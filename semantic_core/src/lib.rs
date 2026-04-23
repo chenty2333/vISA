@@ -15,6 +15,7 @@ pub type FaultDomainId = u64;
 pub type EventId = u64;
 pub type WaitId = u64;
 pub type Generation = u64;
+pub type SnapshotBarrierId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrontendKind {
@@ -154,6 +155,23 @@ impl FaultDomainState {
             Self::Draining => "draining",
             Self::Restarting => "restarting",
             Self::Dead => "dead",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CanonicalGuestIsa {
+    Riscv64,
+    Wasm32,
+    None,
+}
+
+impl CanonicalGuestIsa {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Riscv64 => "riscv64",
+            Self::Wasm32 => "wasm32",
+            Self::None => "none",
         }
     }
 }
@@ -593,6 +611,10 @@ impl EventLog {
         self.events.len()
     }
 
+    pub fn cursor(&self) -> EventId {
+        self.next_id.saturating_sub(1)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
@@ -727,6 +749,24 @@ impl SemanticGraph {
                 generation: resource.generation,
             },
         );
+    }
+
+    pub fn record_window_lease_created(
+        &mut self,
+        owner_task: Option<TaskId>,
+        label: &str,
+        generation: Generation,
+    ) -> ResourceId {
+        let lease = self.register_resource(ResourceKind::WindowLease, owner_task, label);
+        self.event_log
+            .push("dmw", EventKind::WindowLeaseCreated { lease, generation });
+        lease
+    }
+
+    pub fn record_window_lease_destroyed(&mut self, lease: ResourceId, generation: Generation) {
+        self.close_resource(lease);
+        self.event_log
+            .push("dmw", EventKind::WindowLeaseDestroyed { lease, generation });
     }
 
     pub fn register_fault_domain(&mut self, name: &str, role: &str) -> FaultDomainId {
@@ -881,6 +921,53 @@ impl SemanticGraph {
             .push("failure", EventKind::FailureEffect { effect });
     }
 
+    pub fn record_snapshot_barrier_enter(&mut self, barrier: SnapshotBarrierId) {
+        self.event_log
+            .push("snapshot", EventKind::SnapshotBarrierEnter { barrier });
+    }
+
+    pub fn record_snapshot_barrier_exit(&mut self, barrier: SnapshotBarrierId) {
+        self.event_log
+            .push("snapshot", EventKind::SnapshotBarrierExit { barrier });
+    }
+
+    pub fn migration_package(
+        &self,
+        package_id: &str,
+        source_host_arch: &str,
+        target_host_arch_hint: &str,
+        required_artifact_profile: ArtifactProfile,
+        guest: GuestStateSnapshot,
+        substrate_boundary: SubstrateBoundarySnapshot,
+        barrier_id: SnapshotBarrierId,
+        dmw_quiescent: bool,
+    ) -> MigrationPackage {
+        MigrationPackage {
+            schema_version: 1,
+            package_id: package_id.to_string(),
+            source_host_arch: source_host_arch.to_string(),
+            target_host_arch_hint: target_host_arch_hint.to_string(),
+            required_artifact_profile,
+            guest,
+            substrate_boundary: substrate_boundary.clone(),
+            semantic: SemanticSnapshot {
+                barrier: SnapshotBarrierSnapshot {
+                    id: barrier_id,
+                    event_log_cursor: self.event_log.cursor(),
+                    pending_wait_count: self.pending_wait_count(),
+                    live_resource_count: self.live_resource_count(),
+                    active_dmw_lease_count: substrate_boundary.active_dmw_lease_count,
+                    dmw_quiescent,
+                },
+                tasks: self.tasks.clone(),
+                resources: self.resources.clone(),
+                waits: self.waits.clone(),
+                fault_domains: self.fault_domains.clone(),
+                capabilities: self.capabilities.records().to_vec(),
+            },
+        }
+    }
+
     pub fn task_count(&self) -> usize {
         self.tasks.len()
     }
@@ -905,6 +992,20 @@ impl SemanticGraph {
         self.event_log.len()
     }
 
+    pub fn pending_wait_count(&self) -> usize {
+        self.waits
+            .iter()
+            .filter(|wait| wait.state == WaitState::Pending)
+            .count()
+    }
+
+    pub fn live_resource_count(&self) -> usize {
+        self.resources
+            .iter()
+            .filter(|resource| resource.live)
+            .count()
+    }
+
     pub fn capabilities(&self) -> &CapabilityLedger {
         &self.capabilities
     }
@@ -916,6 +1017,166 @@ impl SemanticGraph {
     pub fn event_log_tail(&self, count: usize) -> &[EventRecord] {
         self.event_log.tail(count)
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactProfile {
+    pub artifact_profile: String,
+    pub target_arch: String,
+    pub machine_abi_version: String,
+    pub supervisor_abi_version: String,
+    pub wasm_feature_profile: String,
+    pub memory64: bool,
+    pub multi_memory: bool,
+    pub dmw_layout: String,
+    pub compiler_engine: String,
+    pub compiler_execution_mode: String,
+    pub artifact_format: String,
+}
+
+impl ArtifactProfile {
+    pub fn summary(&self) -> String {
+        format!(
+            "artifact_profile={} target_arch={} machine_abi={} supervisor_abi={} wasm_profile={} dmw_layout={} engine={} mode={} format={}",
+            self.artifact_profile,
+            self.target_arch,
+            self.machine_abi_version,
+            self.supervisor_abi_version,
+            self.wasm_feature_profile,
+            self.dmw_layout,
+            self.compiler_engine,
+            self.compiler_execution_mode,
+            self.artifact_format
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuestStateSnapshot {
+    pub canonical_isa: CanonicalGuestIsa,
+    pub register_count: u32,
+    pub memory_page_count: u64,
+    pub vma_count: u32,
+    pub signal_queue_count: u32,
+    pub note: String,
+}
+
+impl GuestStateSnapshot {
+    pub fn riscv64_placeholder() -> Self {
+        Self {
+            canonical_isa: CanonicalGuestIsa::Riscv64,
+            register_count: 33,
+            memory_page_count: 0,
+            vma_count: 0,
+            signal_queue_count: 0,
+            note: "placeholder canonical guest state; real VM state is not implemented in prototype v0"
+                .to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubstrateBoundarySnapshot {
+    pub timer_epoch: u64,
+    pub pending_irq_causes: u32,
+    pub pending_dma_completions: u32,
+    pub active_dmw_lease_count: u32,
+    pub native_state_policy: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotBarrierSnapshot {
+    pub id: SnapshotBarrierId,
+    pub event_log_cursor: EventId,
+    pub pending_wait_count: usize,
+    pub live_resource_count: usize,
+    pub active_dmw_lease_count: u32,
+    pub dmw_quiescent: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SemanticSnapshot {
+    pub barrier: SnapshotBarrierSnapshot,
+    pub tasks: Vec<TaskRecord>,
+    pub resources: Vec<ResourceRecord>,
+    pub waits: Vec<WaitRecord>,
+    pub fault_domains: Vec<FaultDomainRecord>,
+    pub capabilities: Vec<CapabilityRecord>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MigrationPackage {
+    pub schema_version: u32,
+    pub package_id: String,
+    pub source_host_arch: String,
+    pub target_host_arch_hint: String,
+    pub required_artifact_profile: ArtifactProfile,
+    pub guest: GuestStateSnapshot,
+    pub substrate_boundary: SubstrateBoundarySnapshot,
+    pub semantic: SemanticSnapshot,
+}
+
+impl MigrationPackage {
+    pub fn validate_portability(&self) -> Result<(), MigrationValidationError> {
+        if self.schema_version != 1 {
+            return Err(MigrationValidationError::UnsupportedSchema);
+        }
+        if self.semantic.barrier.active_dmw_lease_count != 0 || !self.semantic.barrier.dmw_quiescent
+        {
+            return Err(MigrationValidationError::ActiveDmwLease);
+        }
+        if self.substrate_boundary.pending_dma_completions != 0 {
+            return Err(MigrationValidationError::InFlightDma);
+        }
+        if self.guest.canonical_isa != CanonicalGuestIsa::Riscv64 {
+            return Err(MigrationValidationError::UnsupportedGuestIsa);
+        }
+        Ok(())
+    }
+
+    pub fn summary_lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        lines.push(format!(
+            "migration package: id={} source_host={} target_hint={} guest_isa={}",
+            self.package_id,
+            self.source_host_arch,
+            self.target_host_arch_hint,
+            self.guest.canonical_isa.as_str()
+        ));
+        lines.push(format!(
+            "snapshot barrier: id={} cursor={} pending_waits={} live_resources={} active_dmw_leases={}",
+            self.semantic.barrier.id,
+            self.semantic.barrier.event_log_cursor,
+            self.semantic.barrier.pending_wait_count,
+            self.semantic.barrier.live_resource_count,
+            self.semantic.barrier.active_dmw_lease_count
+        ));
+        lines.push(format!(
+            "semantic roots: tasks={} resources={} waits={} capabilities={} fault_domains={}",
+            self.semantic.tasks.len(),
+            self.semantic.resources.len(),
+            self.semantic.waits.len(),
+            self.semantic.capabilities.len(),
+            self.semantic.fault_domains.len()
+        ));
+        lines.push(format!(
+            "required artifacts: {}",
+            self.required_artifact_profile.summary()
+        ));
+        lines.push(
+            "not migrated: raw pointers, native stacks, active DMW leases, DMA mappings, MMIO mappings, IRQ registrations, translated code cache"
+                .to_string(),
+        );
+        lines
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MigrationValidationError {
+    UnsupportedSchema,
+    ActiveDmwLease,
+    InFlightDma,
+    UnsupportedGuestIsa,
 }
 
 impl Default for SemanticGraph {
@@ -959,5 +1220,51 @@ mod tests {
             graph.event_log_tail(1)[0].kind.summary(),
             "WaitResolved wait=11 reason=ready"
         );
+    }
+
+    #[test]
+    fn migration_package_rejects_active_dmw_leases() {
+        let mut graph = SemanticGraph::new();
+        graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
+        graph.record_snapshot_barrier_enter(1);
+        graph.record_snapshot_barrier_exit(1);
+
+        let package = graph.migration_package(
+            "test",
+            "x86_64",
+            "aarch64",
+            test_artifact_profile(),
+            GuestStateSnapshot::riscv64_placeholder(),
+            SubstrateBoundarySnapshot {
+                timer_epoch: 0,
+                pending_irq_causes: 0,
+                pending_dma_completions: 0,
+                active_dmw_lease_count: 1,
+                native_state_policy: "rebuild".to_string(),
+            },
+            1,
+            false,
+        );
+
+        assert_eq!(
+            package.validate_portability(),
+            Err(MigrationValidationError::ActiveDmwLease)
+        );
+    }
+
+    fn test_artifact_profile() -> ArtifactProfile {
+        ArtifactProfile {
+            artifact_profile: "test".to_string(),
+            target_arch: "target-native".to_string(),
+            machine_abi_version: "machine".to_string(),
+            supervisor_abi_version: "supervisor".to_string(),
+            wasm_feature_profile: "wasm32".to_string(),
+            memory64: false,
+            multi_memory: false,
+            dmw_layout: "dmw".to_string(),
+            compiler_engine: "wasmtime".to_string(),
+            compiler_execution_mode: "precompiled-core-module".to_string(),
+            artifact_format: "cwasm".to_string(),
+        }
     }
 }

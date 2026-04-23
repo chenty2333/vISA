@@ -24,6 +24,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.run_futex_demo()?;
         self.run_epoll_demo()?;
         self.run_procfs_recovery_demo()?;
+        self.run_snapshot_migration_demo()?;
         self.run_semantic_debug_demo()?;
         Ok(())
     }
@@ -149,6 +150,15 @@ impl<'engine> PrototypeRuntime<'engine> {
     fn run_semantic_debug_demo(&mut self) -> Result<(), &'static str> {
         serial_println!("== semantic object graph demo ==");
         for line in self.semantic_debug_lines() {
+            serial_println!("{}", line);
+        }
+        Ok(())
+    }
+
+    fn run_snapshot_migration_demo(&mut self) -> Result<(), &'static str> {
+        serial_println!("== snapshot migration package demo ==");
+        let package = self.create_migration_package()?;
+        for line in package.summary_lines() {
             serial_println!("{}", line);
         }
         Ok(())

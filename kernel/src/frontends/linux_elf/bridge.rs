@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
 
 use bootloader_api::BootInfo;
+use semantic_core::ResourceId;
 
 use crate::qemu;
 use crate::serial_println;
@@ -370,6 +371,10 @@ fn sys_futex(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn handle_exit(status: i32) -> ! {
     if status == 0 {
+        serial_println!("== post-ring3 semantic object graph ==");
+        for line in active_context().supervisor.semantic_debug_lines() {
+            serial_println!("{}", line);
+        }
         serial_println!("vmos: demo completed");
         qemu::exit_success();
     } else {
@@ -393,10 +398,51 @@ impl Drop for ActivationGuard {
     }
 }
 
-fn user_lease(ptr: u64, len: u64, writable: bool) -> Result<crate::substrate::dmw::DmwLease, i32> {
+struct UserDmwLease {
+    lease: crate::substrate::dmw::DmwLease,
+    resource_id: Option<ResourceId>,
+    generation: u64,
+}
+
+impl UserDmwLease {
+    fn bytes(&self) -> Result<&[u8], crate::substrate::dmw::DmwFault> {
+        self.lease.bytes()
+    }
+
+    fn bytes_mut(&mut self) -> Result<&mut [u8], crate::substrate::dmw::DmwFault> {
+        self.lease.bytes_mut()
+    }
+}
+
+impl Drop for UserDmwLease {
+    fn drop(&mut self) {
+        let Some(resource_id) = self.resource_id.take() else {
+            return;
+        };
+        active_context()
+            .supervisor
+            .record_window_lease_destroyed(resource_id, self.generation);
+    }
+}
+
+fn user_lease(ptr: u64, len: u64, writable: bool) -> Result<UserDmwLease, i32> {
     validate_user_range(ptr, len, writable)?;
-    crate::substrate::dmw::acquire(active_context().activation_id, ptr, len, writable)
-        .map_err(map_dmw_fault)
+    let lease = crate::substrate::dmw::acquire(active_context().activation_id, ptr, len, writable)
+        .map_err(map_dmw_fault)?;
+    let generation = lease.generation();
+    let resource_id = active_context().supervisor.record_window_lease_created(
+        lease.slot_index(),
+        generation,
+        lease.activation_id(),
+        lease.ptr(),
+        lease.len(),
+        lease.writable(),
+    );
+    Ok(UserDmwLease {
+        lease,
+        resource_id: Some(resource_id),
+        generation,
+    })
 }
 
 fn read_epoll_event(ptr: u64) -> Result<(u32, u64), i32> {

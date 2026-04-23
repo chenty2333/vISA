@@ -65,6 +65,7 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) pulse: PulseDevice,
     pub(super) restart_count: u64,
     pub(super) semantic: SemanticGraph,
+    pub(super) next_snapshot_barrier: u64,
 }
 
 impl<'engine> PrototypeRuntime<'engine> {
@@ -87,6 +88,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             pulse: PulseDevice::new(interrupts::tick_count()),
             restart_count: 0,
             semantic: bootstrap_graph(),
+            next_snapshot_barrier: 1,
         })
     }
 

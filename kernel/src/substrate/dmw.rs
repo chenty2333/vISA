@@ -73,6 +73,10 @@ impl DmwManager {
         }
     }
 
+    fn active_lease_count(&self) -> usize {
+        self.slots.iter().filter(|slot| slot.active).count()
+    }
+
     fn validate(
         &self,
         slot_index: usize,
@@ -109,6 +113,30 @@ pub(crate) struct DmwLease {
 }
 
 impl DmwLease {
+    pub(crate) fn slot_index(&self) -> usize {
+        self.slot_index
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn activation_id(&self) -> u64 {
+        self.activation_id
+    }
+
+    pub(crate) fn ptr(&self) -> u64 {
+        self.ptr
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    pub(crate) fn writable(&self) -> bool {
+        self.writable
+    }
+
     pub(crate) fn bytes(&self) -> Result<&[u8], DmwFault> {
         DMW.lock()
             .validate(self.slot_index, self.generation, self.activation_id)?;
@@ -148,6 +176,10 @@ pub(crate) fn acquire(
 
 pub(crate) fn assert_quiescent() -> Result<(), &'static str> {
     DMW.lock().assert_quiescent()
+}
+
+pub(crate) fn active_lease_count() -> usize {
+    DMW.lock().active_lease_count()
 }
 
 pub(crate) fn finish_activation(activation_id: u64) {

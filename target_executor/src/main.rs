@@ -3,7 +3,11 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use artifact_manifest::{ArtifactBundleManifest, ModuleArtifactManifest};
+use artifact_manifest::{
+    ArtifactBundleManifest, GuestStateManifest, MigrationHostManifest, MigrationPackageManifest,
+    MigrationTargetManifest, ModuleArtifactManifest, RequiredArtifactProfileManifest,
+    SemanticSnapshotManifest, SubstrateBoundaryManifest,
+};
 use semantic_core::SemanticGraph;
 use sha2::{Digest, Sha256};
 use supervisor_catalog::{CapabilitySpec, SUPERVISOR_WASM_MODULES, WasmModuleSpec};
@@ -24,6 +28,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace_root.join(DEFAULT_ARTIFACT_ROOT));
+    let migration_path = env::args().nth(2).map(PathBuf::from);
     let manifest = read_manifest(&artifact_root)?;
     let engine = runtime_engine()?;
     let mut semantic = SemanticGraph::new();
@@ -77,6 +82,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             store.package, store.role, store.fault_policy
         );
     }
+    let migration_path = prepare_migration_package(&artifact_root, migration_path, &manifest)?;
+    let migration = read_migration_package(&migration_path)?;
+    validate_migration_package(&migration, &manifest)?;
+    restore_migration_package(&migration, &semantic)?;
 
     Ok(())
 }
@@ -90,6 +99,87 @@ fn register_store_semantics(semantic: &mut SemanticGraph, spec: &WasmModuleSpec)
             capability.rights,
             capability.lifetime,
         );
+    }
+}
+
+fn prepare_migration_package(
+    artifact_root: &Path,
+    migration_path: Option<PathBuf>,
+    manifest: &ArtifactBundleManifest,
+) -> Result<PathBuf, Box<dyn Error>> {
+    if let Some(path) = migration_path {
+        return Ok(path);
+    }
+
+    let path = artifact_root.join("migration-package-demo.json");
+    let package = demo_migration_package(manifest);
+    fs::write(&path, serde_json::to_vec_pretty(&package)?)?;
+    Ok(path)
+}
+
+fn demo_migration_package(manifest: &ArtifactBundleManifest) -> MigrationPackageManifest {
+    let capability_count = manifest
+        .modules
+        .iter()
+        .map(|module| module.capabilities.len())
+        .sum();
+    MigrationPackageManifest {
+        schema_version: 1,
+        package_id: "target-executor-demo-migration-v0".to_owned(),
+        source: MigrationHostManifest {
+            arch: "x86_64".to_owned(),
+        },
+        target: MigrationTargetManifest {
+            arch_requirement: "target-native".to_owned(),
+        },
+        required_artifact_profile: RequiredArtifactProfileManifest {
+            artifact_profile: manifest.artifact_profile.clone(),
+            target_arch: "target-native".to_owned(),
+            machine_abi_version: manifest.target.machine_abi_version.clone(),
+            supervisor_abi_version: manifest.target.supervisor_abi_version.clone(),
+            wasm_feature_profile: manifest.target.wasm_feature_profile.clone(),
+            memory64: manifest.target.memory64,
+            multi_memory: manifest.target.multi_memory,
+            dmw_layout: manifest.target.dmw_layout.clone(),
+            compiler_engine: manifest.compiler.engine.clone(),
+            compiler_execution_mode: manifest.compiler.execution_mode.clone(),
+            artifact_format: manifest.compiler.artifact_format.clone(),
+        },
+        guest: GuestStateManifest {
+            canonical_isa: "riscv64".to_owned(),
+            register_count: 33,
+            memory_page_count: 0,
+            vma_count: 0,
+            signal_queue_count: 0,
+            note: "host-side package proving cross-ISA restore/rebind boundaries".to_owned(),
+        },
+        semantic: SemanticSnapshotManifest {
+            barrier_id: 1,
+            event_log_cursor: 0,
+            task_count: 1,
+            resource_count: 0,
+            wait_token_count: 0,
+            capability_count,
+            fault_domain_count: manifest.modules.len(),
+        },
+        substrate_boundary: SubstrateBoundaryManifest {
+            timer_epoch: 0,
+            pending_irq_causes: 0,
+            pending_dma_completions: 0,
+            active_dmw_lease_count: 0,
+            native_state_policy:
+                "target rebuilds page tables, DMW slots, IRQ registrations, stores, and code cache"
+                    .to_owned(),
+        },
+        not_migrated: vec![
+            "host raw pointers".to_owned(),
+            "native stacks".to_owned(),
+            "active DMW leases".to_owned(),
+            "DMA/IOMMU mappings".to_owned(),
+            "MMIO mappings".to_owned(),
+            "IRQ registrations".to_owned(),
+            "translated guest code cache".to_owned(),
+        ],
     }
 }
 
@@ -109,6 +199,94 @@ fn validate_bundle_manifest(manifest: &ArtifactBundleManifest) -> Result<(), Box
     if manifest.target.supervisor_abi_version != "vmos-supervisor-abi-v0" {
         return Err("supervisor ABI version mismatch".into());
     }
+    Ok(())
+}
+
+fn validate_migration_package(
+    package: &MigrationPackageManifest,
+    manifest: &ArtifactBundleManifest,
+) -> Result<(), Box<dyn Error>> {
+    if package.schema_version != 1 {
+        return Err("unsupported migration package schema version".into());
+    }
+    if package.guest.canonical_isa != "riscv64" {
+        return Err("migration package uses an unsupported canonical guest ISA".into());
+    }
+    if package.substrate_boundary.active_dmw_lease_count != 0 {
+        return Err("migration package contains active DMW leases".into());
+    }
+    if package.substrate_boundary.pending_dma_completions != 0 {
+        return Err("migration package contains in-flight DMA completions".into());
+    }
+
+    let required = &package.required_artifact_profile;
+    if required.target_arch != "target-native" && required.target_arch != manifest.target.arch {
+        return Err("migration package target arch is incompatible with this manifest".into());
+    }
+    if required.machine_abi_version != manifest.target.machine_abi_version {
+        return Err("migration package machine ABI mismatch".into());
+    }
+    if required.supervisor_abi_version != manifest.target.supervisor_abi_version {
+        return Err("migration package supervisor ABI mismatch".into());
+    }
+    if required.wasm_feature_profile != manifest.target.wasm_feature_profile {
+        return Err("migration package Wasm feature profile mismatch".into());
+    }
+    if required.memory64 != manifest.target.memory64
+        || required.multi_memory != manifest.target.multi_memory
+    {
+        return Err("migration package Wasm memory model mismatch".into());
+    }
+    if required.dmw_layout != manifest.target.dmw_layout {
+        return Err("migration package DMW layout mismatch".into());
+    }
+    if required.compiler_engine != manifest.compiler.engine
+        || required.compiler_execution_mode != manifest.compiler.execution_mode
+        || required.artifact_format != manifest.compiler.artifact_format
+    {
+        return Err("migration package compiler/artifact mode mismatch".into());
+    }
+    Ok(())
+}
+
+fn restore_migration_package(
+    package: &MigrationPackageManifest,
+    semantic: &SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    if package.semantic.fault_domain_count > semantic.fault_domain_count() {
+        return Err(
+            "migration package requires more fault domains than the executor rebuilt".into(),
+        );
+    }
+    if package.semantic.capability_count > semantic.capability_count() {
+        return Err(
+            "migration package requires more capabilities than the executor rebound".into(),
+        );
+    }
+
+    println!(
+        "migration restore/rebind demo package={} source_arch={} target_requirement={} guest_isa={}",
+        package.package_id,
+        package.source.arch,
+        package.target.arch_requirement,
+        package.guest.canonical_isa
+    );
+    println!(
+        "restore plan: import semantic roots tasks={} resources={} waits={} event_cursor={}",
+        package.semantic.task_count,
+        package.semantic.resource_count,
+        package.semantic.wait_token_count,
+        package.semantic.event_log_cursor
+    );
+    println!(
+        "restore plan: rebuilt {} stores and rebound {} logical capabilities",
+        semantic.fault_domain_count(),
+        semantic.capability_count()
+    );
+    println!(
+        "restore plan: not migrated = {}",
+        package.not_migrated.join(", ")
+    );
     Ok(())
 }
 
@@ -240,6 +418,11 @@ fn runtime_engine() -> Result<Engine, Box<dyn Error>> {
 
 fn read_manifest(artifact_root: &Path) -> Result<ArtifactBundleManifest, Box<dyn Error>> {
     let bytes = fs::read(artifact_root.join("manifest.json"))?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+fn read_migration_package(path: &Path) -> Result<MigrationPackageManifest, Box<dyn Error>> {
+    let bytes = fs::read(path)?;
     Ok(serde_json::from_slice(&bytes)?)
 }
 
