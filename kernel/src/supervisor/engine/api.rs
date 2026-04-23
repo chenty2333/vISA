@@ -1,33 +1,38 @@
-use alloc::vec;
 use alloc::vec::Vec;
 
-use wasmi::{
-    Engine as BackendEngine, Error, Extern, Instance, Linker, Memory, Module, Store, TypedFunc,
-    WasmParams, WasmResults,
-};
-
-use super::types::ServiceCallError;
+use super::wasmi_backend::{self, FunctionParams, FunctionResults};
+use crate::supervisor::types::ServiceCallError;
 
 pub(crate) struct SupervisorEngine {
-    inner: BackendEngine,
+    inner: EngineBackend,
+}
+
+enum EngineBackend {
+    Wasmi(wasmi_backend::WasmiEngine),
+}
+
+pub(crate) struct WasmFn<Params, Results> {
+    inner: FunctionBackend<Params, Results>,
+}
+
+enum FunctionBackend<Params, Results> {
+    Wasmi(wasmi_backend::WasmiFunction<Params, Results>),
+}
+
+pub(crate) struct ModuleInstance {
+    inner: ModuleBackend,
+}
+
+enum ModuleBackend {
+    Wasmi(wasmi_backend::WasmiModuleInstance),
 }
 
 impl Default for SupervisorEngine {
     fn default() -> Self {
         Self {
-            inner: BackendEngine::default(),
+            inner: EngineBackend::Wasmi(wasmi_backend::new_engine()),
         }
     }
-}
-
-pub(crate) struct WasmFn<Params, Results> {
-    inner: TypedFunc<Params, Results>,
-}
-
-pub(crate) struct ModuleInstance {
-    store: Store<()>,
-    instance: Instance,
-    memory: Memory,
 }
 
 impl ModuleInstance {
@@ -36,21 +41,13 @@ impl ModuleInstance {
         bytes: &[u8],
         instantiate_msg: &'static str,
     ) -> Result<Self, &'static str> {
-        let module = load_module(engine, bytes)?;
-        let mut store = Store::new(&engine.inner, ());
-        let linker = Linker::new(&engine.inner);
-        let instance = linker
-            .instantiate_and_start(&mut store, &module)
-            .map_err(|error| {
-                crate::kwarn!("{}: {:?}", instantiate_msg, error);
-                instantiate_msg
-            })?;
-        let memory = get_memory(&mut store, &instance)?;
-        Ok(Self {
-            store,
-            instance,
-            memory,
-        })
+        match &engine.inner {
+            EngineBackend::Wasmi(engine) => {
+                wasmi_backend::instantiate(engine, bytes, instantiate_msg).map(|inner| Self {
+                    inner: ModuleBackend::Wasmi(inner),
+                })
+            }
+        }
     }
 
     pub(crate) fn bind<Params, Results>(
@@ -59,13 +56,16 @@ impl ModuleInstance {
         missing_msg: &'static str,
     ) -> Result<WasmFn<Params, Results>, &'static str>
     where
-        Params: WasmParams,
-        Results: WasmResults,
+        Params: FunctionParams,
+        Results: FunctionResults,
     {
-        self.instance
-            .get_typed_func::<Params, Results>(&self.store, export)
-            .map(|inner| WasmFn { inner })
-            .map_err(|_| missing_msg)
+        match &self.inner {
+            ModuleBackend::Wasmi(module) => {
+                wasmi_backend::bind(module, export, missing_msg).map(|inner| WasmFn {
+                    inner: FunctionBackend::Wasmi(inner),
+                })
+            }
+        }
     }
 
     pub(crate) fn export_u32(
@@ -85,10 +85,14 @@ impl ModuleInstance {
         trap_msg: &'static str,
     ) -> Result<Results, &'static str>
     where
-        Params: WasmParams,
-        Results: WasmResults,
+        Params: FunctionParams,
+        Results: FunctionResults,
     {
-        func.inner.call(&mut self.store, args).map_err(|_| trap_msg)
+        match (&mut self.inner, &func.inner) {
+            (ModuleBackend::Wasmi(module), FunctionBackend::Wasmi(func)) => {
+                wasmi_backend::call(module, func, args, trap_msg)
+            }
+        }
     }
 
     pub(crate) fn write_memory(
@@ -97,9 +101,11 @@ impl ModuleInstance {
         bytes: &[u8],
         error_msg: &'static str,
     ) -> Result<(), &'static str> {
-        self.memory
-            .write(&mut self.store, ptr as usize, bytes)
-            .map_err(|_| error_msg)
+        match &mut self.inner {
+            ModuleBackend::Wasmi(module) => {
+                wasmi_backend::write_memory(module, ptr, bytes, error_msg)
+            }
+        }
     }
 
     pub(crate) fn read_memory(
@@ -108,11 +114,9 @@ impl ModuleInstance {
         len: u32,
         error_msg: &'static str,
     ) -> Result<Vec<u8>, &'static str> {
-        let mut buffer = vec![0_u8; len as usize];
-        self.memory
-            .read(&self.store, ptr as usize, &mut buffer)
-            .map_err(|_| error_msg)?;
-        Ok(buffer)
+        match &self.inner {
+            ModuleBackend::Wasmi(module) => wasmi_backend::read_memory(module, ptr, len, error_msg),
+        }
     }
 }
 
@@ -166,8 +170,8 @@ impl BufferedModule {
         missing_msg: &'static str,
     ) -> Result<WasmFn<Params, Results>, &'static str>
     where
-        Params: WasmParams,
-        Results: WasmResults,
+        Params: FunctionParams,
+        Results: FunctionResults,
     {
         self.module.bind(export, missing_msg)
     }
@@ -179,8 +183,8 @@ impl BufferedModule {
         trap_msg: &'static str,
     ) -> Result<Results, &'static str>
     where
-        Params: WasmParams,
-        Results: WasmResults,
+        Params: FunctionParams,
+        Results: FunctionResults,
     {
         self.module.call(func, args, trap_msg)
     }
@@ -227,20 +231,4 @@ pub(crate) fn expect_len(rc: i32) -> Result<u32, ServiceCallError> {
     } else {
         Ok(rc as u32)
     }
-}
-
-fn load_module(engine: &SupervisorEngine, bytes: &[u8]) -> Result<Module, &'static str> {
-    Module::new(&engine.inner, bytes).map_err(map_wasmi_error)
-}
-
-fn get_memory(store: &mut Store<()>, instance: &Instance) -> Result<Memory, &'static str> {
-    match instance.get_export(store, "memory") {
-        Some(Extern::Memory(memory)) => Ok(memory),
-        _ => Err("wasm module did not export linear memory"),
-    }
-}
-
-fn map_wasmi_error(error: Error) -> &'static str {
-    let _ = error;
-    "wasm engine returned an error"
 }

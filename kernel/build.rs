@@ -2,18 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const MODULES: [&str; 8] = [
-    "console_service",
-    "devfs_service",
-    "epoll_service",
-    "futex_service",
-    "linux_syscall",
-    "procfs_service",
-    "vfs_service",
-    "wasm_app",
-];
-
-const USER_BINARIES: [&str; 1] = ["linux_user_demo"];
+use supervisor_catalog::{SUPERVISOR_WASM_MODULES, USER_BINARIES};
 
 fn main() {
     let manifest_dir =
@@ -25,16 +14,16 @@ fn main() {
         PathBuf::from(env::var_os("OUT_DIR").expect("missing OUT_DIR")).join("wasm-target");
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
 
-    for module in MODULES {
-        build_module(&cargo, workspace_root, &target_dir, module);
-        expose_artifact_path(workspace_root, &target_dir, module);
+    for module in SUPERVISOR_WASM_MODULES {
+        build_module(&cargo, workspace_root, &target_dir, module.package);
+        expose_artifact_path(workspace_root, &target_dir, module.package);
     }
 
     let user_target_dir =
         PathBuf::from(env::var_os("OUT_DIR").expect("missing OUT_DIR")).join("user-target");
     for binary in USER_BINARIES {
-        build_user_binary(&cargo, workspace_root, &user_target_dir, binary);
-        expose_user_binary_path(workspace_root, &user_target_dir, binary);
+        build_user_binary(&cargo, workspace_root, &user_target_dir, binary.package);
+        expose_user_binary_path(workspace_root, &user_target_dir, binary.package);
     }
 }
 

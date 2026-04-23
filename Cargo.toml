@@ -1,7 +1,9 @@
 [workspace]
 resolver = "3"
 members = [
+    "aotc",
     "abi",
+    "artifact_manifest",
     "console_service",
     "devfs_service",
     "epoll_service",
@@ -11,17 +13,26 @@ members = [
     "linux_syscall",
     "procfs_service",
     "runner",
+    "supervisor_catalog",
+    "target_executor",
     "vfs_service",
     "wasm_app",
 ]
 
 [workspace.dependencies]
+artifact_manifest = { path = "artifact_manifest" }
 bootloader_api = "0.11.15"
+hex = "0.4.3"
 linked_list_allocator = "0.10.6"
 pic8259 = "0.10.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
 spin = "0.9.8"
+supervisor_catalog = { path = "supervisor_catalog" }
 uart_16550 = "0.3.2"
 vmos_abi = { path = "abi" }
+wasmtime = { version = "43.0.0", default-features = false }
 wasmi = { version = "1.0.9", default-features = false }
 x86_64 = { version = "0.15.4", default-features = false, features = ["abi_x86_interrupt", "instructions"] }
 xmas-elf = { version = "0.9.1", default-features = false }
