@@ -1,0 +1,11 @@
+[package]
+name = "procfs_service"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+vmos_abi.workspace = true

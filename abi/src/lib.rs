@@ -1,20 +1,27 @@
 #![no_std]
 
+pub const SYS_READ: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
+pub const SYS_CLOSE: u64 = 3;
 pub const SYS_NANOSLEEP: u64 = 35;
+pub const SYS_UNAME: u64 = 63;
+pub const SYS_GETCWD: u64 = 79;
+pub const SYS_GETDENTS64: u64 = 217;
 pub const SYS_EXIT: u64 = 60;
 pub const SYS_EXIT_GROUP: u64 = 231;
+pub const SYS_OPENAT: u64 = 257;
+pub const SYS_READLINKAT: u64 = 267;
 
 pub const FD_STDOUT: u32 = 1;
 pub const FD_STDERR: u32 = 2;
 
-pub const MSG_WASM_APP: u32 = 1;
-pub const MSG_LINUX_WRITE: u32 = 2;
-pub const MSG_FAULT_RECOVERY: u32 = 3;
-pub const MSG_SLEEP_RESUMED: u32 = 4;
-
 pub const WAIT_TOKEN_SLEEP: u32 = 1;
 
+pub const ERR_ENOENT: i32 = 2;
+pub const ERR_EIO: i32 = 5;
+pub const ERR_EBADF: i32 = 9;
+pub const ERR_ENOTDIR: i32 = 20;
+pub const ERR_EISDIR: i32 = 21;
 pub const ERR_EINVAL: i32 = 22;
 pub const ERR_ENOSYS: i32 = 38;
 
@@ -40,9 +47,10 @@ impl SyscallContext {
 pub enum StepTag {
     Ready = 0,
     Pending = 1,
-    ConsoleWrite = 2,
-    Exit = 3,
-    Error = 4,
+    Plan = 2,
+    ConsoleWrite = 3,
+    Exit = 4,
+    Error = 5,
 }
 
 impl StepTag {
@@ -50,9 +58,79 @@ impl StepTag {
         match raw {
             0 => Self::Ready,
             1 => Self::Pending,
-            2 => Self::ConsoleWrite,
-            3 => Self::Exit,
+            2 => Self::Plan,
+            3 => Self::ConsoleWrite,
+            4 => Self::Exit,
             _ => Self::Error,
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanKind {
+    Write = 1,
+    OpenAt = 2,
+    Read = 3,
+    Close = 4,
+    GetDents64 = 5,
+    ReadLinkAt = 6,
+    GetCwd = 7,
+    Uname = 8,
+}
+
+impl PlanKind {
+    pub const fn from_raw(raw: u32) -> Option<Self> {
+        match raw {
+            1 => Some(Self::Write),
+            2 => Some(Self::OpenAt),
+            3 => Some(Self::Read),
+            4 => Some(Self::Close),
+            5 => Some(Self::GetDents64),
+            6 => Some(Self::ReadLinkAt),
+            7 => Some(Self::GetCwd),
+            8 => Some(Self::Uname),
+            _ => None,
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServiceRoute {
+    Vfs = 1,
+    Procfs = 2,
+    Devfs = 3,
+}
+
+impl ServiceRoute {
+    pub const fn from_raw(raw: u32) -> Option<Self> {
+        match raw {
+            1 => Some(Self::Vfs),
+            2 => Some(Self::Procfs),
+            3 => Some(Self::Devfs),
+            _ => None,
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeKind {
+    File = 1,
+    Directory = 2,
+    Symlink = 3,
+    CharDevice = 4,
+}
+
+impl NodeKind {
+    pub const fn from_raw(raw: u32) -> Option<Self> {
+        match raw {
+            1 => Some(Self::File),
+            2 => Some(Self::Directory),
+            3 => Some(Self::Symlink),
+            4 => Some(Self::CharDevice),
+            _ => None,
         }
     }
 }
@@ -79,6 +157,10 @@ impl PackedStep {
 
     pub const fn pending(token: u32, delay_ms: u32) -> Self {
         Self::pack(StepTag::Pending, token, delay_ms as i32)
+    }
+
+    pub const fn plan(kind: PlanKind) -> Self {
+        Self::pack(StepTag::Plan, kind as u32, 0)
     }
 
     pub const fn console_write(ptr: u32, len: u32) -> Self {

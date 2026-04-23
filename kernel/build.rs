@@ -2,7 +2,14 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const MODULES: [&str; 3] = ["console_service", "linux_syscall", "wasm_app"];
+const MODULES: [&str; 6] = [
+    "console_service",
+    "devfs_service",
+    "linux_syscall",
+    "procfs_service",
+    "vfs_service",
+    "wasm_app",
+];
 
 fn main() {
     let manifest_dir =

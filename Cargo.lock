@@ -103,6 +103,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19d374276b40fb8bbdee95aef7c7fa6b5316ec764510eb64b8dd0e2ed0d7e7f5"
 
 [[package]]
+name = "devfs_service"
+version = "0.1.0"
+dependencies = [
+ "vmos_abi",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -337,6 +344,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "procfs_service"
+version = "0.1.0"
+dependencies = [
+ "vmos_abi",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -516,6 +530,13 @@ dependencies = [
  "getrandom",
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "vfs_service"
+version = "0.1.0"
+dependencies = [
+ "vmos_abi",
 ]
 
 [[package]]

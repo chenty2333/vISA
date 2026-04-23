@@ -3,9 +3,12 @@ resolver = "3"
 members = [
     "abi",
     "console_service",
+    "devfs_service",
     "kernel",
     "linux_syscall",
+    "procfs_service",
     "runner",
+    "vfs_service",
     "wasm_app",
 ]
 
