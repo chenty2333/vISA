@@ -3,9 +3,9 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use semantic_core::{
-    ArtifactProfile, CapabilityDenyReason, FailureEffect, FrontendKind, GuestStateSnapshot,
-    HostcallClass, MigrationPackage, ResourceId, ResourceKind, SemanticGraph, SemanticWaitKind,
-    SubstrateBoundarySnapshot, TaskState,
+    ArtifactProfile, CapabilityDenyReason, FailureEffect, FrontendKind, GenerationCheckError,
+    GuestStateSnapshot, HostcallClass, MigrationPackage, ResourceHandle, ResourceKind,
+    SemanticGraph, SemanticWaitKind, SubstrateBoundarySnapshot, TaskState, WaitHandle,
 };
 use supervisor_catalog::SUPERVISOR_WASM_MODULES;
 use vmos_abi::PlanKind;
@@ -140,6 +140,21 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.semantic.capability_generation(subject, object)
     }
 
+    pub(crate) fn validate_resource_handle(
+        &mut self,
+        handle: ResourceHandle,
+    ) -> Result<(), GenerationCheckError> {
+        self.semantic.validate_resource_handle(handle)
+    }
+
+    pub(crate) fn validate_wait_token(
+        &mut self,
+        token: WaitToken,
+    ) -> Result<(), GenerationCheckError> {
+        self.semantic
+            .validate_wait_handle(WaitHandle::new(token.id, token.generation))
+    }
+
     pub(crate) fn revoke_capability_for_demo(
         &mut self,
         subject: &str,
@@ -170,21 +185,24 @@ impl<'engine> PrototypeRuntime<'engine> {
         ptr: u64,
         len: usize,
         writable: bool,
-    ) -> ResourceId {
+    ) -> ResourceHandle {
         let label = format!(
             "dmw:slot={} activation={} ptr=0x{:x} len={} writable={}",
             slot_index, activation_id, ptr, len, writable
         );
-        self.semantic.record_window_lease_created(
+        let resource = self.semantic.record_window_lease_created(
             Some(self.scheduler.current_task()),
             &label,
             generation,
-        )
+        );
+        self.semantic
+            .resource_handle(resource)
+            .expect("fresh DMW lease should have a semantic resource handle")
     }
 
-    pub(crate) fn record_window_lease_destroyed(&mut self, lease: ResourceId, generation: u64) {
+    pub(crate) fn record_window_lease_destroyed(&mut self, lease: ResourceHandle, generation: u64) {
         self.semantic
-            .record_window_lease_destroyed(lease, generation);
+            .record_window_lease_destroyed(lease.id, generation);
     }
 
     pub(crate) fn create_migration_package(&mut self) -> Result<MigrationPackage, &'static str> {

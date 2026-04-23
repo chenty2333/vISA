@@ -10,7 +10,7 @@ use vmos_abi::{
 
 use super::linux::LinuxCallResult;
 use super::runtime::PrototypeRuntime;
-use super::types::{InjectedFault, WaitRestartClass};
+use super::types::{InjectedFault, WaitRestartClass, WaitToken};
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn run_prototype_demos(&mut self) -> Result<(), &'static str> {
@@ -25,6 +25,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.run_epoll_demo()?;
         self.run_procfs_recovery_demo()?;
         self.run_capability_enforcement_demo()?;
+        self.run_generation_plane_demo()?;
         self.run_snapshot_migration_demo()?;
         self.run_semantic_debug_demo()?;
         Ok(())
@@ -194,6 +195,47 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.require_capability("linux_syscall", "timer.sleep", "arm")
             .map_err(|_| "restored timer.sleep capability was denied")?;
         serial_println!("stale timer.sleep generation rejected after regrant");
+        Ok(())
+    }
+
+    fn run_generation_plane_demo(&mut self) -> Result<(), &'static str> {
+        serial_println!("== resource/wait/dmw generation demo ==");
+
+        let fd = self.open_path(b"/sandbox/hello.txt")?;
+        let fd_handle = self
+            .fd_handle_for_demo(fd)
+            .ok_or("opened fd did not publish a resource handle")?;
+        self.validate_resource_handle(fd_handle)
+            .map_err(|_| "fresh fd resource handle was rejected")?;
+        self.close_fd(fd)?;
+        if self.validate_resource_handle(fd_handle).is_ok() {
+            return Err("stale fd resource handle was accepted after close");
+        }
+        serial_println!("closed fd handle rejected after generation change");
+
+        let pending = self.dispatch_linux_sleep_ms_raw("generation_wait", 1)?;
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            _ => return Err("generation wait did not enter pending state"),
+        };
+        let stale_token = WaitToken {
+            generation: token.generation.saturating_add(1),
+            ..token
+        };
+        if self.validate_wait_token(stale_token).is_ok() {
+            return Err("stale wait token generation was accepted");
+        }
+        match self.block_on_wait("generation_wait", token)? {
+            LinuxCallResult::Ret(_) => {
+                serial_println!("stale wait token rejected before resume");
+            }
+            _ => return Err("generation wait resumed with an unexpected result"),
+        }
+
+        if !crate::substrate::dmw::quarantine_reuse_self_check() {
+            return Err("DMW slot quarantine did not block same-activation reuse");
+        }
+        serial_println!("dmw slot reuse blocked within one activation");
         Ok(())
     }
 

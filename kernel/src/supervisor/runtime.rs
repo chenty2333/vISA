@@ -5,7 +5,7 @@ use core::ptr::null_mut;
 
 use crate::interrupts;
 use semantic_core::{
-    FailureEffect, FaultDomainState, FrontendKind, ResourceId, SemanticGraph, TaskState,
+    FailureEffect, FaultDomainState, FrontendKind, ResourceHandle, SemanticGraph, TaskState,
 };
 use vmos_abi::{
     ERR_EAGAIN, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_EPERM, FD_STDOUT, NodeKind, PackedStep,
@@ -58,7 +58,7 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) linux: LinuxFrontend,
     pub(super) app: WasmApp,
     pub(super) fd_table: Vec<Option<FdEntry>>,
-    pub(super) fd_resources: Vec<Option<ResourceId>>,
+    pub(super) fd_handles: Vec<Option<ResourceHandle>>,
     pub(super) fault: Option<InjectedFault>,
     pub(super) scheduler: Scheduler,
     pub(super) waits: WaitRegistry,
@@ -81,7 +81,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             linux: LinuxFrontend::new(engine)?,
             app: WasmApp::new(engine)?,
             fd_table: vec![None, None, None],
-            fd_resources: vec![None, None, None],
+            fd_handles: vec![None, None, None],
             fault: None,
             scheduler: Scheduler::new(),
             waits: WaitRegistry::new(),
@@ -204,12 +204,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.drain_event_queue();
     }
 
-    pub(crate) fn fd_path(&self, fd: u32) -> Result<Vec<u8>, i32> {
+    pub(crate) fn fd_path(&mut self, fd: u32) -> Result<Vec<u8>, i32> {
+        self.validate_fd_handle(fd).map_err(|_| ERR_EBADF)?;
         let entry = self.fd_entry(fd).ok_or(ERR_EBADF)?;
         match &entry.resource {
             FdResource::ServiceNode { path, .. } => Ok(path.clone()),
             FdResource::EpollInstance { .. } => Err(ERR_EBADF),
         }
+    }
+
+    pub(crate) fn fd_handle_for_demo(&self, fd: u32) -> Option<ResourceHandle> {
+        self.fd_handle(fd)
     }
 
     pub(crate) fn path_kind(&mut self, path: &[u8]) -> Result<NodeKind, i32> {
@@ -739,6 +744,13 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
         }
 
+        let Some(handle) = self.fd_handle(fd) else {
+            return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
+        };
+        if self.validate_resource_handle(handle).is_err() {
+            return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
+        }
+
         let slot = self
             .fd_table
             .get_mut(fd as usize)
@@ -746,10 +758,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         if slot.take().is_none() {
             return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
         }
-        if let Some(slot) = self.fd_resources.get_mut(fd as usize)
-            && let Some(resource_id) = slot.take()
+        if let Some(slot) = self.fd_handles.get_mut(fd as usize)
+            && let Some(handle) = slot.take()
         {
-            self.semantic.close_resource(resource_id);
+            self.semantic.close_resource(handle.id);
         }
 
         Ok(LinuxCallResult::Ret(0))
@@ -979,19 +991,20 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         if let Some(fd) = (3..self.fd_table.len()).find(|fd| self.fd_table[*fd].is_none()) {
             self.fd_table[fd] = Some(entry);
-            self.ensure_fd_resource_slot(fd);
-            self.fd_resources[fd] = Some(resource_id);
+            self.ensure_fd_handle_slot(fd);
+            self.fd_handles[fd] = self.semantic.resource_handle(resource_id);
             return fd as u32;
         }
 
         self.fd_table.push(Some(entry));
-        self.fd_resources.push(Some(resource_id));
+        self.fd_handles
+            .push(self.semantic.resource_handle(resource_id));
         (self.fd_table.len() - 1) as u32
     }
 
-    fn ensure_fd_resource_slot(&mut self, fd: usize) {
-        while self.fd_resources.len() <= fd {
-            self.fd_resources.push(None);
+    fn ensure_fd_handle_slot(&mut self, fd: usize) {
+        while self.fd_handles.len() <= fd {
+            self.fd_handles.push(None);
         }
     }
 
@@ -999,10 +1012,23 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.fd_table.get(fd as usize)?.as_ref()
     }
 
+    fn fd_handle(&self, fd: u32) -> Option<ResourceHandle> {
+        self.fd_handles.get(fd as usize).copied().flatten()
+    }
+
+    fn validate_fd_handle(&mut self, fd: u32) -> Result<(), ServiceCallError> {
+        let handle = self
+            .fd_handle(fd)
+            .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+        self.validate_resource_handle(handle)
+            .map_err(|_| ServiceCallError::Errno(ERR_EBADF))
+    }
+
     fn service_fd_snapshot(
-        &self,
+        &mut self,
         fd: u32,
     ) -> Result<(ServiceRoute, NodeKind, usize, Vec<u8>), ServiceCallError> {
+        self.validate_fd_handle(fd)?;
         let entry = self
             .fd_entry(fd)
             .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
@@ -1024,7 +1050,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(())
     }
 
-    fn epoll_id_from_fd(&self, fd: u32) -> Result<u32, ServiceCallError> {
+    fn epoll_id_from_fd(&mut self, fd: u32) -> Result<u32, ServiceCallError> {
+        self.validate_fd_handle(fd)?;
         match self.fd_entry(fd) {
             Some(FdEntry {
                 resource: FdResource::EpollInstance { epoll_id },
@@ -1034,7 +1061,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    fn fd_ready_key(&self, fd: u32) -> Result<u64, ServiceCallError> {
+    fn fd_ready_key(&mut self, fd: u32) -> Result<u64, ServiceCallError> {
+        self.validate_fd_handle(fd)?;
         let entry = self
             .fd_entry(fd)
             .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
@@ -1090,6 +1118,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         label: &str,
         token: WaitToken,
     ) -> Result<LinuxCallResult, &'static str> {
+        self.validate_wait_token(token)
+            .map_err(|_| "wait token generation check failed before blocking")?;
         if let Err(err) = crate::substrate::dmw::assert_quiescent() {
             self.semantic
                 .record_failure_effect(FailureEffect::CompleteWithErrno(ERR_EFAULT));
@@ -1099,6 +1129,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.pump_async_sources();
 
             if let Some(resolution) = self.waits.take_resolution(token) {
+                self.validate_wait_token(token)
+                    .map_err(|_| "wait token generation check failed before resume")?;
                 self.semantic
                     .set_task_state(token.owner_task, TaskState::Running);
                 return match resolution.outcome {

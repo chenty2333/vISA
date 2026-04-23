@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use bootloader_api::BootInfo;
-use semantic_core::ResourceId;
+use semantic_core::ResourceHandle;
 
 use crate::qemu;
 use crate::serial_println;
@@ -400,28 +400,40 @@ impl Drop for ActivationGuard {
 
 struct UserDmwLease {
     lease: crate::substrate::dmw::DmwLease,
-    resource_id: Option<ResourceId>,
+    resource_handle: Option<ResourceHandle>,
     generation: u64,
 }
 
 impl UserDmwLease {
     fn bytes(&self) -> Result<&[u8], crate::substrate::dmw::DmwFault> {
+        if let Some(handle) = self.resource_handle {
+            active_context()
+                .supervisor
+                .validate_resource_handle(handle)
+                .map_err(|_| crate::substrate::dmw::DmwFault::WindowViolation)?;
+        }
         self.lease.bytes()
     }
 
     fn bytes_mut(&mut self) -> Result<&mut [u8], crate::substrate::dmw::DmwFault> {
+        if let Some(handle) = self.resource_handle {
+            active_context()
+                .supervisor
+                .validate_resource_handle(handle)
+                .map_err(|_| crate::substrate::dmw::DmwFault::WindowViolation)?;
+        }
         self.lease.bytes_mut()
     }
 }
 
 impl Drop for UserDmwLease {
     fn drop(&mut self) {
-        let Some(resource_id) = self.resource_id.take() else {
+        let Some(resource_handle) = self.resource_handle.take() else {
             return;
         };
         active_context()
             .supervisor
-            .record_window_lease_destroyed(resource_id, self.generation);
+            .record_window_lease_destroyed(resource_handle, self.generation);
     }
 }
 
@@ -434,7 +446,7 @@ fn user_lease(ptr: u64, len: u64, writable: bool) -> Result<UserDmwLease, i32> {
     let lease = crate::substrate::dmw::acquire(active_context().activation_id, ptr, len, writable)
         .map_err(map_dmw_fault)?;
     let generation = lease.generation();
-    let resource_id = active_context().supervisor.record_window_lease_created(
+    let resource_handle = active_context().supervisor.record_window_lease_created(
         lease.slot_index(),
         generation,
         lease.activation_id(),
@@ -444,7 +456,7 @@ fn user_lease(ptr: u64, len: u64, writable: bool) -> Result<UserDmwLease, i32> {
     );
     Ok(UserDmwLease {
         lease,
-        resource_id: Some(resource_id),
+        resource_handle: Some(resource_handle),
         generation,
     })
 }
@@ -468,10 +480,10 @@ fn map_dmw_fault(fault: crate::substrate::dmw::DmwFault) -> i32 {
 }
 
 fn read_user_c_string(ptr: u64, max_len: usize) -> Result<Vec<u8>, i32> {
+    let lease = user_lease(ptr, max_len as u64, false)?;
+    let bytes = lease.bytes().map_err(map_dmw_fault)?;
     let mut out = Vec::new();
-    for index in 0..max_len {
-        let lease = user_lease(ptr + index as u64, 1, false)?;
-        let byte = lease.bytes().map_err(map_dmw_fault)?[0];
+    for byte in bytes.iter().copied() {
         if byte == 0 {
             return Ok(out);
         }

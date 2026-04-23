@@ -17,6 +17,7 @@ struct DmwSlot {
     activation_id: u64,
     generation: u64,
     active: bool,
+    quarantined_activation_id: u64,
 }
 
 struct DmwManager {
@@ -31,6 +32,7 @@ impl DmwManager {
                 activation_id: 0,
                 generation: 0,
                 active: false,
+                quarantined_activation_id: 0,
             }; MAX_DMW_SLOTS],
             next_generation: 1,
         }
@@ -41,6 +43,9 @@ impl DmwManager {
             if slot.active {
                 continue;
             }
+            if slot.quarantined_activation_id == activation_id {
+                continue;
+            }
 
             let generation = self.next_generation;
             self.next_generation += 1;
@@ -48,6 +53,7 @@ impl DmwManager {
                 activation_id,
                 generation,
                 active: true,
+                quarantined_activation_id: 0,
             };
             return Ok((index, generation));
         }
@@ -60,8 +66,10 @@ impl DmwManager {
             return;
         };
         if slot.active && slot.generation == generation {
+            let activation_id = slot.activation_id;
             slot.active = false;
             slot.activation_id = 0;
+            slot.quarantined_activation_id = activation_id;
         }
     }
 
@@ -99,7 +107,27 @@ impl DmwManager {
                 slot.active = false;
                 slot.activation_id = 0;
             }
+            if slot.quarantined_activation_id == activation_id {
+                slot.quarantined_activation_id = 0;
+            }
         }
+    }
+
+    fn quarantine_reuse_self_check(&mut self, activation_id: u64) -> bool {
+        self.finish_activation(activation_id);
+        let Ok((first_slot, first_generation)) = self.acquire(activation_id) else {
+            return false;
+        };
+        self.release(first_slot, first_generation);
+
+        let Ok((second_slot, second_generation)) = self.acquire(activation_id) else {
+            self.finish_activation(activation_id);
+            return false;
+        };
+        let reuse_blocked = second_slot != first_slot;
+        self.release(second_slot, second_generation);
+        self.finish_activation(activation_id);
+        reuse_blocked
     }
 }
 
@@ -184,4 +212,8 @@ pub(crate) fn active_lease_count() -> usize {
 
 pub(crate) fn finish_activation(activation_id: u64) {
     DMW.lock().finish_activation(activation_id);
+}
+
+pub(crate) fn quarantine_reuse_self_check() -> bool {
+    DMW.lock().quarantine_reuse_self_check(0xd0_0000_0000_0001)
 }

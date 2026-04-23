@@ -18,6 +18,52 @@ pub type Generation = u64;
 pub type SnapshotBarrierId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResourceHandle {
+    pub id: ResourceId,
+    pub generation: Generation,
+}
+
+impl ResourceHandle {
+    pub const fn new(id: ResourceId, generation: Generation) -> Self {
+        Self { id, generation }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WaitHandle {
+    pub id: WaitId,
+    pub generation: Generation,
+}
+
+impl WaitHandle {
+    pub const fn new(id: WaitId, generation: Generation) -> Self {
+        Self { id, generation }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GenerationCheckError {
+    Missing,
+    Dead {
+        actual: Generation,
+    },
+    GenerationMismatch {
+        expected: Generation,
+        actual: Option<Generation>,
+    },
+}
+
+impl GenerationCheckError {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Dead { .. } => "dead",
+            Self::GenerationMismatch { .. } => "generation-mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrontendKind {
     Supervisor,
     LinuxElf,
@@ -500,6 +546,16 @@ pub enum EventKind {
         resource: ResourceId,
         generation: Generation,
     },
+    ResourceHandleValidated {
+        resource: ResourceId,
+        generation: Generation,
+    },
+    ResourceHandleRejected {
+        resource: ResourceId,
+        expected: Generation,
+        actual: Option<Generation>,
+        reason: GenerationCheckError,
+    },
     WaitCreated {
         wait: WaitId,
         task: TaskId,
@@ -517,6 +573,16 @@ pub enum EventKind {
     WaitRestarted {
         wait: WaitId,
         class: String,
+    },
+    WaitTokenValidated {
+        wait: WaitId,
+        generation: Generation,
+    },
+    WaitTokenRejected {
+        wait: WaitId,
+        expected: Generation,
+        actual: Option<Generation>,
+        reason: GenerationCheckError,
     },
     CapabilityGranted {
         cap: CapabilityId,
@@ -611,6 +677,25 @@ impl EventKind {
                 resource,
                 generation,
             } => format!("ResourceClosed resource={resource} generation={generation}"),
+            Self::ResourceHandleValidated {
+                resource,
+                generation,
+            } => format!("ResourceHandleValidated resource={resource} generation={generation}"),
+            Self::ResourceHandleRejected {
+                resource,
+                expected,
+                actual,
+                reason,
+            } => match actual {
+                Some(actual) => format!(
+                    "ResourceHandleRejected resource={resource} expected={expected} actual={actual} reason={}",
+                    reason.as_str()
+                ),
+                None => format!(
+                    "ResourceHandleRejected resource={resource} expected={expected} actual=missing reason={}",
+                    reason.as_str()
+                ),
+            },
             Self::WaitCreated {
                 wait,
                 task,
@@ -629,6 +714,24 @@ impl EventKind {
             Self::WaitRestarted { wait, class } => {
                 format!("WaitRestarted wait={wait} class={class}")
             }
+            Self::WaitTokenValidated { wait, generation } => {
+                format!("WaitTokenValidated wait={wait} generation={generation}")
+            }
+            Self::WaitTokenRejected {
+                wait,
+                expected,
+                actual,
+                reason,
+            } => match actual {
+                Some(actual) => format!(
+                    "WaitTokenRejected wait={wait} expected={expected} actual={actual} reason={}",
+                    reason.as_str()
+                ),
+                None => format!(
+                    "WaitTokenRejected wait={wait} expected={expected} actual=missing reason={}",
+                    reason.as_str()
+                ),
+            },
             Self::CapabilityGranted { cap } => format!("CapabilityGranted cap={cap}"),
             Self::CapabilityRevoked { cap } => format!("CapabilityRevoked cap={cap}"),
             Self::CapabilityUsed {
@@ -901,6 +1004,62 @@ impl SemanticGraph {
                 generation: resource.generation,
             },
         );
+    }
+
+    pub fn resource_handle(&self, id: ResourceId) -> Option<ResourceHandle> {
+        self.resources
+            .iter()
+            .find(|resource| resource.id == id)
+            .map(|resource| ResourceHandle::new(resource.id, resource.generation))
+    }
+
+    pub fn validate_resource_handle(
+        &mut self,
+        handle: ResourceHandle,
+    ) -> Result<(), GenerationCheckError> {
+        let resource = self
+            .resources
+            .iter()
+            .find(|resource| resource.id == handle.id);
+        let actual = resource.map(|resource| resource.generation);
+        let result = match resource {
+            None => Err(GenerationCheckError::Missing),
+            Some(resource) if resource.generation != handle.generation => {
+                Err(GenerationCheckError::GenerationMismatch {
+                    expected: handle.generation,
+                    actual,
+                })
+            }
+            Some(resource) if !resource.live => Err(GenerationCheckError::Dead {
+                actual: resource.generation,
+            }),
+            Some(_) => Ok(()),
+        };
+
+        match result {
+            Ok(()) => {
+                self.event_log.push(
+                    "resource",
+                    EventKind::ResourceHandleValidated {
+                        resource: handle.id,
+                        generation: handle.generation,
+                    },
+                );
+                Ok(())
+            }
+            Err(reason) => {
+                self.event_log.push(
+                    "resource",
+                    EventKind::ResourceHandleRejected {
+                        resource: handle.id,
+                        expected: handle.generation,
+                        actual,
+                        reason,
+                    },
+                );
+                Err(reason)
+            }
+        }
     }
 
     pub fn record_window_lease_created(
@@ -1191,6 +1350,53 @@ impl SemanticGraph {
                 class: class.to_string(),
             },
         );
+    }
+
+    pub fn wait_handle(&self, id: WaitId) -> Option<WaitHandle> {
+        self.waits
+            .iter()
+            .find(|wait| wait.id == id)
+            .map(|wait| WaitHandle::new(wait.id, wait.generation))
+    }
+
+    pub fn validate_wait_handle(&mut self, handle: WaitHandle) -> Result<(), GenerationCheckError> {
+        let wait = self.waits.iter().find(|wait| wait.id == handle.id);
+        let actual = wait.map(|wait| wait.generation);
+        let result = match wait {
+            None => Err(GenerationCheckError::Missing),
+            Some(wait) if wait.generation != handle.generation => {
+                Err(GenerationCheckError::GenerationMismatch {
+                    expected: handle.generation,
+                    actual,
+                })
+            }
+            Some(_) => Ok(()),
+        };
+
+        match result {
+            Ok(()) => {
+                self.event_log.push(
+                    "wait",
+                    EventKind::WaitTokenValidated {
+                        wait: handle.id,
+                        generation: handle.generation,
+                    },
+                );
+                Ok(())
+            }
+            Err(reason) => {
+                self.event_log.push(
+                    "wait",
+                    EventKind::WaitTokenRejected {
+                        wait: handle.id,
+                        expected: handle.generation,
+                        actual,
+                        reason,
+                    },
+                );
+                Err(reason)
+            }
+        }
     }
 
     pub fn record_failure_effect(&mut self, effect: FailureEffect) {
@@ -1523,6 +1729,48 @@ mod tests {
         assert_eq!(
             graph.event_log_tail(1)[0].kind.summary(),
             "WaitResolved wait=11 reason=ready"
+        );
+    }
+
+    #[test]
+    fn stale_resource_handles_are_rejected() {
+        let mut graph = SemanticGraph::new();
+        let resource = graph.register_resource(ResourceKind::Fd, None, "fd:/sandbox/hello.txt");
+        let handle = graph.resource_handle(resource).expect("resource handle");
+
+        assert_eq!(graph.validate_resource_handle(handle), Ok(()));
+        graph.close_resource(resource);
+        assert_eq!(
+            graph.validate_resource_handle(handle),
+            Err(GenerationCheckError::GenerationMismatch {
+                expected: 1,
+                actual: Some(2),
+            })
+        );
+        assert_eq!(
+            graph.event_log_tail(1)[0].kind.summary(),
+            "ResourceHandleRejected resource=1 expected=1 actual=2 reason=generation-mismatch"
+        );
+    }
+
+    #[test]
+    fn stale_wait_tokens_are_rejected() {
+        let mut graph = SemanticGraph::new();
+        graph.ensure_task(7, FrontendKind::LinuxElf, "guest");
+        graph.record_wait_created(11, 7, SemanticWaitKind::Timer, 3);
+        let handle = graph.wait_handle(11).expect("wait handle");
+
+        assert_eq!(graph.validate_wait_handle(handle), Ok(()));
+        assert_eq!(
+            graph.validate_wait_handle(WaitHandle::new(11, 2)),
+            Err(GenerationCheckError::GenerationMismatch {
+                expected: 2,
+                actual: Some(3),
+            })
+        );
+        assert_eq!(
+            graph.event_log_tail(1)[0].kind.summary(),
+            "WaitTokenRejected wait=11 expected=2 actual=3 reason=generation-mismatch"
         );
     }
 
