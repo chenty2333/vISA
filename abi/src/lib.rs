@@ -26,6 +26,7 @@ pub const EPOLL_CTL_ADD: u32 = 1;
 pub const EPOLL_CTL_DEL: u32 = 2;
 pub const EPOLLIN: u32 = 0x001;
 
+pub const ERR_EPERM: i32 = 1;
 pub const ERR_ENOENT: i32 = 2;
 pub const ERR_EINTR: i32 = 4;
 pub const ERR_EIO: i32 = 5;

@@ -8,9 +8,9 @@ use semantic_core::{
     FailureEffect, FaultDomainState, FrontendKind, ResourceId, SemanticGraph, TaskState,
 };
 use vmos_abi::{
-    ERR_EAGAIN, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, FD_STDOUT, NodeKind, PackedStep, PlanKind,
-    SYS_CLOSE, SYS_GETCWD, SYS_GETDENTS64, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME,
-    SYS_WRITE, ServiceRoute, StepTag, SyscallContext,
+    ERR_EAGAIN, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_EPERM, FD_STDOUT, NodeKind, PackedStep,
+    PlanKind, SYS_CLOSE, SYS_GETCWD, SYS_GETDENTS64, SYS_OPENAT, SYS_READ, SYS_READLINKAT,
+    SYS_UNAME, SYS_WRITE, ServiceRoute, StepTag, SyscallContext,
 };
 
 use super::engine::SupervisorEngine;
@@ -348,6 +348,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             StepTag::ConsoleWrite => {
                 let len = u32::try_from(decoded.value)
                     .map_err(|_| "linux console write length was negative")?;
+                self.require_capability("linux_syscall", "console.write", "write")
+                    .map_err(|_| "linux console write capability denied")?;
                 let bytes = self.linux.read_bytes(decoded.aux, len)?;
                 self.console.write_bytes(&bytes, false)?;
                 Ok(LinuxCallResult::Ret(len as i64))
@@ -363,6 +365,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
         crate::kdebug!("{}: {:?}", label, plan.kind);
+        self.record_hostcall_plan(label, plan.kind);
         match plan.kind {
             PlanKind::Write => self.plan_write(plan),
             PlanKind::OpenAt => self.plan_openat(plan),
@@ -383,6 +386,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn plan_sleep(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("linux_syscall", "timer.sleep", "arm")
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
         let resume_cookie =
             u32::try_from(plan.args[0]).map_err(|_| "sleep resume cookie overflowed")?;
         let delay_ms = u32::try_from(plan.args[1]).map_err(|_| "sleep delay overflowed")?;
@@ -400,6 +409,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn plan_futex_wait(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("futex_service", "futex.waitset", "wait")
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
         let key = plan.args[0];
         let timeout_ms = if plan.args[1] == u64::MAX {
             None
@@ -443,6 +458,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn plan_futex_wake(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("futex_service", "futex.waitset", "wake")
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
         let key = plan.args[0];
         let count = u32::try_from(plan.args[1]).map_err(|_| "futex wake count overflowed")?;
         match self.futex.wake(key, count) {
@@ -469,6 +490,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         let bytes = self.linux.read_bytes(ptr, len)?;
 
         if fd == FD_STDOUT || fd == vmos_abi::FD_STDERR {
+            if self
+                .require_capability("linux_syscall", "console.write", "write")
+                .is_err()
+            {
+                return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+            }
             self.console.write_bytes(&bytes, false)?;
             return Ok(LinuxCallResult::Ret(bytes.len() as i64));
         }
@@ -479,6 +506,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         match &entry.resource {
             FdResource::ServiceNode { route, path, .. } if *route == ServiceRoute::Devfs => {
                 let path = path.clone();
+                if self
+                    .require_capability("devfs_service", "device.pulse", "poll")
+                    .is_err()
+                {
+                    return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+                }
                 match self.devfs.write_device(&path, bytes.len() as u32, false) {
                     Ok(count) => Ok(LinuxCallResult::Ret(count as i64)),
                     Err(ServiceCallError::Errno(errno)) => {
@@ -519,6 +552,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn plan_epoll_create1(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("epoll_service", "epoll.instance", "create")
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
         let flags = u32::try_from(plan.args[0]).map_err(|_| "epoll_create1 flags overflowed")?;
         match self.epoll.create(flags) {
             Ok(epoll_id) => {
@@ -538,6 +577,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn plan_epoll_ctl(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("epoll_service", "epoll.instance", "ctl")
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
         let epfd = u32::try_from(plan.args[0]).map_err(|_| "epoll_ctl epfd overflowed")?;
         let op = u32::try_from(plan.args[1]).map_err(|_| "epoll_ctl op overflowed")?;
         let fd = u32::try_from(plan.args[2]).map_err(|_| "epoll_ctl fd overflowed")?;
@@ -566,6 +611,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn plan_epoll_wait(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("epoll_service", "epoll.instance", "wait")
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
         let epfd = u32::try_from(plan.args[0]).map_err(|_| "epoll_wait epfd overflowed")?;
         let max_events =
             u32::try_from(plan.args[1]).map_err(|_| "epoll_wait max_events overflowed")?;
@@ -635,6 +686,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn plan_epoll_ready(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("epoll_service", "epoll.instance", "wait")
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
         let epoll_id =
             u32::try_from(plan.args[0]).map_err(|_| "epoll_ready epoll id overflowed")?;
         let max_events =
@@ -671,6 +728,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn plan_close(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("linux_syscall", "fd.table", "close")
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
         let fd = u32::try_from(plan.args[0]).map_err(|_| "close plan fd overflowed")?;
         if fd < 3 {
             return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
@@ -723,10 +786,14 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn lookup_path(&mut self, path: &[u8]) -> Result<LookupInfo, ServiceCallError> {
+        self.require_capability("vfs_service", "vfs.namespace", "lookup")
+            .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
         let info = self.vfs.lookup(path, false)?;
         match info.route {
             ServiceRoute::Vfs => Ok(info),
             ServiceRoute::Procfs => {
+                self.require_capability("procfs_service", "procfs.tree", "lookup")
+                    .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
                 let node = self.procfs_mut().lookup(path, false)?;
                 Ok(LookupInfo {
                     route: ServiceRoute::Procfs,
@@ -734,6 +801,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                 })
             }
             ServiceRoute::Devfs => {
+                self.require_capability("devfs_service", "device.pulse", "read")
+                    .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
                 let node = self.devfs.lookup(path, false)?;
                 Ok(LookupInfo {
                     route: ServiceRoute::Devfs,
@@ -750,9 +819,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         let bytes = match route {
-            ServiceRoute::Vfs => self.vfs.read_file(&path, false)?,
-            ServiceRoute::Procfs => self.procfs_read_with_recovery(&path)?,
+            ServiceRoute::Vfs => {
+                self.require_capability("vfs_service", "vfs.namespace", "read")
+                    .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
+                self.vfs.read_file(&path, false)?
+            }
+            ServiceRoute::Procfs => {
+                self.require_capability("procfs_service", "procfs.tree", "read")
+                    .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
+                self.procfs_read_with_recovery(&path)?
+            }
             ServiceRoute::Devfs => {
+                self.require_capability("devfs_service", "device.pulse", "read")
+                    .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
                 if let Some(bytes) = self.pulse.read(&path, count, interrupts::tick_count()) {
                     bytes.to_vec()
                 } else if path == b"/dev/pulse" {
@@ -777,9 +856,21 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         let bytes = match route {
-            ServiceRoute::Vfs => self.vfs.list_dir(&path, false)?,
-            ServiceRoute::Procfs => self.procfs_mut().list_dir(&path, false)?,
-            ServiceRoute::Devfs => self.devfs.list_dir(&path, false)?,
+            ServiceRoute::Vfs => {
+                self.require_capability("vfs_service", "vfs.namespace", "list")
+                    .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
+                self.vfs.list_dir(&path, false)?
+            }
+            ServiceRoute::Procfs => {
+                self.require_capability("procfs_service", "procfs.tree", "list")
+                    .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
+                self.procfs_mut().list_dir(&path, false)?
+            }
+            ServiceRoute::Devfs => {
+                self.require_capability("devfs_service", "device.pulse", "poll")
+                    .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
+                self.devfs.list_dir(&path, false)?
+            }
         };
 
         let start = cursor.min(bytes.len());
@@ -796,8 +887,16 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         match info.route {
-            ServiceRoute::Vfs => self.vfs.read_link(path, false),
-            ServiceRoute::Procfs => self.procfs_mut().read_link(path, false),
+            ServiceRoute::Vfs => {
+                self.require_capability("vfs_service", "vfs.namespace", "readlink")
+                    .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
+                self.vfs.read_link(path, false)
+            }
+            ServiceRoute::Procfs => {
+                self.require_capability("procfs_service", "procfs.tree", "readlink")
+                    .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
+                self.procfs_mut().read_link(path, false)
+            }
             ServiceRoute::Devfs => Err(ServiceCallError::Errno(ERR_EINVAL)),
         }
     }
@@ -835,6 +934,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(bytes) => Ok(bytes),
             Err(ServiceCallError::Trap(_)) if inject_fault => {
                 crate::kinfo!("procfs_service trapped; recreating service store");
+                self.require_capability("fault_manager", "fault-domain.procfs_service", "restart")
+                    .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
                 let domain = self.semantic.fault_domain_id("procfs_service");
                 self.semantic
                     .record_driver_trap(domain, "injected procfs read fault");

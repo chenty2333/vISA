@@ -4,9 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use artifact_manifest::{
-    ArtifactBundleManifest, GuestStateManifest, MigrationHostManifest, MigrationPackageManifest,
-    MigrationTargetManifest, ModuleArtifactManifest, RequiredArtifactProfileManifest,
-    SemanticSnapshotManifest, SubstrateBoundaryManifest,
+    ArtifactBundleManifest, GuestStateManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationPackageManifest, MigrationTargetManifest, ModuleArtifactManifest,
+    RequiredArtifactProfileManifest, SemanticSnapshotManifest, SubstrateBoundaryManifest,
 };
 use semantic_core::SemanticGraph;
 use sha2::{Digest, Sha256};
@@ -118,11 +118,23 @@ fn prepare_migration_package(
 }
 
 fn demo_migration_package(manifest: &ArtifactBundleManifest) -> MigrationPackageManifest {
-    let capability_count = manifest
+    let logical_capabilities = manifest
         .modules
         .iter()
-        .map(|module| module.capabilities.len())
-        .sum();
+        .flat_map(|module| {
+            module
+                .capabilities
+                .iter()
+                .map(|capability| MigrationCapabilityManifest {
+                    subject: module.package.clone(),
+                    object: capability.name.clone(),
+                    rights: capability.rights.clone(),
+                    lifetime: capability.lifetime.clone(),
+                    generation: 1,
+                })
+        })
+        .collect::<Vec<_>>();
+    let capability_count = logical_capabilities.len();
     MigrationPackageManifest {
         schema_version: 1,
         package_id: "target-executor-demo-migration-v0".to_owned(),
@@ -162,6 +174,7 @@ fn demo_migration_package(manifest: &ArtifactBundleManifest) -> MigrationPackage
             capability_count,
             fault_domain_count: manifest.modules.len(),
         },
+        logical_capabilities,
         substrate_boundary: SubstrateBoundaryManifest {
             timer_epoch: 0,
             pending_irq_causes: 0,
@@ -218,6 +231,9 @@ fn validate_migration_package(
     if package.substrate_boundary.pending_dma_completions != 0 {
         return Err("migration package contains in-flight DMA completions".into());
     }
+    if package.logical_capabilities.len() != package.semantic.capability_count {
+        return Err("migration package capability list/count mismatch".into());
+    }
 
     let required = &package.required_artifact_profile;
     if required.target_arch != "target-native" && required.target_arch != manifest.target.arch {
@@ -263,6 +279,58 @@ fn restore_migration_package(
             "migration package requires more capabilities than the executor rebound".into(),
         );
     }
+    for capability in &package.logical_capabilities {
+        let Some(module) = SUPERVISOR_WASM_MODULES
+            .iter()
+            .find(|module| module.package == capability.subject)
+        else {
+            return Err(format!(
+                "migration package capability subject {} is not in target catalog",
+                capability.subject
+            )
+            .into());
+        };
+        let Some(target_capability) = module
+            .capabilities
+            .iter()
+            .find(|target| target.name == capability.object)
+        else {
+            return Err(format!(
+                "target manifest cannot satisfy capability {}::{}",
+                capability.subject, capability.object
+            )
+            .into());
+        };
+        if target_capability.lifetime != capability.lifetime {
+            return Err(format!(
+                "target manifest lifetime mismatch for {}::{}",
+                capability.subject, capability.object
+            )
+            .into());
+        }
+        for right in &capability.rights {
+            if !target_capability
+                .rights
+                .iter()
+                .any(|target_right| target_right == right)
+            {
+                return Err(format!(
+                    "target manifest cannot satisfy right {} for {}::{}",
+                    right, capability.subject, capability.object
+                )
+                .into());
+            }
+            semantic
+                .capabilities()
+                .check(&capability.subject, &capability.object, right)
+                .map_err(|_| {
+                    format!(
+                        "target executor failed to rebind capability {}::{} right {}",
+                        capability.subject, capability.object, right
+                    )
+                })?;
+        }
+    }
 
     println!(
         "migration restore/rebind demo package={} source_arch={} target_requirement={} guest_isa={}",
@@ -281,7 +349,7 @@ fn restore_migration_package(
     println!(
         "restore plan: rebuilt {} stores and rebound {} logical capabilities",
         semantic.fault_domain_count(),
-        semantic.capability_count()
+        package.logical_capabilities.len()
     );
     println!(
         "restore plan: not migrated = {}",

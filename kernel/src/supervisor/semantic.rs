@@ -3,10 +3,12 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use semantic_core::{
-    ArtifactProfile, FailureEffect, FrontendKind, GuestStateSnapshot, MigrationPackage, ResourceId,
-    ResourceKind, SemanticGraph, SemanticWaitKind, SubstrateBoundarySnapshot, TaskState,
+    ArtifactProfile, CapabilityDenyReason, FailureEffect, FrontendKind, GuestStateSnapshot,
+    HostcallClass, MigrationPackage, ResourceId, ResourceKind, SemanticGraph, SemanticWaitKind,
+    SubstrateBoundarySnapshot, TaskState,
 };
 use supervisor_catalog::SUPERVISOR_WASM_MODULES;
+use vmos_abi::PlanKind;
 
 use super::events::Event;
 use super::runtime::PrototypeRuntime;
@@ -28,6 +30,24 @@ pub(super) fn bootstrap_graph() -> SemanticGraph {
             );
         }
     }
+    graph.grant_capability(
+        "linux_elf_frontend",
+        "dmw.window",
+        &["acquire"],
+        "activation",
+    );
+    graph.grant_capability(
+        "snapshot_manager",
+        "snapshot.barrier",
+        &["enter"],
+        "activation",
+    );
+    graph.grant_capability(
+        "fault_manager",
+        "fault-domain.procfs_service",
+        &["restart"],
+        "fault-recovery",
+    );
 
     graph
 }
@@ -87,6 +107,61 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    pub(super) fn record_hostcall_plan(&mut self, label: &str, kind: PlanKind) {
+        let (class, subject, object, operation) = hostcall_metadata(kind);
+        self.semantic
+            .record_hostcall(label, class, subject, object, operation);
+    }
+
+    pub(crate) fn require_capability(
+        &mut self,
+        subject: &str,
+        object: &str,
+        operation: &str,
+    ) -> Result<(), CapabilityDenyReason> {
+        self.semantic
+            .check_capability(subject, object, operation)
+            .map(|_| ())
+    }
+
+    pub(crate) fn require_capability_generation(
+        &mut self,
+        subject: &str,
+        object: &str,
+        operation: &str,
+        expected_generation: u64,
+    ) -> Result<(), CapabilityDenyReason> {
+        self.semantic
+            .check_capability_generation(subject, object, operation, expected_generation)
+            .map(|_| ())
+    }
+
+    pub(crate) fn capability_generation(&self, subject: &str, object: &str) -> Option<u64> {
+        self.semantic.capability_generation(subject, object)
+    }
+
+    pub(crate) fn revoke_capability_for_demo(
+        &mut self,
+        subject: &str,
+        object: &str,
+    ) -> Result<(), &'static str> {
+        self.semantic
+            .revoke_capability_by_subject_object(subject, object)
+            .map(|_| ())
+            .ok_or("capability to revoke was not present")
+    }
+
+    pub(crate) fn grant_capability_for_demo(
+        &mut self,
+        subject: &str,
+        object: &str,
+        operations: &[&str],
+        lifetime: &str,
+    ) {
+        self.semantic
+            .grant_capability(subject, object, operations, lifetime);
+    }
+
     pub(crate) fn record_window_lease_created(
         &mut self,
         slot_index: usize,
@@ -113,6 +188,8 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn create_migration_package(&mut self) -> Result<MigrationPackage, &'static str> {
+        self.require_capability("snapshot_manager", "snapshot.barrier", "enter")
+            .map_err(|_| "snapshot barrier capability denied")?;
         let barrier = self.next_snapshot_barrier;
         self.next_snapshot_barrier += 1;
         self.semantic.record_snapshot_barrier_enter(barrier);
@@ -162,6 +239,89 @@ fn semantic_wait_kind(kind: WaitKind) -> SemanticWaitKind {
 fn wait_restart_class_name(class: WaitRestartClass) -> &'static str {
     match class {
         WaitRestartClass::DriverRestart => "driver-restart",
+    }
+}
+
+fn hostcall_metadata(kind: PlanKind) -> (HostcallClass, &'static str, &'static str, &'static str) {
+    match kind {
+        PlanKind::GetCwd | PlanKind::Uname => (
+            HostcallClass::PureQuery,
+            "linux_syscall",
+            "process.metadata",
+            "query",
+        ),
+        PlanKind::Write => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "linux_syscall",
+            "console.write",
+            "write",
+        ),
+        PlanKind::OpenAt => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "vfs_service",
+            "vfs.namespace",
+            "lookup",
+        ),
+        PlanKind::Read => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "vfs_service",
+            "vfs.namespace",
+            "read",
+        ),
+        PlanKind::Close => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "linux_syscall",
+            "fd.table",
+            "close",
+        ),
+        PlanKind::GetDents64 => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "vfs_service",
+            "vfs.namespace",
+            "list",
+        ),
+        PlanKind::ReadLinkAt => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "vfs_service",
+            "vfs.namespace",
+            "readlink",
+        ),
+        PlanKind::Sleep => (
+            HostcallClass::AsyncOp,
+            "linux_syscall",
+            "timer.sleep",
+            "arm",
+        ),
+        PlanKind::FutexWait => (
+            HostcallClass::AsyncOp,
+            "futex_service",
+            "futex.waitset",
+            "wait",
+        ),
+        PlanKind::FutexWake => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "futex_service",
+            "futex.waitset",
+            "wake",
+        ),
+        PlanKind::EpollCreate1 => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "epoll_service",
+            "epoll.instance",
+            "create",
+        ),
+        PlanKind::EpollCtl => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "epoll_service",
+            "epoll.instance",
+            "ctl",
+        ),
+        PlanKind::EpollWait | PlanKind::EpollReady => (
+            HostcallClass::AsyncOp,
+            "epoll_service",
+            "epoll.instance",
+            "wait",
+        ),
     }
 }
 

@@ -8,9 +8,9 @@ use crate::serial_println;
 use crate::substrate::ring3::{self, SyscallFrame};
 use crate::supervisor::{LinuxCallResult, runtime};
 use vmos_abi::{
-    ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, SYS_CLOSE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_NANOSLEEP,
-    SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE, SyscallContext,
+    ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, SYS_CLOSE, SYS_EPOLL_CREATE1,
+    SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
+    SYS_NANOSLEEP, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE, SyscallContext,
 };
 
 use super::context::{ActiveUserContext, active_context, install_active_context};
@@ -426,6 +426,10 @@ impl Drop for UserDmwLease {
 }
 
 fn user_lease(ptr: u64, len: u64, writable: bool) -> Result<UserDmwLease, i32> {
+    active_context()
+        .supervisor
+        .require_capability("linux_elf_frontend", "dmw.window", "acquire")
+        .map_err(|_| ERR_EPERM)?;
     validate_user_range(ptr, len, writable)?;
     let lease = crate::substrate::dmw::acquire(active_context().activation_id, ptr, len, writable)
         .map_err(map_dmw_fault)?;

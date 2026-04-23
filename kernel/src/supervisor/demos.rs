@@ -4,8 +4,8 @@ use core::fmt::Write;
 use crate::serial;
 use crate::serial_println;
 use vmos_abi::{
-    EPOLL_CTL_ADD, EPOLLIN, FD_STDOUT, FUTEX_WAIT, FUTEX_WAKE, PackedStep, SYS_EPOLL_CREATE1,
-    SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_FUTEX, StepTag, SyscallContext,
+    EPOLL_CTL_ADD, EPOLLIN, ERR_EPERM, FD_STDOUT, FUTEX_WAIT, FUTEX_WAKE, PackedStep,
+    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_FUTEX, StepTag, SyscallContext,
 };
 
 use super::linux::LinuxCallResult;
@@ -24,6 +24,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.run_futex_demo()?;
         self.run_epoll_demo()?;
         self.run_procfs_recovery_demo()?;
+        self.run_capability_enforcement_demo()?;
         self.run_snapshot_migration_demo()?;
         self.run_semantic_debug_demo()?;
         Ok(())
@@ -164,6 +165,38 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(())
     }
 
+    fn run_capability_enforcement_demo(&mut self) -> Result<(), &'static str> {
+        serial_println!("== capability enforcement demo ==");
+        let old_generation = self
+            .capability_generation("linux_syscall", "timer.sleep")
+            .ok_or("timer.sleep capability generation was missing")?;
+        self.revoke_capability_for_demo("linux_syscall", "timer.sleep")?;
+
+        match self.dispatch_linux_sleep_ms_raw("capability_denied_sleep", 1)? {
+            LinuxCallResult::Ret(ret) if ret == -(ERR_EPERM as i64) => {
+                serial_println!("revoked timer.sleep denied nanosleep");
+            }
+            _ => return Err("revoked timer.sleep did not deny nanosleep"),
+        }
+
+        self.grant_capability_for_demo(
+            "linux_syscall",
+            "timer.sleep",
+            &["arm", "cancel"],
+            "wait-token",
+        );
+        if self
+            .require_capability_generation("linux_syscall", "timer.sleep", "arm", old_generation)
+            .is_ok()
+        {
+            return Err("stale timer.sleep generation was accepted");
+        }
+        self.require_capability("linux_syscall", "timer.sleep", "arm")
+            .map_err(|_| "restored timer.sleep capability was denied")?;
+        serial_println!("stale timer.sleep generation rejected after regrant");
+        Ok(())
+    }
+
     fn run_futex_demo(&mut self) -> Result<(), &'static str> {
         serial_println!("== futex service demo ==");
         let bootstrap = self.bootstrap_task();
@@ -272,6 +305,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                     decoded.aux,
                     len
                 );
+                self.require_capability("wasm_app", "console.write", "write")
+                    .map_err(|_| "wasm_app console.write capability denied")?;
                 let bytes = self.app.read_bytes(decoded.aux, len)?;
                 self.console.write_bytes(&bytes, false)
             }

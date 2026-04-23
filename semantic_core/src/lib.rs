@@ -194,6 +194,10 @@ impl OperationSet {
             .all(|requested| self.operations.iter().any(|op| op == requested))
     }
 
+    pub fn contains(&self, requested: &str) -> bool {
+        self.operations.iter().any(|op| op == requested)
+    }
+
     pub fn as_slice(&self) -> &[String] {
         &self.operations
     }
@@ -296,6 +300,20 @@ impl CapabilityLedger {
         true
     }
 
+    pub fn revoke_by_subject_object(
+        &mut self,
+        subject: &str,
+        object: &str,
+    ) -> Option<CapabilityId> {
+        let record = self
+            .records
+            .iter_mut()
+            .find(|record| record.subject == subject && record.object == object)?;
+        record.revoked = true;
+        record.generation += 1;
+        Some(record.id)
+    }
+
     pub fn revoke_subject(&mut self, subject: &str) -> usize {
         let mut revoked = 0;
         for record in &mut self.records {
@@ -314,6 +332,35 @@ impl CapabilityLedger {
             .find(|record| record.id == id && !record.revoked)
     }
 
+    pub fn check(
+        &self,
+        subject: &str,
+        object: &str,
+        operation: &str,
+    ) -> Result<&CapabilityRecord, CapabilityDenyReason> {
+        let Some(record) = self
+            .records
+            .iter()
+            .find(|record| record.subject == subject && record.object == object)
+        else {
+            return Err(CapabilityDenyReason::Missing);
+        };
+        if record.revoked {
+            return Err(CapabilityDenyReason::Revoked);
+        }
+        if !record.operations.contains(operation) {
+            return Err(CapabilityDenyReason::OperationDenied);
+        }
+        Ok(record)
+    }
+
+    pub fn generation_of(&self, subject: &str, object: &str) -> Option<Generation> {
+        self.records
+            .iter()
+            .find(|record| record.subject == subject && record.object == object)
+            .map(|record| record.generation)
+    }
+
     pub fn records(&self) -> &[CapabilityRecord] {
         &self.records
     }
@@ -326,6 +373,42 @@ impl CapabilityLedger {
 impl Default for CapabilityLedger {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapabilityDenyReason {
+    Missing,
+    Revoked,
+    OperationDenied,
+    GenerationMismatch,
+}
+
+impl CapabilityDenyReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Revoked => "revoked",
+            Self::OperationDenied => "operation-denied",
+            Self::GenerationMismatch => "generation-mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostcallClass {
+    PureQuery,
+    ImmediatePrivilegedOp,
+    AsyncOp,
+}
+
+impl HostcallClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PureQuery => "pure-query",
+            Self::ImmediatePrivilegedOp => "immediate-privileged-op",
+            Self::AsyncOp => "async-op",
+        }
     }
 }
 
@@ -441,6 +524,33 @@ pub enum EventKind {
     CapabilityRevoked {
         cap: CapabilityId,
     },
+    CapabilityUsed {
+        cap: CapabilityId,
+        subject: String,
+        object: String,
+        operation: String,
+        generation: Generation,
+    },
+    CapabilityDenied {
+        subject: String,
+        object: String,
+        operation: String,
+        reason: CapabilityDenyReason,
+    },
+    CapabilityGenerationMismatch {
+        subject: String,
+        object: String,
+        operation: String,
+        expected: Generation,
+        actual: Option<Generation>,
+    },
+    HostcallEntered {
+        label: String,
+        class: HostcallClass,
+        subject: String,
+        object: String,
+        operation: String,
+    },
     FaultDomainRegistered {
         domain: FaultDomainId,
     },
@@ -521,6 +631,48 @@ impl EventKind {
             }
             Self::CapabilityGranted { cap } => format!("CapabilityGranted cap={cap}"),
             Self::CapabilityRevoked { cap } => format!("CapabilityRevoked cap={cap}"),
+            Self::CapabilityUsed {
+                cap,
+                subject,
+                object,
+                operation,
+                generation,
+            } => format!(
+                "CapabilityUsed cap={cap} subject={subject} object={object} op={operation} generation={generation}"
+            ),
+            Self::CapabilityDenied {
+                subject,
+                object,
+                operation,
+                reason,
+            } => format!(
+                "CapabilityDenied subject={subject} object={object} op={operation} reason={}",
+                reason.as_str()
+            ),
+            Self::CapabilityGenerationMismatch {
+                subject,
+                object,
+                operation,
+                expected,
+                actual,
+            } => match actual {
+                Some(actual) => format!(
+                    "CapabilityGenerationMismatch subject={subject} object={object} op={operation} expected={expected} actual={actual}"
+                ),
+                None => format!(
+                    "CapabilityGenerationMismatch subject={subject} object={object} op={operation} expected={expected} actual=missing"
+                ),
+            },
+            Self::HostcallEntered {
+                label,
+                class,
+                subject,
+                object,
+                operation,
+            } => format!(
+                "HostcallEntered label={label} class={} subject={subject} object={object} op={operation}",
+                class.as_str()
+            ),
             Self::FaultDomainRegistered { domain } => {
                 format!("FaultDomainRegistered domain={domain}")
             }
@@ -846,6 +998,131 @@ impl SemanticGraph {
         self.event_log
             .push("capability", EventKind::CapabilityRevoked { cap });
         true
+    }
+
+    pub fn revoke_capability_by_subject_object(
+        &mut self,
+        subject: &str,
+        object: &str,
+    ) -> Option<CapabilityId> {
+        let cap = self
+            .capabilities
+            .revoke_by_subject_object(subject, object)?;
+        self.event_log
+            .push("capability", EventKind::CapabilityRevoked { cap });
+        Some(cap)
+    }
+
+    pub fn check_capability(
+        &mut self,
+        subject: &str,
+        object: &str,
+        operation: &str,
+    ) -> Result<CapabilityId, CapabilityDenyReason> {
+        match self.capabilities.check(subject, object, operation) {
+            Ok(record) => {
+                let cap = record.id;
+                let generation = record.generation;
+                self.event_log.push(
+                    "capability",
+                    EventKind::CapabilityUsed {
+                        cap,
+                        subject: subject.to_string(),
+                        object: object.to_string(),
+                        operation: operation.to_string(),
+                        generation,
+                    },
+                );
+                Ok(cap)
+            }
+            Err(reason) => {
+                self.event_log.push(
+                    "capability",
+                    EventKind::CapabilityDenied {
+                        subject: subject.to_string(),
+                        object: object.to_string(),
+                        operation: operation.to_string(),
+                        reason,
+                    },
+                );
+                Err(reason)
+            }
+        }
+    }
+
+    pub fn check_capability_generation(
+        &mut self,
+        subject: &str,
+        object: &str,
+        operation: &str,
+        expected_generation: Generation,
+    ) -> Result<CapabilityId, CapabilityDenyReason> {
+        let actual_generation = self.capabilities.generation_of(subject, object);
+        let record = match self.capabilities.check(subject, object, operation) {
+            Ok(record) => record,
+            Err(reason) => {
+                self.event_log.push(
+                    "capability",
+                    EventKind::CapabilityDenied {
+                        subject: subject.to_string(),
+                        object: object.to_string(),
+                        operation: operation.to_string(),
+                        reason,
+                    },
+                );
+                return Err(reason);
+            }
+        };
+        if record.generation != expected_generation {
+            self.event_log.push(
+                "capability",
+                EventKind::CapabilityGenerationMismatch {
+                    subject: subject.to_string(),
+                    object: object.to_string(),
+                    operation: operation.to_string(),
+                    expected: expected_generation,
+                    actual: actual_generation,
+                },
+            );
+            return Err(CapabilityDenyReason::GenerationMismatch);
+        }
+        let cap = record.id;
+        let generation = record.generation;
+        self.event_log.push(
+            "capability",
+            EventKind::CapabilityUsed {
+                cap,
+                subject: subject.to_string(),
+                object: object.to_string(),
+                operation: operation.to_string(),
+                generation,
+            },
+        );
+        Ok(cap)
+    }
+
+    pub fn capability_generation(&self, subject: &str, object: &str) -> Option<Generation> {
+        self.capabilities.generation_of(subject, object)
+    }
+
+    pub fn record_hostcall(
+        &mut self,
+        label: &str,
+        class: HostcallClass,
+        subject: &str,
+        object: &str,
+        operation: &str,
+    ) {
+        self.event_log.push(
+            "hostcall",
+            EventKind::HostcallEntered {
+                label: label.to_string(),
+                class,
+                subject: subject.to_string(),
+                object: object.to_string(),
+                operation: operation.to_string(),
+            },
+        );
     }
 
     pub fn record_wait_created(
@@ -1203,6 +1480,33 @@ mod tests {
             ledger
                 .attenuate(parent, "helper", &["write"], "activation")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn capability_check_records_denial_and_generation_mismatch() {
+        let mut graph = SemanticGraph::new();
+        let generation = {
+            graph.grant_capability("linux_syscall", "timer.sleep", &["arm"], "wait-token");
+            graph
+                .capability_generation("linux_syscall", "timer.sleep")
+                .expect("capability generation")
+        };
+
+        assert!(
+            graph
+                .check_capability("linux_syscall", "timer.sleep", "arm")
+                .is_ok()
+        );
+        graph.revoke_capability_by_subject_object("linux_syscall", "timer.sleep");
+        assert_eq!(
+            graph.check_capability("linux_syscall", "timer.sleep", "arm"),
+            Err(CapabilityDenyReason::Revoked)
+        );
+        graph.grant_capability("linux_syscall", "timer.sleep", &["arm"], "wait-token");
+        assert_eq!(
+            graph.check_capability_generation("linux_syscall", "timer.sleep", "arm", generation),
+            Err(CapabilityDenyReason::GenerationMismatch)
         );
     }
 

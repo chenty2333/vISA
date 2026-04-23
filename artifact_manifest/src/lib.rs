@@ -82,6 +82,7 @@ pub struct MigrationPackageManifest {
     pub required_artifact_profile: RequiredArtifactProfileManifest,
     pub guest: GuestStateManifest,
     pub semantic: SemanticSnapshotManifest,
+    pub logical_capabilities: Vec<MigrationCapabilityManifest>,
     pub substrate_boundary: SubstrateBoundaryManifest,
     pub not_migrated: Vec<String>,
 }
@@ -139,4 +140,13 @@ pub struct SubstrateBoundaryManifest {
     pub pending_dma_completions: u32,
     pub active_dmw_lease_count: u32,
     pub native_state_policy: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MigrationCapabilityManifest {
+    pub subject: String,
+    pub object: String,
+    pub rights: Vec<String>,
+    pub lifetime: String,
+    pub generation: u64,
 }

@@ -53,20 +53,51 @@ pub struct CapabilitySpec {
     pub lifetime: &'static str,
 }
 
-const NO_CAPABILITIES: &[CapabilitySpec] = &[];
 const CONSOLE_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
     name: "console.write",
     rights: &["write"],
     lifetime: "activation",
 }];
-const TIMER_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
-    name: "timer.sleep",
-    rights: &["arm", "cancel"],
-    lifetime: "wait-token",
-}];
+const LINUX_CAPABILITIES: &[CapabilitySpec] = &[
+    CapabilitySpec {
+        name: "timer.sleep",
+        rights: &["arm", "cancel"],
+        lifetime: "wait-token",
+    },
+    CapabilitySpec {
+        name: "console.write",
+        rights: &["write"],
+        lifetime: "activation",
+    },
+    CapabilitySpec {
+        name: "fd.table",
+        rights: &["close"],
+        lifetime: "task",
+    },
+];
 const DEVFS_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
     name: "device.pulse",
     rights: &["read", "poll"],
+    lifetime: "store",
+}];
+const EPOLL_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
+    name: "epoll.instance",
+    rights: &["create", "ctl", "wait", "notify", "restart", "cancel"],
+    lifetime: "store",
+}];
+const FUTEX_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
+    name: "futex.waitset",
+    rights: &["wait", "wake", "cancel"],
+    lifetime: "store",
+}];
+const PROCFS_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
+    name: "procfs.tree",
+    rights: &["lookup", "read", "list", "readlink"],
+    lifetime: "store",
+}];
+const VFS_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
+    name: "vfs.namespace",
+    rights: &["lookup", "read", "list", "readlink"],
     lifetime: "store",
 }];
 
@@ -103,7 +134,7 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
         artifact_name: "epoll",
         role: StoreRole::CoreService,
         fault_policy: FaultPolicy::Restartable,
-        capabilities: NO_CAPABILITIES,
+        capabilities: EPOLL_CAPABILITIES,
         expected_exports: &[
             "memory",
             "request_ptr",
@@ -124,7 +155,7 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
         artifact_name: "futex",
         role: StoreRole::CoreService,
         fault_policy: FaultPolicy::Restartable,
-        capabilities: NO_CAPABILITIES,
+        capabilities: FUTEX_CAPABILITIES,
         expected_exports: &[
             "memory",
             "request_ptr",
@@ -141,7 +172,7 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
         artifact_name: "linux_personality",
         role: StoreRole::Personality,
         fault_policy: FaultPolicy::KillOnTrap,
-        capabilities: TIMER_CAPABILITIES,
+        capabilities: LINUX_CAPABILITIES,
         expected_exports: &[
             "memory",
             "dispatch",
@@ -165,7 +196,7 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
         artifact_name: "procfs",
         role: StoreRole::CoreService,
         fault_policy: FaultPolicy::Restartable,
-        capabilities: NO_CAPABILITIES,
+        capabilities: PROCFS_CAPABILITIES,
         expected_exports: &[
             "memory",
             "request_ptr",
@@ -184,7 +215,7 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
         artifact_name: "vfs",
         role: StoreRole::CoreService,
         fault_policy: FaultPolicy::Restartable,
-        capabilities: NO_CAPABILITIES,
+        capabilities: VFS_CAPABILITIES,
         expected_exports: &[
             "memory",
             "request_ptr",
