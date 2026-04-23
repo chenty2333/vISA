@@ -1,0 +1,13 @@
+[package]
+name = "runner"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[[bin]]
+name = "runner"
+path = "src/main.rs"
+
+[build-dependencies]
+bootloader = { version = "0.11.15", default-features = false, features = ["uefi"] }
+kernel = { path = "../kernel", artifact = "bin", target = "x86_64-unknown-none" }

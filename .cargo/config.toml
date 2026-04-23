@@ -1,0 +1,7 @@
+[unstable]
+bindeps = true
+
+[alias]
+kernel = "build -p kernel --target x86_64-unknown-none"
+run-vm = "run -p runner --"
+wasm = "build -p console_service -p linux_syscall -p wasm_app --target wasm32-unknown-unknown"
