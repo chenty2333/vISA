@@ -4,6 +4,7 @@ pub const SYS_READ: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
 pub const SYS_CLOSE: u64 = 3;
 pub const SYS_NANOSLEEP: u64 = 35;
+pub const SYS_FUTEX: u64 = 202;
 pub const SYS_UNAME: u64 = 63;
 pub const SYS_GETCWD: u64 = 79;
 pub const SYS_GETDENTS64: u64 = 217;
@@ -16,15 +17,19 @@ pub const FD_STDOUT: u32 = 1;
 pub const FD_STDERR: u32 = 2;
 
 pub const WAIT_TOKEN_SLEEP: u32 = 1;
+pub const FUTEX_WAIT: u32 = 0;
+pub const FUTEX_WAKE: u32 = 1;
 
 pub const ERR_ENOENT: i32 = 2;
 pub const ERR_EIO: i32 = 5;
 pub const ERR_EBADF: i32 = 9;
+pub const ERR_EAGAIN: i32 = 11;
 pub const ERR_EFAULT: i32 = 14;
 pub const ERR_ENOTDIR: i32 = 20;
 pub const ERR_EISDIR: i32 = 21;
 pub const ERR_EINVAL: i32 = 22;
 pub const ERR_ENOSYS: i32 = 38;
+pub const ERR_ETIMEDOUT: i32 = 110;
 
 const TAG_SHIFT: u64 = 60;
 const AUX_SHIFT: u64 = 32;
@@ -78,6 +83,9 @@ pub enum PlanKind {
     ReadLinkAt = 6,
     GetCwd = 7,
     Uname = 8,
+    Sleep = 9,
+    FutexWait = 10,
+    FutexWake = 11,
 }
 
 impl PlanKind {
@@ -91,6 +99,9 @@ impl PlanKind {
             6 => Some(Self::ReadLinkAt),
             7 => Some(Self::GetCwd),
             8 => Some(Self::Uname),
+            9 => Some(Self::Sleep),
+            10 => Some(Self::FutexWait),
+            11 => Some(Self::FutexWake),
             _ => None,
         }
     }

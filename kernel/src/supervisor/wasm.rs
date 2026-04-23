@@ -25,7 +25,10 @@ impl BufferedStore {
         let linker = Linker::new(engine);
         let instance = linker
             .instantiate_and_start(&mut store, &module)
-            .map_err(|_| module_name)?;
+            .map_err(|error| {
+                crate::kwarn!("{} instantiate failed: {:?}", module_name, error);
+                module_name
+            })?;
         let memory = get_memory(&mut store, &instance)?;
         let request_ptr = instance
             .get_typed_func::<(), u32>(&store, "request_ptr")

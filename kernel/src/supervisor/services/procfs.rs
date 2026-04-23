@@ -9,8 +9,7 @@ use super::super::wasm::{BufferedStore, expect_len, expect_ok};
 
 const PROCFS_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_PROCFS_SERVICE_WASM"));
 
-pub(crate) struct ProcfsService<'engine> {
-    pub(crate) engine: &'engine Engine,
+pub(crate) struct ProcfsService {
     io: BufferedStore,
     lookup: TypedFunc<(u32, u32), i32>,
     node_kind: TypedFunc<(), u32>,
@@ -19,8 +18,8 @@ pub(crate) struct ProcfsService<'engine> {
     read_link: TypedFunc<(u32, u32), i32>,
 }
 
-impl<'engine> ProcfsService<'engine> {
-    pub(crate) fn new(engine: &'engine Engine) -> Result<Self, &'static str> {
+impl ProcfsService {
+    pub(crate) fn new(engine: &Engine) -> Result<Self, &'static str> {
         let (io, instance) = BufferedStore::new(
             engine,
             PROCFS_SERVICE_WASM,
@@ -43,7 +42,6 @@ impl<'engine> ProcfsService<'engine> {
             .map_err(|_| "missing procfs read_link export")?;
 
         Ok(Self {
-            engine,
             io,
             lookup,
             node_kind,

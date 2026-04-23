@@ -9,7 +9,7 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 const PIC_1_OFFSET: u8 = 32;
 const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
 const PIT_INPUT_HZ: u32 = 1_193_182;
-const TIMER_HZ: u32 = 1_000;
+pub const TIMER_HZ: u32 = 1_000;
 
 static TICKS: AtomicU64 = AtomicU64::new(0);
 
@@ -52,30 +52,13 @@ pub fn init() {
     interrupts::enable();
 }
 
-pub fn sleep_ms(delay_ms: u32) {
-    if delay_ms == 0 {
-        return;
-    }
-
-    let deadline = tick_count().saturating_add(ms_to_ticks(delay_ms));
-    while tick_count() < deadline {
-        interrupts::disable();
-        if tick_count() >= deadline {
-            interrupts::enable();
-            break;
-        }
-
-        interrupts::enable_and_hlt();
-    }
+pub fn wait_for_interrupt() {
+    interrupts::disable();
+    interrupts::enable_and_hlt();
 }
 
 pub fn tick_count() -> u64 {
     TICKS.load(Ordering::Acquire)
-}
-
-fn ms_to_ticks(delay_ms: u32) -> u64 {
-    let scaled = delay_ms as u64 * TIMER_HZ as u64;
-    scaled.div_ceil(1_000).max(1)
 }
 
 fn init_pit_timer(frequency_hz: u32) {

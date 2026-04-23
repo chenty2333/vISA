@@ -26,7 +26,7 @@ use x86_64::instructions::hlt;
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
-const HEAP_SIZE: usize = 8 * 1024 * 1024;
+const HEAP_SIZE: usize = 32 * 1024 * 1024;
 static mut HEAP_SPACE: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
 
 const BOOTLOADER_CONFIG: BootloaderConfig = {

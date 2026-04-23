@@ -1,38 +1,62 @@
 #![no_std]
 
 use core::panic::PanicInfo;
+use core::ptr::addr_of_mut;
+use core::slice;
 
 use vmos_abi::{
-    ERR_EINVAL, ERR_ENOSYS, PackedStep, PlanKind, SYS_CLOSE, SYS_EXIT, SYS_EXIT_GROUP, SYS_GETCWD,
-    SYS_GETDENTS64, SYS_NANOSLEEP, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE,
-    WAIT_TOKEN_SLEEP, is_stdio_fd,
+    ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_WAIT, FUTEX_WAKE, PackedStep, PlanKind, SYS_CLOSE,
+    SYS_EXIT, SYS_EXIT_GROUP, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_NANOSLEEP, SYS_OPENAT,
+    SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
+const RESULT_BUFFER_CAPACITY: usize = 1024;
+const PENDING_SLOTS: usize = 8;
+const UTS_FIELD_LEN: usize = 65;
 
 static SLEEP_RESUMED: &[u8] = b"linux frontend: resumed after nanosleep\n";
 static mut ARG_BUFFER: [u8; ARG_BUFFER_CAPACITY] = [0; ARG_BUFFER_CAPACITY];
+static mut RESULT_BUFFER: [u8; RESULT_BUFFER_CAPACITY] = [0; RESULT_BUFFER_CAPACITY];
 static mut PLAN_ARGS: [u64; 6] = [0; 6];
+static mut PENDING_OPS: [PendingOp; PENDING_SLOTS] = [PendingOp::Empty; PENDING_SLOTS];
+
+#[derive(Clone, Copy)]
+enum PendingOp {
+    Empty,
+    Sleep,
+    FutexWait,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GuestTimespec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+
+#[repr(C)]
+struct GuestUtsName {
+    sysname: [u8; UTS_FIELD_LEN],
+    nodename: [u8; UTS_FIELD_LEN],
+    release: [u8; UTS_FIELD_LEN],
+    version: [u8; UTS_FIELD_LEN],
+    machine: [u8; UTS_FIELD_LEN],
+    domainname: [u8; UTS_FIELD_LEN],
+}
 
 #[unsafe(no_mangle)]
-pub extern "C" fn dispatch(
-    nr: u64,
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    _a3: u64,
-    _a4: u64,
-    _a5: u64,
-) -> u64 {
+pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64 {
     let step = match nr {
         SYS_READ => plan_read(a0, a2),
         SYS_WRITE => plan_write(a0, a1, a2),
         SYS_CLOSE => plan_close(a0),
-        SYS_NANOSLEEP => dispatch_sleep(a0),
+        SYS_NANOSLEEP => dispatch_nanosleep(a0, a1),
+        SYS_FUTEX => dispatch_futex(a0, a1, a2, a3, a4, a5),
         SYS_UNAME => plan_simple(PlanKind::Uname),
         SYS_GETCWD => plan_getcwd(a1),
         SYS_GETDENTS64 => plan_getdents(a0, a2),
-        SYS_OPENAT => plan_openat(a0, a1, a2, _a3, _a4),
+        SYS_OPENAT => plan_openat(a0, a1, a2, a3, a4),
         SYS_READLINKAT => plan_readlinkat(a0, a1, a2),
         SYS_EXIT | SYS_EXIT_GROUP => PackedStep::exit(a0 as i32),
         _ => PackedStep::error(-ERR_ENOSYS),
@@ -43,21 +67,23 @@ pub extern "C" fn dispatch(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn resume_wait(token: u32) -> u64 {
-    if token == WAIT_TOKEN_SLEEP {
-        reset_plan(
-            PlanKind::Write,
-            [
-                vmos_abi::FD_STDOUT as u64,
-                SLEEP_RESUMED.as_ptr() as u64,
-                SLEEP_RESUMED.len() as u64,
-                0,
-                0,
-                0,
-            ],
-        );
-        PackedStep::plan(PlanKind::Write).raw()
-    } else {
-        PackedStep::error(-ERR_EINVAL).raw()
+    match take_pending_op(token) {
+        Some(PendingOp::Sleep) => {
+            reset_plan(
+                PlanKind::Write,
+                [
+                    vmos_abi::FD_STDOUT as u64,
+                    SLEEP_RESUMED.as_ptr() as u64,
+                    SLEEP_RESUMED.len() as u64,
+                    0,
+                    0,
+                    0,
+                ],
+            );
+            PackedStep::plan(PlanKind::Write).raw()
+        }
+        Some(PendingOp::FutexWait) => PackedStep::ready(0).raw(),
+        _ => PackedStep::error(-ERR_EINVAL).raw(),
     }
 }
 
@@ -72,6 +98,16 @@ pub extern "C" fn arg_buffer_capacity() -> u32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn result_buffer_ptr() -> u32 {
+    addr_of_mut!(RESULT_BUFFER) as *mut u8 as u32
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn result_buffer_capacity() -> u32 {
+    RESULT_BUFFER_CAPACITY as u32
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn plan_arg(index: u32) -> u64 {
     if index as usize >= 6 {
         return 0;
@@ -83,13 +119,128 @@ pub extern "C" fn plan_arg(index: u32) -> u64 {
     }
 }
 
-fn dispatch_sleep(duration_ms: u64) -> PackedStep {
+#[unsafe(no_mangle)]
+pub extern "C" fn dispatch_sleep_ms(duration_ms: u64) -> u64 {
+    plan_sleep(duration_ms).raw()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn dispatch_futex_raw(
+    key: u64,
+    op: u64,
+    val: u64,
+    timeout_ms: u64,
+    current_word: u64,
+) -> u64 {
+    plan_futex(key, op, val, timeout_ms, current_word).raw()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn encode_uname(release_ptr: u32, release_len: u32) -> i32 {
+    let Ok(release) = arg_bytes(release_ptr, release_len) else {
+        return -ERR_EINVAL;
+    };
+
+    let uts = GuestUtsName {
+        sysname: c_field(b"VmOS"),
+        nodename: c_field(b"prototype2"),
+        release: c_field(release),
+        version: c_field(b"supervisor-world"),
+        machine: c_field(b"x86_64"),
+        domainname: [0; UTS_FIELD_LEN],
+    };
+    write_result_bytes(unsafe {
+        slice::from_raw_parts(
+            (&uts as *const GuestUtsName).cast::<u8>(),
+            core::mem::size_of::<GuestUtsName>(),
+        )
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn encode_dirents64(records_ptr: u32, records_len: u32, max_len: u32) -> i32 {
+    let Ok(records) = arg_bytes(records_ptr, records_len) else {
+        return -ERR_EINVAL;
+    };
+    pack_dirents64(records, max_len as usize)
+}
+
+fn dispatch_nanosleep(ptr: u64, len: u64) -> PackedStep {
+    let ptr = ptr as u32;
+    let len = len as u32;
+    let Ok(req) = parse_timespec_ms(ptr, len) else {
+        return PackedStep::error(-ERR_EINVAL);
+    };
+    plan_sleep(req)
+}
+
+fn plan_sleep(duration_ms: u64) -> PackedStep {
     let clamped = if duration_ms > u32::MAX as u64 {
         u32::MAX
     } else {
         duration_ms as u32
     };
-    PackedStep::pending(WAIT_TOKEN_SLEEP, clamped)
+    let Some(resume_cookie) = allocate_pending_op(PendingOp::Sleep) else {
+        return PackedStep::error(-ERR_EINVAL);
+    };
+    reset_plan(
+        PlanKind::Sleep,
+        [resume_cookie as u64, clamped as u64, 0, 0, 0, 0],
+    );
+    PackedStep::plan(PlanKind::Sleep)
+}
+
+fn dispatch_futex(
+    key: u64,
+    op: u64,
+    val: u64,
+    timeout_ptr: u64,
+    timeout_len: u64,
+    current_word: u64,
+) -> PackedStep {
+    let timeout_ms = if timeout_ptr == 0 || timeout_len == 0 {
+        u64::MAX
+    } else {
+        match parse_timespec_ms(timeout_ptr as u32, timeout_len as u32) {
+            Ok(ms) => ms,
+            Err(_) => return PackedStep::error(-ERR_EINVAL),
+        }
+    };
+    plan_futex(key, op, val, timeout_ms, current_word)
+}
+
+fn plan_futex(key: u64, op: u64, val: u64, timeout_ms: u64, current_word: u64) -> PackedStep {
+    match op as u32 {
+        FUTEX_WAIT => plan_futex_wait(key, val, timeout_ms, current_word),
+        FUTEX_WAKE => plan_futex_wake(key, val),
+        _ => PackedStep::error(-ERR_EINVAL),
+    }
+}
+
+fn plan_futex_wait(key: u64, expected: u64, timeout_ms: u64, current_word: u64) -> PackedStep {
+    if current_word != expected {
+        return PackedStep::error(-ERR_EAGAIN);
+    }
+
+    let Some(resume_cookie) = allocate_pending_op(PendingOp::FutexWait) else {
+        return PackedStep::error(-ERR_EINVAL);
+    };
+    let timeout = if timeout_ms == u64::MAX {
+        u64::MAX
+    } else {
+        (timeout_ms as u32) as u64
+    };
+    reset_plan(
+        PlanKind::FutexWait,
+        [key, timeout, resume_cookie as u64, 0, 0, 0],
+    );
+    PackedStep::plan(PlanKind::FutexWait)
+}
+
+fn plan_futex_wake(key: u64, count: u64) -> PackedStep {
+    let count = count.min(u32::MAX as u64);
+    reset_plan(PlanKind::FutexWake, [key, count, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::FutexWake)
 }
 
 fn plan_write(fd: u64, ptr: u64, len: u64) -> PackedStep {
@@ -149,6 +300,131 @@ fn reset_plan(kind: PlanKind, args: [u64; 6]) {
     unsafe {
         PLAN_ARGS = args;
     }
+}
+
+fn allocate_pending_op(op: PendingOp) -> Option<u32> {
+    unsafe {
+        let base = core::ptr::addr_of_mut!(PENDING_OPS) as *mut PendingOp;
+        for index in 0..PENDING_SLOTS {
+            let slot = base.add(index);
+            if matches!(*slot, PendingOp::Empty) {
+                *slot = op;
+                return Some((index + 1) as u32);
+            }
+        }
+    }
+    None
+}
+
+fn take_pending_op(token: u32) -> Option<PendingOp> {
+    if token == 0 || token as usize > PENDING_SLOTS {
+        return None;
+    }
+
+    unsafe {
+        let slot = (core::ptr::addr_of_mut!(PENDING_OPS) as *mut PendingOp).add(token as usize - 1);
+        let op = *slot;
+        *slot = PendingOp::Empty;
+        match op {
+            PendingOp::Empty => None,
+            _ => Some(op),
+        }
+    }
+}
+
+fn parse_timespec_ms(ptr: u32, len: u32) -> Result<u64, i32> {
+    if len != core::mem::size_of::<GuestTimespec>() as u32 {
+        return Err(-ERR_EINVAL);
+    }
+    let bytes = arg_bytes(ptr, len)?;
+    let mut raw = [0u8; core::mem::size_of::<GuestTimespec>()];
+    raw.copy_from_slice(bytes);
+    let tv_sec = i64::from_le_bytes(raw[0..8].try_into().unwrap());
+    let tv_nsec = i64::from_le_bytes(raw[8..16].try_into().unwrap());
+    if tv_sec < 0 || tv_nsec < 0 {
+        return Err(-ERR_EINVAL);
+    }
+
+    Ok((tv_sec as u64)
+        .saturating_mul(1000)
+        .saturating_add((tv_nsec as u64).div_ceil(1_000_000)))
+}
+
+fn arg_bytes(ptr: u32, len: u32) -> Result<&'static [u8], i32> {
+    let base = core::ptr::addr_of!(ARG_BUFFER) as usize as u32;
+    let end = ptr.checked_add(len).ok_or(-ERR_EINVAL)?;
+    if ptr < base || end > base + ARG_BUFFER_CAPACITY as u32 {
+        return Err(-ERR_EINVAL);
+    }
+
+    Ok(unsafe { slice::from_raw_parts(ptr as *const u8, len as usize) })
+}
+
+fn write_result_bytes(bytes: &[u8]) -> i32 {
+    if bytes.len() > RESULT_BUFFER_CAPACITY {
+        return -ERR_EINVAL;
+    }
+
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            addr_of_mut!(RESULT_BUFFER) as *mut u8,
+            bytes.len(),
+        );
+    }
+    bytes.len() as i32
+}
+
+fn pack_dirents64(records: &[u8], max_len: usize) -> i32 {
+    let limit = core::cmp::min(max_len, RESULT_BUFFER_CAPACITY);
+    let mut out = [0u8; RESULT_BUFFER_CAPACITY];
+    let mut out_len = 0usize;
+    let mut next_off = 1i64;
+    let mut cursor = 0usize;
+
+    while cursor < records.len() {
+        let dtype = records[cursor];
+        cursor += 1;
+        let name_end = records[cursor..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .map(|offset| cursor + offset)
+            .ok_or(-ERR_EINVAL);
+        let Ok(name_end) = name_end else {
+            return -ERR_EINVAL;
+        };
+        let name = &records[cursor..name_end];
+        cursor = name_end + 1;
+
+        let reclen = align_up(19 + name.len() + 1, 8);
+        if reclen > limit {
+            return -ERR_EINVAL;
+        }
+        if out_len + reclen > limit {
+            break;
+        }
+
+        out[out_len..out_len + 8].copy_from_slice(&(next_off as u64).to_le_bytes());
+        out[out_len + 8..out_len + 16].copy_from_slice(&next_off.to_le_bytes());
+        out[out_len + 16..out_len + 18].copy_from_slice(&(reclen as u16).to_le_bytes());
+        out[out_len + 18] = dtype;
+        out[out_len + 19..out_len + 19 + name.len()].copy_from_slice(name);
+        out_len += reclen;
+        next_off += 1;
+    }
+
+    write_result_bytes(&out[..out_len])
+}
+
+fn c_field(value: &[u8]) -> [u8; UTS_FIELD_LEN] {
+    let mut field = [0u8; UTS_FIELD_LEN];
+    let len = core::cmp::min(value.len(), UTS_FIELD_LEN - 1);
+    field[..len].copy_from_slice(&value[..len]);
+    field
+}
+
+fn align_up(value: usize, align: usize) -> usize {
+    (value + align - 1) & !(align - 1)
 }
 
 #[cfg(target_arch = "wasm32")]

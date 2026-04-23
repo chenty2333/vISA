@@ -3,7 +3,7 @@ use core::fmt::Write;
 
 use crate::serial;
 use crate::serial_println;
-use vmos_abi::{FD_STDOUT, PackedStep, SYS_NANOSLEEP, StepTag, SyscallContext};
+use vmos_abi::{FD_STDOUT, FUTEX_WAIT, FUTEX_WAKE, PackedStep, SYS_FUTEX, StepTag, SyscallContext};
 
 use super::linux::LinuxCallResult;
 use super::runtime::PrototypeRuntime;
@@ -18,6 +18,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.run_linux_devfs_demo()?;
         self.run_linux_metadata_demo()?;
         self.run_sleep_demo()?;
+        self.run_futex_demo()?;
         self.run_procfs_recovery_demo()?;
         Ok(())
     }
@@ -109,25 +110,14 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     fn run_sleep_demo(&mut self) -> Result<(), &'static str> {
         serial_println!("== explicit suspend/resume demo ==");
-        let pending = self.dispatch_linux_syscall(
-            "linux_sleep",
-            SyscallContext::new(SYS_NANOSLEEP, [25, 0, 0, 0, 0, 0]),
-        )?;
-        let (token, delay_ms) = match pending {
-            LinuxCallResult::Pending { token, delay_ms } => (token, delay_ms),
+        let pending = self.dispatch_linux_sleep_ms_raw("linux_sleep", 25)?;
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
             _ => return Err("sleep path did not enter pending state"),
         };
 
-        crate::kinfo!(
-            "linux_syscall returned Pending(token={}, delay_hint={}ms)",
-            token,
-            delay_ms
-        );
-        crate::kinfo!("waiting for timer wakeup");
-        crate::interrupts::sleep_ms(delay_ms);
-
-        let resumed = self.linux.resume_wait(token)?;
-        match self.execute_linux_step("linux_resume", resumed)? {
+        crate::kinfo!("linux_syscall returned Pending({:?})", token);
+        match self.block_on_wait("linux_sleep", token)? {
             LinuxCallResult::Ret(count) => {
                 crate::kinfo!("nanosleep completed with explicit resume");
                 serial_println!("resume path returned {}", count);
@@ -149,6 +139,48 @@ impl<'engine> PrototypeRuntime<'engine> {
             serial_println!();
         }
         Ok(())
+    }
+
+    fn run_futex_demo(&mut self) -> Result<(), &'static str> {
+        serial_println!("== futex service demo ==");
+        let bootstrap = self.bootstrap_task();
+        let waiter = self.allocate_task();
+        let waker = self.allocate_task();
+
+        self.set_current_task(waiter);
+        let pending =
+            self.dispatch_linux_futex_raw("futex_wait", 0x2000, FUTEX_WAIT as u64, 1, u64::MAX, 1)?;
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            _ => return Err("futex wait did not enter pending state"),
+        };
+
+        self.set_current_task(waker);
+        let woke = self.dispatch_linux_syscall(
+            "futex_wake",
+            SyscallContext::new(SYS_FUTEX, [0x2000, FUTEX_WAKE as u64, 1, 0, 0, 0]),
+        )?;
+        let woke = match woke {
+            LinuxCallResult::Ret(value) => value,
+            _ => {
+                self.set_current_task(bootstrap);
+                return Err("futex wake returned an unexpected result");
+            }
+        };
+        serial_println!("futex_wake(...) -> {}", woke);
+
+        self.set_current_task(waiter);
+        match self.block_on_wait("futex_wait", token)? {
+            LinuxCallResult::Ret(0) => {
+                serial_println!("futex waiter resumed");
+                self.set_current_task(bootstrap);
+                Ok(())
+            }
+            _ => {
+                self.set_current_task(bootstrap);
+                Err("futex waiter resumed with an unexpected result")
+            }
+        }
     }
 
     fn handle_wasm_step(&mut self, label: &str, step: u64) -> Result<(), &'static str> {

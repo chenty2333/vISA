@@ -8,13 +8,18 @@ use wasmi::Engine;
 use crate::interrupts;
 use vmos_abi::{
     ERR_EBADF, ERR_EINVAL, FD_STDOUT, NodeKind, PackedStep, PlanKind, SYS_CLOSE, SYS_GETCWD,
-    SYS_GETDENTS64, SYS_NANOSLEEP, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE,
-    ServiceRoute, StepTag, SyscallContext,
+    SYS_GETDENTS64, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE, ServiceRoute,
+    StepTag, SyscallContext,
 };
 
+use super::events::Event;
 use super::linux::{LinuxCallResult, LinuxFrontend, LinuxPlan};
-use super::services::{ConsoleService, DevfsService, ProcfsService, VfsService, WasmApp};
-use super::types::{FdEntry, InjectedFault, LookupInfo, ServiceCallError};
+use super::scheduler::Scheduler;
+use super::services::{
+    ConsoleService, DevfsService, FutexService, ProcfsService, VfsService, WasmApp,
+};
+use super::types::{FdEntry, InjectedFault, LookupInfo, ServiceCallError, TaskId, WaitToken};
+use super::wait::{WaitOutcome, WaitRegistration, WaitRegistry};
 
 pub(super) const CURRENT_CWD: &[u8] = b"/sandbox";
 pub(super) const UNAME_BYTES: &[u8] = b"prototype2";
@@ -38,12 +43,16 @@ pub(crate) fn runtime() -> Result<&'static mut PrototypeRuntime<'static>, &'stat
 pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) console: ConsoleService,
     pub(super) vfs: VfsService,
-    pub(super) procfs: ProcfsService<'engine>,
+    pub(super) procfs_engine: &'engine Engine,
+    pub(super) procfs: Option<ProcfsService>,
     pub(super) devfs: DevfsService,
+    pub(super) futex: FutexService,
     pub(super) linux: LinuxFrontend<'engine>,
     pub(super) app: WasmApp<'engine>,
     pub(super) fd_table: Vec<Option<FdEntry>>,
     pub(super) fault: Option<InjectedFault>,
+    pub(super) scheduler: Scheduler,
+    pub(super) waits: WaitRegistry,
 }
 
 impl<'engine> PrototypeRuntime<'engine> {
@@ -51,13 +60,29 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(Self {
             console: ConsoleService::new(engine)?,
             vfs: VfsService::new(engine)?,
-            procfs: ProcfsService::new(engine)?,
+            procfs_engine: engine,
+            procfs: Some(ProcfsService::new(engine)?),
             devfs: DevfsService::new(engine)?,
+            futex: FutexService::new(engine)?,
             linux: LinuxFrontend::new(engine)?,
             app: WasmApp::new(engine)?,
             fd_table: vec![None, None, None],
             fault: None,
+            scheduler: Scheduler::new(),
+            waits: WaitRegistry::new(),
         })
+    }
+
+    pub(crate) fn allocate_task(&mut self) -> TaskId {
+        self.scheduler.allocate_task()
+    }
+
+    pub(crate) fn set_current_task(&mut self, task: TaskId) {
+        self.scheduler.set_current_task(task);
+    }
+
+    pub(crate) fn bootstrap_task(&self) -> TaskId {
+        self.scheduler.bootstrap_task()
     }
 
     pub(crate) fn sys_write(&mut self, fd: u32, bytes: &[u8]) -> Result<i64, &'static str> {
@@ -96,12 +121,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             LinuxCallResult::Bytes(bytes) => Ok(bytes),
             LinuxCallResult::Ret(0) => Ok(Vec::new()),
             LinuxCallResult::Ret(_) => Err("read returned a numeric error"),
-            LinuxCallResult::Pending { token, delay_ms } => {
-                crate::kwarn!(
-                    "read unexpectedly returned Pending(token={}, delay_ms={})",
-                    token,
-                    delay_ms
-                );
+            LinuxCallResult::Pending(token) => {
+                crate::kwarn!("read unexpectedly returned Pending({:?})", token);
                 Err("read returned an unexpected pending result")
             }
             LinuxCallResult::Exit(code) => {
@@ -150,31 +171,6 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.expect_ret("close", result)
     }
 
-    pub(crate) fn sleep_ms(&mut self, delay_ms: u64) -> Result<(), &'static str> {
-        let pending = self.dispatch_linux_syscall(
-            "linux_sleep",
-            SyscallContext::new(SYS_NANOSLEEP, [delay_ms, 0, 0, 0, 0, 0]),
-        )?;
-        let token = match pending {
-            LinuxCallResult::Pending { token, delay_ms } => {
-                crate::kinfo!(
-                    "linux_syscall returned Pending(token={}, delay_hint={}ms)",
-                    token,
-                    delay_ms
-                );
-                interrupts::sleep_ms(delay_ms);
-                token
-            }
-            _ => return Err("sleep path did not enter pending state"),
-        };
-
-        let resumed = self.linux.resume_wait(token)?;
-        match self.execute_linux_step("linux_resume", resumed)? {
-            LinuxCallResult::Ret(_) => Ok(()),
-            _ => Err("resume path returned an unexpected result"),
-        }
-    }
-
     pub(crate) fn fd_path(&self, fd: u32) -> Result<Vec<u8>, i32> {
         Ok(self.fd_entry(fd).ok_or(ERR_EBADF)?.path.clone())
     }
@@ -193,8 +189,58 @@ impl<'engine> PrototypeRuntime<'engine> {
         label: &str,
         ctx: SyscallContext,
     ) -> Result<LinuxCallResult, &'static str> {
+        let result = self.dispatch_linux_syscall_raw(label, ctx)?;
+        match result {
+            LinuxCallResult::Pending(token) => self.block_on_wait(label, token),
+            ready => Ok(ready),
+        }
+    }
+
+    pub(crate) fn dispatch_linux_syscall_raw(
+        &mut self,
+        label: &str,
+        ctx: SyscallContext,
+    ) -> Result<LinuxCallResult, &'static str> {
         let step = self.linux.dispatch(ctx)?;
         self.execute_linux_step(label, step)
+    }
+
+    pub(crate) fn dispatch_linux_sleep_ms_raw(
+        &mut self,
+        label: &str,
+        delay_ms: u64,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let step = self.linux.dispatch_sleep_ms(delay_ms)?;
+        self.execute_linux_step(label, step)
+    }
+
+    pub(crate) fn dispatch_linux_futex_raw(
+        &mut self,
+        label: &str,
+        key: u64,
+        op: u64,
+        val: u64,
+        timeout_ms: u64,
+        current_word: u64,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let step = self
+            .linux
+            .dispatch_futex_raw(key, op, val, timeout_ms, current_word)?;
+        self.execute_linux_step(label, step)
+    }
+
+    pub(crate) fn uname_abi(&mut self) -> Result<Vec<u8>, &'static str> {
+        let release = self.uname()?;
+        self.linux.encode_uname(&release)
+    }
+
+    pub(crate) fn getdents64_abi(&mut self, fd: u32, count: u32) -> Result<Vec<u8>, &'static str> {
+        let dir_path = self
+            .fd_path(fd)
+            .map_err(|_| "getdents64 targeted an unknown fd")?;
+        let listing = self.getdents(fd, count)?;
+        let records = self.build_dirent_records(&dir_path, &listing)?;
+        self.linux.encode_dirents64(&records, count)
     }
 
     pub(crate) fn write_linux_arg_bytes(
@@ -212,13 +258,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         match result {
             LinuxCallResult::Ret(ret) => Ok(ret),
             LinuxCallResult::Bytes(_) => Err("linux call returned bytes instead of an integer"),
-            LinuxCallResult::Pending { token, delay_ms } => {
-                crate::kwarn!(
-                    "{} unexpectedly returned Pending(token={}, delay_ms={})",
-                    context,
-                    token,
-                    delay_ms
-                );
+            LinuxCallResult::Pending(token) => {
+                crate::kwarn!("{} unexpectedly returned Pending({:?})", context, token);
                 Err("linux call returned an unexpected pending result")
             }
             LinuxCallResult::Exit(code) => {
@@ -239,13 +280,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                 crate::kwarn!("{} unexpectedly returned Ret({})", context, ret);
                 Err("linux call returned an integer instead of bytes")
             }
-            LinuxCallResult::Pending { token, delay_ms } => {
-                crate::kwarn!(
-                    "{} unexpectedly returned Pending(token={}, delay_ms={})",
-                    context,
-                    token,
-                    delay_ms
-                );
+            LinuxCallResult::Pending(token) => {
+                crate::kwarn!("{} unexpectedly returned Pending({:?})", context, token);
                 Err("linux call returned an unexpected pending result")
             }
             LinuxCallResult::Exit(code) => {
@@ -266,10 +302,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 crate::kdebug!("{}: Ready({})", label, decoded.value);
                 Ok(LinuxCallResult::Ret(decoded.value as i64))
             }
-            StepTag::Pending => Ok(LinuxCallResult::Pending {
-                token: decoded.aux,
-                delay_ms: decoded.value as u32,
-            }),
+            StepTag::Pending => Err("linux_syscall returned a legacy Pending step"),
             StepTag::Plan => {
                 let kind = PlanKind::from_raw(decoded.aux).ok_or("linux plan kind was invalid")?;
                 let plan = self.linux.current_plan(kind)?;
@@ -302,6 +335,75 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::ReadLinkAt => self.plan_readlinkat(plan),
             PlanKind::GetCwd => Ok(LinuxCallResult::Bytes(CURRENT_CWD.to_vec())),
             PlanKind::Uname => Ok(LinuxCallResult::Bytes(UNAME_BYTES.to_vec())),
+            PlanKind::Sleep => self.plan_sleep(plan),
+            PlanKind::FutexWait => self.plan_futex_wait(plan),
+            PlanKind::FutexWake => self.plan_futex_wake(plan),
+        }
+    }
+
+    fn plan_sleep(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let resume_cookie =
+            u32::try_from(plan.args[0]).map_err(|_| "sleep resume cookie overflowed")?;
+        let delay_ms = u32::try_from(plan.args[1]).map_err(|_| "sleep delay overflowed")?;
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::Timer {
+                delay_ms,
+                resume_cookie,
+            },
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+        Ok(LinuxCallResult::Pending(token))
+    }
+
+    fn plan_futex_wait(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let key = plan.args[0];
+        let timeout_ms = if plan.args[1] == u64::MAX {
+            None
+        } else {
+            Some(u32::try_from(plan.args[1]).map_err(|_| "futex timeout overflowed")?)
+        };
+        let resume_cookie =
+            u32::try_from(plan.args[2]).map_err(|_| "futex resume cookie overflowed")?;
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::Futex {
+                timeout_ms,
+                resume_cookie,
+            },
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+
+        match self.futex.register_wait(key, token.id) {
+            Ok(()) => Ok(LinuxCallResult::Pending(token)),
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("futex_wait: {}", reason);
+                Err("futex_service trapped during futex wait")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
+    fn plan_futex_wake(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let key = plan.args[0];
+        let count = u32::try_from(plan.args[1]).map_err(|_| "futex wake count overflowed")?;
+        match self.futex.wake(key, count) {
+            Ok(wait_ids) => {
+                for wait_id in &wait_ids {
+                    self.scheduler.push_event(Event::WaitReady(*wait_id));
+                }
+                self.drain_event_queue();
+                Ok(LinuxCallResult::Ret(wait_ids.len() as i64))
+            }
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("futex_wake: {}", reason);
+                Err("futex_service trapped during futex wake")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
         }
     }
 
@@ -424,7 +526,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         match info.route {
             ServiceRoute::Vfs => Ok(info),
             ServiceRoute::Procfs => {
-                let node = self.procfs.lookup(path, false)?;
+                let node = self.procfs_mut().lookup(path, false)?;
                 Ok(LookupInfo {
                     route: ServiceRoute::Procfs,
                     node,
@@ -467,7 +569,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         let bytes = match route {
             ServiceRoute::Vfs => self.vfs.list_dir(&path, false)?,
-            ServiceRoute::Procfs => self.procfs.list_dir(&path, false)?,
+            ServiceRoute::Procfs => self.procfs_mut().list_dir(&path, false)?,
             ServiceRoute::Devfs => self.devfs.list_dir(&path, false)?,
         };
 
@@ -486,20 +588,49 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         match info.route {
             ServiceRoute::Vfs => self.vfs.read_link(path, false),
-            ServiceRoute::Procfs => self.procfs.read_link(path, false),
+            ServiceRoute::Procfs => self.procfs_mut().read_link(path, false),
             ServiceRoute::Devfs => Err(ServiceCallError::Errno(ERR_EINVAL)),
         }
     }
 
+    fn build_dirent_records(
+        &mut self,
+        dir_path: &[u8],
+        listing: &[u8],
+    ) -> Result<Vec<u8>, &'static str> {
+        let mut out = Vec::new();
+        for name in listing.split(|byte| *byte == b'\n') {
+            if name.is_empty() {
+                continue;
+            }
+
+            let dtype = match self
+                .path_kind(&join_path(dir_path, name))
+                .map_err(|_| "failed to classify directory entry kind")?
+            {
+                NodeKind::File => 8,
+                NodeKind::Directory => 4,
+                NodeKind::Symlink => 10,
+                NodeKind::CharDevice => 2,
+            };
+            out.push(dtype);
+            out.extend_from_slice(name);
+            out.push(0);
+        }
+        Ok(out)
+    }
+
     fn procfs_read_with_recovery(&mut self, path: &[u8]) -> Result<Vec<u8>, ServiceCallError> {
         let inject_fault = self.take_fault(InjectedFault::ProcfsRead);
-        match self.procfs.read_file(path, inject_fault) {
+        match self.procfs_mut().read_file(path, inject_fault) {
             Ok(bytes) => Ok(bytes),
             Err(ServiceCallError::Trap(_)) if inject_fault => {
                 crate::kinfo!("procfs_service trapped; recreating service store");
-                let engine = self.procfs.engine;
-                self.procfs = ProcfsService::new(engine).map_err(ServiceCallError::Invalid)?;
-                self.procfs.read_file(path, false)
+                let _ = self.procfs.take();
+                self.procfs = Some(
+                    ProcfsService::new(self.procfs_engine).map_err(ServiceCallError::Invalid)?,
+                );
+                self.procfs_mut().read_file(path, false)
             }
             Err(err) => Err(err),
         }
@@ -550,4 +681,69 @@ impl<'engine> PrototypeRuntime<'engine> {
         entry.cursor = cursor;
         Ok(())
     }
+
+    fn procfs_mut(&mut self) -> &mut ProcfsService {
+        self.procfs
+            .as_mut()
+            .expect("procfs service should always be installed outside recovery")
+    }
+
+    pub(super) fn block_on_wait(
+        &mut self,
+        _label: &str,
+        token: WaitToken,
+    ) -> Result<LinuxCallResult, &'static str> {
+        crate::substrate::dmw::assert_quiescent()
+            .map_err(|_| "entered Pending with an active DMW lease")?;
+        loop {
+            let mut due_events = vec![];
+            self.waits
+                .collect_due_events(interrupts::tick_count(), &mut due_events);
+            for event in due_events {
+                self.scheduler.push_event(event);
+            }
+            self.drain_event_queue();
+
+            if let Some(resolution) = self.waits.take_resolution(token) {
+                return match resolution.outcome {
+                    WaitOutcome::Ready => {
+                        let resumed = self.linux.resume_wait(resolution.resume_cookie)?;
+                        self.execute_linux_step("linux_resume", resumed)
+                    }
+                    WaitOutcome::Cancelled(errno) => {
+                        if token.kind == super::types::WaitKind::Futex {
+                            match self.futex.cancel_wait(token.id) {
+                                Ok(()) | Err(ServiceCallError::Errno(_)) => {}
+                                Err(ServiceCallError::Trap(reason)) => {
+                                    crate::kwarn!("futex cancel: {}", reason);
+                                }
+                                Err(ServiceCallError::Invalid(err)) => {
+                                    crate::kwarn!("futex cancel: {}", err);
+                                }
+                            }
+                        }
+                        Ok(LinuxCallResult::Ret(-(errno as i64)))
+                    }
+                };
+            }
+
+            interrupts::wait_for_interrupt();
+        }
+    }
+
+    fn drain_event_queue(&mut self) {
+        while let Some(event) = self.scheduler.pop_event() {
+            self.waits.apply_event(event);
+        }
+    }
+}
+
+fn join_path(base: &[u8], name: &[u8]) -> Vec<u8> {
+    let mut path = Vec::with_capacity(base.len() + name.len() + 1);
+    path.extend_from_slice(base);
+    if !base.ends_with(b"/") {
+        path.push(b'/');
+    }
+    path.extend_from_slice(name);
+    path
 }

@@ -6,11 +6,12 @@ use core::panic::PanicInfo;
 use core::slice;
 
 use vmos_abi::{
-    SYS_CLOSE, SYS_EXIT, SYS_GETCWD, SYS_GETDENTS64, SYS_NANOSLEEP, SYS_OPENAT, SYS_READ,
-    SYS_READLINKAT, SYS_UNAME, SYS_WRITE,
+    FUTEX_WAIT, SYS_CLOSE, SYS_EXIT, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_NANOSLEEP,
+    SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE,
 };
 
 const AT_FDCWD: i32 = -100;
+const ETIMEDOUT: i32 = 110;
 const O_RDONLY: u32 = 0;
 
 static FILE_LABEL: &[u8] = b"-- /sandbox/hello.txt --\n";
@@ -20,6 +21,7 @@ static DENTS_LABEL: &[u8] = b"-- getdents64('/') --\n";
 static CWD_LABEL: &[u8] = b"getcwd() -> ";
 static LINK_LABEL: &[u8] = b"readlinkat('/sandbox/readme.link') -> ";
 static UNAME_LABEL: &[u8] = b"uname() -> ";
+static FUTEX_LABEL: &[u8] = b"futex wait timed out as expected\n";
 static SLEEP_LABEL: &[u8] = b"ring3 ELF resumed after nanosleep\n";
 static ERROR_LABEL: &[u8] = b"ring3 ELF demo failed\n";
 
@@ -28,6 +30,7 @@ static FILE_PATH: &[u8] = b"/sandbox/hello.txt\0";
 static PROC_PATH: &[u8] = b"/proc/self/status\0";
 static LINK_PATH: &[u8] = b"/sandbox/readme.link\0";
 static DEV_PATH: &[u8] = b"/dev/zero\0";
+static FUTEX_WORD: u32 = 1;
 
 #[repr(C)]
 struct Timespec {
@@ -73,6 +76,7 @@ fn run() -> Result<(), i32> {
     show_getcwd()?;
     show_readlink()?;
     show_uname()?;
+    check_futex_timeout()?;
     do_sleep()?;
     Ok(())
 }
@@ -175,6 +179,27 @@ fn do_sleep() -> Result<(), i32> {
     };
     sys_nanosleep(&req)?;
     write_all(SLEEP_LABEL)
+}
+
+fn check_futex_timeout() -> Result<(), i32> {
+    let timeout = Timespec {
+        tv_sec: 0,
+        tv_nsec: 5_000_000,
+    };
+    let rc = syscall6(
+        SYS_FUTEX,
+        (&raw const FUTEX_WORD) as u64,
+        FUTEX_WAIT as u64,
+        1,
+        &timeout as *const Timespec as u64,
+        0,
+        0,
+    );
+    if rc != -(ETIMEDOUT as i64) {
+        return Err(-1);
+    }
+
+    write_all(FUTEX_LABEL)
 }
 
 fn open_readonly(path: &[u8]) -> Result<i32, i32> {
@@ -338,6 +363,25 @@ fn syscall4(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
             in("rsi") a1,
             in("rdx") a2,
             in("r10") a3,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+    }
+    ret
+}
+
+fn syscall6(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
+    let ret: i64;
+    unsafe {
+        asm!(
+            "syscall",
+            inlateout("rax") nr as i64 => ret,
+            in("rdi") a0,
+            in("rsi") a1,
+            in("rdx") a2,
+            in("r10") a3,
+            in("r8") a4,
+            in("r9") a5,
             lateout("rcx") _,
             lateout("r11") _,
         );

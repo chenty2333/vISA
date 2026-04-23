@@ -2,9 +2,25 @@ use alloc::vec::Vec;
 
 use vmos_abi::{NodeKind, ServiceRoute};
 
+pub(crate) type TaskId = u32;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InjectedFault {
     ProcfsRead,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WaitKind {
+    Timer,
+    Futex,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WaitToken {
+    pub(crate) id: u64,
+    pub(crate) owner_task: TaskId,
+    pub(crate) kind: WaitKind,
+    pub(crate) generation: u64,
 }
 
 #[derive(Clone, Debug)]
