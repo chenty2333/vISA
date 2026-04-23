@@ -5,6 +5,8 @@ pub const SYS_WRITE: u64 = 1;
 pub const SYS_CLOSE: u64 = 3;
 pub const SYS_NANOSLEEP: u64 = 35;
 pub const SYS_FUTEX: u64 = 202;
+pub const SYS_EPOLL_WAIT: u64 = 232;
+pub const SYS_EPOLL_CTL: u64 = 233;
 pub const SYS_UNAME: u64 = 63;
 pub const SYS_GETCWD: u64 = 79;
 pub const SYS_GETDENTS64: u64 = 217;
@@ -12,6 +14,7 @@ pub const SYS_EXIT: u64 = 60;
 pub const SYS_EXIT_GROUP: u64 = 231;
 pub const SYS_OPENAT: u64 = 257;
 pub const SYS_READLINKAT: u64 = 267;
+pub const SYS_EPOLL_CREATE1: u64 = 291;
 
 pub const FD_STDOUT: u32 = 1;
 pub const FD_STDERR: u32 = 2;
@@ -19,8 +22,12 @@ pub const FD_STDERR: u32 = 2;
 pub const WAIT_TOKEN_SLEEP: u32 = 1;
 pub const FUTEX_WAIT: u32 = 0;
 pub const FUTEX_WAKE: u32 = 1;
+pub const EPOLL_CTL_ADD: u32 = 1;
+pub const EPOLL_CTL_DEL: u32 = 2;
+pub const EPOLLIN: u32 = 0x001;
 
 pub const ERR_ENOENT: i32 = 2;
+pub const ERR_EINTR: i32 = 4;
 pub const ERR_EIO: i32 = 5;
 pub const ERR_EBADF: i32 = 9;
 pub const ERR_EAGAIN: i32 = 11;
@@ -86,6 +93,10 @@ pub enum PlanKind {
     Sleep = 9,
     FutexWait = 10,
     FutexWake = 11,
+    EpollCreate1 = 12,
+    EpollCtl = 13,
+    EpollWait = 14,
+    EpollReady = 15,
 }
 
 impl PlanKind {
@@ -102,6 +113,25 @@ impl PlanKind {
             9 => Some(Self::Sleep),
             10 => Some(Self::FutexWait),
             11 => Some(Self::FutexWake),
+            12 => Some(Self::EpollCreate1),
+            13 => Some(Self::EpollCtl),
+            14 => Some(Self::EpollWait),
+            15 => Some(Self::EpollReady),
+            _ => None,
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestartClass {
+    DriverRestart = 1,
+}
+
+impl RestartClass {
+    pub const fn from_raw(raw: u32) -> Option<Self> {
+        match raw {
+            1 => Some(Self::DriverRestart),
             _ => None,
         }
     }

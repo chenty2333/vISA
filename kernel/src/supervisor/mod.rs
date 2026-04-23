@@ -1,6 +1,7 @@
 mod demos;
 mod events;
 mod linux;
+mod pulse;
 mod runtime;
 mod scheduler;
 mod services;

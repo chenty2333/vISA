@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use vmos_abi::ERR_ETIMEDOUT;
 
 use super::events::Event;
-use super::types::{TaskId, WaitKind, WaitToken};
+use super::types::{TaskId, WaitKind, WaitRestartClass, WaitToken};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum WaitRegistration {
@@ -15,18 +15,26 @@ pub(crate) enum WaitRegistration {
         timeout_ms: Option<u32>,
         resume_cookie: u32,
     },
+    Epoll {
+        epoll_id: u32,
+        max_events: u32,
+        timeout_ms: Option<u32>,
+        resume_cookie: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WaitOutcome {
     Ready,
     Cancelled(i32),
+    Restart(WaitRestartClass),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WaitResolution {
     pub(crate) outcome: WaitOutcome,
     pub(crate) resume_cookie: u32,
+    pub(crate) source: WaitSource,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,12 +42,14 @@ enum WaitState {
     Pending,
     Ready,
     Cancelled(i32),
+    Restart(WaitRestartClass),
 }
 
-#[derive(Clone, Copy, Debug)]
-enum WaitSource {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WaitSource {
     Timer,
     Futex,
+    Epoll { epoll_id: u32, max_events: u32 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -91,6 +101,21 @@ impl WaitRegistry {
                 timeout_ms
                     .map(|delay_ms| now_ticks.saturating_add(ms_to_ticks(delay_ms, timer_hz))),
             ),
+            WaitRegistration::Epoll {
+                epoll_id,
+                max_events,
+                timeout_ms,
+                resume_cookie,
+            } => (
+                WaitKind::Epoll,
+                WaitSource::Epoll {
+                    epoll_id,
+                    max_events,
+                },
+                resume_cookie,
+                timeout_ms
+                    .map(|delay_ms| now_ticks.saturating_add(ms_to_ticks(delay_ms, timer_hz))),
+            ),
         };
 
         let token = WaitToken {
@@ -138,6 +163,7 @@ impl WaitRegistry {
                 WaitSource::Futex => {
                     events.push(Event::WaitCancelled(record.token.id, ERR_ETIMEDOUT))
                 }
+                WaitSource::Epoll { .. } => events.push(Event::WaitReady(record.token.id)),
             }
         }
     }
@@ -146,6 +172,7 @@ impl WaitRegistry {
         match event {
             Event::WaitReady(id) => self.mark_ready(id),
             Event::WaitCancelled(id, errno) => self.mark_cancelled(id, errno),
+            Event::WaitRestart(id, class) => self.mark_restart(id, class),
         }
     }
 
@@ -163,10 +190,17 @@ impl WaitRegistry {
             WaitState::Ready => Some(WaitResolution {
                 outcome: WaitOutcome::Ready,
                 resume_cookie: record.resume_cookie,
+                source: record.source,
             }),
             WaitState::Cancelled(errno) => Some(WaitResolution {
                 outcome: WaitOutcome::Cancelled(errno),
                 resume_cookie: record.resume_cookie,
+                source: record.source,
+            }),
+            WaitState::Restart(class) => Some(WaitResolution {
+                outcome: WaitOutcome::Restart(class),
+                resume_cookie: record.resume_cookie,
+                source: record.source,
             }),
         }
     }
@@ -180,6 +214,12 @@ impl WaitRegistry {
     fn mark_cancelled(&mut self, token_id: u64, errno: i32) {
         if let Some(record) = self.find_mut(token_id) {
             record.state = WaitState::Cancelled(errno);
+        }
+    }
+
+    fn mark_restart(&mut self, token_id: u64, class: WaitRestartClass) {
+        if let Some(record) = self.find_mut(token_id) {
+            record.state = WaitState::Restart(class);
         }
     }
 

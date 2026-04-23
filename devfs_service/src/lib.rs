@@ -9,7 +9,8 @@ use vmos_abi::{ERR_EINVAL, ERR_ENOENT, ERR_ENOTDIR, NodeKind};
 const REQUEST_CAPACITY: usize = 256;
 const RESPONSE_CAPACITY: usize = 4096;
 
-static DEV_DIR: &[u8] = b"null\nzero\n";
+static DEV_DIR: &[u8] = b"null\nzero\npulse\n";
+static PULSE_BYTES: &[u8] = b"pulse\n";
 
 static mut REQUEST: [u8; REQUEST_CAPACITY] = [0; REQUEST_CAPACITY];
 static mut RESPONSE: [u8; RESPONSE_CAPACITY] = [0; RESPONSE_CAPACITY];
@@ -48,7 +49,7 @@ pub extern "C" fn lookup(path_len: u32, inject_fault: u32) -> i32 {
 
     match request_bytes(path_len) {
         Ok(b"/dev") => set_kind(NodeKind::Directory),
-        Ok(b"/dev/null") | Ok(b"/dev/zero") => set_kind(NodeKind::CharDevice),
+        Ok(b"/dev/null") | Ok(b"/dev/zero") | Ok(b"/dev/pulse") => set_kind(NodeKind::CharDevice),
         Ok(_) => -ERR_ENOENT,
         Err(errno) => errno,
     }
@@ -62,7 +63,7 @@ pub extern "C" fn list_dir(path_len: u32, inject_fault: u32) -> i32 {
 
     match request_bytes(path_len) {
         Ok(b"/dev") => copy_response(DEV_DIR),
-        Ok(b"/dev/null") | Ok(b"/dev/zero") => -ERR_ENOTDIR,
+        Ok(b"/dev/null") | Ok(b"/dev/zero") | Ok(b"/dev/pulse") => -ERR_ENOTDIR,
         Ok(_) => -ERR_ENOENT,
         Err(errno) => errno,
     }
@@ -83,6 +84,9 @@ pub extern "C" fn read_device(path_len: u32, max_len: u32, inject_fault: u32) ->
             }
             count as i32
         }
+        Ok(b"/dev/pulse") => {
+            copy_response(&PULSE_BYTES[..core::cmp::min(max_len as usize, PULSE_BYTES.len())])
+        }
         Ok(_) => -ERR_ENOENT,
         Err(errno) => errno,
     }
@@ -96,7 +100,7 @@ pub extern "C" fn write_device(path_len: u32, data_len: u32, inject_fault: u32) 
 
     match request_bytes(path_len) {
         Ok(b"/dev/null") => data_len as i32,
-        Ok(b"/dev/zero") => -ERR_EINVAL,
+        Ok(b"/dev/zero") | Ok(b"/dev/pulse") => -ERR_EINVAL,
         Ok(_) => -ERR_ENOENT,
         Err(errno) => errno,
     }

@@ -5,9 +5,10 @@ use core::ptr::addr_of_mut;
 use core::slice;
 
 use vmos_abi::{
-    ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_WAIT, FUTEX_WAKE, PackedStep, PlanKind, SYS_CLOSE,
-    SYS_EXIT, SYS_EXIT_GROUP, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_NANOSLEEP, SYS_OPENAT,
-    SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE, is_stdio_fd,
+    EPOLLIN, ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_WAIT, FUTEX_WAKE, PackedStep, PlanKind,
+    RestartClass, SYS_CLOSE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT,
+    SYS_EXIT_GROUP, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_NANOSLEEP, SYS_OPENAT, SYS_READ,
+    SYS_READLINKAT, SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -26,6 +27,11 @@ enum PendingOp {
     Empty,
     Sleep,
     FutexWait,
+    EpollWait {
+        epfd: u32,
+        max_events: u32,
+        timeout_ms: u64,
+    },
 }
 
 #[repr(C)]
@@ -45,6 +51,12 @@ struct GuestUtsName {
     domainname: [u8; UTS_FIELD_LEN],
 }
 
+#[repr(C, packed)]
+struct GuestEpollEvent {
+    events: u32,
+    data: u64,
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64 {
     let step = match nr {
@@ -53,6 +65,9 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_CLOSE => plan_close(a0),
         SYS_NANOSLEEP => dispatch_nanosleep(a0, a1),
         SYS_FUTEX => dispatch_futex(a0, a1, a2, a3, a4, a5),
+        SYS_EPOLL_CREATE1 => plan_epoll_create1(a0),
+        SYS_EPOLL_CTL => plan_epoll_ctl(a0, a1, a2, a3, a4),
+        SYS_EPOLL_WAIT => plan_epoll_wait(a0, a1, a2),
         SYS_UNAME => plan_simple(PlanKind::Uname),
         SYS_GETCWD => plan_getcwd(a1),
         SYS_GETDENTS64 => plan_getdents(a0, a2),
@@ -83,7 +98,41 @@ pub extern "C" fn resume_wait(token: u32) -> u64 {
             PackedStep::plan(PlanKind::Write).raw()
         }
         Some(PendingOp::FutexWait) => PackedStep::ready(0).raw(),
+        Some(PendingOp::EpollWait {
+            epfd, max_events, ..
+        }) => {
+            reset_plan(
+                PlanKind::EpollReady,
+                [epfd as u64, max_events as u64, 0, 0, 0, 0],
+            );
+            PackedStep::plan(PlanKind::EpollReady).raw()
+        }
         _ => PackedStep::error(-ERR_EINVAL).raw(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn cancel_wait(token: u32, errno: i32) -> u64 {
+    match take_pending_op(token) {
+        Some(_) => PackedStep::error(-errno).raw(),
+        None => PackedStep::error(-ERR_EINVAL).raw(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn restart_wait(token: u32, class: u32) -> u64 {
+    let Some(class) = RestartClass::from_raw(class) else {
+        return PackedStep::error(-ERR_EINVAL).raw();
+    };
+    match peek_pending_op(token) {
+        Some(PendingOp::EpollWait {
+            epfd,
+            max_events,
+            timeout_ms,
+        }) => restart_epoll_wait(token, epfd, max_events, timeout_ms, class).raw(),
+        Some(PendingOp::Sleep) | Some(PendingOp::FutexWait) | Some(PendingOp::Empty) | None => {
+            PackedStep::error(-ERR_EINVAL).raw()
+        }
     }
 }
 
@@ -165,6 +214,14 @@ pub extern "C" fn encode_dirents64(records_ptr: u32, records_len: u32, max_len: 
     pack_dirents64(records, max_len as usize)
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn encode_epoll_events(records_ptr: u32, records_len: u32, max_events: u32) -> i32 {
+    let Ok(records) = arg_bytes(records_ptr, records_len) else {
+        return -ERR_EINVAL;
+    };
+    pack_epoll_events(records, max_events as usize)
+}
+
 fn dispatch_nanosleep(ptr: u64, len: u64) -> PackedStep {
     let ptr = ptr as u32;
     let len = len as u32;
@@ -241,6 +298,42 @@ fn plan_futex_wake(key: u64, count: u64) -> PackedStep {
     let count = count.min(u32::MAX as u64);
     reset_plan(PlanKind::FutexWake, [key, count, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::FutexWake)
+}
+
+fn plan_epoll_create1(flags: u64) -> PackedStep {
+    let flags = (flags as u32) as u64;
+    reset_plan(PlanKind::EpollCreate1, [flags, 0, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::EpollCreate1)
+}
+
+fn plan_epoll_ctl(epfd: u64, op: u64, fd: u64, events: u64, data: u64) -> PackedStep {
+    reset_plan(PlanKind::EpollCtl, [epfd, op, fd, events, data, 0]);
+    PackedStep::plan(PlanKind::EpollCtl)
+}
+
+fn plan_epoll_wait(epfd: u64, max_events: u64, timeout_ms: u64) -> PackedStep {
+    if max_events == 0 {
+        return PackedStep::error(-ERR_EINVAL);
+    }
+
+    let Some(resume_cookie) = allocate_pending_op(PendingOp::EpollWait {
+        epfd: epfd as u32,
+        max_events: max_events as u32,
+        timeout_ms,
+    }) else {
+        return PackedStep::error(-ERR_EINVAL);
+    };
+
+    let timeout_ms = if timeout_ms < 0_i64 as u64 {
+        u64::MAX
+    } else {
+        timeout_ms
+    };
+    reset_plan(
+        PlanKind::EpollWait,
+        [epfd, max_events, timeout_ms, resume_cookie as u64, 0, 0],
+    );
+    PackedStep::plan(PlanKind::EpollWait)
 }
 
 fn plan_write(fd: u64, ptr: u64, len: u64) -> PackedStep {
@@ -332,6 +425,43 @@ fn take_pending_op(token: u32) -> Option<PendingOp> {
     }
 }
 
+fn peek_pending_op(token: u32) -> Option<PendingOp> {
+    if token == 0 || token as usize > PENDING_SLOTS {
+        return None;
+    }
+
+    unsafe {
+        let slot = (core::ptr::addr_of!(PENDING_OPS) as *const PendingOp).add(token as usize - 1);
+        let op = *slot;
+        match op {
+            PendingOp::Empty => None,
+            _ => Some(op),
+        }
+    }
+}
+
+fn restart_epoll_wait(
+    resume_cookie: u32,
+    epfd: u32,
+    max_events: u32,
+    timeout_ms: u64,
+    class: RestartClass,
+) -> PackedStep {
+    let _ = class;
+    reset_plan(
+        PlanKind::EpollWait,
+        [
+            epfd as u64,
+            max_events as u64,
+            timeout_ms,
+            resume_cookie as u64,
+            0,
+            0,
+        ],
+    );
+    PackedStep::plan(PlanKind::EpollWait)
+}
+
 fn parse_timespec_ms(ptr: u32, len: u32) -> Result<u64, i32> {
     if len != core::mem::size_of::<GuestTimespec>() as u32 {
         return Err(-ERR_EINVAL);
@@ -411,6 +541,36 @@ fn pack_dirents64(records: &[u8], max_len: usize) -> i32 {
         out[out_len + 19..out_len + 19 + name.len()].copy_from_slice(name);
         out_len += reclen;
         next_off += 1;
+    }
+
+    write_result_bytes(&out[..out_len])
+}
+
+fn pack_epoll_events(records: &[u8], max_events: usize) -> i32 {
+    if records.len() % 12 != 0 {
+        return -ERR_EINVAL;
+    }
+
+    let count = core::cmp::min(records.len() / 12, max_events.max(1));
+    let mut out = [0u8; RESULT_BUFFER_CAPACITY];
+    let mut out_len = 0usize;
+    for index in 0..count {
+        let offset = index * 12;
+        let event = GuestEpollEvent {
+            events: u32::from_le_bytes(records[offset..offset + 4].try_into().unwrap()) | EPOLLIN,
+            data: u64::from_le_bytes(records[offset + 4..offset + 12].try_into().unwrap()),
+        };
+        let bytes = unsafe {
+            slice::from_raw_parts(
+                (&event as *const GuestEpollEvent).cast::<u8>(),
+                core::mem::size_of::<GuestEpollEvent>(),
+            )
+        };
+        if out_len + bytes.len() > RESULT_BUFFER_CAPACITY {
+            break;
+        }
+        out[out_len..out_len + bytes.len()].copy_from_slice(bytes);
+        out_len += bytes.len();
     }
 
     write_result_bytes(&out[..out_len])

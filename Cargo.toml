@@ -4,6 +4,7 @@ members = [
     "abi",
     "console_service",
     "devfs_service",
+    "epoll_service",
     "futex_service",
     "kernel",
     "linux_user_demo",

@@ -7,19 +7,23 @@ use wasmi::Engine;
 
 use crate::interrupts;
 use vmos_abi::{
-    ERR_EBADF, ERR_EINVAL, FD_STDOUT, NodeKind, PackedStep, PlanKind, SYS_CLOSE, SYS_GETCWD,
-    SYS_GETDENTS64, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE, ServiceRoute,
-    StepTag, SyscallContext,
+    ERR_EAGAIN, ERR_EBADF, ERR_EINVAL, FD_STDOUT, NodeKind, PackedStep, PlanKind, SYS_CLOSE,
+    SYS_GETCWD, SYS_GETDENTS64, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE,
+    ServiceRoute, StepTag, SyscallContext,
 };
 
 use super::events::Event;
 use super::linux::{LinuxCallResult, LinuxFrontend, LinuxPlan};
+use super::pulse::{PulseDevice, PulseEvent};
 use super::scheduler::Scheduler;
 use super::services::{
-    ConsoleService, DevfsService, FutexService, ProcfsService, VfsService, WasmApp,
+    ConsoleService, DevfsService, EpollService, FutexService, ProcfsService, VfsService, WasmApp,
 };
-use super::types::{FdEntry, InjectedFault, LookupInfo, ServiceCallError, TaskId, WaitToken};
-use super::wait::{WaitOutcome, WaitRegistration, WaitRegistry};
+use super::types::{
+    FdEntry, FdResource, InjectedFault, LookupInfo, ServiceCallError, TaskId, WaitRestartClass,
+    WaitToken,
+};
+use super::wait::{WaitOutcome, WaitRegistration, WaitRegistry, WaitSource};
 
 pub(super) const CURRENT_CWD: &[u8] = b"/sandbox";
 pub(super) const UNAME_BYTES: &[u8] = b"prototype2";
@@ -46,6 +50,7 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) procfs_engine: &'engine Engine,
     pub(super) procfs: Option<ProcfsService>,
     pub(super) devfs: DevfsService,
+    pub(super) epoll: EpollService,
     pub(super) futex: FutexService,
     pub(super) linux: LinuxFrontend<'engine>,
     pub(super) app: WasmApp<'engine>,
@@ -53,6 +58,8 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) fault: Option<InjectedFault>,
     pub(super) scheduler: Scheduler,
     pub(super) waits: WaitRegistry,
+    pub(super) pulse: PulseDevice,
+    pub(super) restart_count: u64,
 }
 
 impl<'engine> PrototypeRuntime<'engine> {
@@ -63,6 +70,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             procfs_engine: engine,
             procfs: Some(ProcfsService::new(engine)?),
             devfs: DevfsService::new(engine)?,
+            epoll: EpollService::new(engine)?,
             futex: FutexService::new(engine)?,
             linux: LinuxFrontend::new(engine)?,
             app: WasmApp::new(engine)?,
@@ -70,6 +78,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             fault: None,
             scheduler: Scheduler::new(),
             waits: WaitRegistry::new(),
+            pulse: PulseDevice::new(interrupts::tick_count()),
+            restart_count: 0,
         })
     }
 
@@ -171,8 +181,22 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.expect_ret("close", result)
     }
 
+    pub(crate) fn restart_count(&self) -> u64 {
+        self.restart_count
+    }
+
+    pub(crate) fn inject_wait_restart(&mut self, token: WaitToken, class: WaitRestartClass) {
+        self.scheduler
+            .push_event(Event::WaitRestart(token.id, class));
+        self.drain_event_queue();
+    }
+
     pub(crate) fn fd_path(&self, fd: u32) -> Result<Vec<u8>, i32> {
-        Ok(self.fd_entry(fd).ok_or(ERR_EBADF)?.path.clone())
+        let entry = self.fd_entry(fd).ok_or(ERR_EBADF)?;
+        match &entry.resource {
+            FdResource::ServiceNode { path, .. } => Ok(path.clone()),
+            FdResource::EpollInstance { .. } => Err(ERR_EBADF),
+        }
     }
 
     pub(crate) fn path_kind(&mut self, path: &[u8]) -> Result<NodeKind, i32> {
@@ -250,7 +274,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.linux.write_arg_bytes(bytes)
     }
 
-    fn expect_ret(
+    pub(crate) fn expect_ret(
         &self,
         context: &'static str,
         result: LinuxCallResult,
@@ -269,7 +293,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    fn expect_bytes(
+    pub(crate) fn expect_bytes(
         &self,
         context: &'static str,
         result: LinuxCallResult,
@@ -338,6 +362,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Sleep => self.plan_sleep(plan),
             PlanKind::FutexWait => self.plan_futex_wait(plan),
             PlanKind::FutexWake => self.plan_futex_wake(plan),
+            PlanKind::EpollCreate1 => self.plan_epoll_create1(plan),
+            PlanKind::EpollCtl => self.plan_epoll_ctl(plan),
+            PlanKind::EpollWait => self.plan_epoll_wait(plan),
+            PlanKind::EpollReady => self.plan_epoll_ready(plan),
         }
     }
 
@@ -418,11 +446,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(LinuxCallResult::Ret(bytes.len() as i64));
         }
 
-        let (route, _node, _cursor, path) = self
-            .fd_snapshot(fd)
-            .map_err(|_| "write targeted an unknown file descriptor")?;
-        match route {
-            ServiceRoute::Devfs => {
+        let entry = self
+            .fd_entry(fd)
+            .ok_or("write targeted an unknown file descriptor")?;
+        match &entry.resource {
+            FdResource::ServiceNode { route, path, .. } if *route == ServiceRoute::Devfs => {
+                let path = path.clone();
                 match self.devfs.write_device(&path, bytes.len() as u32, false) {
                     Ok(count) => Ok(LinuxCallResult::Ret(count as i64)),
                     Err(ServiceCallError::Errno(errno)) => {
@@ -444,9 +473,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         match self.lookup_path(&path) {
             Ok(info) => {
                 let fd = self.alloc_fd(FdEntry {
-                    route: info.route,
-                    node: info.node,
-                    path,
+                    resource: FdResource::ServiceNode {
+                        route: info.route,
+                        node: info.node,
+                        path,
+                    },
                     cursor: 0,
                 });
                 Ok(LinuxCallResult::Ret(fd as i64))
@@ -458,6 +489,131 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Invalid(err)) => Err(err),
         }
+    }
+
+    fn plan_epoll_create1(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let flags = u32::try_from(plan.args[0]).map_err(|_| "epoll_create1 flags overflowed")?;
+        match self.epoll.create(flags) {
+            Ok(epoll_id) => {
+                let fd = self.alloc_fd(FdEntry {
+                    resource: FdResource::EpollInstance { epoll_id },
+                    cursor: 0,
+                });
+                Ok(LinuxCallResult::Ret(fd as i64))
+            }
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("epoll_create1: {}", reason);
+                Err("epoll_service trapped during epoll_create1")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
+    fn plan_epoll_ctl(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let epfd = u32::try_from(plan.args[0]).map_err(|_| "epoll_ctl epfd overflowed")?;
+        let op = u32::try_from(plan.args[1]).map_err(|_| "epoll_ctl op overflowed")?;
+        let fd = u32::try_from(plan.args[2]).map_err(|_| "epoll_ctl fd overflowed")?;
+        let events = u32::try_from(plan.args[3]).map_err(|_| "epoll_ctl events overflowed")?;
+        let data = plan.args[4];
+        let epoll_id = self
+            .epoll_id_from_fd(epfd)
+            .map_err(|_| "epoll_ctl targeted an invalid epoll fd")?;
+        let ready_key = self
+            .fd_ready_key(fd)
+            .map_err(|_| "epoll_ctl targeted a non-pollable fd")?;
+        match self.epoll.ctl(epoll_id, op, ready_key, events, data) {
+            Ok(()) => {
+                if self.pulse.is_ready_key(ready_key) {
+                    let _ = self.epoll.notify_ready(ready_key);
+                }
+                Ok(LinuxCallResult::Ret(0))
+            }
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("epoll_ctl: {}", reason);
+                Err("epoll_service trapped during epoll_ctl")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
+    fn plan_epoll_wait(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let epfd = u32::try_from(plan.args[0]).map_err(|_| "epoll_wait epfd overflowed")?;
+        let max_events =
+            u32::try_from(plan.args[1]).map_err(|_| "epoll_wait max_events overflowed")?;
+        let timeout_ms = if plan.args[2] == u64::MAX {
+            None
+        } else {
+            Some(u32::try_from(plan.args[2]).map_err(|_| "epoll_wait timeout overflowed")?)
+        };
+        let resume_cookie =
+            u32::try_from(plan.args[3]).map_err(|_| "epoll_wait resume cookie overflowed")?;
+        let epoll_id = self
+            .epoll_id_from_fd(epfd)
+            .map_err(|_| "epoll_wait targeted an invalid epoll fd")?;
+
+        self.pump_async_sources();
+        let ready = match self.epoll.collect_ready(epoll_id, max_events) {
+            Ok(bytes) => bytes,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("epoll_wait collect_ready: {}", reason);
+                return Err("epoll_service trapped during epoll_wait");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        if !ready.is_empty() {
+            return self.encode_epoll_ready(&ready, max_events);
+        }
+        if timeout_ms == Some(0) {
+            return Ok(LinuxCallResult::Ret(0));
+        }
+
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::Epoll {
+                epoll_id,
+                max_events,
+                timeout_ms,
+                resume_cookie,
+            },
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+        match self.epoll.arm_wait(epoll_id, token.id) {
+            Ok(()) => Ok(LinuxCallResult::Pending(token)),
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("epoll_wait arm_wait: {}", reason);
+                Err("epoll_service trapped during epoll_wait")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
+    fn plan_epoll_ready(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let epoll_id =
+            u32::try_from(plan.args[0]).map_err(|_| "epoll_ready epoll id overflowed")?;
+        let max_events =
+            u32::try_from(plan.args[1]).map_err(|_| "epoll_ready max_events overflowed")?;
+        let ready = match self.epoll.collect_ready(epoll_id, max_events) {
+            Ok(bytes) => bytes,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("epoll_ready: {}", reason);
+                return Err("epoll_service trapped during epoll ready");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        if ready.is_empty() {
+            return Ok(LinuxCallResult::Ret(0));
+        }
+        self.encode_epoll_ready(&ready, max_events)
     }
 
     fn plan_read(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
@@ -543,7 +699,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn read_from_fd(&mut self, fd: u32, count: u32) -> Result<Vec<u8>, ServiceCallError> {
-        let (route, node, cursor, path) = self.fd_snapshot(fd)?;
+        let (route, node, cursor, path) = self.service_fd_snapshot(fd)?;
         if node == NodeKind::Directory {
             return Err(ServiceCallError::Errno(vmos_abi::ERR_EISDIR));
         }
@@ -551,7 +707,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         let bytes = match route {
             ServiceRoute::Vfs => self.vfs.read_file(&path, false)?,
             ServiceRoute::Procfs => self.procfs_read_with_recovery(&path)?,
-            ServiceRoute::Devfs => self.devfs.read_device(&path, count, false)?,
+            ServiceRoute::Devfs => {
+                if let Some(bytes) = self.pulse.read(&path, count, interrupts::tick_count()) {
+                    bytes.to_vec()
+                } else if path == b"/dev/pulse" {
+                    return Err(ServiceCallError::Errno(ERR_EAGAIN));
+                } else {
+                    self.devfs.read_device(&path, count, false)?
+                }
+            }
         };
 
         let start = cursor.min(bytes.len());
@@ -562,7 +726,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn read_dir_entries(&mut self, fd: u32, count: u32) -> Result<Vec<u8>, ServiceCallError> {
-        let (route, node, cursor, path) = self.fd_snapshot(fd)?;
+        let (route, node, cursor, path) = self.service_fd_snapshot(fd)?;
         if node != NodeKind::Directory {
             return Err(ServiceCallError::Errno(vmos_abi::ERR_ENOTDIR));
         }
@@ -662,14 +826,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.fd_table.get(fd as usize)?.as_ref()
     }
 
-    fn fd_snapshot(
+    fn service_fd_snapshot(
         &self,
         fd: u32,
     ) -> Result<(ServiceRoute, NodeKind, usize, Vec<u8>), ServiceCallError> {
         let entry = self
             .fd_entry(fd)
             .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
-        Ok((entry.route, entry.node, entry.cursor, entry.path.clone()))
+        match &entry.resource {
+            FdResource::ServiceNode { route, node, path } => {
+                Ok((*route, *node, entry.cursor, path.clone()))
+            }
+            FdResource::EpollInstance { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+        }
     }
 
     fn set_fd_cursor(&mut self, fd: u32, cursor: usize) -> Result<(), ServiceCallError> {
@@ -682,47 +851,129 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(())
     }
 
+    fn epoll_id_from_fd(&self, fd: u32) -> Result<u32, ServiceCallError> {
+        match self.fd_entry(fd) {
+            Some(FdEntry {
+                resource: FdResource::EpollInstance { epoll_id },
+                ..
+            }) => Ok(*epoll_id),
+            _ => Err(ServiceCallError::Errno(ERR_EBADF)),
+        }
+    }
+
+    fn fd_ready_key(&self, fd: u32) -> Result<u64, ServiceCallError> {
+        let entry = self
+            .fd_entry(fd)
+            .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+        match &entry.resource {
+            FdResource::ServiceNode {
+                route: ServiceRoute::Devfs,
+                path,
+                ..
+            } => PulseDevice::ready_key_for_path(path).ok_or(ServiceCallError::Errno(ERR_EINVAL)),
+            _ => Err(ServiceCallError::Errno(ERR_EINVAL)),
+        }
+    }
+
     fn procfs_mut(&mut self) -> &mut ProcfsService {
         self.procfs
             .as_mut()
             .expect("procfs service should always be installed outside recovery")
     }
 
+    fn collect_epoll_ready(
+        &mut self,
+        epoll_id: u32,
+        max_events: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let ready = match self.epoll.collect_ready(epoll_id, max_events) {
+            Ok(bytes) => bytes,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("epoll collect_ready: {}", reason);
+                return Err("epoll_service trapped while collecting ready events");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        if ready.is_empty() {
+            return Ok(LinuxCallResult::Ret(0));
+        }
+        self.encode_epoll_ready(&ready, max_events)
+    }
+
+    fn encode_epoll_ready(
+        &mut self,
+        records: &[u8],
+        max_events: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let bytes = self.linux.encode_epoll_events(records, max_events)?;
+        Ok(LinuxCallResult::Bytes(bytes))
+    }
+
     pub(super) fn block_on_wait(
         &mut self,
-        _label: &str,
+        label: &str,
         token: WaitToken,
     ) -> Result<LinuxCallResult, &'static str> {
         crate::substrate::dmw::assert_quiescent()
             .map_err(|_| "entered Pending with an active DMW lease")?;
         loop {
-            let mut due_events = vec![];
-            self.waits
-                .collect_due_events(interrupts::tick_count(), &mut due_events);
-            for event in due_events {
-                self.scheduler.push_event(event);
-            }
-            self.drain_event_queue();
+            self.pump_async_sources();
 
             if let Some(resolution) = self.waits.take_resolution(token) {
                 return match resolution.outcome {
-                    WaitOutcome::Ready => {
-                        let resumed = self.linux.resume_wait(resolution.resume_cookie)?;
-                        self.execute_linux_step("linux_resume", resumed)
-                    }
+                    WaitOutcome::Ready => match resolution.source {
+                        WaitSource::Epoll {
+                            epoll_id,
+                            max_events,
+                        } => {
+                            let _ = self.linux.resume_wait(resolution.resume_cookie)?;
+                            self.collect_epoll_ready(epoll_id, max_events)
+                        }
+                        _ => {
+                            let resumed = self.linux.resume_wait(resolution.resume_cookie)?;
+                            self.execute_linux_step("linux_resume", resumed)
+                        }
+                    },
                     WaitOutcome::Cancelled(errno) => {
-                        if token.kind == super::types::WaitKind::Futex {
-                            match self.futex.cancel_wait(token.id) {
-                                Ok(()) | Err(ServiceCallError::Errno(_)) => {}
-                                Err(ServiceCallError::Trap(reason)) => {
-                                    crate::kwarn!("futex cancel: {}", reason);
-                                }
-                                Err(ServiceCallError::Invalid(err)) => {
-                                    crate::kwarn!("futex cancel: {}", err);
+                        match token.kind {
+                            super::types::WaitKind::Futex => {
+                                match self.futex.cancel_wait(token.id) {
+                                    Ok(()) | Err(ServiceCallError::Errno(_)) => {}
+                                    Err(ServiceCallError::Trap(reason)) => {
+                                        crate::kwarn!("futex cancel: {}", reason);
+                                    }
+                                    Err(ServiceCallError::Invalid(err)) => {
+                                        crate::kwarn!("futex cancel: {}", err);
+                                    }
                                 }
                             }
+                            super::types::WaitKind::Epoll => {
+                                match self.epoll.cancel_wait(token.id) {
+                                    Ok(()) | Err(ServiceCallError::Errno(_)) => {}
+                                    Err(ServiceCallError::Trap(reason)) => {
+                                        crate::kwarn!("epoll cancel: {}", reason);
+                                    }
+                                    Err(ServiceCallError::Invalid(err)) => {
+                                        crate::kwarn!("epoll cancel: {}", err);
+                                    }
+                                }
+                            }
+                            super::types::WaitKind::Timer => {}
                         }
-                        Ok(LinuxCallResult::Ret(-(errno as i64)))
+                        let cancelled = self.linux.cancel_wait(resolution.resume_cookie, errno)?;
+                        self.execute_linux_step("linux_cancel", cancelled)
+                    }
+                    WaitOutcome::Restart(class) => {
+                        self.restart_count += 1;
+                        crate::kinfo!("{} restarted as {:?}", label, class);
+                        let restarted = self.linux.restart_wait(resolution.resume_cookie, class)?;
+                        Ok(match self.execute_linux_step("linux_restart", restarted)? {
+                            LinuxCallResult::Pending(next) => self.block_on_wait(label, next),
+                            ready => Ok(ready),
+                        }?)
                     }
                 };
             }
@@ -735,6 +986,59 @@ impl<'engine> PrototypeRuntime<'engine> {
         while let Some(event) = self.scheduler.pop_event() {
             self.waits.apply_event(event);
         }
+    }
+
+    fn pump_async_sources(&mut self) {
+        let mut due_events = vec![];
+        self.waits
+            .collect_due_events(interrupts::tick_count(), &mut due_events);
+        for event in due_events {
+            self.scheduler.push_event(event);
+        }
+
+        let mut pulse_events = Vec::new();
+        self.pulse
+            .collect_events(interrupts::tick_count(), &mut pulse_events);
+        for event in pulse_events {
+            match event {
+                PulseEvent::Ready(ready_key) => match self.epoll.notify_ready(ready_key) {
+                    Ok(wait_ids) => {
+                        for wait_id in wait_ids {
+                            self.scheduler.push_event(Event::WaitReady(wait_id));
+                        }
+                    }
+                    Err(ServiceCallError::Trap(reason)) => {
+                        crate::kwarn!("epoll ready notification: {}", reason);
+                    }
+                    Err(ServiceCallError::Invalid(err)) => {
+                        crate::kwarn!("epoll ready notification: {}", err);
+                    }
+                    Err(ServiceCallError::Errno(errno)) => {
+                        crate::kwarn!("epoll ready notification errno={}", errno);
+                    }
+                },
+                PulseEvent::Restart(ready_key) => match self.epoll.restart_key(ready_key) {
+                    Ok(wait_ids) => {
+                        for wait_id in wait_ids {
+                            self.scheduler.push_event(Event::WaitRestart(
+                                wait_id,
+                                WaitRestartClass::DriverRestart,
+                            ));
+                        }
+                    }
+                    Err(ServiceCallError::Trap(reason)) => {
+                        crate::kwarn!("epoll restart notification: {}", reason);
+                    }
+                    Err(ServiceCallError::Invalid(err)) => {
+                        crate::kwarn!("epoll restart notification: {}", err);
+                    }
+                    Err(ServiceCallError::Errno(errno)) => {
+                        crate::kwarn!("epoll restart notification errno={}", errno);
+                    }
+                },
+            }
+        }
+        self.drain_event_queue();
     }
 }
 

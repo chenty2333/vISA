@@ -1,9 +1,12 @@
 use alloc::collections::VecDeque;
 
+use super::types::WaitRestartClass;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Event {
     WaitReady(u64),
     WaitCancelled(u64, i32),
+    WaitRestart(u64, WaitRestartClass),
 }
 
 pub(crate) struct EventQueue {

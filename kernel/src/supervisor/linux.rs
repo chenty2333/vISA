@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use wasmi::{Engine, Linker, Memory, Store, TypedFunc};
 
-use super::types::WaitToken;
+use super::types::{WaitRestartClass, WaitToken};
 use super::wasm::{get_memory, load_module, read_memory};
 use vmos_abi::{PackedStep, PlanKind, SyscallContext};
 
@@ -33,9 +33,12 @@ pub(super) struct LinuxFrontend<'engine> {
     dispatch_sleep_ms: TypedFunc<u64, u64>,
     dispatch_futex_raw: TypedFunc<(u64, u64, u64, u64, u64), u64>,
     resume_wait: TypedFunc<u32, u64>,
+    cancel_wait: TypedFunc<(u32, i32), u64>,
+    restart_wait: TypedFunc<(u32, u32), u64>,
     plan_arg: TypedFunc<u32, u64>,
     encode_uname: TypedFunc<(u32, u32), i32>,
     encode_dirents64: TypedFunc<(u32, u32, u32), i32>,
+    encode_epoll_events: TypedFunc<(u32, u32, u32), i32>,
     _engine: &'engine Engine,
 }
 
@@ -80,6 +83,12 @@ impl<'engine> LinuxFrontend<'engine> {
         let resume_wait = instance
             .get_typed_func::<u32, u64>(&store, "resume_wait")
             .map_err(|_| "missing linux resume_wait export")?;
+        let cancel_wait = instance
+            .get_typed_func::<(u32, i32), u64>(&store, "cancel_wait")
+            .map_err(|_| "missing linux cancel_wait export")?;
+        let restart_wait = instance
+            .get_typed_func::<(u32, u32), u64>(&store, "restart_wait")
+            .map_err(|_| "missing linux restart_wait export")?;
         let plan_arg = instance
             .get_typed_func::<u32, u64>(&store, "plan_arg")
             .map_err(|_| "missing linux plan_arg export")?;
@@ -89,6 +98,9 @@ impl<'engine> LinuxFrontend<'engine> {
         let encode_dirents64 = instance
             .get_typed_func::<(u32, u32, u32), i32>(&store, "encode_dirents64")
             .map_err(|_| "missing linux encode_dirents64 export")?;
+        let encode_epoll_events = instance
+            .get_typed_func::<(u32, u32, u32), i32>(&store, "encode_epoll_events")
+            .map_err(|_| "missing linux encode_epoll_events export")?;
 
         Ok(Self {
             store,
@@ -101,9 +113,12 @@ impl<'engine> LinuxFrontend<'engine> {
             dispatch_sleep_ms,
             dispatch_futex_raw,
             resume_wait,
+            cancel_wait,
+            restart_wait,
             plan_arg,
             encode_uname,
             encode_dirents64,
+            encode_epoll_events,
             _engine: engine,
         })
     }
@@ -129,6 +144,22 @@ impl<'engine> LinuxFrontend<'engine> {
         self.resume_wait
             .call(&mut self.store, token)
             .map_err(|_| "linux_syscall resume trapped")
+    }
+
+    pub(super) fn cancel_wait(&mut self, token: u32, errno: i32) -> Result<u64, &'static str> {
+        self.cancel_wait
+            .call(&mut self.store, (token, errno))
+            .map_err(|_| "linux_syscall cancel trapped")
+    }
+
+    pub(super) fn restart_wait(
+        &mut self,
+        token: u32,
+        class: WaitRestartClass,
+    ) -> Result<u64, &'static str> {
+        self.restart_wait
+            .call(&mut self.store, (token, class as u32))
+            .map_err(|_| "linux_syscall restart trapped")
     }
 
     pub(super) fn dispatch_sleep_ms(&mut self, delay_ms: u64) -> Result<u64, &'static str> {
@@ -186,6 +217,21 @@ impl<'engine> LinuxFrontend<'engine> {
             .map_err(|_| "linux_syscall encode_dirents64 trapped")?;
         self.read_result_bytes(
             u32::try_from(out_len).map_err(|_| "linux dirent output was too large")?,
+        )
+    }
+
+    pub(super) fn encode_epoll_events(
+        &mut self,
+        records: &[u8],
+        max_events: u32,
+    ) -> Result<Vec<u8>, &'static str> {
+        let (ptr, len) = self.write_arg_bytes(records)?;
+        let out_len = self
+            .encode_epoll_events
+            .call(&mut self.store, (ptr, len, max_events))
+            .map_err(|_| "linux_syscall encode_epoll_events trapped")?;
+        self.read_result_bytes(
+            u32::try_from(out_len).map_err(|_| "linux epoll output was too large")?,
         )
     }
 

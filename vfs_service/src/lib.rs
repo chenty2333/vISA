@@ -65,7 +65,7 @@ pub extern "C" fn lookup(path_len: u32, inject_fault: u32) -> i32 {
         | Ok(b"/proc/self/status")
         | Ok(b"/proc/self/cwd")
         | Ok(b"/proc/meminfo") => set_lookup(ServiceRoute::Procfs, infer_procfs_kind(path_len)),
-        Ok(b"/dev") | Ok(b"/dev/null") | Ok(b"/dev/zero") => {
+        Ok(b"/dev") | Ok(b"/dev/null") | Ok(b"/dev/zero") | Ok(b"/dev/pulse") => {
             set_lookup(ServiceRoute::Devfs, infer_devfs_kind(path_len))
         }
         Ok(_) => -ERR_ENOENT,

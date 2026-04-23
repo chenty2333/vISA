@@ -3,11 +3,14 @@ use core::fmt::Write;
 
 use crate::serial;
 use crate::serial_println;
-use vmos_abi::{FD_STDOUT, FUTEX_WAIT, FUTEX_WAKE, PackedStep, SYS_FUTEX, StepTag, SyscallContext};
+use vmos_abi::{
+    EPOLL_CTL_ADD, EPOLLIN, FD_STDOUT, FUTEX_WAIT, FUTEX_WAKE, PackedStep, SYS_EPOLL_CREATE1,
+    SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_FUTEX, StepTag, SyscallContext,
+};
 
 use super::linux::LinuxCallResult;
 use super::runtime::PrototypeRuntime;
-use super::types::InjectedFault;
+use super::types::{InjectedFault, WaitRestartClass};
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn run_prototype_demos(&mut self) -> Result<(), &'static str> {
@@ -19,6 +22,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.run_linux_metadata_demo()?;
         self.run_sleep_demo()?;
         self.run_futex_demo()?;
+        self.run_epoll_demo()?;
         self.run_procfs_recovery_demo()?;
         Ok(())
     }
@@ -181,6 +185,60 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Err("futex waiter resumed with an unexpected result")
             }
         }
+    }
+
+    fn run_epoll_demo(&mut self) -> Result<(), &'static str> {
+        serial_println!("== epoll demo ==");
+        self.pulse.reset_sequence(crate::interrupts::tick_count());
+        let pulse_fd = self.open_path(b"/dev/pulse")?;
+        let created = self.dispatch_linux_syscall(
+            "epoll_create1",
+            SyscallContext::new(SYS_EPOLL_CREATE1, [0, 0, 0, 0, 0, 0]),
+        )?;
+        let epfd = self.expect_ret("epoll_create1", created)? as u32;
+        let ctl = self.dispatch_linux_syscall(
+            "epoll_ctl",
+            SyscallContext::new(
+                SYS_EPOLL_CTL,
+                [
+                    epfd as u64,
+                    EPOLL_CTL_ADD as u64,
+                    pulse_fd as u64,
+                    EPOLLIN as u64,
+                    0x33,
+                    0,
+                ],
+            ),
+        )?;
+        let added = self.expect_ret("epoll_ctl", ctl)?;
+        serial_println!("epoll_ctl(add /dev/pulse) -> {}", added);
+
+        let before = self.restart_count();
+        let waited = match self.dispatch_linux_syscall_raw(
+            "epoll_wait",
+            SyscallContext::new(SYS_EPOLL_WAIT, [epfd as u64, 1, 40, 0, 0, 0]),
+        )? {
+            LinuxCallResult::Pending(token) => {
+                self.inject_wait_restart(token, WaitRestartClass::DriverRestart);
+                self.block_on_wait("epoll_wait", token)?
+            }
+            ready => ready,
+        };
+        let events = self.expect_bytes("epoll_wait", waited)?;
+        if self.restart_count() > before {
+            serial_println!("epoll_wait restarted after pulse source restart");
+        }
+        serial_println!("epoll_wait(...) -> {}", events.len() / 12);
+
+        let pulse = self.read_fd(pulse_fd, 16)?;
+        serial_println!(
+            "pulse fd read -> {}",
+            core::str::from_utf8(&pulse).unwrap_or("<invalid utf8>")
+        );
+
+        self.close_fd(pulse_fd)?;
+        self.close_fd(epfd)?;
+        Ok(())
     }
 
     fn handle_wasm_step(&mut self, label: &str, step: u64) -> Result<(), &'static str> {

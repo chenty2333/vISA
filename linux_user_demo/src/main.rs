@@ -6,8 +6,9 @@ use core::panic::PanicInfo;
 use core::slice;
 
 use vmos_abi::{
-    FUTEX_WAIT, SYS_CLOSE, SYS_EXIT, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_NANOSLEEP,
-    SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE,
+    EPOLL_CTL_ADD, EPOLLIN, FUTEX_WAIT, SYS_CLOSE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+    SYS_EPOLL_WAIT, SYS_EXIT, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_NANOSLEEP, SYS_OPENAT,
+    SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE,
 };
 
 const AT_FDCWD: i32 = -100;
@@ -22,6 +23,7 @@ static CWD_LABEL: &[u8] = b"getcwd() -> ";
 static LINK_LABEL: &[u8] = b"readlinkat('/sandbox/readme.link') -> ";
 static UNAME_LABEL: &[u8] = b"uname() -> ";
 static FUTEX_LABEL: &[u8] = b"futex wait timed out as expected\n";
+static EPOLL_LABEL: &[u8] = b"/dev/pulse became readable via epoll\n";
 static SLEEP_LABEL: &[u8] = b"ring3 ELF resumed after nanosleep\n";
 static ERROR_LABEL: &[u8] = b"ring3 ELF demo failed\n";
 
@@ -30,6 +32,7 @@ static FILE_PATH: &[u8] = b"/sandbox/hello.txt\0";
 static PROC_PATH: &[u8] = b"/proc/self/status\0";
 static LINK_PATH: &[u8] = b"/sandbox/readme.link\0";
 static DEV_PATH: &[u8] = b"/dev/zero\0";
+static PULSE_PATH: &[u8] = b"/dev/pulse\0";
 static FUTEX_WORD: u32 = 1;
 
 #[repr(C)]
@@ -56,6 +59,12 @@ struct LinuxDirent64Head {
     ty: u8,
 }
 
+#[repr(C, packed)]
+struct EpollEvent {
+    events: u32,
+    data: u64,
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     let code = match run() {
@@ -77,6 +86,7 @@ fn run() -> Result<(), i32> {
     show_readlink()?;
     show_uname()?;
     check_futex_timeout()?;
+    check_epoll_pulse()?;
     do_sleep()?;
     Ok(())
 }
@@ -202,6 +212,32 @@ fn check_futex_timeout() -> Result<(), i32> {
     write_all(FUTEX_LABEL)
 }
 
+fn check_epoll_pulse() -> Result<(), i32> {
+    let pulse_fd = open_readonly(PULSE_PATH)?;
+    let epfd = sys_epoll_create1(0)?;
+    let ctl_event = EpollEvent {
+        events: EPOLLIN,
+        data: pulse_fd as u64,
+    };
+    sys_epoll_ctl(epfd, EPOLL_CTL_ADD as i32, pulse_fd, &ctl_event)?;
+
+    let mut events = [EpollEvent { events: 0, data: 0 }; 1];
+    let ready = sys_epoll_wait(epfd, &mut events, 40)?;
+    if ready != 1 {
+        return Err(-1);
+    }
+
+    let mut pulse = [0u8; 16];
+    let len = sys_read(pulse_fd, &mut pulse)?;
+    close_fd(pulse_fd)?;
+    close_fd(epfd)?;
+    if &pulse[..len] != b"pulse\n" {
+        return Err(-1);
+    }
+
+    write_all(EPOLL_LABEL)
+}
+
 fn open_readonly(path: &[u8]) -> Result<i32, i32> {
     let rc = syscall4(
         SYS_OPENAT,
@@ -252,6 +288,41 @@ fn sys_getdents64(fd: i32, buffer: &mut [u8]) -> Result<usize, i32> {
 
 fn sys_getcwd(buffer: &mut [u8]) -> Result<usize, i32> {
     let rc = syscall2(SYS_GETCWD, buffer.as_mut_ptr() as u64, buffer.len() as u64);
+    if rc < 0 {
+        Err(rc as i32)
+    } else {
+        Ok(rc as usize)
+    }
+}
+
+fn sys_epoll_create1(flags: u32) -> Result<i32, i32> {
+    let rc = syscall1(SYS_EPOLL_CREATE1, flags as u64);
+    if rc < 0 {
+        Err(rc as i32)
+    } else {
+        Ok(rc as i32)
+    }
+}
+
+fn sys_epoll_ctl(epfd: i32, op: i32, fd: i32, event: &EpollEvent) -> Result<(), i32> {
+    let rc = syscall4(
+        SYS_EPOLL_CTL,
+        epfd as u64,
+        op as u64,
+        fd as u64,
+        event as *const EpollEvent as u64,
+    );
+    if rc < 0 { Err(rc as i32) } else { Ok(()) }
+}
+
+fn sys_epoll_wait(epfd: i32, events: &mut [EpollEvent], timeout_ms: i32) -> Result<usize, i32> {
+    let rc = syscall4(
+        SYS_EPOLL_WAIT,
+        epfd as u64,
+        events.as_mut_ptr() as u64,
+        events.len() as u64,
+        timeout_ms as u64,
+    );
     if rc < 0 {
         Err(rc as i32)
     } else {

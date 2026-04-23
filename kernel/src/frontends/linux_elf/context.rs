@@ -21,6 +21,7 @@ pub(crate) struct ActiveUserContext {
     pub(crate) regions: Vec<UserRegion>,
     pub(crate) task_id: TaskId,
     pub(crate) activation_id: u64,
+    next_activation_id: u64,
 }
 
 static mut ACTIVE_CONTEXT: *mut ActiveUserContext = null_mut();
@@ -35,7 +36,21 @@ impl ActiveUserContext {
             supervisor,
             regions,
             task_id,
-            activation_id: task_id as u64,
+            activation_id: 0,
+            next_activation_id: (task_id as u64) << 32 | 1,
+        }
+    }
+
+    pub(crate) fn begin_activation(&mut self) -> u64 {
+        let activation_id = self.next_activation_id;
+        self.next_activation_id += 1;
+        self.activation_id = activation_id;
+        activation_id
+    }
+
+    pub(crate) fn finish_activation(&mut self, activation_id: u64) {
+        if self.activation_id == activation_id {
+            self.activation_id = 0;
         }
     }
 }

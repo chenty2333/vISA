@@ -2,9 +2,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const MODULES: [&str; 7] = [
+const MODULES: [&str; 8] = [
     "console_service",
     "devfs_service",
+    "epoll_service",
     "futex_service",
     "linux_syscall",
     "procfs_service",
