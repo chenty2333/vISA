@@ -5,6 +5,7 @@ members = [
     "console_service",
     "devfs_service",
     "kernel",
+    "linux_user_demo",
     "linux_syscall",
     "procfs_service",
     "runner",
@@ -21,6 +22,7 @@ uart_16550 = "0.3.2"
 vmos_abi = { path = "abi" }
 wasmi = { version = "1.0.9", default-features = false }
 x86_64 = { version = "0.15.4", default-features = false, features = ["abi_x86_interrupt", "instructions"] }
+xmas-elf = { version = "0.9.1", default-features = false }
 
 [profile.dev]
 debug = 0

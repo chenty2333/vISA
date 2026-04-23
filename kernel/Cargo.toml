@@ -17,3 +17,4 @@ uart_16550.workspace = true
 vmos_abi.workspace = true
 wasmi.workspace = true
 x86_64.workspace = true
+xmas-elf.workspace = true

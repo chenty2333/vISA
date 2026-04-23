@@ -6,11 +6,13 @@
 extern crate alloc;
 
 mod debugcon;
-mod demo;
+mod frontends;
 mod interrupts;
 mod log;
 mod qemu;
 mod serial;
+mod substrate;
+mod supervisor;
 mod user_mode;
 
 use core::alloc::Layout;
@@ -49,7 +51,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     crate::kinfo!("booting substrate");
     crate::kinfo!("starting linear prototype");
 
-    if let Err(err) = demo::run() {
+    if let Err(err) = supervisor::run() {
         crate::kerror!("demo failed: {}", err);
         serial_println!("vmos: demo failed: {}", err);
         qemu::exit_failed();

@@ -20,6 +20,7 @@ pub const WAIT_TOKEN_SLEEP: u32 = 1;
 pub const ERR_ENOENT: i32 = 2;
 pub const ERR_EIO: i32 = 5;
 pub const ERR_EBADF: i32 = 9;
+pub const ERR_EFAULT: i32 = 14;
 pub const ERR_ENOTDIR: i32 = 20;
 pub const ERR_EISDIR: i32 = 21;
 pub const ERR_EINVAL: i32 = 22;

@@ -1,0 +1,12 @@
+[package]
+name = "linux_user_demo"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[[bin]]
+name = "linux_user_demo"
+path = "src/main.rs"
+
+[dependencies]
+vmos_abi.workspace = true

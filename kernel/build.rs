@@ -11,6 +11,8 @@ const MODULES: [&str; 6] = [
     "wasm_app",
 ];
 
+const USER_BINARIES: [&str; 1] = ["linux_user_demo"];
+
 fn main() {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("missing manifest dir"));
@@ -24,6 +26,13 @@ fn main() {
     for module in MODULES {
         build_module(&cargo, workspace_root, &target_dir, module);
         expose_artifact_path(workspace_root, &target_dir, module);
+    }
+
+    let user_target_dir =
+        PathBuf::from(env::var_os("OUT_DIR").expect("missing OUT_DIR")).join("user-target");
+    for binary in USER_BINARIES {
+        build_user_binary(&cargo, workspace_root, &user_target_dir, binary);
+        expose_user_binary_path(workspace_root, &user_target_dir, binary);
     }
 }
 
@@ -55,5 +64,36 @@ fn expose_artifact_path(workspace_root: &Path, target_dir: &Path, module: &str) 
         .join("debug")
         .join(format!("{module}.wasm"));
     let env_key = format!("VMOS_{}_WASM", module.to_ascii_uppercase());
+    println!("cargo:rustc-env={}={}", env_key, artifact.display());
+}
+
+fn build_user_binary(cargo: &str, workspace_root: &Path, target_dir: &Path, binary: &str) {
+    let status = Command::new(cargo)
+        .current_dir(workspace_root)
+        .env("CARGO_TARGET_DIR", target_dir)
+        .args(["build", "-p", binary, "--target", "x86_64-unknown-none"])
+        .status()
+        .unwrap_or_else(|err| panic!("failed to spawn cargo for {binary}: {err}"));
+
+    if !status.success() {
+        panic!("building {binary} for x86_64-unknown-none failed");
+    }
+}
+
+fn expose_user_binary_path(workspace_root: &Path, target_dir: &Path, binary: &str) {
+    println!(
+        "cargo:rerun-if-changed={}",
+        workspace_root.join(binary).display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        workspace_root.join("abi").display()
+    );
+
+    let artifact = target_dir
+        .join("x86_64-unknown-none")
+        .join("debug")
+        .join(binary);
+    let env_key = format!("VMOS_{}_ELF", binary.to_ascii_uppercase());
     println!("cargo:rustc-env={}={}", env_key, artifact.display());
 }
