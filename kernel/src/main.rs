@@ -1,4 +1,5 @@
 #![feature(alloc_error_handler)]
+#![feature(abi_x86_interrupt)]
 #![no_std]
 #![no_main]
 
@@ -10,10 +11,12 @@ mod interrupts;
 mod log;
 mod qemu;
 mod serial;
+mod user_mode;
 
 use core::alloc::Layout;
 use core::panic::PanicInfo;
 
+use bootloader_api::config::{BootloaderConfig, Mapping};
 use bootloader_api::{BootInfo, entry_point};
 use linked_list_allocator::LockedHeap;
 use x86_64::instructions::hlt;
@@ -24,31 +27,38 @@ static ALLOCATOR: LockedHeap = LockedHeap::empty();
 const HEAP_SIZE: usize = 8 * 1024 * 1024;
 static mut HEAP_SPACE: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
 
-entry_point!(kernel_main);
+const BOOTLOADER_CONFIG: BootloaderConfig = {
+    let mut config = BootloaderConfig::new_default();
+    config.mappings.physical_memory = Some(Mapping::Dynamic);
+    config
+};
 
-fn kernel_main(_boot_info: &'static mut BootInfo) -> ! {
+entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
+
+fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     crate::ktrace!("kernel_main entered");
     serial::init();
     crate::ktrace!("serial ready");
     init_heap();
     crate::ktrace!("heap ready");
+    user_mode::init();
+    crate::ktrace!("user mode ready");
     interrupts::init();
     crate::ktrace!("interrupts ready");
 
     crate::kinfo!("booting substrate");
     crate::kinfo!("starting linear prototype");
 
-    match demo::run() {
-        Ok(()) => {
-            serial_println!("vmos: demo completed");
-            crate::kinfo!("demo completed");
-            qemu::exit_success();
-        }
-        Err(err) => {
-            crate::kerror!("demo failed: {}", err);
-            serial_println!("vmos: demo failed: {}", err);
-            qemu::exit_failed();
-        }
+    if let Err(err) = demo::run() {
+        crate::kerror!("demo failed: {}", err);
+        serial_println!("vmos: demo failed: {}", err);
+        qemu::exit_failed();
+    }
+
+    if let Err(err) = user_mode::run_demo(boot_info) {
+        crate::kerror!("user mode demo failed: {}", err);
+        serial_println!("vmos: demo failed: {}", err);
+        qemu::exit_failed();
     }
 
     crate::ktrace!("entering halt loop");

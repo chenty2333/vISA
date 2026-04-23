@@ -18,9 +18,9 @@ pub const WAIT_TOKEN_SLEEP: u32 = 1;
 pub const ERR_EINVAL: i32 = 22;
 pub const ERR_ENOSYS: i32 = 38;
 
-const TAG_SHIFT: u64 = 56;
+const TAG_SHIFT: u64 = 60;
 const AUX_SHIFT: u64 = 32;
-const AUX_MASK: u64 = 0x00FF_FFFF;
+const AUX_MASK: u64 = 0x0FFF_FFFF;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,8 +81,8 @@ impl PackedStep {
         Self::pack(StepTag::Pending, token, delay_ms as i32)
     }
 
-    pub const fn console_write(fd: u32, message_id: u32) -> Self {
-        Self::pack(StepTag::ConsoleWrite, message_id, fd as i32)
+    pub const fn console_write(ptr: u32, len: u32) -> Self {
+        Self::pack(StepTag::ConsoleWrite, ptr, len as i32)
     }
 
     pub const fn exit(code: i32) -> Self {
@@ -114,9 +114,6 @@ pub const fn is_stdio_fd(fd: u64) -> bool {
     fd == FD_STDOUT as u64 || fd == FD_STDERR as u64
 }
 
-pub const fn is_known_message(message_id: u32) -> bool {
-    matches!(
-        message_id,
-        MSG_WASM_APP | MSG_LINUX_WRITE | MSG_FAULT_RECOVERY | MSG_SLEEP_RESUMED
-    )
+pub const fn can_pack_console_ptr(ptr: u32) -> bool {
+    (ptr as u64) <= AUX_MASK
 }

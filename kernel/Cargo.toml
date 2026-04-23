@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 bootloader_api.workspace = true
 linked_list_allocator.workspace = true
+pic8259.workspace = true
 spin.workspace = true
 uart_16550.workspace = true
 vmos_abi.workspace = true

@@ -51,15 +51,16 @@ impl<'engine> DemoRuntime<'engine> {
     fn run_wasm_frontend(&mut self) -> Result<(), &'static str> {
         serial_println!("== wasm frontend demo ==");
         let step = self.app.run()?;
-        self.handle_step("wasm_app", step, false)?;
+        self.handle_step("wasm_app", StepSource::WasmApp, step, false)?;
         Ok(())
     }
 
     fn run_linux_write_demo(&mut self) -> Result<(), &'static str> {
         serial_println!("== linux write demo ==");
-        let ctx = SyscallContext::new(SYS_WRITE, [1, MSG_LINUX_WRITE as u64, 0, 0, 0, 0]);
+        let (ptr, len) = self.linux.demo_message(MSG_LINUX_WRITE)?;
+        let ctx = SyscallContext::new(SYS_WRITE, [1, ptr as u64, len as u64, 0, 0, 0]);
         let step = self.linux.dispatch(ctx)?;
-        self.handle_step("linux_write", step, false)?;
+        self.handle_step("linux_write", StepSource::LinuxFrontend, step, false)?;
         Ok(())
     }
 
@@ -81,21 +82,18 @@ impl<'engine> DemoRuntime<'engine> {
         interrupts::sleep_ms(decoded.value as u32);
 
         let resume = self.linux.resume_wait(decoded.aux)?;
-        self.handle_step("linux_resume", resume, false)?;
+        self.handle_step("linux_resume", StepSource::LinuxFrontend, resume, false)?;
         crate::kinfo!("nanosleep completed with explicit resume");
         Ok(())
     }
 
     fn run_fault_recovery_demo(&mut self) -> Result<(), &'static str> {
         serial_println!("== local recovery demo ==");
-        let ctx = SyscallContext::new(SYS_WRITE, [1, MSG_FAULT_RECOVERY as u64, 0, 0, 0, 0]);
+        let (ptr, len) = self.linux.demo_message(MSG_FAULT_RECOVERY)?;
+        let ctx = SyscallContext::new(SYS_WRITE, [1, ptr as u64, len as u64, 0, 0, 0]);
         let step = self.linux.dispatch(ctx)?;
-        let decoded = self.decode_step(step);
-        if decoded.tag != StepTag::ConsoleWrite {
-            return Err("fault demo did not produce a console write action");
-        }
-
-        match self.console.write_message(decoded.aux, true) {
+        let bytes = self.console_write_bytes(StepSource::LinuxFrontend, step)?;
+        match self.console.write_bytes(&bytes, true) {
             Ok(()) => return Err("fault injection unexpectedly succeeded"),
             Err(_) => {
                 crate::kinfo!("console_service trapped; recreating service store");
@@ -103,7 +101,7 @@ impl<'engine> DemoRuntime<'engine> {
             }
         }
 
-        self.console.write_message(decoded.aux, false)?;
+        self.console.write_bytes(&bytes, false)?;
         crate::kinfo!("console_service recovered locally");
         Ok(())
     }
@@ -111,6 +109,7 @@ impl<'engine> DemoRuntime<'engine> {
     fn handle_step(
         &mut self,
         label: &str,
+        source: StepSource,
         step: u64,
         inject_fault: bool,
     ) -> Result<(), &'static str> {
@@ -121,13 +120,15 @@ impl<'engine> DemoRuntime<'engine> {
                 Ok(())
             }
             StepTag::ConsoleWrite => {
+                let len = decoded.value as u32;
                 crate::kdebug!(
-                    "{}: ConsoleWrite(fd={}, message_id={})",
+                    "{}: ConsoleWrite(ptr=0x{:x}, len={})",
                     label,
-                    decoded.value,
-                    decoded.aux
+                    decoded.aux,
+                    len
                 );
-                self.console.write_message(decoded.aux, inject_fault)
+                let bytes = self.console_write_bytes(source, step)?;
+                self.console.write_bytes(&bytes, inject_fault)
             }
             StepTag::Pending => Err("unexpected pending step"),
             StepTag::Exit => {
@@ -141,15 +142,38 @@ impl<'engine> DemoRuntime<'engine> {
     fn decode_step(&self, raw: u64) -> DecodedStep {
         PackedStep::decode(raw)
     }
+
+    fn console_write_bytes(
+        &mut self,
+        source: StepSource,
+        step: u64,
+    ) -> Result<Vec<u8>, &'static str> {
+        let decoded = self.decode_step(step);
+        if decoded.tag != StepTag::ConsoleWrite {
+            return Err("step was not a console write");
+        }
+
+        let len = u32::try_from(decoded.value).map_err(|_| "console write length was negative")?;
+        match source {
+            StepSource::WasmApp => self.app.read_bytes(decoded.aux, len),
+            StepSource::LinuxFrontend => self.linux.read_bytes(decoded.aux, len),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StepSource {
+    WasmApp,
+    LinuxFrontend,
 }
 
 struct ConsoleService<'engine> {
     engine: &'engine Engine,
     store: Store<()>,
     memory: Memory,
-    write_message: TypedFunc<(u32, u32), i32>,
-    message_ptr: TypedFunc<u32, u32>,
-    message_len: TypedFunc<u32, u32>,
+    buffer_ptr: u32,
+    buffer_capacity: u32,
+    commit_write: TypedFunc<(u32, u32), i32>,
 }
 
 impl<'engine> ConsoleService<'engine> {
@@ -161,53 +185,56 @@ impl<'engine> ConsoleService<'engine> {
             .instantiate_and_start(&mut store, &module)
             .map_err(|_| "failed to instantiate console_service")?;
         let memory = get_memory(&mut store, &instance)?;
-        let write_message = instance
-            .get_typed_func::<(u32, u32), i32>(&store, "write_message")
-            .map_err(|_| "missing write_message export")?;
-        let message_ptr = instance
-            .get_typed_func::<u32, u32>(&store, "message_ptr")
-            .map_err(|_| "missing message_ptr export")?;
-        let message_len = instance
-            .get_typed_func::<u32, u32>(&store, "message_len")
-            .map_err(|_| "missing message_len export")?;
+        let buffer_ptr = instance
+            .get_typed_func::<(), u32>(&store, "buffer_ptr")
+            .map_err(|_| "missing buffer_ptr export")?
+            .call(&mut store, ())
+            .map_err(|_| "failed to fetch console buffer ptr")?;
+        let buffer_capacity = instance
+            .get_typed_func::<(), u32>(&store, "buffer_capacity")
+            .map_err(|_| "missing buffer_capacity export")?
+            .call(&mut store, ())
+            .map_err(|_| "failed to fetch console buffer capacity")?;
+        let commit_write = instance
+            .get_typed_func::<(u32, u32), i32>(&store, "commit_write")
+            .map_err(|_| "missing commit_write export")?;
 
         Ok(Self {
             engine,
             store,
             memory,
-            write_message,
-            message_ptr,
-            message_len,
+            buffer_ptr,
+            buffer_capacity,
+            commit_write,
         })
     }
 
-    fn write_message(&mut self, message_id: u32, inject_fault: bool) -> Result<(), &'static str> {
-        let inject = if inject_fault { 1 } else { 0 };
-        let rc = self
-            .write_message
-            .call(&mut self.store, (message_id, inject))
-            .map_err(|_| "console_service trapped")?;
-        if rc != 0 {
-            return Err("console_service rejected message id");
+    fn write_bytes(&mut self, bytes: &[u8], inject_fault: bool) -> Result<(), &'static str> {
+        if bytes.len() > self.buffer_capacity as usize {
+            return Err("console_service buffer too small");
         }
 
-        let bytes = self.read_message(message_id)?;
-        serial::write_bytes(&bytes);
+        self.memory
+            .write(&mut self.store, self.buffer_ptr as usize, bytes)
+            .map_err(|_| "failed to write console_service buffer")?;
+        let inject = if inject_fault { 1 } else { 0 };
+        let rc = self
+            .commit_write
+            .call(&mut self.store, (bytes.len() as u32, inject))
+            .map_err(|_| "console_service trapped")?;
+        if rc != 0 {
+            return Err("console_service rejected message");
+        }
+
+        let echoed = self.read_buffer(bytes.len() as u32)?;
+        serial::write_bytes(&echoed);
         Ok(())
     }
 
-    fn read_message(&mut self, message_id: u32) -> Result<Vec<u8>, &'static str> {
-        let ptr = self
-            .message_ptr
-            .call(&mut self.store, message_id)
-            .map_err(|_| "failed to fetch message_ptr")?;
-        let len = self
-            .message_len
-            .call(&mut self.store, message_id)
-            .map_err(|_| "failed to fetch message_len")?;
+    fn read_buffer(&mut self, len: u32) -> Result<Vec<u8>, &'static str> {
         let mut buffer = vec![0_u8; len as usize];
         self.memory
-            .read(&self.store, ptr as usize, &mut buffer)
+            .read(&self.store, self.buffer_ptr as usize, &mut buffer)
             .map_err(|_| "failed to read console_service memory")?;
         Ok(buffer)
     }
@@ -215,8 +242,11 @@ impl<'engine> ConsoleService<'engine> {
 
 struct LinuxFrontend<'engine> {
     store: Store<()>,
+    memory: Memory,
     dispatch: TypedFunc<(u64, u64, u64, u64, u64, u64, u64), u64>,
     resume_wait: TypedFunc<u32, u64>,
+    demo_message_ptr: TypedFunc<u32, u32>,
+    demo_message_len: TypedFunc<u32, u32>,
     _engine: &'engine Engine,
 }
 
@@ -228,17 +258,27 @@ impl<'engine> LinuxFrontend<'engine> {
         let instance = linker
             .instantiate_and_start(&mut store, &module)
             .map_err(|_| "failed to instantiate linux_syscall")?;
+        let memory = get_memory(&mut store, &instance)?;
         let dispatch = instance
             .get_typed_func::<(u64, u64, u64, u64, u64, u64, u64), u64>(&store, "dispatch")
             .map_err(|_| "missing dispatch export")?;
         let resume_wait = instance
             .get_typed_func::<u32, u64>(&store, "resume_wait")
             .map_err(|_| "missing resume_wait export")?;
+        let demo_message_ptr = instance
+            .get_typed_func::<u32, u32>(&store, "demo_message_ptr")
+            .map_err(|_| "missing demo_message_ptr export")?;
+        let demo_message_len = instance
+            .get_typed_func::<u32, u32>(&store, "demo_message_len")
+            .map_err(|_| "missing demo_message_len export")?;
 
         Ok(Self {
             store,
+            memory,
             dispatch,
             resume_wait,
+            demo_message_ptr,
+            demo_message_len,
             _engine: engine,
         })
     }
@@ -265,10 +305,30 @@ impl<'engine> LinuxFrontend<'engine> {
             .call(&mut self.store, token)
             .map_err(|_| "linux_syscall resume trapped")
     }
+
+    fn demo_message(&mut self, message_id: u32) -> Result<(u32, u32), &'static str> {
+        let ptr = self
+            .demo_message_ptr
+            .call(&mut self.store, message_id)
+            .map_err(|_| "failed to fetch linux demo ptr")?;
+        let len = self
+            .demo_message_len
+            .call(&mut self.store, message_id)
+            .map_err(|_| "failed to fetch linux demo len")?;
+        if len == 0 {
+            return Err("linux demo message was empty");
+        }
+        Ok((ptr, len))
+    }
+
+    fn read_bytes(&mut self, ptr: u32, len: u32) -> Result<Vec<u8>, &'static str> {
+        read_memory(&self.memory, &self.store, ptr, len)
+    }
 }
 
 struct WasmApp<'engine> {
     store: Store<()>,
+    memory: Memory,
     run: TypedFunc<(), u64>,
     _engine: &'engine Engine,
 }
@@ -281,12 +341,14 @@ impl<'engine> WasmApp<'engine> {
         let instance = linker
             .instantiate_and_start(&mut store, &module)
             .map_err(|_| "failed to instantiate wasm_app")?;
+        let memory = get_memory(&mut store, &instance)?;
         let run = instance
             .get_typed_func::<(), u64>(&store, "run")
             .map_err(|_| "missing run export")?;
 
         Ok(Self {
             store,
+            memory,
             run,
             _engine: engine,
         })
@@ -297,6 +359,10 @@ impl<'engine> WasmApp<'engine> {
             .call(&mut self.store, ())
             .map_err(|_| "wasm_app trapped")
     }
+
+    fn read_bytes(&mut self, ptr: u32, len: u32) -> Result<Vec<u8>, &'static str> {
+        read_memory(&self.memory, &self.store, ptr, len)
+    }
 }
 
 fn load_module(engine: &Engine, bytes: &[u8]) -> Result<Module, &'static str> {
@@ -306,8 +372,21 @@ fn load_module(engine: &Engine, bytes: &[u8]) -> Result<Module, &'static str> {
 fn get_memory(store: &mut Store<()>, instance: &Instance) -> Result<Memory, &'static str> {
     match instance.get_export(store, "memory") {
         Some(Extern::Memory(memory)) => Ok(memory),
-        _ => Err("console_service did not export linear memory"),
+        _ => Err("wasm module did not export linear memory"),
     }
+}
+
+fn read_memory(
+    memory: &Memory,
+    store: &Store<()>,
+    ptr: u32,
+    len: u32,
+) -> Result<Vec<u8>, &'static str> {
+    let mut buffer = vec![0_u8; len as usize];
+    memory
+        .read(store, ptr as usize, &mut buffer)
+        .map_err(|_| "failed to read wasm linear memory")?;
+    Ok(buffer)
 }
 
 fn map_wasmi_error(error: Error) -> &'static str {

@@ -1,12 +1,120 @@
+use core::sync::atomic::{AtomicU64, Ordering};
+
+use pic8259::ChainedPics;
+use spin::{Lazy, Mutex};
+use x86_64::instructions::interrupts;
+use x86_64::instructions::port::Port;
+use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
+
+const PIC_1_OFFSET: u8 = 32;
+const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
+const PIT_INPUT_HZ: u32 = 1_193_182;
+const TIMER_HZ: u32 = 1_000;
+
+static TICKS: AtomicU64 = AtomicU64::new(0);
+
+static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
+    let mut idt = InterruptDescriptorTable::new();
+    idt.breakpoint.set_handler_fn(breakpoint_handler);
+    idt.page_fault.set_handler_fn(page_fault_handler);
+    idt.general_protection_fault
+        .set_handler_fn(general_protection_fault_handler);
+    idt[InterruptIndex::Timer.as_u8()].set_handler_fn(timer_interrupt_handler);
+    idt
+});
+
+static PICS: Mutex<ChainedPics> =
+    Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
+
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum InterruptIndex {
+    Timer = PIC_1_OFFSET,
+}
+
+impl InterruptIndex {
+    const fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
 pub fn init() {
-    // Keep the bring-up surface minimal for the prototype.
+    interrupts::disable();
+    IDT.load();
+
+    unsafe {
+        let mut pics = PICS.lock();
+        pics.initialize();
+        pics.write_masks(0b1111_1110, 0xff);
+    }
+
+    init_pit_timer(TIMER_HZ);
+    interrupts::enable();
 }
 
 pub fn sleep_ms(delay_ms: u32) {
-    let outer_loops = delay_ms.max(1) as u64 * 50_000;
-    for _ in 0..outer_loops {
-        for _ in 0..32 {
-            core::hint::spin_loop();
+    if delay_ms == 0 {
+        return;
+    }
+
+    let deadline = tick_count().saturating_add(ms_to_ticks(delay_ms));
+    while tick_count() < deadline {
+        interrupts::disable();
+        if tick_count() >= deadline {
+            interrupts::enable();
+            break;
         }
+
+        interrupts::enable_and_hlt();
+    }
+}
+
+pub fn tick_count() -> u64 {
+    TICKS.load(Ordering::Acquire)
+}
+
+fn ms_to_ticks(delay_ms: u32) -> u64 {
+    let scaled = delay_ms as u64 * TIMER_HZ as u64;
+    scaled.div_ceil(1_000).max(1)
+}
+
+fn init_pit_timer(frequency_hz: u32) {
+    let divisor = (PIT_INPUT_HZ / frequency_hz.max(1)).clamp(1, u16::MAX as u32) as u16;
+    unsafe {
+        let mut command = Port::<u8>::new(0x43);
+        let mut channel0 = Port::<u8>::new(0x40);
+        command.write(0x36);
+        channel0.write((divisor & 0x00ff) as u8);
+        channel0.write((divisor >> 8) as u8);
+    }
+}
+
+extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
+    crate::kwarn!("breakpoint exception: {stack_frame:#?}");
+}
+
+extern "x86-interrupt" fn page_fault_handler(
+    stack_frame: InterruptStackFrame,
+    error_code: x86_64::structures::idt::PageFaultErrorCode,
+) {
+    let accessed = x86_64::registers::control::Cr2::read();
+    panic!(
+        "page fault while accessing {:?}: {:?}\n{stack_frame:#?}",
+        accessed, error_code
+    );
+}
+
+extern "x86-interrupt" fn general_protection_fault_handler(
+    stack_frame: InterruptStackFrame,
+    error_code: u64,
+) {
+    panic!("general protection fault (code={error_code:#x})\n{stack_frame:#?}");
+}
+
+extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    TICKS.fetch_add(1, Ordering::Release);
+    unsafe {
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
     }
 }
