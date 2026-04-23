@@ -1,46 +1,29 @@
 use alloc::vec::Vec;
 
-use wasmi::{Engine, Linker, Memory, Store, TypedFunc};
-
-use super::super::wasm::{get_memory, load_module, read_memory};
+use super::super::engine::{ModuleInstance, SupervisorEngine, WasmFn};
 
 const WASM_APP_WASM: &[u8] = include_bytes!(env!("VMOS_WASM_APP_WASM"));
 
-pub(crate) struct WasmApp<'engine> {
-    store: Store<()>,
-    memory: Memory,
-    run: TypedFunc<(), u64>,
-    _engine: &'engine Engine,
+pub(crate) struct WasmApp {
+    module: ModuleInstance,
+    run: WasmFn<(), u64>,
 }
 
-impl<'engine> WasmApp<'engine> {
-    pub(crate) fn new(engine: &'engine Engine) -> Result<Self, &'static str> {
-        let module = load_module(engine, WASM_APP_WASM)?;
-        let mut store = Store::new(engine, ());
-        let linker = Linker::new(engine);
-        let instance = linker
-            .instantiate_and_start(&mut store, &module)
-            .map_err(|_| "failed to instantiate wasm_app")?;
-        let memory = get_memory(&mut store, &instance)?;
-        let run = instance
-            .get_typed_func::<(), u64>(&store, "run")
-            .map_err(|_| "missing wasm_app run export")?;
+impl WasmApp {
+    pub(crate) fn new(engine: &SupervisorEngine) -> Result<Self, &'static str> {
+        let module =
+            ModuleInstance::instantiate(engine, WASM_APP_WASM, "failed to instantiate wasm_app")?;
+        let run = module.bind("run", "missing wasm_app run export")?;
 
-        Ok(Self {
-            store,
-            memory,
-            run,
-            _engine: engine,
-        })
+        Ok(Self { module, run })
     }
 
     pub(crate) fn run(&mut self) -> Result<u64, &'static str> {
-        self.run
-            .call(&mut self.store, ())
-            .map_err(|_| "wasm_app trapped")
+        self.module.call(&self.run, (), "wasm_app trapped")
     }
 
     pub(crate) fn read_bytes(&mut self, ptr: u32, len: u32) -> Result<Vec<u8>, &'static str> {
-        read_memory(&self.memory, &self.store, ptr, len)
+        self.module
+            .read_memory(ptr, len, "failed to read wasm_app memory")
     }
 }

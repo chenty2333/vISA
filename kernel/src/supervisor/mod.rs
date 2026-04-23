@@ -1,4 +1,5 @@
 mod demos;
+mod engine;
 mod events;
 mod linux;
 mod pulse;
@@ -7,7 +8,6 @@ mod scheduler;
 mod services;
 mod types;
 mod wait;
-mod wasm;
 
 pub(crate) use linux::LinuxCallResult;
 pub(crate) use runtime::{PrototypeRuntime, runtime};
