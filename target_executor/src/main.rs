@@ -8,7 +8,7 @@ use artifact_manifest::{
     MigrationPackageManifest, MigrationTargetManifest, ModuleArtifactManifest,
     RequiredArtifactProfileManifest, SemanticSnapshotManifest, SubstrateBoundaryManifest,
 };
-use semantic_core::SemanticGraph;
+use semantic_core::{SemanticGraph, StoreState};
 use sha2::{Digest, Sha256};
 use supervisor_catalog::{CapabilitySpec, SUPERVISOR_WASM_MODULES, WasmModuleSpec};
 use wasmtime::{Config, Engine, Instance, Module, Precompiled, Store};
@@ -73,6 +73,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         semantic.fault_domain_count()
     );
     println!(
+        "semantic store graph contains {} stores",
+        semantic.store_count()
+    );
+    println!(
         "semantic event log contains {} events",
         semantic.event_count()
     );
@@ -91,7 +95,14 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn register_store_semantics(semantic: &mut SemanticGraph, spec: &WasmModuleSpec) {
-    semantic.register_fault_domain(spec.package, spec.role.as_str());
+    let store = semantic.register_store(
+        spec.package,
+        spec.artifact_name,
+        spec.role.as_str(),
+        spec.fault_policy.as_str(),
+    );
+    semantic.set_store_state(store, StoreState::Instantiating);
+    semantic.set_store_state(store, StoreState::Running);
     for capability in spec.capabilities {
         semantic.grant_capability(
             spec.package,
@@ -173,6 +184,7 @@ fn demo_migration_package(manifest: &ArtifactBundleManifest) -> MigrationPackage
             wait_token_count: 0,
             capability_count,
             fault_domain_count: manifest.modules.len(),
+            store_count: manifest.modules.len(),
         },
         logical_capabilities,
         substrate_boundary: SubstrateBoundaryManifest {
@@ -274,6 +286,9 @@ fn restore_migration_package(
             "migration package requires more fault domains than the executor rebuilt".into(),
         );
     }
+    if package.semantic.store_count > semantic.store_count() {
+        return Err("migration package requires more stores than the executor rebuilt".into());
+    }
     if package.semantic.capability_count > semantic.capability_count() {
         return Err(
             "migration package requires more capabilities than the executor rebound".into(),
@@ -347,7 +362,8 @@ fn restore_migration_package(
         package.semantic.event_log_cursor
     );
     println!(
-        "restore plan: rebuilt {} stores and rebound {} logical capabilities",
+        "restore plan: rebuilt {} stores across {} fault domains and rebound {} logical capabilities",
+        semantic.store_count(),
         semantic.fault_domain_count(),
         package.logical_capabilities.len()
     );

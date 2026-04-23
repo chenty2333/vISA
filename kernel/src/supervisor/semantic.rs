@@ -5,7 +5,8 @@ use alloc::vec::Vec;
 use semantic_core::{
     ArtifactProfile, CapabilityDenyReason, FailureEffect, FrontendKind, GenerationCheckError,
     GuestStateSnapshot, HostcallClass, MigrationPackage, ResourceHandle, ResourceKind,
-    SemanticGraph, SemanticWaitKind, SubstrateBoundarySnapshot, TaskState, WaitHandle,
+    SemanticGraph, SemanticWaitKind, StoreId, StoreState, SubstrateBoundarySnapshot, TaskState,
+    WaitHandle,
 };
 use supervisor_catalog::SUPERVISOR_WASM_MODULES;
 use vmos_abi::PlanKind;
@@ -20,7 +21,14 @@ pub(super) fn bootstrap_graph() -> SemanticGraph {
     graph.set_task_state(1, TaskState::Running);
 
     for spec in SUPERVISOR_WASM_MODULES {
-        graph.register_fault_domain(spec.package, spec.role.as_str());
+        let store = graph.register_store(
+            spec.package,
+            spec.artifact_name,
+            spec.role.as_str(),
+            spec.fault_policy.as_str(),
+        );
+        graph.set_store_state(store, StoreState::Instantiating);
+        graph.set_store_state(store, StoreState::Running);
         for capability in spec.capabilities {
             graph.grant_capability(
                 spec.package,
@@ -81,11 +89,35 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.semantic.fault_domain_count(),
             self.semantic.event_count()
         ));
+        lines.push(format!(
+            "store graph: stores={} live_resources={}",
+            self.semantic.store_count(),
+            self.semantic.live_resource_count()
+        ));
         lines.push("event log tail:".to_string());
         for event in self.semantic.event_log_tail(16) {
             lines.push(event.summary());
         }
         lines
+    }
+
+    pub(crate) fn store_lifecycle_line(&self, package: &str) -> Option<String> {
+        let store = self
+            .semantic
+            .stores()
+            .iter()
+            .find(|store| store.package == package)?;
+        Some(format!(
+            "store {} state={} generation={} restarts={} resource={}",
+            store.package,
+            store.state.as_str(),
+            store.generation,
+            store.restart_count,
+            store
+                .resource
+                .map(|resource| resource.to_string())
+                .unwrap_or_else(|| "none".to_string())
+        ))
     }
 
     pub(super) fn record_wait_token(&mut self, token: WaitToken) {
@@ -153,6 +185,29 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<(), GenerationCheckError> {
         self.semantic
             .validate_wait_handle(WaitHandle::new(token.id, token.generation))
+    }
+
+    pub(crate) fn store_id(&self, package: &str) -> Option<StoreId> {
+        self.semantic.store_id(package)
+    }
+
+    pub(crate) fn record_store_trap(&mut self, store: StoreId, trap: &str) {
+        self.semantic.record_store_trap(store, trap);
+    }
+
+    pub(crate) fn set_store_state(&mut self, store: StoreId, state: StoreState) {
+        self.semantic.set_store_state(store, state);
+    }
+
+    pub(crate) fn drop_store_instance(&mut self, store: StoreId) {
+        self.semantic.drop_store_instance(store);
+    }
+
+    pub(crate) fn rebind_store_instance(&mut self, store: StoreId) -> Result<(), &'static str> {
+        self.semantic
+            .rebind_store_instance(store)
+            .map(|_| ())
+            .ok_or("store to rebind was not present")
     }
 
     pub(crate) fn revoke_capability_for_demo(

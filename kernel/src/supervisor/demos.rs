@@ -142,6 +142,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         let bytes = self.read_fd(fd, 128)?;
         self.close_fd(fd)?;
         serial_println!("procfs recovered after injected fault");
+        if let Some(line) = self.store_lifecycle_line("procfs_service") {
+            serial_println!("{}", line);
+        }
         serial::write_bytes(&bytes);
         if !bytes.ends_with(b"\n") {
             serial_println!();

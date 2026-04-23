@@ -16,6 +16,7 @@ pub type EventId = u64;
 pub type WaitId = u64;
 pub type Generation = u64;
 pub type SnapshotBarrierId = u64;
+pub type StoreId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResourceHandle {
@@ -37,6 +38,18 @@ pub struct WaitHandle {
 
 impl WaitHandle {
     pub const fn new(id: WaitId, generation: Generation) -> Self {
+        Self { id, generation }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoreHandle {
+    pub id: StoreId,
+    pub generation: Generation,
+}
+
+impl StoreHandle {
+    pub const fn new(id: StoreId, generation: Generation) -> Self {
         Self { id, generation }
     }
 }
@@ -201,6 +214,45 @@ impl FaultDomainState {
             Self::Draining => "draining",
             Self::Restarting => "restarting",
             Self::Dead => "dead",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoreState {
+    Created,
+    Instantiating,
+    Running,
+    Degraded,
+    Draining,
+    Restarting,
+    Rebinding,
+    Dead,
+}
+
+impl StoreState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Instantiating => "instantiating",
+            Self::Running => "running",
+            Self::Degraded => "degraded",
+            Self::Draining => "draining",
+            Self::Restarting => "restarting",
+            Self::Rebinding => "rebinding",
+            Self::Dead => "dead",
+        }
+    }
+
+    pub const fn fault_domain_state(self) -> FaultDomainState {
+        match self {
+            Self::Created => FaultDomainState::Created,
+            Self::Instantiating | Self::Rebinding => FaultDomainState::Initializing,
+            Self::Running => FaultDomainState::Running,
+            Self::Degraded => FaultDomainState::Degraded,
+            Self::Draining => FaultDomainState::Draining,
+            Self::Restarting => FaultDomainState::Restarting,
+            Self::Dead => FaultDomainState::Dead,
         }
     }
 }
@@ -498,6 +550,20 @@ pub struct FaultDomainRecord {
     pub generation: Generation,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoreRecord {
+    pub id: StoreId,
+    pub package: String,
+    pub artifact: String,
+    pub role: String,
+    pub fault_policy: String,
+    pub fault_domain: FaultDomainId,
+    pub resource: Option<ResourceId>,
+    pub state: StoreState,
+    pub generation: Generation,
+    pub restart_count: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailureEffect {
     CompleteWithErrno(i32),
@@ -620,12 +686,44 @@ pub enum EventKind {
     FaultDomainRegistered {
         domain: FaultDomainId,
     },
+    FaultDomainStateChanged {
+        domain: FaultDomainId,
+        from: FaultDomainState,
+        to: FaultDomainState,
+        generation: Generation,
+    },
     DriverTrap {
         domain: Option<FaultDomainId>,
         trap: String,
     },
     FaultDomainRestarted {
         domain: FaultDomainId,
+    },
+    StoreRegistered {
+        store: StoreId,
+        domain: FaultDomainId,
+        resource: ResourceId,
+        generation: Generation,
+    },
+    StoreStateChanged {
+        store: StoreId,
+        from: StoreState,
+        to: StoreState,
+        generation: Generation,
+    },
+    StoreTrap {
+        store: StoreId,
+        trap: String,
+    },
+    StoreDropped {
+        store: StoreId,
+        generation: Generation,
+        resource: Option<ResourceId>,
+    },
+    StoreRebound {
+        store: StoreId,
+        generation: Generation,
+        resource: ResourceId,
     },
     WindowLeaseCreated {
         lease: ResourceId,
@@ -779,6 +877,16 @@ impl EventKind {
             Self::FaultDomainRegistered { domain } => {
                 format!("FaultDomainRegistered domain={domain}")
             }
+            Self::FaultDomainStateChanged {
+                domain,
+                from,
+                to,
+                generation,
+            } => format!(
+                "FaultDomainStateChanged domain={domain} {}->{} generation={generation}",
+                from.as_str(),
+                to.as_str()
+            ),
             Self::DriverTrap { domain, trap } => match domain {
                 Some(domain) => format!("DriverTrap domain={domain} trap={trap}"),
                 None => format!("DriverTrap trap={trap}"),
@@ -786,6 +894,42 @@ impl EventKind {
             Self::FaultDomainRestarted { domain } => {
                 format!("FaultDomainRestarted domain={domain}")
             }
+            Self::StoreRegistered {
+                store,
+                domain,
+                resource,
+                generation,
+            } => format!(
+                "StoreRegistered store={store} domain={domain} resource={resource} generation={generation}"
+            ),
+            Self::StoreStateChanged {
+                store,
+                from,
+                to,
+                generation,
+            } => format!(
+                "StoreStateChanged store={store} {}->{} generation={generation}",
+                from.as_str(),
+                to.as_str()
+            ),
+            Self::StoreTrap { store, trap } => {
+                format!("StoreTrap store={store} trap={trap}")
+            }
+            Self::StoreDropped {
+                store,
+                generation,
+                resource,
+            } => match resource {
+                Some(resource) => format!(
+                    "StoreDropped store={store} generation={generation} resource={resource}"
+                ),
+                None => format!("StoreDropped store={store} generation={generation}"),
+            },
+            Self::StoreRebound {
+                store,
+                generation,
+                resource,
+            } => format!("StoreRebound store={store} generation={generation} resource={resource}"),
             Self::WindowLeaseCreated { lease, generation } => {
                 format!("WindowLeaseCreated lease={lease} generation={generation}")
             }
@@ -892,10 +1036,12 @@ pub struct SemanticGraph {
     resources: Vec<ResourceRecord>,
     waits: Vec<WaitRecord>,
     fault_domains: Vec<FaultDomainRecord>,
+    stores: Vec<StoreRecord>,
     capabilities: CapabilityLedger,
     event_log: EventLog,
     next_resource_id: ResourceId,
     next_fault_domain_id: FaultDomainId,
+    next_store_id: StoreId,
 }
 
 impl SemanticGraph {
@@ -905,10 +1051,12 @@ impl SemanticGraph {
             resources: Vec::new(),
             waits: Vec::new(),
             fault_domains: Vec::new(),
+            stores: Vec::new(),
             capabilities: CapabilityLedger::new(),
             event_log: EventLog::new(),
             next_resource_id: 1,
             next_fault_domain_id: 1,
+            next_store_id: 1,
         }
     }
 
@@ -1091,7 +1239,7 @@ impl SemanticGraph {
             id,
             name: name.to_string(),
             role: role.to_string(),
-            state: FaultDomainState::Running,
+            state: FaultDomainState::Created,
             generation: 1,
         });
         self.event_log.push(
@@ -1112,17 +1260,207 @@ impl SemanticGraph {
         let Some(domain) = self.fault_domains.iter_mut().find(|domain| domain.id == id) else {
             return;
         };
+        let from = domain.state;
         if domain.state == state {
             return;
         }
         domain.state = state;
         domain.generation += 1;
-        if state == FaultDomainState::Running {
+        let generation = domain.generation;
+        self.event_log.push(
+            "fault-domain",
+            EventKind::FaultDomainStateChanged {
+                domain: id,
+                from,
+                to: state,
+                generation,
+            },
+        );
+    }
+
+    pub fn register_store(
+        &mut self,
+        package: &str,
+        artifact: &str,
+        role: &str,
+        fault_policy: &str,
+    ) -> StoreId {
+        if let Some(store) = self.stores.iter().find(|store| store.package == package) {
+            return store.id;
+        }
+
+        let fault_domain = self.register_fault_domain(package, role);
+        let resource = self.register_resource(
+            ResourceKind::ServiceStore,
+            None,
+            &format!("store:{package}:{artifact}"),
+        );
+        let id = self.next_store_id;
+        self.next_store_id += 1;
+        self.stores.push(StoreRecord {
+            id,
+            package: package.to_string(),
+            artifact: artifact.to_string(),
+            role: role.to_string(),
+            fault_policy: fault_policy.to_string(),
+            fault_domain,
+            resource: Some(resource),
+            state: StoreState::Created,
+            generation: 1,
+            restart_count: 0,
+        });
+        self.event_log.push(
+            "store",
+            EventKind::StoreRegistered {
+                store: id,
+                domain: fault_domain,
+                resource,
+                generation: 1,
+            },
+        );
+        id
+    }
+
+    pub fn store_id(&self, package: &str) -> Option<StoreId> {
+        self.stores
+            .iter()
+            .find(|store| store.package == package)
+            .map(|store| store.id)
+    }
+
+    pub fn store_handle(&self, id: StoreId) -> Option<StoreHandle> {
+        self.stores
+            .iter()
+            .find(|store| store.id == id)
+            .map(|store| StoreHandle::new(store.id, store.generation))
+    }
+
+    pub fn store_resource(&self, id: StoreId) -> Option<ResourceId> {
+        self.stores
+            .iter()
+            .find(|store| store.id == id)
+            .and_then(|store| store.resource)
+    }
+
+    pub fn validate_store_handle(
+        &mut self,
+        handle: StoreHandle,
+    ) -> Result<(), GenerationCheckError> {
+        let store = self.stores.iter().find(|store| store.id == handle.id);
+        let actual = store.map(|store| store.generation);
+        match store {
+            None => Err(GenerationCheckError::Missing),
+            Some(store) if store.generation != handle.generation => {
+                Err(GenerationCheckError::GenerationMismatch {
+                    expected: handle.generation,
+                    actual,
+                })
+            }
+            Some(store) if store.state == StoreState::Dead => Err(GenerationCheckError::Dead {
+                actual: store.generation,
+            }),
+            Some(_) => Ok(()),
+        }
+    }
+
+    pub fn set_store_state(&mut self, id: StoreId, state: StoreState) {
+        let Some(index) = self.stores.iter().position(|store| store.id == id) else {
+            return;
+        };
+        let from = self.stores[index].state;
+        if from == state {
+            return;
+        }
+        self.stores[index].state = state;
+        self.stores[index].generation += 1;
+        if state == StoreState::Restarting {
+            self.stores[index].restart_count += 1;
+        }
+        let generation = self.stores[index].generation;
+        let fault_domain = self.stores[index].fault_domain;
+        self.event_log.push(
+            "store",
+            EventKind::StoreStateChanged {
+                store: id,
+                from,
+                to: state,
+                generation,
+            },
+        );
+        self.set_fault_domain_state(fault_domain, state.fault_domain_state());
+        if state == StoreState::Running && self.stores[index].restart_count > 0 {
             self.event_log.push(
                 "fault-domain",
-                EventKind::FaultDomainRestarted { domain: id },
+                EventKind::FaultDomainRestarted {
+                    domain: fault_domain,
+                },
             );
         }
+    }
+
+    pub fn record_store_trap(&mut self, id: StoreId, trap: &str) {
+        let domain = self
+            .stores
+            .iter()
+            .find(|store| store.id == id)
+            .map(|store| store.fault_domain);
+        self.event_log.push(
+            "store",
+            EventKind::StoreTrap {
+                store: id,
+                trap: trap.to_string(),
+            },
+        );
+        self.record_driver_trap(domain, trap);
+        self.set_store_state(id, StoreState::Degraded);
+    }
+
+    pub fn drop_store_instance(&mut self, id: StoreId) {
+        let Some(index) = self.stores.iter().position(|store| store.id == id) else {
+            return;
+        };
+        let resource = self.stores[index].resource.take();
+        if let Some(resource) = resource {
+            self.close_resource(resource);
+        }
+        self.set_store_state(id, StoreState::Dead);
+        let generation = self.stores[index].generation;
+        self.event_log.push(
+            "store",
+            EventKind::StoreDropped {
+                store: id,
+                generation,
+                resource,
+            },
+        );
+    }
+
+    pub fn rebind_store_instance(&mut self, id: StoreId) -> Option<ResourceId> {
+        let index = self.stores.iter().position(|store| store.id == id)?;
+        let package = self.stores[index].package.clone();
+        let artifact = self.stores[index].artifact.clone();
+        let resource = self.register_resource(
+            ResourceKind::ServiceStore,
+            None,
+            &format!("store:{package}:{artifact}"),
+        );
+        self.stores[index].resource = Some(resource);
+        self.stores[index].generation += 1;
+        self.stores[index].state = StoreState::Rebinding;
+        let generation = self.stores[index].generation;
+        self.event_log.push(
+            "store",
+            EventKind::StoreRebound {
+                store: id,
+                generation,
+                resource,
+            },
+        );
+        self.set_fault_domain_state(
+            self.stores[index].fault_domain,
+            StoreState::Rebinding.fault_domain_state(),
+        );
+        Some(resource)
     }
 
     pub fn record_driver_trap(&mut self, domain: Option<FaultDomainId>, trap: &str) {
@@ -1446,6 +1784,7 @@ impl SemanticGraph {
                 resources: self.resources.clone(),
                 waits: self.waits.clone(),
                 fault_domains: self.fault_domains.clone(),
+                stores: self.stores.clone(),
                 capabilities: self.capabilities.records().to_vec(),
             },
         }
@@ -1465,6 +1804,10 @@ impl SemanticGraph {
 
     pub fn fault_domain_count(&self) -> usize {
         self.fault_domains.len()
+    }
+
+    pub fn store_count(&self) -> usize {
+        self.stores.len()
     }
 
     pub fn capability_count(&self) -> usize {
@@ -1495,6 +1838,10 @@ impl SemanticGraph {
 
     pub fn event_log(&self) -> &EventLog {
         &self.event_log
+    }
+
+    pub fn stores(&self) -> &[StoreRecord] {
+        &self.stores
     }
 
     pub fn event_log_tail(&self, count: usize) -> &[EventRecord] {
@@ -1584,6 +1931,7 @@ pub struct SemanticSnapshot {
     pub resources: Vec<ResourceRecord>,
     pub waits: Vec<WaitRecord>,
     pub fault_domains: Vec<FaultDomainRecord>,
+    pub stores: Vec<StoreRecord>,
     pub capabilities: Vec<CapabilityRecord>,
 }
 
@@ -1635,12 +1983,13 @@ impl MigrationPackage {
             self.semantic.barrier.active_dmw_lease_count
         ));
         lines.push(format!(
-            "semantic roots: tasks={} resources={} waits={} capabilities={} fault_domains={}",
+            "semantic roots: tasks={} resources={} waits={} capabilities={} fault_domains={} stores={}",
             self.semantic.tasks.len(),
             self.semantic.resources.len(),
             self.semantic.waits.len(),
             self.semantic.capabilities.len(),
-            self.semantic.fault_domains.len()
+            self.semantic.fault_domains.len(),
+            self.semantic.stores.len()
         ));
         lines.push(format!(
             "required artifacts: {}",
@@ -1771,6 +2120,43 @@ mod tests {
         assert_eq!(
             graph.event_log_tail(1)[0].kind.summary(),
             "WaitTokenRejected wait=11 expected=2 actual=3 reason=generation-mismatch"
+        );
+    }
+
+    #[test]
+    fn store_lifecycle_rebinds_instance_resource() {
+        let mut graph = SemanticGraph::new();
+        let store = graph.register_store("procfs_service", "procfs", "service", "restartable");
+
+        graph.set_store_state(store, StoreState::Instantiating);
+        graph.set_store_state(store, StoreState::Running);
+        let first_resource = graph.store_resource(store).expect("initial store resource");
+
+        graph.record_store_trap(store, "injected procfs read fault");
+        graph.set_store_state(store, StoreState::Draining);
+        graph.set_store_state(store, StoreState::Restarting);
+        graph.drop_store_instance(store);
+        assert_eq!(
+            graph.validate_resource_handle(ResourceHandle::new(first_resource, 1)),
+            Err(GenerationCheckError::GenerationMismatch {
+                expected: 1,
+                actual: Some(2),
+            })
+        );
+
+        let second_resource = graph
+            .rebind_store_instance(store)
+            .expect("rebound store resource");
+        graph.set_store_state(store, StoreState::Running);
+
+        assert_ne!(first_resource, second_resource);
+        assert_eq!(graph.store_count(), 1);
+        assert_eq!(graph.live_resource_count(), 1);
+        assert_eq!(graph.stores()[0].restart_count, 1);
+        assert_eq!(graph.stores()[0].state, StoreState::Running);
+        assert_eq!(
+            graph.event_log_tail(1)[0].kind.summary(),
+            "FaultDomainRestarted domain=1"
         );
     }
 
