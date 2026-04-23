@@ -4,10 +4,13 @@ use alloc::vec::Vec;
 use core::ptr::null_mut;
 
 use crate::interrupts;
+use semantic_core::{
+    FailureEffect, FaultDomainState, FrontendKind, ResourceId, SemanticGraph, TaskState,
+};
 use vmos_abi::{
-    ERR_EAGAIN, ERR_EBADF, ERR_EINVAL, FD_STDOUT, NodeKind, PackedStep, PlanKind, SYS_CLOSE,
-    SYS_GETCWD, SYS_GETDENTS64, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE,
-    ServiceRoute, StepTag, SyscallContext,
+    ERR_EAGAIN, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, FD_STDOUT, NodeKind, PackedStep, PlanKind,
+    SYS_CLOSE, SYS_GETCWD, SYS_GETDENTS64, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME,
+    SYS_WRITE, ServiceRoute, StepTag, SyscallContext,
 };
 
 use super::engine::SupervisorEngine;
@@ -15,6 +18,7 @@ use super::events::Event;
 use super::linux::{LinuxCallResult, LinuxFrontend, LinuxPlan};
 use super::pulse::{PulseDevice, PulseEvent};
 use super::scheduler::Scheduler;
+use super::semantic::{bootstrap_graph, fd_resource_kind, fd_resource_label};
 use super::services::{
     ConsoleService, DevfsService, EpollService, FutexService, ProcfsService, VfsService, WasmApp,
 };
@@ -54,11 +58,13 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) linux: LinuxFrontend,
     pub(super) app: WasmApp,
     pub(super) fd_table: Vec<Option<FdEntry>>,
+    pub(super) fd_resources: Vec<Option<ResourceId>>,
     pub(super) fault: Option<InjectedFault>,
     pub(super) scheduler: Scheduler,
     pub(super) waits: WaitRegistry,
     pub(super) pulse: PulseDevice,
     pub(super) restart_count: u64,
+    pub(super) semantic: SemanticGraph,
 }
 
 impl<'engine> PrototypeRuntime<'engine> {
@@ -74,20 +80,26 @@ impl<'engine> PrototypeRuntime<'engine> {
             linux: LinuxFrontend::new(engine)?,
             app: WasmApp::new(engine)?,
             fd_table: vec![None, None, None],
+            fd_resources: vec![None, None, None],
             fault: None,
             scheduler: Scheduler::new(),
             waits: WaitRegistry::new(),
             pulse: PulseDevice::new(interrupts::tick_count()),
             restart_count: 0,
+            semantic: bootstrap_graph(),
         })
     }
 
     pub(crate) fn allocate_task(&mut self) -> TaskId {
-        self.scheduler.allocate_task()
+        let task = self.scheduler.allocate_task();
+        self.semantic
+            .ensure_task(task, FrontendKind::LinuxElf, "linux-elf-task");
+        task
     }
 
     pub(crate) fn set_current_task(&mut self, task: TaskId) {
         self.scheduler.set_current_task(task);
+        self.semantic.set_task_state(task, TaskState::Running);
     }
 
     pub(crate) fn bootstrap_task(&self) -> TaskId {
@@ -381,6 +393,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             interrupts::tick_count(),
             interrupts::TIMER_HZ,
         );
+        self.record_wait_token(token);
         Ok(LinuxCallResult::Pending(token))
     }
 
@@ -404,10 +417,23 @@ impl<'engine> PrototypeRuntime<'engine> {
         );
 
         match self.futex.register_wait(key, token.id) {
-            Ok(()) => Ok(LinuxCallResult::Pending(token)),
-            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Ok(()) => {
+                self.record_wait_token(token);
+                Ok(LinuxCallResult::Pending(token))
+            }
+            Err(ServiceCallError::Errno(errno)) => {
+                self.semantic.record_wait_cancelled(token.id, errno);
+                self.semantic
+                    .record_failure_effect(FailureEffect::CancelWaitToken {
+                        wait: token.id,
+                        errno,
+                    });
+                Ok(LinuxCallResult::Ret(-(errno as i64)))
+            }
             Err(ServiceCallError::Trap(reason)) => {
                 crate::kwarn!("futex_wait: {}", reason);
+                self.semantic
+                    .record_driver_trap(self.semantic.fault_domain_id("futex_service"), reason);
                 Err("futex_service trapped during futex wait")
             }
             Err(ServiceCallError::Invalid(err)) => Err(err),
@@ -583,10 +609,23 @@ impl<'engine> PrototypeRuntime<'engine> {
             interrupts::TIMER_HZ,
         );
         match self.epoll.arm_wait(epoll_id, token.id) {
-            Ok(()) => Ok(LinuxCallResult::Pending(token)),
-            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Ok(()) => {
+                self.record_wait_token(token);
+                Ok(LinuxCallResult::Pending(token))
+            }
+            Err(ServiceCallError::Errno(errno)) => {
+                self.semantic.record_wait_cancelled(token.id, errno);
+                self.semantic
+                    .record_failure_effect(FailureEffect::CancelWaitToken {
+                        wait: token.id,
+                        errno,
+                    });
+                Ok(LinuxCallResult::Ret(-(errno as i64)))
+            }
             Err(ServiceCallError::Trap(reason)) => {
                 crate::kwarn!("epoll_wait arm_wait: {}", reason);
+                self.semantic
+                    .record_driver_trap(self.semantic.fault_domain_id("epoll_service"), reason);
                 Err("epoll_service trapped during epoll_wait")
             }
             Err(ServiceCallError::Invalid(err)) => Err(err),
@@ -641,6 +680,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             .ok_or("close targeted an out-of-range file descriptor")?;
         if slot.take().is_none() {
             return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
+        }
+        if let Some(slot) = self.fd_resources.get_mut(fd as usize)
+            && let Some(resource_id) = slot.take()
+        {
+            self.semantic.close_resource(resource_id);
         }
 
         Ok(LinuxCallResult::Ret(0))
@@ -789,10 +833,23 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(bytes) => Ok(bytes),
             Err(ServiceCallError::Trap(_)) if inject_fault => {
                 crate::kinfo!("procfs_service trapped; recreating service store");
+                let domain = self.semantic.fault_domain_id("procfs_service");
+                self.semantic
+                    .record_driver_trap(domain, "injected procfs read fault");
+                if let Some(domain) = domain {
+                    self.semantic
+                        .set_fault_domain_state(domain, FaultDomainState::Restarting);
+                    self.semantic
+                        .record_failure_effect(FailureEffect::RebootFaultDomain(domain));
+                }
                 let _ = self.procfs.take();
                 self.procfs = Some(
                     ProcfsService::new(self.procfs_engine).map_err(ServiceCallError::Invalid)?,
                 );
+                if let Some(domain) = domain {
+                    self.semantic
+                        .set_fault_domain_state(domain, FaultDomainState::Running);
+                }
                 self.procfs_mut().read_file(path, false)
             }
             Err(err) => Err(err),
@@ -810,15 +867,29 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn alloc_fd(&mut self, entry: FdEntry) -> u32 {
-        for (fd, slot) in self.fd_table.iter_mut().enumerate().skip(3) {
-            if slot.is_none() {
-                *slot = Some(entry);
-                return fd as u32;
-            }
+        let resource_kind = fd_resource_kind(&entry.resource);
+        let resource_label = fd_resource_label(&entry.resource);
+        let owner_task = Some(self.scheduler.current_task());
+        let resource_id =
+            self.semantic
+                .register_resource(resource_kind, owner_task, &resource_label);
+
+        if let Some(fd) = (3..self.fd_table.len()).find(|fd| self.fd_table[*fd].is_none()) {
+            self.fd_table[fd] = Some(entry);
+            self.ensure_fd_resource_slot(fd);
+            self.fd_resources[fd] = Some(resource_id);
+            return fd as u32;
         }
 
         self.fd_table.push(Some(entry));
+        self.fd_resources.push(Some(resource_id));
         (self.fd_table.len() - 1) as u32
+    }
+
+    fn ensure_fd_resource_slot(&mut self, fd: usize) {
+        while self.fd_resources.len() <= fd {
+            self.fd_resources.push(None);
+        }
     }
 
     fn fd_entry(&self, fd: u32) -> Option<&FdEntry> {
@@ -916,12 +987,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         label: &str,
         token: WaitToken,
     ) -> Result<LinuxCallResult, &'static str> {
-        crate::substrate::dmw::assert_quiescent()
-            .map_err(|_| "entered Pending with an active DMW lease")?;
+        if let Err(err) = crate::substrate::dmw::assert_quiescent() {
+            self.semantic
+                .record_failure_effect(FailureEffect::CompleteWithErrno(ERR_EFAULT));
+            return Err(err);
+        }
         loop {
             self.pump_async_sources();
 
             if let Some(resolution) = self.waits.take_resolution(token) {
+                self.semantic
+                    .set_task_state(token.owner_task, TaskState::Running);
                 return match resolution.outcome {
                     WaitOutcome::Ready => match resolution.source {
                         WaitSource::Epoll {
@@ -937,6 +1013,11 @@ impl<'engine> PrototypeRuntime<'engine> {
                         }
                     },
                     WaitOutcome::Cancelled(errno) => {
+                        self.semantic
+                            .record_failure_effect(FailureEffect::CancelWaitToken {
+                                wait: token.id,
+                                errno,
+                            });
                         match token.kind {
                             super::types::WaitKind::Futex => {
                                 match self.futex.cancel_wait(token.id) {
@@ -968,6 +1049,10 @@ impl<'engine> PrototypeRuntime<'engine> {
                     WaitOutcome::Restart(class) => {
                         self.restart_count += 1;
                         crate::kinfo!("{} restarted as {:?}", label, class);
+                        self.semantic
+                            .record_failure_effect(FailureEffect::RestartSyscall {
+                                wait: Some(token.id),
+                            });
                         let restarted = self.linux.restart_wait(resolution.resume_cookie, class)?;
                         Ok(match self.execute_linux_step("linux_restart", restarted)? {
                             LinuxCallResult::Pending(next) => self.block_on_wait(label, next),
@@ -983,6 +1068,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     fn drain_event_queue(&mut self) {
         while let Some(event) = self.scheduler.pop_event() {
+            self.record_scheduler_event(event);
             self.waits.apply_event(event);
         }
     }

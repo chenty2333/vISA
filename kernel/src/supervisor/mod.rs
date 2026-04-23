@@ -5,6 +5,7 @@ mod linux;
 mod pulse;
 mod runtime;
 mod scheduler;
+mod semantic;
 mod services;
 mod types;
 mod wait;

@@ -24,6 +24,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.run_futex_demo()?;
         self.run_epoll_demo()?;
         self.run_procfs_recovery_demo()?;
+        self.run_semantic_debug_demo()?;
         Ok(())
     }
 
@@ -141,6 +142,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         serial::write_bytes(&bytes);
         if !bytes.ends_with(b"\n") {
             serial_println!();
+        }
+        Ok(())
+    }
+
+    fn run_semantic_debug_demo(&mut self) -> Result<(), &'static str> {
+        serial_println!("== semantic object graph demo ==");
+        for line in self.semantic_debug_lines() {
+            serial_println!("{}", line);
         }
         Ok(())
     }

@@ -13,6 +13,7 @@ members = [
     "linux_syscall",
     "procfs_service",
     "runner",
+    "semantic_core",
     "supervisor_catalog",
     "target_executor",
     "vfs_service",
@@ -27,6 +28,7 @@ linked_list_allocator = "0.10.6"
 pic8259 = "0.10.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+semantic_core = { path = "semantic_core" }
 sha2 = "0.10"
 spin = "0.9.8"
 supervisor_catalog = { path = "supervisor_catalog" }

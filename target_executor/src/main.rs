@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use artifact_manifest::{ArtifactBundleManifest, ModuleArtifactManifest};
+use semantic_core::SemanticGraph;
 use sha2::{Digest, Sha256};
 use supervisor_catalog::{CapabilitySpec, SUPERVISOR_WASM_MODULES, WasmModuleSpec};
 use wasmtime::{Config, Engine, Instance, Module, Precompiled, Store};
@@ -26,7 +26,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| workspace_root.join(DEFAULT_ARTIFACT_ROOT));
     let manifest = read_manifest(&artifact_root)?;
     let engine = runtime_engine()?;
-    let mut ledger = CapabilityLedger::new();
+    let mut semantic = SemanticGraph::new();
     let mut stores = Vec::with_capacity(SUPERVISOR_WASM_MODULES.len());
 
     validate_bundle_manifest(&manifest)?;
@@ -53,7 +53,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let mut store = Store::new(&engine, ());
         let instance = Instance::new(&mut store, &module, &[])?;
         smoke_instance(spec, &instance, &mut store)?;
-        ledger.grant(spec);
+        register_store_semantics(&mut semantic, spec);
         stores.push(LoadedStore {
             package: spec.package,
             role: spec.role.as_str(),
@@ -62,9 +62,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     println!(
-        "target executor loaded {} runtime-only stores with {} capability grants",
+        "target executor loaded {} runtime-only stores with {} capability grants across {} fault domains",
         stores.len(),
-        ledger.grant_count()
+        semantic.capability_count(),
+        semantic.fault_domain_count()
+    );
+    println!(
+        "semantic event log contains {} events",
+        semantic.event_count()
     );
     for store in stores {
         println!(
@@ -74,6 +79,18 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn register_store_semantics(semantic: &mut SemanticGraph, spec: &WasmModuleSpec) {
+    semantic.register_fault_domain(spec.package, spec.role.as_str());
+    for capability in spec.capabilities {
+        semantic.grant_capability(
+            spec.package,
+            capability.name,
+            capability.rights,
+            capability.lifetime,
+        );
+    }
 }
 
 fn validate_bundle_manifest(manifest: &ArtifactBundleManifest) -> Result<(), Box<dyn Error>> {
@@ -267,30 +284,6 @@ fn rights_vec(capability: &CapabilitySpec) -> Vec<String> {
         .iter()
         .map(|right| (*right).to_owned())
         .collect()
-}
-
-struct CapabilityLedger {
-    generations: BTreeMap<String, u64>,
-}
-
-impl CapabilityLedger {
-    fn new() -> Self {
-        Self {
-            generations: BTreeMap::new(),
-        }
-    }
-
-    fn grant(&mut self, spec: &WasmModuleSpec) {
-        for capability in spec.capabilities {
-            let key = format!("{}::{}", spec.package, capability.name);
-            let generation = self.generations.entry(key).or_insert(0);
-            *generation += 1;
-        }
-    }
-
-    fn grant_count(&self) -> usize {
-        self.generations.len()
-    }
 }
 
 struct LoadedStore {

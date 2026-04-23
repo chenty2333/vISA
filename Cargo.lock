@@ -595,6 +595,7 @@ dependencies = [
  "bootloader_api",
  "linked_list_allocator",
  "pic8259",
+ "semantic_core",
  "spin",
  "supervisor_catalog",
  "uart_16550",
@@ -862,6 +863,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "semantic_core"
+version = "0.1.0"
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -987,6 +992,7 @@ version = "0.1.0"
 dependencies = [
  "artifact_manifest",
  "hex",
+ "semantic_core",
  "serde_json",
  "sha2",
  "supervisor_catalog",
