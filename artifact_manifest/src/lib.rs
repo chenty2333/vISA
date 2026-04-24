@@ -221,6 +221,12 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub cleanup_transaction_count: usize,
     #[serde(default)]
+    pub memory_policy_count: usize,
+    #[serde(default)]
+    pub snapshot_validation_violation_count: usize,
+    #[serde(default)]
+    pub replay_validation_violation_count: usize,
+    #[serde(default)]
     pub target_artifacts: Vec<TargetArtifactImageManifest>,
     #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
@@ -238,6 +244,12 @@ pub struct SemanticSnapshotManifest {
     pub contract_violations: Vec<ContractViolationManifest>,
     #[serde(default)]
     pub cleanup_transactions: Vec<CleanupTransactionManifest>,
+    #[serde(default)]
+    pub memory_policies: Vec<MemoryClassPolicyManifest>,
+    #[serde(default)]
+    pub snapshot_validation: BoundaryValidationReportManifest,
+    #[serde(default)]
+    pub replay_validation: BoundaryValidationReportManifest,
     #[serde(default)]
     pub network_socket_count: u32,
     #[serde(default)]
@@ -286,6 +298,12 @@ pub struct SemanticRootSetManifest {
     pub contract_violation_roots: Vec<String>,
     #[serde(default)]
     pub cleanup_roots: Vec<String>,
+    #[serde(default)]
+    pub memory_policy_roots: Vec<String>,
+    #[serde(default)]
+    pub snapshot_validation_roots: Vec<String>,
+    #[serde(default)]
+    pub replay_validation_roots: Vec<String>,
     #[serde(default)]
     pub event_log_tail: Vec<String>,
 }
@@ -530,6 +548,35 @@ pub struct CleanupTransactionManifest {
     pub unbound_code_object: bool,
     pub effect: String,
     pub steps: Vec<CleanupStepManifest>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct MemoryClassPolicyManifest {
+    pub class: String,
+    pub owner_kind: String,
+    pub permissions: String,
+    pub migration_policy: String,
+    pub snapshot_policy: String,
+    pub cleanup_policy: String,
+    pub can_alias_guest_memory: bool,
+    pub can_cross_pending: bool,
+    pub can_be_executable: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct BoundaryValidationViolationManifest {
+    pub validator: String,
+    pub kind: String,
+    pub object: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct BoundaryValidationReportManifest {
+    pub validator: String,
+    pub ok: bool,
+    pub violation_count: usize,
+    pub violations: Vec<BoundaryValidationViolationManifest>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

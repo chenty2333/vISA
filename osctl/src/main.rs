@@ -3,7 +3,9 @@ use std::error::Error;
 use std::fs;
 use std::path::Path;
 
-use artifact_manifest::{ArtifactBundleManifest, MigrationPackageManifest};
+use artifact_manifest::{
+    ArtifactBundleManifest, BoundaryValidationReportManifest, MigrationPackageManifest,
+};
 use contract_core::{
     ValidatedArtifactPlan, build_validated_artifact_plan, validate_migration_against_manifest,
     validate_migration_package, validate_replay_quiescent,
@@ -178,7 +180,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|event <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|memory-policy|snapshot-validation|replay-validation|event <manifest-or-migration.json> [filter]"
     );
     eprintln!(
         "  osctl replay --until <event-cursor> [--manifest <manifest.json>] [--json] <migration.json>"
@@ -879,6 +881,52 @@ fn inspect_package_object(
                 print_roots_filtered("cleanup", &package.semantic.roots.cleanup_roots, filter);
             }
         }
+        "memory-policy" => {
+            println!(
+                "inspect memory-policy package={} count={}",
+                package.package_id, package.semantic.memory_policy_count
+            );
+            for policy in &package.semantic.memory_policies {
+                let line = format!(
+                    "memory-policy class={} owner={} perms={} migration={} snapshot={} cleanup={} alias_guest={} cross_pending={} executable={}",
+                    policy.class,
+                    policy.owner_kind,
+                    policy.permissions,
+                    policy.migration_policy,
+                    policy.snapshot_policy,
+                    policy.cleanup_policy,
+                    policy.can_alias_guest_memory,
+                    policy.can_cross_pending,
+                    policy.can_be_executable
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.memory_policies.is_empty() {
+                print_roots_filtered(
+                    "memory-policy",
+                    &package.semantic.roots.memory_policy_roots,
+                    filter,
+                );
+            }
+        }
+        "snapshot-validation" => {
+            print_boundary_validation(
+                "snapshot-validation",
+                package.package_id.as_str(),
+                &package.semantic.snapshot_validation,
+                &package.semantic.roots.snapshot_validation_roots,
+                filter,
+            );
+        }
+        "replay-validation" => {
+            print_boundary_validation(
+                "replay-validation",
+                package.package_id.as_str(),
+                &package.semantic.replay_validation,
+                &package.semantic.roots.replay_validation_roots,
+                filter,
+            );
+        }
         _ => return Err(format!("unknown inspect kind `{kind}`").into()),
     }
     Ok(())
@@ -949,6 +997,29 @@ fn print_roots_filtered(label: &str, roots: &[String], filter: Option<&str>) {
     for root in roots {
         let line = format!("{label} {root}");
         print_if_matches(&line, filter);
+    }
+}
+
+fn print_boundary_validation(
+    label: &str,
+    package_id: &str,
+    report: &BoundaryValidationReportManifest,
+    roots: &[String],
+    filter: Option<&str>,
+) {
+    println!(
+        "inspect {label} package={} validator={} ok={} violations={}",
+        package_id, report.validator, report.ok, report.violation_count
+    );
+    for violation in &report.violations {
+        let line = format!(
+            "boundary-validation validator={} kind={} object={} detail={}",
+            violation.validator, violation.kind, violation.object, violation.detail
+        );
+        print_if_matches(&line, filter);
+    }
+    if report.violations.is_empty() {
+        print_roots_filtered(label, roots, filter);
     }
 }
 

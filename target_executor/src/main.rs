@@ -6,14 +6,16 @@ use std::path::{Path, PathBuf};
 mod runtime;
 
 use artifact_manifest::{
-    ActivationRecordManifest, ArtifactBundleManifest, CapabilityHandleArgManifest,
-    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, ContractObjectRefManifest,
+    ActivationRecordManifest, ArtifactBundleManifest, BoundaryValidationReportManifest,
+    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CleanupStepManifest,
+    CleanupTransactionManifest, CodeObjectManifest, ContractObjectRefManifest,
     ContractViolationManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, RequiredArtifactProfileManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SubstrateBoundaryManifest,
-    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
-    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    RequiredArtifactProfileManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    SubstrateBoundaryManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
+    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
+    TombstoneManifest, TrapRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -22,14 +24,16 @@ use contract_core::{
 use runtime::RuntimeOnlyExecutor;
 use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, BoundaryKind, BoundaryStatus,
-    CapabilityClass, CapabilityHandleArg, CapabilityLedger, CodeObject, CodePublishState,
-    CodePublisher, ContractGraphSnapshot, ContractObjectRef, ContractViolation, EntrypointState,
-    ExpectedTargetArtifact, FrontendKind, HostcallCategory, HostcallFrame, HostcallLinkState,
-    HostcallSpec, HostcallTraceRecord, ManagedStoreRecord, MemoryLayoutState,
-    MigrationObjectRecord, RuntimeMode, SemanticGraph, StoreState, TargetAddressMapEntry,
-    TargetArtifactImage, TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan,
-    TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState, TombstoneRecord,
-    TrapSurfaceState, VerifiedArtifact, validate_contract_graph,
+    BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass, CapabilityHandleArg,
+    CapabilityLedger, CodeObject, CodePublishState, CodePublisher, ContractGraphSnapshot,
+    ContractObjectRef, ContractViolation, EntrypointState, ExpectedTargetArtifact, FrontendKind,
+    HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
+    ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
+    PackageReplayValidator, ReplayPackageValidationState, RuntimeMode, SemanticGraph,
+    SnapshotBarrierValidator, StoreState, TargetAddressMapEntry, TargetArtifactImage,
+    TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass,
+    TargetTrapMetadata, TaskState, TombstoneRecord, TrapSurfaceState, VerifiedArtifact,
+    memory_class_policies, validate_contract_graph,
 };
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
@@ -45,6 +49,9 @@ struct TargetExecutorV1Report {
     tombstones: Vec<TombstoneManifest>,
     contract_violations: Vec<ContractViolationManifest>,
     cleanup_transactions: Vec<CleanupTransactionManifest>,
+    memory_policies: Vec<MemoryClassPolicyManifest>,
+    snapshot_validation: BoundaryValidationReportManifest,
+    replay_validation: BoundaryValidationReportManifest,
     target_event_tail: Vec<String>,
 }
 
@@ -317,9 +324,23 @@ fn build_target_executor_v1(
             .map_err(|error| error.message())?;
     }
 
+    let snapshot_validation =
+        SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
+    report.snapshot_validation = boundary_validation_report_manifest(&snapshot_validation);
     executor
         .snapshot_barrier()
         .map_err(|error| error.message())?;
+    let replay_record_modes = executor
+        .hostcall_trace()
+        .iter()
+        .map(|trace| trace.record_mode)
+        .collect::<Vec<_>>();
+    let replay_state = ReplayPackageValidationState::clean(replay_record_modes);
+    let replay_validation = PackageReplayValidator::validate(&replay_state);
+    report.replay_validation = boundary_validation_report_manifest(&replay_validation);
+    for policy in memory_class_policies() {
+        report.memory_policies.push(memory_policy_manifest(policy));
+    }
     for code in publisher.objects() {
         report.code_objects.push(code_object_manifest(code));
     }
@@ -938,6 +959,9 @@ fn demo_migration_package(
             tombstone_count: target_v1.tombstones.len(),
             contract_violation_count: target_v1.contract_violations.len(),
             cleanup_transaction_count: target_v1.cleanup_transactions.len(),
+            memory_policy_count: target_v1.memory_policies.len(),
+            snapshot_validation_violation_count: target_v1.snapshot_validation.violation_count,
+            replay_validation_violation_count: target_v1.replay_validation.violation_count,
             target_artifacts: target_v1.target_artifacts.clone(),
             code_objects: target_v1.code_objects.clone(),
             activation_records: target_v1.activation_records.clone(),
@@ -947,6 +971,9 @@ fn demo_migration_package(
             tombstones: target_v1.tombstones.clone(),
             contract_violations: target_v1.contract_violations.clone(),
             cleanup_transactions: target_v1.cleanup_transactions.clone(),
+            memory_policies: target_v1.memory_policies.clone(),
+            snapshot_validation: target_v1.snapshot_validation.clone(),
+            replay_validation: target_v1.replay_validation.clone(),
             network_socket_count: 1,
             network_rx_queue_bytes: 0,
         },
@@ -1236,6 +1263,26 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        memory_policy_roots: target_v1
+            .memory_policies
+            .iter()
+            .map(|policy| {
+                format!(
+                    "memory-policy class={} owner={} perms={} migration={} snapshot={} cleanup={} alias_guest={} cross_pending={} executable={}",
+                    policy.class,
+                    policy.owner_kind,
+                    policy.permissions,
+                    policy.migration_policy,
+                    policy.snapshot_policy,
+                    policy.cleanup_policy,
+                    policy.can_alias_guest_memory,
+                    policy.can_cross_pending,
+                    policy.can_be_executable
+                )
+            })
+            .collect(),
+        snapshot_validation_roots: validation_roots(&target_v1.snapshot_validation),
+        replay_validation_roots: validation_roots(&target_v1.replay_validation),
         event_log_tail: semantic
             .event_log_tail(16)
             .iter()
@@ -1453,6 +1500,61 @@ fn cleanup_transaction_manifest(
             })
             .collect(),
     }
+}
+
+fn memory_policy_manifest(policy: &MemoryClassPolicy) -> MemoryClassPolicyManifest {
+    MemoryClassPolicyManifest {
+        class: policy.class.as_str().to_owned(),
+        owner_kind: policy.owner_kind.as_str().to_owned(),
+        permissions: policy.permissions.summary(),
+        migration_policy: policy.migratable.as_str().to_owned(),
+        snapshot_policy: policy.snapshot_policy.as_str().to_owned(),
+        cleanup_policy: policy.cleanup_policy.as_str().to_owned(),
+        can_alias_guest_memory: policy.can_alias_guest_memory,
+        can_cross_pending: policy.can_cross_pending,
+        can_be_executable: policy.can_be_executable,
+    }
+}
+
+fn boundary_validation_report_manifest(
+    report: &BoundaryValidationReport,
+) -> BoundaryValidationReportManifest {
+    BoundaryValidationReportManifest {
+        validator: report.validator.as_str().to_owned(),
+        ok: report.is_ok(),
+        violation_count: report.violations.len(),
+        violations: report
+            .violations
+            .iter()
+            .map(boundary_validation_violation_manifest)
+            .collect(),
+    }
+}
+
+fn boundary_validation_violation_manifest(
+    violation: &BoundaryValidationViolation,
+) -> BoundaryValidationViolationManifest {
+    BoundaryValidationViolationManifest {
+        validator: violation.validator.as_str().to_owned(),
+        kind: violation.kind.as_str().to_owned(),
+        object: violation.object.clone(),
+        detail: violation.detail.clone(),
+    }
+}
+
+fn validation_roots(report: &BoundaryValidationReportManifest) -> Vec<String> {
+    let mut roots = Vec::new();
+    roots.push(format!(
+        "boundary-validation validator={} ok={} violations={}",
+        report.validator, report.ok, report.violation_count
+    ));
+    roots.extend(report.violations.iter().map(|violation| {
+        format!(
+            "boundary-validation validator={} kind={} object={} detail={}",
+            violation.validator, violation.kind, violation.object, violation.detail
+        )
+    }));
+    roots
 }
 
 fn hostcall_manifest(hostcall: &HostcallSpec) -> HostcallSpecManifest {

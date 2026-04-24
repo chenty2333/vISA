@@ -2514,17 +2514,32 @@ impl TargetExecutor {
     }
 
     pub fn snapshot_barrier(&self) -> Result<(), TargetExecutorError> {
-        if self.dmw_leases.iter().any(|lease| lease.active) {
-            return Err(TargetExecutorError::DmwLeaseActive);
-        }
-        if self
-            .cleanup_transactions
-            .iter()
-            .any(|cleanup| cleanup.state == CleanupTransactionState::Pending)
-        {
-            return Err(TargetExecutorError::PendingCleanupActive);
+        let report = SnapshotBarrierValidator::validate(&self.snapshot_barrier_validation_state());
+        for violation in report.violations {
+            match violation.kind {
+                BoundaryValidationErrorKind::ActiveDmwLease => {
+                    return Err(TargetExecutorError::DmwLeaseActive);
+                }
+                BoundaryValidationErrorKind::PendingCleanup => {
+                    return Err(TargetExecutorError::PendingCleanupActive);
+                }
+                _ => {}
+            }
         }
         Ok(())
+    }
+
+    pub fn snapshot_barrier_validation_state(&self) -> SnapshotBarrierValidationState {
+        SnapshotBarrierValidationState {
+            active_dmw_lease_count: self.dmw_leases.iter().filter(|lease| lease.active).count()
+                as u32,
+            pending_cleanup_count: self
+                .cleanup_transactions
+                .iter()
+                .filter(|cleanup| cleanup.state == CleanupTransactionState::Pending)
+                .count() as u32,
+            ..SnapshotBarrierValidationState::default()
+        }
     }
 
     pub fn begin_fault_cleanup_transaction(
