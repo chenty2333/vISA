@@ -5,6 +5,7 @@ pub(crate) use service_core::driver::DriverNetEventKind;
 use service_core::driver::{DriverVirtioNetState, RESPONSE_CAPACITY};
 use service_core::linux_socket::LinuxSocketState;
 use service_core::net::{NetCoreState, QUEUE_CAPACITY};
+use service_core::packet::decode_frame;
 use service_core::replay::ReplaySnapshotState;
 
 use crate::supervisor::engine::SupervisorEngine;
@@ -53,6 +54,13 @@ impl NetCoreService {
         map_errno(self.state.send_socket(socket_id, bytes))
     }
 
+    pub(crate) fn take_tx_frame(&mut self, socket_id: u32) -> Result<Vec<u8>, ServiceCallError> {
+        let mut out = alloc::vec![0; service_core::packet::PACKET_FRAME_CAPACITY];
+        let len = map_errno(self.state.take_tx_frame(socket_id, &mut out))?;
+        out.truncate(len as usize);
+        Ok(out)
+    }
+
     pub(crate) fn recv_socket(
         &mut self,
         socket_id: u32,
@@ -64,8 +72,11 @@ impl NetCoreService {
         Ok(out)
     }
 
-    pub(crate) fn inject_packet(&mut self, bytes: &[u8]) -> Result<Option<u64>, ServiceCallError> {
-        map_errno(self.state.inject_packet(bytes))
+    pub(crate) fn deliver_packet_frame(
+        &mut self,
+        frame: &[u8],
+    ) -> Result<Option<u64>, ServiceCallError> {
+        map_errno(self.state.deliver_packet_frame(frame))
     }
 
     pub(crate) fn socket_count(&mut self) -> Result<u32, ServiceCallError> {
@@ -186,7 +197,7 @@ impl LinuxSocketService {
 pub(crate) struct DriverNetEvent {
     pub(crate) kind: DriverNetEventKind,
     pub(crate) len: u32,
-    pub(crate) packet: Vec<u8>,
+    pub(crate) frame: Vec<u8>,
 }
 
 pub(crate) struct DriverVirtioNetService {
@@ -205,22 +216,34 @@ impl DriverVirtioNetService {
         Ok(())
     }
 
+    pub(crate) fn submit_tx_frame(
+        &mut self,
+        now_ticks: u64,
+        frame: &[u8],
+    ) -> Result<u32, ServiceCallError> {
+        map_errno(self.state.submit_tx_frame(now_ticks, frame))
+    }
+
     pub(crate) fn poll_device(
         &mut self,
         now_ticks: u64,
     ) -> Result<DriverNetEvent, ServiceCallError> {
-        let mut packet = alloc::vec![0; RESPONSE_CAPACITY];
-        let event = self.state.poll_device(now_ticks, &mut packet);
+        let event = self.state.poll_device(now_ticks);
+        let mut frame = alloc::vec![0; RESPONSE_CAPACITY];
+        let mut payload_len = event.len;
         if event.kind == DriverNetEventKind::PacketRx {
-            packet.truncate(event.len as usize);
-            self.state.consume_packet();
+            let frame_len = map_errno(self.state.dequeue_rx_frame(&mut frame))?;
+            frame.truncate(frame_len as usize);
+            payload_len = decode_frame(&frame)
+                .map(|(meta, _)| meta.payload_len)
+                .unwrap_or(frame_len);
         } else {
-            packet.clear();
+            frame.clear();
         }
         Ok(DriverNetEvent {
             kind: event.kind,
-            len: event.len,
-            packet,
+            len: payload_len,
+            frame,
         })
     }
 }

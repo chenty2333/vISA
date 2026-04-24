@@ -74,7 +74,7 @@ pub(super) fn fd_resource_label(resource: &FdResource) -> String {
             format!("fd:{path}")
         }
         FdResource::EpollInstance { epoll_id } => format!("epoll:{epoll_id}"),
-        FdResource::Socket { socket_id, .. } => format!("socket:fake-net:{socket_id}"),
+        FdResource::Socket { socket_id, .. } => format!("socket:net:{socket_id}"),
     }
 }
 

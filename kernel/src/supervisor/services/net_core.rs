@@ -12,8 +12,9 @@ pub(crate) struct NetCoreService {
     ready_key: WasmFn<u32, u64>,
     poll_socket: WasmFn<u32, u32>,
     send_socket: WasmFn<(u32, u32), i32>,
+    take_tx_frame: WasmFn<u32, i32>,
     recv_socket: WasmFn<(u32, u32), i32>,
-    inject_packet: WasmFn<u32, i64>,
+    deliver_packet_frame: WasmFn<u32, i64>,
     socket_count: WasmFn<(), u32>,
     queued_rx_bytes: WasmFn<(), u32>,
 }
@@ -27,8 +28,12 @@ impl NetCoreService {
         let ready_key = io.bind("ready_key", "missing net_core ready_key export")?;
         let poll_socket = io.bind("poll_socket", "missing net_core poll_socket export")?;
         let send_socket = io.bind("send_socket", "missing net_core send_socket export")?;
+        let take_tx_frame = io.bind("take_tx_frame", "missing net_core take_tx_frame export")?;
         let recv_socket = io.bind("recv_socket", "missing net_core recv_socket export")?;
-        let inject_packet = io.bind("inject_packet", "missing net_core inject_packet export")?;
+        let deliver_packet_frame = io.bind(
+            "deliver_packet_frame",
+            "missing net_core deliver_packet_frame export",
+        )?;
         let socket_count = io.bind("socket_count", "missing net_core socket_count export")?;
         let queued_rx_bytes =
             io.bind("queued_rx_bytes", "missing net_core queued_rx_bytes export")?;
@@ -40,8 +45,9 @@ impl NetCoreService {
             ready_key,
             poll_socket,
             send_socket,
+            take_tx_frame,
             recv_socket,
-            inject_packet,
+            deliver_packet_frame,
             socket_count,
             queued_rx_bytes,
         })
@@ -123,14 +129,28 @@ impl NetCoreService {
             .map_err(ServiceCallError::Invalid)
     }
 
-    pub(crate) fn inject_packet(&mut self, bytes: &[u8]) -> Result<Option<u64>, ServiceCallError> {
+    pub(crate) fn take_tx_frame(&mut self, socket_id: u32) -> Result<Vec<u8>, ServiceCallError> {
+        let len = expect_len(
+            self.io
+                .call(&self.take_tx_frame, socket_id, "net_core trapped")
+                .map_err(ServiceCallError::Trap)?,
+        )?;
+        self.io
+            .read_response(len)
+            .map_err(ServiceCallError::Invalid)
+    }
+
+    pub(crate) fn deliver_packet_frame(
+        &mut self,
+        frame: &[u8],
+    ) -> Result<Option<u64>, ServiceCallError> {
         let len = self
             .io
-            .write_request(bytes)
+            .write_request(frame)
             .map_err(ServiceCallError::Invalid)?;
         let raw = self
             .io
-            .call(&self.inject_packet, len, "net_core trapped")
+            .call(&self.deliver_packet_frame, len, "net_core trapped")
             .map_err(ServiceCallError::Trap)?;
         if raw < 0 {
             return Err(ServiceCallError::Errno((-raw) as i32));

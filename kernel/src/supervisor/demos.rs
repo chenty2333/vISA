@@ -5,7 +5,8 @@ use crate::serial;
 use crate::serial_println;
 use vmos_abi::{
     EPOLL_CTL_ADD, EPOLLIN, ERR_EPERM, FD_STDOUT, FUTEX_WAIT, FUTEX_WAKE, PackedStep,
-    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_FUTEX, StepTag, SyscallContext,
+    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_FUTEX, SYS_SENDTO, StepTag,
+    SyscallContext,
 };
 
 use super::linux::LinuxCallResult;
@@ -376,7 +377,20 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.net_driver
             .reset_sequence(crate::interrupts::tick_count())
             .map_err(|_| "driver_virtio_net reset failed")?;
-        let socket_fd = self.open_fake_socket_for_demo()?;
+        let socket_fd = self.open_demo_socket_for_demo()?;
+        let get = b"GET / HTTP/1.0\r\n\r\n";
+        let (ptr, len) = self.write_linux_arg_bytes(get)?;
+        let sent = self.dispatch_linux_syscall(
+            "net_sendto",
+            SyscallContext::new(
+                SYS_SENDTO,
+                [socket_fd as u64, ptr as u64, len as u64, 0, 0, 0],
+            ),
+        )?;
+        let sent = self.expect_ret("net_sendto", sent)?;
+        if sent as usize != get.len() {
+            return Err("demo socket request was not transmitted");
+        }
         let created = self.dispatch_linux_syscall(
             "net_epoll_create1",
             SyscallContext::new(SYS_EPOLL_CREATE1, [0, 0, 0, 0, 0, 0]),
@@ -408,7 +422,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let events = self.expect_bytes("net_epoll_wait", waited)?;
         let event_count = events.len() / 12;
         if event_count == 0 {
-            return Err("fake packet did not become epoll-readable");
+            return Err("packet-device frame did not become epoll-readable");
         }
         serial_println!("packet-rx WaitToken -> epoll ready events={}", event_count);
         serial_println!(

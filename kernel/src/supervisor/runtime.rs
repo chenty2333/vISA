@@ -258,7 +258,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.fd_handle(fd)
     }
 
-    pub(crate) fn open_fake_socket_for_demo(&mut self) -> Result<u32, &'static str> {
+    pub(crate) fn open_demo_socket_for_demo(&mut self) -> Result<u32, &'static str> {
         let socket_id = self
             .net_core
             .create_socket(vmos_abi::AF_INET, vmos_abi::SOCK_STREAM, 0)
@@ -285,7 +285,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         });
         let handle = self
             .fd_handle(fd)
-            .ok_or("fake socket fd did not publish a resource handle")?;
+            .ok_or("demo socket fd did not publish a resource handle")?;
         self.semantic.record_socket_state_changed(handle.id, "open");
         Ok(fd)
     }
@@ -1009,6 +1009,31 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         match self.net_core.send_socket(socket_id, &bytes) {
             Ok(count) => {
+                let frame = match self.net_core.take_tx_frame(socket_id) {
+                    Ok(frame) => frame,
+                    Err(ServiceCallError::Errno(errno)) => {
+                        return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                    }
+                    Err(ServiceCallError::Trap(reason)) => {
+                        crate::kwarn!("net_core take_tx_frame: {}", reason);
+                        return Err("net_core trapped while preparing send frame");
+                    }
+                    Err(ServiceCallError::Invalid(err)) => return Err(err),
+                };
+                match self
+                    .net_driver
+                    .submit_tx_frame(interrupts::tick_count(), &frame)
+                {
+                    Ok(_) => {}
+                    Err(ServiceCallError::Errno(errno)) => {
+                        return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                    }
+                    Err(ServiceCallError::Trap(reason)) => {
+                        crate::kwarn!("driver_virtio_net submit_tx_frame: {}", reason);
+                        return Err("driver_virtio_net trapped while submitting tx frame");
+                    }
+                    Err(ServiceCallError::Invalid(err)) => return Err(err),
+                }
                 self.semantic.record_packet_transmitted(
                     self.net.interface.id,
                     Some(handle.id),
@@ -1888,37 +1913,39 @@ impl<'engine> PrototypeRuntime<'engine> {
                 DriverNetEventKind::DriverCompletion => self
                     .semantic
                     .record_driver_completion(self.net.device.id, "virtio-net-rx"),
-                DriverNetEventKind::PacketRx => match self.net_core.inject_packet(&event.packet) {
-                    Ok(Some(ready_key)) => {
-                        let socket = self
-                            .socket_resource_for_ready_key(ready_key)
-                            .map(|handle| handle.id);
-                        self.semantic.record_packet_received(
-                            self.net.interface.id,
-                            socket,
-                            ready_key,
-                            event.len as usize,
-                        );
-                        self.notify_ready_key(ready_key, "epoll net ready notification");
+                DriverNetEventKind::PacketRx => {
+                    match self.net_core.deliver_packet_frame(&event.frame) {
+                        Ok(Some(ready_key)) => {
+                            let socket = self
+                                .socket_resource_for_ready_key(ready_key)
+                                .map(|handle| handle.id);
+                            self.semantic.record_packet_received(
+                                self.net.interface.id,
+                                socket,
+                                ready_key,
+                                event.len as usize,
+                            );
+                            self.notify_ready_key(ready_key, "epoll net ready notification");
+                        }
+                        Ok(None) => {
+                            self.semantic.record_packet_received(
+                                self.net.interface.id,
+                                None,
+                                0,
+                                event.len as usize,
+                            );
+                        }
+                        Err(ServiceCallError::Trap(reason)) => {
+                            crate::kwarn!("net_core deliver_packet_frame: {}", reason);
+                        }
+                        Err(ServiceCallError::Invalid(err)) => {
+                            crate::kwarn!("net_core deliver_packet_frame: {}", err);
+                        }
+                        Err(ServiceCallError::Errno(errno)) => {
+                            crate::kwarn!("net_core deliver_packet_frame errno={}", errno);
+                        }
                     }
-                    Ok(None) => {
-                        self.semantic.record_packet_received(
-                            self.net.interface.id,
-                            None,
-                            0,
-                            event.len as usize,
-                        );
-                    }
-                    Err(ServiceCallError::Trap(reason)) => {
-                        crate::kwarn!("net_core inject_packet: {}", reason);
-                    }
-                    Err(ServiceCallError::Invalid(err)) => {
-                        crate::kwarn!("net_core inject_packet: {}", err);
-                    }
-                    Err(ServiceCallError::Errno(errno)) => {
-                        crate::kwarn!("net_core inject_packet errno={}", errno);
-                    }
-                },
+                }
             }
         }
         self.drain_event_queue();

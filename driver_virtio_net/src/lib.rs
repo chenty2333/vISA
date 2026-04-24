@@ -43,11 +43,18 @@ pub extern "C" fn reset_sequence(now_ticks: u64) {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn submit_tx_frame(now_ticks: u64, len: u32) -> i32 {
+    let len = (len as usize).min(REQUEST_CAPACITY);
+    let request = unsafe { core::slice::from_raw_parts(addr_of_mut!(REQUEST) as *const u8, len) };
+    match unsafe { state().submit_tx_frame(now_ticks, request) } {
+        Ok(len) => len as i32,
+        Err(errno) => -errno,
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn poll_device(now_ticks: u64) -> u32 {
-    let response = unsafe {
-        core::slice::from_raw_parts_mut(addr_of_mut!(RESPONSE) as *mut u8, RESPONSE_CAPACITY)
-    };
-    unsafe { state().poll_device(now_ticks, response).kind as u32 }
+    unsafe { state().poll_device(now_ticks).kind as u32 }
 }
 
 #[unsafe(no_mangle)]
@@ -56,10 +63,19 @@ pub extern "C" fn event_len() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn consume_packet() {
-    unsafe {
-        state().consume_packet();
+pub extern "C" fn dequeue_rx_frame() -> i32 {
+    let response = unsafe {
+        core::slice::from_raw_parts_mut(addr_of_mut!(RESPONSE) as *mut u8, RESPONSE_CAPACITY)
+    };
+    match unsafe { state().dequeue_rx_frame(response) } {
+        Ok(len) => len as i32,
+        Err(errno) => -errno,
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pending_rx_frames() -> u32 {
+    unsafe { state().pending_rx_frames() }
 }
 
 unsafe fn state() -> &'static mut DriverVirtioNetState {
