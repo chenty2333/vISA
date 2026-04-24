@@ -10,7 +10,9 @@ use artifact_manifest::{
 };
 use semantic_core::{SemanticGraph, StoreState};
 use sha2::{Digest, Sha256};
-use supervisor_catalog::{CapabilitySpec, SUPERVISOR_WASM_MODULES, WasmModuleSpec};
+use supervisor_catalog::{
+    CapabilitySpec, NETWORK_STORE_BLUEPRINTS, SUPERVISOR_WASM_MODULES, WasmModuleSpec,
+};
 use wasmtime::{Config, Engine, Instance, Module, Precompiled, Store};
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
@@ -84,6 +86,19 @@ fn run() -> Result<(), Box<dyn Error>> {
         println!(
             "store {} role={} fault_policy={}",
             store.package, store.role, store.fault_policy
+        );
+    }
+    println!(
+        "network semantic blueprints staged for future artifacts: {}",
+        NETWORK_STORE_BLUEPRINTS.len()
+    );
+    for blueprint in NETWORK_STORE_BLUEPRINTS {
+        println!(
+            "blueprint {} role={} fault_policy={} capabilities={}",
+            blueprint.package,
+            blueprint.role.as_str(),
+            blueprint.fault_policy.as_str(),
+            blueprint.capabilities.len()
         );
     }
     let migration_path = prepare_migration_package(&artifact_root, migration_path, &manifest)?;
@@ -179,6 +194,7 @@ fn demo_migration_package(manifest: &ArtifactBundleManifest) -> MigrationPackage
         semantic: SemanticSnapshotManifest {
             barrier_id: 1,
             event_log_cursor: 0,
+            pending_wait_count: 0,
             task_count: 1,
             resource_count: 0,
             wait_token_count: 0,
@@ -186,6 +202,7 @@ fn demo_migration_package(manifest: &ArtifactBundleManifest) -> MigrationPackage
             fault_domain_count: manifest.modules.len(),
             store_count: manifest.modules.len(),
             transaction_count: 0,
+            active_transaction_count: 0,
         },
         logical_capabilities,
         substrate_boundary: SubstrateBoundaryManifest {
@@ -200,6 +217,7 @@ fn demo_migration_package(manifest: &ArtifactBundleManifest) -> MigrationPackage
         not_migrated: vec![
             "host raw pointers".to_owned(),
             "native stacks".to_owned(),
+            "active semantic transactions".to_owned(),
             "active DMW leases".to_owned(),
             "DMA/IOMMU mappings".to_owned(),
             "MMIO mappings".to_owned(),
@@ -243,6 +261,9 @@ fn validate_migration_package(
     }
     if package.substrate_boundary.pending_dma_completions != 0 {
         return Err("migration package contains in-flight DMA completions".into());
+    }
+    if package.semantic.active_transaction_count != 0 {
+        return Err("migration package contains active semantic transactions".into());
     }
     if package.logical_capabilities.len() != package.semantic.capability_count {
         return Err("migration package capability list/count mismatch".into());
@@ -356,11 +377,13 @@ fn restore_migration_package(
         package.guest.canonical_isa
     );
     println!(
-        "restore plan: import semantic roots tasks={} resources={} waits={} transactions={} event_cursor={}",
+        "restore plan: import semantic roots tasks={} resources={} waits={} pending_waits={} transactions={} active_transactions={} event_cursor={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.wait_token_count,
+        package.semantic.pending_wait_count,
         package.semantic.transaction_count,
+        package.semantic.active_transaction_count,
         package.semantic.event_log_cursor
     );
     println!(

@@ -23,6 +23,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.run_sleep_demo()?;
         self.run_futex_demo()?;
         self.run_epoll_demo()?;
+        self.run_network_semantic_demo()?;
         self.run_procfs_recovery_demo()?;
         self.run_capability_enforcement_demo()?;
         self.run_generation_plane_demo()?;
@@ -334,6 +335,50 @@ impl<'engine> PrototypeRuntime<'engine> {
         );
 
         self.close_fd(pulse_fd)?;
+        self.close_fd(epfd)?;
+        Ok(())
+    }
+
+    fn run_network_semantic_demo(&mut self) -> Result<(), &'static str> {
+        serial_println!("== network semantic skeleton demo ==");
+        self.net.reset_sequence(crate::interrupts::tick_count());
+        let socket_fd = self.open_fake_socket_for_demo()?;
+        let created = self.dispatch_linux_syscall(
+            "net_epoll_create1",
+            SyscallContext::new(SYS_EPOLL_CREATE1, [0, 0, 0, 0, 0, 0]),
+        )?;
+        let epfd = self.expect_ret("net_epoll_create1", created)? as u32;
+        let ctl = self.dispatch_linux_syscall(
+            "net_epoll_ctl",
+            SyscallContext::new(
+                SYS_EPOLL_CTL,
+                [
+                    epfd as u64,
+                    EPOLL_CTL_ADD as u64,
+                    socket_fd as u64,
+                    EPOLLIN as u64,
+                    0x51,
+                    0,
+                ],
+            ),
+        )?;
+        self.expect_ret("net_epoll_ctl", ctl)?;
+
+        let waited = match self.dispatch_linux_syscall_raw(
+            "net_epoll_wait",
+            SyscallContext::new(SYS_EPOLL_WAIT, [epfd as u64, 1, 40, 0, 0, 0]),
+        )? {
+            LinuxCallResult::Pending(token) => self.block_on_wait("net_epoll_wait", token)?,
+            ready => ready,
+        };
+        let events = self.expect_bytes("net_epoll_wait", waited)?;
+        let event_count = events.len() / 12;
+        if event_count == 0 {
+            return Err("fake packet did not become epoll-readable");
+        }
+        serial_println!("packet-rx WaitToken -> epoll ready events={}", event_count);
+
+        self.close_fd(socket_fd)?;
         self.close_fd(epfd)?;
         Ok(())
     }

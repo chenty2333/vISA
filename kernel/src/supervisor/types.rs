@@ -34,6 +34,10 @@ pub(crate) enum FdResource {
     EpollInstance {
         epoll_id: u32,
     },
+    Socket {
+        socket_id: u64,
+        ready_key: u64,
+    },
 }
 
 #[derive(Clone, Debug)]

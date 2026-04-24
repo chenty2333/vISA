@@ -3,6 +3,7 @@ mod engine;
 mod events;
 mod fault;
 mod linux;
+mod net;
 mod pulse;
 mod recovery;
 mod runtime;

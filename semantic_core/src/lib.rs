@@ -128,6 +128,12 @@ pub enum ResourceKind {
     Futex,
     Epoll,
     Device,
+    PacketDevice,
+    NetInterface,
+    NetSocket,
+    SocketQueue,
+    DmaBuffer,
+    IrqLine,
     GuestMemory,
     WindowLease,
     ServiceStore,
@@ -141,6 +147,12 @@ impl ResourceKind {
             Self::Futex => "futex",
             Self::Epoll => "epoll",
             Self::Device => "device",
+            Self::PacketDevice => "packet-device",
+            Self::NetInterface => "net-interface",
+            Self::NetSocket => "net-socket",
+            Self::SocketQueue => "socket-queue",
+            Self::DmaBuffer => "dma-buffer",
+            Self::IrqLine => "irq-line",
             Self::GuestMemory => "guest-memory",
             Self::WindowLease => "window-lease",
             Self::ServiceStore => "service-store",
@@ -155,6 +167,12 @@ pub enum SemanticWaitKind {
     Epoll,
     FdReadable,
     FdWritable,
+    PacketRx,
+    PacketTx,
+    SocketReadable,
+    SocketWritable,
+    SocketAccept,
+    DeviceIrq,
     DriverCompletion,
     Signal,
     ChildExit,
@@ -168,6 +186,12 @@ impl SemanticWaitKind {
             Self::Epoll => "epoll",
             Self::FdReadable => "fd-readable",
             Self::FdWritable => "fd-writable",
+            Self::PacketRx => "packet-rx",
+            Self::PacketTx => "packet-tx",
+            Self::SocketReadable => "socket-readable",
+            Self::SocketWritable => "socket-writable",
+            Self::SocketAccept => "socket-accept",
+            Self::DeviceIrq => "device-irq",
             Self::DriverCompletion => "driver-completion",
             Self::Signal => "signal",
             Self::ChildExit => "child-exit",
@@ -801,6 +825,45 @@ pub enum EventKind {
         trap: TrapClass,
         detail: String,
     },
+    PacketReceived {
+        interface: ResourceId,
+        socket: Option<ResourceId>,
+        ready_key: u64,
+        len: usize,
+    },
+    PacketTransmitted {
+        interface: ResourceId,
+        socket: Option<ResourceId>,
+        ready_key: u64,
+        len: usize,
+    },
+    NetInterfaceStateChanged {
+        interface: ResourceId,
+        up: bool,
+    },
+    SocketStateChanged {
+        socket: ResourceId,
+        state: String,
+    },
+    DeviceIrqDelivered {
+        irq: ResourceId,
+        device: ResourceId,
+        cause: String,
+    },
+    DriverCompletion {
+        device: ResourceId,
+        operation: String,
+    },
+    DmaSubmitted {
+        buffer: ResourceId,
+        device: ResourceId,
+        len: usize,
+    },
+    DmaCompleted {
+        buffer: ResourceId,
+        device: ResourceId,
+        len: usize,
+    },
     FaultDomainRestarted {
         domain: FaultDomainId,
     },
@@ -1038,6 +1101,55 @@ impl EventKind {
                 ),
                 None => format!("DriverTrap trap={} detail={detail}", trap.as_str()),
             },
+            Self::PacketReceived {
+                interface,
+                socket,
+                ready_key,
+                len,
+            } => {
+                let socket = socket
+                    .map(|socket| socket.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                format!(
+                    "PacketReceived interface={interface} socket={socket} ready_key=0x{ready_key:x} len={len}"
+                )
+            }
+            Self::PacketTransmitted {
+                interface,
+                socket,
+                ready_key,
+                len,
+            } => {
+                let socket = socket
+                    .map(|socket| socket.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                format!(
+                    "PacketTransmitted interface={interface} socket={socket} ready_key=0x{ready_key:x} len={len}"
+                )
+            }
+            Self::NetInterfaceStateChanged { interface, up } => {
+                let state = if *up { "up" } else { "down" };
+                format!("NetInterfaceStateChanged interface={interface} state={state}")
+            }
+            Self::SocketStateChanged { socket, state } => {
+                format!("SocketStateChanged socket={socket} state={state}")
+            }
+            Self::DeviceIrqDelivered { irq, device, cause } => {
+                format!("DeviceIrqDelivered irq={irq} device={device} cause={cause}")
+            }
+            Self::DriverCompletion { device, operation } => {
+                format!("DriverCompletion device={device} operation={operation}")
+            }
+            Self::DmaSubmitted {
+                buffer,
+                device,
+                len,
+            } => format!("DmaSubmitted buffer={buffer} device={device} len={len}"),
+            Self::DmaCompleted {
+                buffer,
+                device,
+                len,
+            } => format!("DmaCompleted buffer={buffer} device={device} len={len}"),
             Self::FaultDomainRestarted { domain } => {
                 format!("FaultDomainRestarted domain={domain}")
             }
@@ -1717,6 +1829,105 @@ impl SemanticGraph {
         );
     }
 
+    pub fn record_packet_received(
+        &mut self,
+        interface: ResourceId,
+        socket: Option<ResourceId>,
+        ready_key: u64,
+        len: usize,
+    ) {
+        self.event_log.push(
+            "net",
+            EventKind::PacketReceived {
+                interface,
+                socket,
+                ready_key,
+                len,
+            },
+        );
+    }
+
+    pub fn record_packet_transmitted(
+        &mut self,
+        interface: ResourceId,
+        socket: Option<ResourceId>,
+        ready_key: u64,
+        len: usize,
+    ) {
+        self.event_log.push(
+            "net",
+            EventKind::PacketTransmitted {
+                interface,
+                socket,
+                ready_key,
+                len,
+            },
+        );
+    }
+
+    pub fn record_net_interface_state_changed(&mut self, interface: ResourceId, up: bool) {
+        self.event_log
+            .push("net", EventKind::NetInterfaceStateChanged { interface, up });
+    }
+
+    pub fn record_socket_state_changed(&mut self, socket: ResourceId, state: &str) {
+        self.event_log.push(
+            "net",
+            EventKind::SocketStateChanged {
+                socket,
+                state: state.to_string(),
+            },
+        );
+    }
+
+    pub fn record_device_irq_delivered(
+        &mut self,
+        irq: ResourceId,
+        device: ResourceId,
+        cause: &str,
+    ) {
+        self.event_log.push(
+            "device",
+            EventKind::DeviceIrqDelivered {
+                irq,
+                device,
+                cause: cause.to_string(),
+            },
+        );
+    }
+
+    pub fn record_driver_completion(&mut self, device: ResourceId, operation: &str) {
+        self.event_log.push(
+            "driver",
+            EventKind::DriverCompletion {
+                device,
+                operation: operation.to_string(),
+            },
+        );
+    }
+
+    pub fn record_dma_submitted(&mut self, buffer: ResourceId, device: ResourceId, len: usize) {
+        self.event_log.push(
+            "dma",
+            EventKind::DmaSubmitted {
+                buffer,
+                device,
+                len,
+            },
+        );
+    }
+
+    pub fn record_dma_completed(&mut self, buffer: ResourceId, device: ResourceId, len: usize) {
+        self.event_log.push(
+            "dma",
+            EventKind::DmaCompleted {
+                buffer,
+                device,
+                len,
+            },
+        );
+    }
+
     pub fn grant_capability(
         &mut self,
         subject: &str,
@@ -2094,6 +2305,7 @@ impl SemanticGraph {
                     event_log_cursor: self.event_log.cursor(),
                     pending_wait_count: self.pending_wait_count(),
                     live_resource_count: self.live_resource_count(),
+                    active_transaction_count: self.active_transaction_count(),
                     active_dmw_lease_count: substrate_boundary.active_dmw_lease_count,
                     dmw_quiescent,
                 },
@@ -2130,6 +2342,13 @@ impl SemanticGraph {
 
     pub fn transaction_count(&self) -> usize {
         self.transactions.len()
+    }
+
+    pub fn active_transaction_count(&self) -> usize {
+        self.transactions
+            .iter()
+            .filter(|transaction| transaction.state == TransactionState::Begun)
+            .count()
     }
 
     pub fn capability_count(&self) -> usize {
@@ -2246,6 +2465,7 @@ pub struct SnapshotBarrierSnapshot {
     pub event_log_cursor: EventId,
     pub pending_wait_count: usize,
     pub live_resource_count: usize,
+    pub active_transaction_count: usize,
     pub active_dmw_lease_count: u32,
     pub dmw_quiescent: bool,
 }
@@ -2286,6 +2506,9 @@ impl MigrationPackage {
         if self.substrate_boundary.pending_dma_completions != 0 {
             return Err(MigrationValidationError::InFlightDma);
         }
+        if self.semantic.barrier.active_transaction_count != 0 {
+            return Err(MigrationValidationError::ActiveSemanticTransaction);
+        }
         if self.guest.canonical_isa != CanonicalGuestIsa::Riscv64 {
             return Err(MigrationValidationError::UnsupportedGuestIsa);
         }
@@ -2302,11 +2525,12 @@ impl MigrationPackage {
             self.guest.canonical_isa.as_str()
         ));
         lines.push(format!(
-            "snapshot barrier: id={} cursor={} pending_waits={} live_resources={} active_dmw_leases={}",
+            "snapshot barrier: id={} cursor={} pending_waits={} live_resources={} active_transactions={} active_dmw_leases={}",
             self.semantic.barrier.id,
             self.semantic.barrier.event_log_cursor,
             self.semantic.barrier.pending_wait_count,
             self.semantic.barrier.live_resource_count,
+            self.semantic.barrier.active_transaction_count,
             self.semantic.barrier.active_dmw_lease_count
         ));
         lines.push(format!(
@@ -2324,7 +2548,7 @@ impl MigrationPackage {
             self.required_artifact_profile.summary()
         ));
         lines.push(
-            "not migrated: raw pointers, native stacks, active DMW leases, DMA mappings, MMIO mappings, IRQ registrations, translated code cache"
+            "not migrated: raw pointers, native stacks, active semantic transactions, active DMW leases, DMA mappings, MMIO mappings, IRQ registrations, translated code cache"
                 .to_string(),
         );
         lines
@@ -2336,6 +2560,7 @@ pub enum MigrationValidationError {
     UnsupportedSchema,
     ActiveDmwLease,
     InFlightDma,
+    ActiveSemanticTransaction,
     UnsupportedGuestIsa,
 }
 
@@ -2524,6 +2749,34 @@ mod tests {
     }
 
     #[test]
+    fn network_events_are_recorded_as_semantic_state() {
+        let mut graph = SemanticGraph::new();
+        let device =
+            graph.register_resource(ResourceKind::PacketDevice, None, "packet-device:net0");
+        let interface =
+            graph.register_resource(ResourceKind::NetInterface, None, "net-interface:net0");
+        let socket = graph.register_resource(ResourceKind::NetSocket, Some(7), "socket:tcp:1");
+        let irq = graph.register_resource(ResourceKind::IrqLine, None, "irq:net0");
+        let dma = graph.register_resource(ResourceKind::DmaBuffer, None, "dma:net0-rx");
+
+        graph.record_net_interface_state_changed(interface, true);
+        graph.record_device_irq_delivered(irq, device, "rx");
+        graph.record_dma_submitted(dma, device, 64);
+        graph.record_dma_completed(dma, device, 64);
+        graph.record_packet_received(interface, Some(socket), 0x6e6574307278, 64);
+
+        assert!(graph.event_log_tail(8).iter().any(|event| matches!(
+            event.kind,
+            EventKind::PacketReceived {
+                interface: recorded_interface,
+                socket: Some(recorded_socket),
+                len: 64,
+                ..
+            } if recorded_interface == interface && recorded_socket == socket
+        )));
+    }
+
+    #[test]
     fn migration_package_rejects_active_dmw_leases() {
         let mut graph = SemanticGraph::new();
         graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
@@ -2550,6 +2803,35 @@ mod tests {
         assert_eq!(
             package.validate_portability(),
             Err(MigrationValidationError::ActiveDmwLease)
+        );
+    }
+
+    #[test]
+    fn migration_package_rejects_active_semantic_transactions() {
+        let mut graph = SemanticGraph::new();
+        graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
+        graph.begin_transaction("net.recvmsg", None, Some(1));
+
+        let package = graph.migration_package(
+            "test",
+            "x86_64",
+            "aarch64",
+            test_artifact_profile(),
+            GuestStateSnapshot::riscv64_placeholder(),
+            SubstrateBoundarySnapshot {
+                timer_epoch: 0,
+                pending_irq_causes: 0,
+                pending_dma_completions: 0,
+                active_dmw_lease_count: 0,
+                native_state_policy: "rebuild".to_string(),
+            },
+            1,
+            true,
+        );
+
+        assert_eq!(
+            package.validate_portability(),
+            Err(MigrationValidationError::ActiveSemanticTransaction)
         );
     }
 

@@ -14,6 +14,7 @@ use vmos_abi::{
 use super::engine::SupervisorEngine;
 use super::events::Event;
 use super::linux::{LinuxCallResult, LinuxFrontend, LinuxPlan};
+use super::net::{FakePacketDevice, NetEvent};
 use super::pulse::{PulseDevice, PulseEvent};
 use super::scheduler::Scheduler;
 use super::semantic::{bootstrap_graph, fd_resource_kind, fd_resource_label};
@@ -61,6 +62,7 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) scheduler: Scheduler,
     pub(super) waits: WaitRegistry,
     pub(super) pulse: PulseDevice,
+    pub(super) net: FakePacketDevice,
     pub(super) restart_count: u64,
     pub(super) semantic: SemanticGraph,
     pub(super) next_snapshot_barrier: u64,
@@ -68,6 +70,8 @@ pub(crate) struct PrototypeRuntime<'engine> {
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn new(engine: &'engine SupervisorEngine) -> Result<Self, &'static str> {
+        let mut semantic = bootstrap_graph();
+        let net = FakePacketDevice::new(interrupts::tick_count(), &mut semantic);
         Ok(Self {
             console: ConsoleService::new(engine)?,
             vfs: VfsService::new(engine)?,
@@ -84,8 +88,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             scheduler: Scheduler::new(),
             waits: WaitRegistry::new(),
             pulse: PulseDevice::new(interrupts::tick_count()),
+            net,
             restart_count: 0,
-            semantic: bootstrap_graph(),
+            semantic,
             next_snapshot_barrier: 1,
         })
     }
@@ -208,11 +213,29 @@ impl<'engine> PrototypeRuntime<'engine> {
         match &entry.resource {
             FdResource::ServiceNode { path, .. } => Ok(path.clone()),
             FdResource::EpollInstance { .. } => Err(ERR_EBADF),
+            FdResource::Socket { .. } => Err(ERR_EBADF),
         }
     }
 
     pub(crate) fn fd_handle_for_demo(&self, fd: u32) -> Option<ResourceHandle> {
         self.fd_handle(fd)
+    }
+
+    pub(crate) fn open_fake_socket_for_demo(&mut self) -> Result<u32, &'static str> {
+        let socket_id = self.net.allocate_socket_id();
+        let ready_key = self.net.ready_key();
+        let fd = self.alloc_fd(FdEntry {
+            resource: FdResource::Socket {
+                socket_id,
+                ready_key,
+            },
+            cursor: 0,
+        });
+        let handle = self
+            .fd_handle(fd)
+            .ok_or("fake socket fd did not publish a resource handle")?;
+        self.semantic.record_socket_state_changed(handle.id, "open");
+        Ok(fd)
     }
 
     pub(crate) fn path_kind(&mut self, path: &[u8]) -> Result<NodeKind, i32> {
@@ -598,7 +621,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             .map_err(|_| "epoll_ctl targeted a non-pollable fd")?;
         match self.epoll.ctl(epoll_id, op, ready_key, events, data) {
             Ok(()) => {
-                if self.pulse.is_ready_key(ready_key) {
+                if self.pulse.is_ready_key(ready_key) || self.net.is_ready_key(ready_key) {
                     let _ = self.epoll.notify_ready(ready_key);
                 }
                 Ok(LinuxCallResult::Ret(0))
@@ -751,12 +774,19 @@ impl<'engine> PrototypeRuntime<'engine> {
             .fd_table
             .get_mut(fd as usize)
             .ok_or("close targeted an out-of-range file descriptor")?;
+        let closing_socket = slot
+            .as_ref()
+            .is_some_and(|entry| matches!(&entry.resource, FdResource::Socket { .. }));
         if slot.take().is_none() {
             return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
         }
         if let Some(slot) = self.fd_handles.get_mut(fd as usize)
             && let Some(handle) = slot.take()
         {
+            if closing_socket {
+                self.semantic
+                    .record_socket_state_changed(handle.id, "closed");
+            }
             self.semantic.close_resource(handle.id);
         }
 
@@ -1015,6 +1045,25 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.fd_handles.get(fd as usize).copied().flatten()
     }
 
+    fn socket_resource_for_ready_key(&self, ready_key: u64) -> Option<ResourceHandle> {
+        for (fd, entry) in self.fd_table.iter().enumerate() {
+            let Some(entry) = entry else {
+                continue;
+            };
+            let FdResource::Socket {
+                ready_key: socket_key,
+                ..
+            } = &entry.resource
+            else {
+                continue;
+            };
+            if *socket_key == ready_key {
+                return self.fd_handle(fd as u32);
+            }
+        }
+        None
+    }
+
     fn validate_fd_handle(&mut self, fd: u32) -> Result<(), ServiceCallError> {
         let handle = self
             .fd_handle(fd)
@@ -1036,6 +1085,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Ok((*route, *node, entry.cursor, path.clone()))
             }
             FdResource::EpollInstance { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::Socket { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
         }
     }
 
@@ -1071,6 +1121,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 path,
                 ..
             } => PulseDevice::ready_key_for_path(path).ok_or(ServiceCallError::Errno(ERR_EINVAL)),
+            FdResource::Socket { ready_key, .. } => Ok(*ready_key),
             _ => Err(ServiceCallError::Errno(ERR_EINVAL)),
         }
     }
@@ -1255,6 +1306,62 @@ impl<'engine> PrototypeRuntime<'engine> {
                         crate::kwarn!("epoll restart notification errno={}", errno);
                     }
                 },
+            }
+        }
+
+        let mut net_events = Vec::new();
+        self.net
+            .collect_events(interrupts::tick_count(), &mut net_events);
+        for event in net_events {
+            match event {
+                NetEvent::DeviceIrq { irq, device } => {
+                    self.semantic
+                        .record_device_irq_delivered(irq.id, device.id, "rx");
+                }
+                NetEvent::DmaSubmitted {
+                    buffer,
+                    device,
+                    len,
+                } => self
+                    .semantic
+                    .record_dma_submitted(buffer.id, device.id, len),
+                NetEvent::DmaCompleted {
+                    buffer,
+                    device,
+                    len,
+                } => self
+                    .semantic
+                    .record_dma_completed(buffer.id, device.id, len),
+                NetEvent::DriverCompletion { device } => {
+                    self.semantic.record_driver_completion(device.id, "net-rx")
+                }
+                NetEvent::PacketReceived {
+                    interface,
+                    ready_key,
+                    len,
+                } => {
+                    let socket = self
+                        .socket_resource_for_ready_key(ready_key)
+                        .map(|handle| handle.id);
+                    self.semantic
+                        .record_packet_received(interface.id, socket, ready_key, len);
+                    match self.epoll.notify_ready(ready_key) {
+                        Ok(wait_ids) => {
+                            for wait_id in wait_ids {
+                                self.scheduler.push_event(Event::WaitReady(wait_id));
+                            }
+                        }
+                        Err(ServiceCallError::Trap(reason)) => {
+                            crate::kwarn!("epoll net ready notification: {}", reason);
+                        }
+                        Err(ServiceCallError::Invalid(err)) => {
+                            crate::kwarn!("epoll net ready notification: {}", err);
+                        }
+                        Err(ServiceCallError::Errno(errno)) => {
+                            crate::kwarn!("epoll net ready notification errno={}", errno);
+                        }
+                    }
+                }
             }
         }
         self.drain_event_queue();

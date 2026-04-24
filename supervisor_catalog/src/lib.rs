@@ -13,6 +13,13 @@ pub struct UserBinarySpec {
     pub package: &'static str,
 }
 
+pub struct StoreBlueprint {
+    pub package: &'static str,
+    pub role: StoreRole,
+    pub fault_policy: FaultPolicy,
+    pub capabilities: &'static [CapabilitySpec],
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreRole {
     Personality,
@@ -100,6 +107,77 @@ const VFS_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
     rights: &["lookup", "read", "list", "readlink"],
     lifetime: "store",
 }];
+const DRIVER_VIRTIO_NET_CAPABILITIES: &[CapabilitySpec] = &[
+    CapabilitySpec {
+        name: "packet-device.net0",
+        rights: &["rx", "tx", "poll", "irq", "dma"],
+        lifetime: "store",
+    },
+    CapabilitySpec {
+        name: "dma.pool.net0",
+        rights: &["submit", "complete", "cancel"],
+        lifetime: "store",
+    },
+    CapabilitySpec {
+        name: "irq.net0",
+        rights: &["ack", "mask", "unmask"],
+        lifetime: "store",
+    },
+];
+const NET_CORE_CAPABILITIES: &[CapabilitySpec] = &[
+    CapabilitySpec {
+        name: "packet-device.net0",
+        rights: &["rx", "tx", "poll"],
+        lifetime: "store",
+    },
+    CapabilitySpec {
+        name: "net.interface",
+        rights: &["attach", "up", "down", "rx", "tx"],
+        lifetime: "store",
+    },
+    CapabilitySpec {
+        name: "net.socket",
+        rights: &[
+            "create", "bind", "connect", "listen", "accept", "send", "recv", "poll", "close",
+        ],
+        lifetime: "task",
+    },
+];
+const LINUX_SOCKET_CAPABILITIES: &[CapabilitySpec] = &[
+    CapabilitySpec {
+        name: "linux.socket",
+        rights: &[
+            "socket", "bind", "connect", "listen", "accept", "send", "recv", "poll", "close",
+        ],
+        lifetime: "task",
+    },
+    CapabilitySpec {
+        name: "net.socket",
+        rights: &["create", "send", "recv", "poll", "close"],
+        lifetime: "task",
+    },
+];
+
+pub const NETWORK_STORE_BLUEPRINTS: &[StoreBlueprint] = &[
+    StoreBlueprint {
+        package: "driver_virtio_net",
+        role: StoreRole::Driver,
+        fault_policy: FaultPolicy::Restartable,
+        capabilities: DRIVER_VIRTIO_NET_CAPABILITIES,
+    },
+    StoreBlueprint {
+        package: "net_core",
+        role: StoreRole::CoreService,
+        fault_policy: FaultPolicy::Restartable,
+        capabilities: NET_CORE_CAPABILITIES,
+    },
+    StoreBlueprint {
+        package: "linux_socket_service",
+        role: StoreRole::CoreService,
+        fault_policy: FaultPolicy::Restartable,
+        capabilities: LINUX_SOCKET_CAPABILITIES,
+    },
+];
 
 pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
     WasmModuleSpec {

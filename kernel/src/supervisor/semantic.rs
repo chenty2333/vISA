@@ -63,6 +63,7 @@ pub(super) fn fd_resource_kind(resource: &FdResource) -> ResourceKind {
     match resource {
         FdResource::ServiceNode { .. } => ResourceKind::Fd,
         FdResource::EpollInstance { .. } => ResourceKind::Epoll,
+        FdResource::Socket { .. } => ResourceKind::NetSocket,
     }
 }
 
@@ -73,6 +74,7 @@ pub(super) fn fd_resource_label(resource: &FdResource) -> String {
             format!("fd:{path}")
         }
         FdResource::EpollInstance { epoll_id } => format!("epoll:{epoll_id}"),
+        FdResource::Socket { socket_id, .. } => format!("socket:fake-net:{socket_id}"),
     }
 }
 
@@ -89,10 +91,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.semantic.event_count()
         ));
         lines.push(format!(
-            "store graph: stores={} live_resources={} transactions={}",
+            "store graph: stores={} live_resources={} transactions={} active_transactions={}",
             self.semantic.store_count(),
             self.semantic.live_resource_count(),
-            self.semantic.transaction_count()
+            self.semantic.transaction_count(),
+            self.semantic.active_transaction_count()
         ));
         lines.push("event log tail:".to_string());
         for event in self.semantic.event_log_tail(16) {
@@ -232,6 +235,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err("snapshot barrier observed active DMW leases");
         }
         crate::substrate::dmw::assert_quiescent()?;
+        if self.semantic.active_transaction_count() != 0 {
+            self.semantic
+                .record_failure_effect(FailureEffect::CompleteWithErrno(vmos_abi::ERR_EAGAIN));
+            return Err("snapshot barrier observed active semantic transactions");
+        }
 
         self.semantic.record_snapshot_barrier_exit(barrier);
         let package = self.semantic.migration_package(

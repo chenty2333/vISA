@@ -126,6 +126,8 @@ pub struct GuestStateManifest {
 pub struct SemanticSnapshotManifest {
     pub barrier_id: u64,
     pub event_log_cursor: u64,
+    #[serde(default)]
+    pub pending_wait_count: usize,
     pub task_count: usize,
     pub resource_count: usize,
     pub wait_token_count: usize,
@@ -135,6 +137,8 @@ pub struct SemanticSnapshotManifest {
     pub store_count: usize,
     #[serde(default)]
     pub transaction_count: usize,
+    #[serde(default)]
+    pub active_transaction_count: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
