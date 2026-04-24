@@ -842,6 +842,43 @@ fn inspect_package_object(
                 );
             }
         }
+        "cleanup" => {
+            println!(
+                "inspect cleanup package={} count={}",
+                package.package_id, package.semantic.cleanup_transaction_count
+            );
+            for cleanup in &package.semantic.cleanup_transactions {
+                let activation = display_option_u64(cleanup.activation);
+                let code = display_option_u64(cleanup.code_object);
+                let steps = cleanup
+                    .steps
+                    .iter()
+                    .map(|step| format!("{}:{}:{}", step.step, step.state, step.detail))
+                    .collect::<Vec<_>>()
+                    .join("|");
+                let line = format!(
+                    "cleanup id={} store={} activation={} code={} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
+                    cleanup.id,
+                    cleanup.store,
+                    activation,
+                    code,
+                    cleanup.generation,
+                    cleanup.state,
+                    cleanup.reason,
+                    cleanup.released_dmw_leases,
+                    cleanup.cancelled_waits,
+                    cleanup.revoked_capabilities.len(),
+                    cleanup.dropped_resources,
+                    cleanup.unbound_code_object,
+                    cleanup.effect,
+                    steps
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.cleanup_transactions.is_empty() {
+                print_roots_filtered("cleanup", &package.semantic.roots.cleanup_roots, filter);
+            }
+        }
         _ => return Err(format!("unknown inspect kind `{kind}`").into()),
     }
     Ok(())

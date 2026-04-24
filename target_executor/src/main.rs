@@ -7,13 +7,13 @@ mod runtime;
 
 use artifact_manifest::{
     ActivationRecordManifest, ArtifactBundleManifest, CapabilityHandleArgManifest,
-    CodeObjectManifest, ContractObjectRefManifest, ContractViolationManifest, GuestStateManifest,
-    HostcallSpecManifest, HostcallTraceManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, RequiredArtifactProfileManifest, SemanticRootSetManifest,
-    SemanticSnapshotManifest, SubstrateBoundaryManifest, TargetAddressMapEntryManifest,
-    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
-    TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest,
+    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, ContractObjectRefManifest,
+    ContractViolationManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, RequiredArtifactProfileManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SubstrateBoundaryManifest,
+    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
+    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -44,6 +44,7 @@ struct TargetExecutorV1Report {
     migration_objects: Vec<MigrationObjectManifest>,
     tombstones: Vec<TombstoneManifest>,
     contract_violations: Vec<ContractViolationManifest>,
+    cleanup_transactions: Vec<CleanupTransactionManifest>,
     target_event_tail: Vec<String>,
 }
 
@@ -289,6 +290,33 @@ fn build_target_executor_v1(
         run_activation_harness(index, &mut executor, store, &code, &ledger)?;
     }
 
+    if let (Some(store), Some(code)) =
+        (store_manager.records().first(), publisher.objects().first())
+    {
+        let mut cleanup_store = store.store.clone();
+        let mut cleanup_code = code.clone();
+        let mut cleanup_ledger = ledger.clone();
+        let cleanup_activation = executor
+            .start_activation(
+                &cleanup_store,
+                &cleanup_code,
+                ActivationEntry::Symbol("cleanup_harness".to_owned()),
+            )
+            .map_err(|error| error.message())?;
+        executor
+            .acquire_dmw_lease(cleanup_activation, "dmw.cleanup.harness")
+            .map_err(|error| error.message())?;
+        executor
+            .run_fault_cleanup(
+                &mut cleanup_store,
+                Some(cleanup_activation),
+                Some(&mut cleanup_code),
+                &mut cleanup_ledger,
+                "cleanup-harness",
+            )
+            .map_err(|error| error.message())?;
+    }
+
     executor
         .snapshot_barrier()
         .map_err(|error| error.message())?;
@@ -310,6 +338,11 @@ fn build_target_executor_v1(
         report
             .migration_objects
             .push(migration_object_manifest(&object));
+    }
+    for cleanup in executor.cleanup_transactions() {
+        report
+            .cleanup_transactions
+            .push(cleanup_transaction_manifest(cleanup));
     }
     for tombstone in publisher
         .tombstones()
@@ -904,6 +937,7 @@ fn demo_migration_package(
             migration_object_count: target_v1.migration_objects.len(),
             tombstone_count: target_v1.tombstones.len(),
             contract_violation_count: target_v1.contract_violations.len(),
+            cleanup_transaction_count: target_v1.cleanup_transactions.len(),
             target_artifacts: target_v1.target_artifacts.clone(),
             code_objects: target_v1.code_objects.clone(),
             activation_records: target_v1.activation_records.clone(),
@@ -912,6 +946,7 @@ fn demo_migration_package(
             migration_objects: target_v1.migration_objects.clone(),
             tombstones: target_v1.tombstones.clone(),
             contract_violations: target_v1.contract_violations.clone(),
+            cleanup_transactions: target_v1.cleanup_transactions.clone(),
             network_socket_count: 1,
             network_rx_queue_bytes: 0,
         },
@@ -1167,6 +1202,40 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        cleanup_roots: target_v1
+            .cleanup_transactions
+            .iter()
+            .map(|cleanup| {
+                format!(
+                    "cleanup id={} store={} activation={} code={} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
+                    cleanup.id,
+                    cleanup.store,
+                    cleanup
+                        .activation
+                        .map(|activation| activation.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    cleanup
+                        .code_object
+                        .map(|code| code.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    cleanup.generation,
+                    cleanup.state,
+                    cleanup.reason,
+                    cleanup.released_dmw_leases,
+                    cleanup.cancelled_waits,
+                    cleanup.revoked_capabilities.len(),
+                    cleanup.dropped_resources,
+                    cleanup.unbound_code_object,
+                    cleanup.effect,
+                    cleanup
+                        .steps
+                        .iter()
+                        .map(|step| format!("{}:{}", step.step, step.state))
+                        .collect::<Vec<_>>()
+                        .join("|")
+                )
+            })
+            .collect(),
         event_log_tail: semantic
             .event_log_tail(16)
             .iter()
@@ -1354,6 +1423,35 @@ fn contract_violation_manifest(violation: &ContractViolation) -> ContractViolati
         from: contract_object_ref_manifest(violation.from),
         to: violation.to.map(contract_object_ref_manifest),
         detail: violation.detail.clone(),
+    }
+}
+
+fn cleanup_transaction_manifest(
+    cleanup: &semantic_core::FaultCleanupTransaction,
+) -> CleanupTransactionManifest {
+    CleanupTransactionManifest {
+        id: cleanup.id,
+        store: cleanup.store,
+        activation: cleanup.activation,
+        code_object: cleanup.code_object,
+        generation: cleanup.generation,
+        state: cleanup.state.as_str().to_owned(),
+        reason: cleanup.reason.clone(),
+        released_dmw_leases: cleanup.released_dmw_leases,
+        cancelled_waits: cleanup.cancelled_waits,
+        revoked_capabilities: cleanup.revoked_capabilities.clone(),
+        dropped_resources: cleanup.dropped_resources,
+        unbound_code_object: cleanup.unbound_code_object,
+        effect: cleanup.effect.summary(),
+        steps: cleanup
+            .steps
+            .iter()
+            .map(|step| CleanupStepManifest {
+                step: step.step.as_str().to_owned(),
+                state: step.state.as_str().to_owned(),
+                detail: step.detail.clone(),
+            })
+            .collect(),
     }
 }
 

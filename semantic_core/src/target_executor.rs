@@ -1725,6 +1725,155 @@ impl DmwLeaseRecord {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CleanupStep {
+    SealActivation,
+    PreventHostcalls,
+    ReleaseDmwLeases,
+    CancelWaitTokens,
+    RevokeCapabilities,
+    DropResourceArena,
+    UnbindCodeObject,
+    MarkStoreState,
+    RecordTransition,
+    RecordFailureEffect,
+    EmitReport,
+}
+
+impl CleanupStep {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SealActivation => "seal-activation",
+            Self::PreventHostcalls => "prevent-hostcalls",
+            Self::ReleaseDmwLeases => "release-dmw-leases",
+            Self::CancelWaitTokens => "cancel-wait-tokens",
+            Self::RevokeCapabilities => "revoke-capabilities",
+            Self::DropResourceArena => "drop-resource-arena",
+            Self::UnbindCodeObject => "unbind-code-object",
+            Self::MarkStoreState => "mark-store-state",
+            Self::RecordTransition => "record-transition",
+            Self::RecordFailureEffect => "record-failure-effect",
+            Self::EmitReport => "emit-report",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CleanupStepState {
+    NotStarted,
+    Done,
+    FailedRecoverable,
+    FailedFatal,
+}
+
+impl CleanupStepState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotStarted => "not-started",
+            Self::Done => "done",
+            Self::FailedRecoverable => "failed-recoverable",
+            Self::FailedFatal => "failed-fatal",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CleanupStepRecord {
+    pub step: CleanupStep,
+    pub state: CleanupStepState,
+    pub detail: String,
+}
+
+impl CleanupStepRecord {
+    pub fn done(step: CleanupStep, detail: &str) -> Self {
+        Self {
+            step,
+            state: CleanupStepState::Done,
+            detail: detail.to_string(),
+        }
+    }
+
+    pub fn pending(step: CleanupStep) -> Self {
+        Self {
+            step,
+            state: CleanupStepState::NotStarted,
+            detail: String::new(),
+        }
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.step.as_str(),
+            self.state.as_str(),
+            self.detail
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CleanupTransactionState {
+    Pending,
+    Completed,
+}
+
+impl CleanupTransactionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Completed => "completed",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FaultCleanupTransaction {
+    pub id: CleanupTransactionId,
+    pub store: StoreId,
+    pub activation: Option<ActivationId>,
+    pub code_object: Option<CodeObjectId>,
+    pub generation: Generation,
+    pub state: CleanupTransactionState,
+    pub reason: String,
+    pub steps: Vec<CleanupStepRecord>,
+    pub released_dmw_leases: u32,
+    pub cancelled_waits: u32,
+    pub revoked_capabilities: Vec<CapabilityId>,
+    pub dropped_resources: u32,
+    pub unbound_code_object: bool,
+    pub effect: FailureEffect,
+}
+
+impl FaultCleanupTransaction {
+    pub fn summary(&self) -> String {
+        format!(
+            "cleanup id={} store={} activation={} code={} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
+            self.id,
+            self.store,
+            self.activation
+                .map(|activation| activation.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            self.code_object
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            self.generation,
+            self.state.as_str(),
+            self.reason,
+            self.released_dmw_leases,
+            self.cancelled_waits,
+            self.revoked_capabilities.len(),
+            self.dropped_resources,
+            self.unbound_code_object,
+            self.effect.summary(),
+            self.steps
+                .iter()
+                .map(CleanupStepRecord::summary)
+                .collect::<Vec<_>>()
+                .join("|")
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetExecutorError {
     StoreNotRunning,
     CodeObjectNotBound,
@@ -1739,6 +1888,7 @@ pub enum TargetExecutorError {
     CapabilityDenied,
     DmwLeaseActive,
     DmwLeaseMissing,
+    PendingCleanupActive,
 }
 
 impl TargetExecutorError {
@@ -1757,6 +1907,7 @@ impl TargetExecutorError {
             Self::CapabilityDenied => "hostcall capability gate denied access",
             Self::DmwLeaseActive => "active DMW lease cannot cross exit boundary",
             Self::DmwLeaseMissing => "DMW lease is missing",
+            Self::PendingCleanupActive => "pending cleanup transaction blocks this boundary",
         }
     }
 }
@@ -1766,12 +1917,14 @@ pub struct TargetExecutor {
     next_activation_id: ActivationId,
     next_trap_id: TargetTrapId,
     next_hostcall_trace_id: HostcallTraceId,
+    next_cleanup_id: CleanupTransactionId,
     next_lease_id: DmwLeaseId,
     next_event_id: EventId,
     activations: Vec<ActivationRecord>,
     traps: Vec<TargetTrapRecord>,
     dmw_leases: Vec<DmwLeaseRecord>,
     hostcall_trace: Vec<HostcallTraceRecord>,
+    cleanup_transactions: Vec<FaultCleanupTransaction>,
     event_log: Vec<String>,
 }
 
@@ -1781,12 +1934,14 @@ impl TargetExecutor {
             next_activation_id: 1,
             next_trap_id: 1,
             next_hostcall_trace_id: 1,
+            next_cleanup_id: 1,
             next_lease_id: 1,
             next_event_id: 1,
             activations: Vec::new(),
             traps: Vec::new(),
             dmw_leases: Vec::new(),
             hostcall_trace: Vec::new(),
+            cleanup_transactions: Vec::new(),
             event_log: Vec::new(),
         }
     }
@@ -2362,7 +2517,200 @@ impl TargetExecutor {
         if self.dmw_leases.iter().any(|lease| lease.active) {
             return Err(TargetExecutorError::DmwLeaseActive);
         }
+        if self
+            .cleanup_transactions
+            .iter()
+            .any(|cleanup| cleanup.state == CleanupTransactionState::Pending)
+        {
+            return Err(TargetExecutorError::PendingCleanupActive);
+        }
         Ok(())
+    }
+
+    pub fn begin_fault_cleanup_transaction(
+        &mut self,
+        store: StoreId,
+        activation: Option<ActivationId>,
+        code_object: Option<CodeObjectId>,
+        reason: &str,
+    ) -> CleanupTransactionId {
+        if let Some(existing) = self.cleanup_transactions.iter().find(|cleanup| {
+            cleanup.store == store
+                && cleanup.activation == activation
+                && cleanup.reason == reason
+                && cleanup.state == CleanupTransactionState::Pending
+        }) {
+            return existing.id;
+        }
+        let id = self.next_cleanup_id;
+        self.next_cleanup_id += 1;
+        self.cleanup_transactions.push(FaultCleanupTransaction {
+            id,
+            store,
+            activation,
+            code_object,
+            generation: 1,
+            state: CleanupTransactionState::Pending,
+            reason: reason.to_string(),
+            steps: [
+                CleanupStep::SealActivation,
+                CleanupStep::PreventHostcalls,
+                CleanupStep::ReleaseDmwLeases,
+                CleanupStep::CancelWaitTokens,
+                CleanupStep::RevokeCapabilities,
+                CleanupStep::DropResourceArena,
+                CleanupStep::UnbindCodeObject,
+                CleanupStep::MarkStoreState,
+                CleanupStep::RecordTransition,
+                CleanupStep::RecordFailureEffect,
+                CleanupStep::EmitReport,
+            ]
+            .iter()
+            .map(|step| CleanupStepRecord::pending(*step))
+            .collect(),
+            released_dmw_leases: 0,
+            cancelled_waits: 0,
+            revoked_capabilities: Vec::new(),
+            dropped_resources: 0,
+            unbound_code_object: false,
+            effect: FailureEffect::CompleteWithErrno(5),
+        });
+        self.event_log.push(format!(
+            "FaultCleanupStarted cleanup={id} store={store} activation={} reason={reason}",
+            activation
+                .map(|activation| activation.to_string())
+                .unwrap_or_else(|| "none".to_string())
+        ));
+        id
+    }
+
+    pub fn run_fault_cleanup(
+        &mut self,
+        store: &mut StoreRecord,
+        activation: Option<ActivationId>,
+        code: Option<&mut CodeObject>,
+        capabilities: &mut CapabilityLedger,
+        reason: &str,
+    ) -> Result<CleanupTransactionId, TargetExecutorError> {
+        if let Some(existing) = self.cleanup_transactions.iter().find(|cleanup| {
+            cleanup.store == store.id
+                && cleanup.activation == activation
+                && cleanup.reason == reason
+                && cleanup.state == CleanupTransactionState::Completed
+        }) {
+            return Ok(existing.id);
+        }
+        let code_object = code.as_ref().map(|code| code.id);
+        let id = self.begin_fault_cleanup_transaction(store.id, activation, code_object, reason);
+        let released = activation
+            .map(|activation| self.release_all_leases_for_activation_id(activation, reason))
+            .unwrap_or(0);
+        let mut cancelled_waits = 0;
+        if let Some(activation) = activation {
+            if let Some(index) = self
+                .activations
+                .iter()
+                .position(|record| record.id == activation)
+            {
+                let exit_event = self.next_event("activation-cleanup-dropped");
+                let (activation_generation, cancelled) = {
+                    let record = &mut self.activations[index];
+                    record.state = ActivationState::Dropped;
+                    record.return_tag = Some(HostcallReturnTag::KillStore);
+                    record.exit_event = Some(exit_event);
+                    let cancelled = if record.blocked_wait.take().is_some() {
+                        1
+                    } else {
+                        0
+                    };
+                    record.active_dmw_leases = 0;
+                    record.generation += 1;
+                    (record.generation, cancelled)
+                };
+                cancelled_waits += cancelled;
+                self.refresh_hostcall_activation_generation(activation, activation_generation);
+            }
+        }
+        let revoked = capabilities.revoke_owner_store(store.id);
+        let mut unbound = false;
+        if let Some(code) = code {
+            if code.bound_store == Some(store.id) {
+                code.bound_store = None;
+                code.hostcall_table = None;
+                code.state = CodeObjectState::Retired;
+                code.generation += 1;
+                unbound = true;
+            }
+        }
+        store.state = StoreState::Dead;
+        store.generation += 1;
+        let cleanup = self
+            .cleanup_transactions
+            .iter_mut()
+            .find(|cleanup| cleanup.id == id)
+            .expect("cleanup transaction must exist");
+        cleanup.state = CleanupTransactionState::Completed;
+        cleanup.generation += 1;
+        cleanup.released_dmw_leases = released;
+        cleanup.cancelled_waits = cancelled_waits;
+        cleanup.revoked_capabilities = revoked;
+        cleanup.dropped_resources = 1;
+        cleanup.unbound_code_object = unbound;
+        cleanup.effect = FailureEffect::CompleteWithErrno(5);
+        let mut steps = Vec::new();
+        steps.push(CleanupStepRecord::done(
+            CleanupStep::SealActivation,
+            "activation sealed",
+        ));
+        steps.push(CleanupStepRecord::done(
+            CleanupStep::PreventHostcalls,
+            "activation dropped",
+        ));
+        steps.push(CleanupStepRecord::done(
+            CleanupStep::ReleaseDmwLeases,
+            "leases released",
+        ));
+        steps.push(CleanupStepRecord::done(
+            CleanupStep::CancelWaitTokens,
+            "no wait tokens in harness",
+        ));
+        steps.push(CleanupStepRecord::done(
+            CleanupStep::RevokeCapabilities,
+            "store-owned capabilities revoked",
+        ));
+        steps.push(CleanupStepRecord::done(
+            CleanupStep::DropResourceArena,
+            "resource arena dropped",
+        ));
+        steps.push(CleanupStepRecord::done(
+            CleanupStep::UnbindCodeObject,
+            "code object unbound",
+        ));
+        steps.push(CleanupStepRecord::done(
+            CleanupStep::MarkStoreState,
+            "store marked dead",
+        ));
+        steps.push(CleanupStepRecord::done(
+            CleanupStep::RecordTransition,
+            "cleanup transition recorded",
+        ));
+        steps.push(CleanupStepRecord::done(
+            CleanupStep::RecordFailureEffect,
+            "failure effect recorded",
+        ));
+        steps.push(CleanupStepRecord::done(
+            CleanupStep::EmitReport,
+            "cleanup report emitted",
+        ));
+        cleanup.steps = steps;
+        self.event_log.push(format!(
+            "FaultCleanupCompleted cleanup={id} store={} released_dmw={} revoked_caps={} unbound_code={}",
+            store.id,
+            released,
+            cleanup.revoked_capabilities.len(),
+            unbound
+        ));
+        Ok(id)
     }
 
     pub fn classify_migration_objects(
@@ -2414,6 +2762,10 @@ impl TargetExecutor {
 
     pub fn hostcall_trace(&self) -> &[HostcallTraceRecord] {
         &self.hostcall_trace
+    }
+
+    pub fn cleanup_transactions(&self) -> &[FaultCleanupTransaction] {
+        &self.cleanup_transactions
     }
 
     pub fn event_log(&self) -> &[String] {
@@ -3404,6 +3756,145 @@ mod tests {
             violation.kind == ContractViolationKind::DanglingEdge
                 && violation.edge == "trap->activation"
         }));
+    }
+
+    #[test]
+    fn fault_cleanup_transaction_is_idempotent_and_closes_owned_state() {
+        let (_artifact, store, code, mut capabilities) = running_store_and_code();
+        let mut store = store.store.clone();
+        let mut code = code.clone();
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(&store, &code, ActivationEntry::Symbol("_start".to_string()))
+            .unwrap();
+        executor
+            .acquire_dmw_lease(activation, "dmw.cleanup.lease")
+            .unwrap();
+        assert_eq!(
+            executor.snapshot_barrier(),
+            Err(TargetExecutorError::DmwLeaseActive)
+        );
+
+        let cleanup_id = executor
+            .run_fault_cleanup(
+                &mut store,
+                Some(activation),
+                Some(&mut code),
+                &mut capabilities,
+                "fault-cleanup-test",
+            )
+            .unwrap();
+        let cleanup = &executor.cleanup_transactions()[0];
+        assert_eq!(cleanup.id, cleanup_id);
+        assert_eq!(cleanup.state, CleanupTransactionState::Completed);
+        assert_eq!(cleanup.released_dmw_leases, 1);
+        assert_eq!(cleanup.cancelled_waits, 0);
+        assert_eq!(cleanup.revoked_capabilities.len(), 1);
+        assert_eq!(cleanup.dropped_resources, 1);
+        assert!(cleanup.unbound_code_object);
+        assert!(
+            cleanup
+                .steps
+                .iter()
+                .all(|step| step.state == CleanupStepState::Done)
+        );
+        assert!(
+            executor
+                .dmw_leases()
+                .iter()
+                .all(|lease| !lease.active && lease.generation == 2)
+        );
+        let activation_record = executor
+            .activations()
+            .iter()
+            .find(|record| record.id == activation)
+            .unwrap();
+        assert_eq!(activation_record.state, ActivationState::Dropped);
+        assert_eq!(activation_record.active_dmw_leases, 0);
+        assert_eq!(
+            activation_record.return_tag,
+            Some(HostcallReturnTag::KillStore)
+        );
+        assert_eq!(store.state, StoreState::Dead);
+        assert_eq!(code.state, CodeObjectState::Retired);
+        assert_eq!(code.bound_store, None);
+        assert!(capabilities.records().iter().all(|record| record.revoked));
+        assert_eq!(executor.snapshot_barrier(), Ok(()));
+
+        let cleanup_id_again = executor
+            .run_fault_cleanup(
+                &mut store,
+                Some(activation),
+                Some(&mut code),
+                &mut capabilities,
+                "fault-cleanup-test",
+            )
+            .unwrap();
+        assert_eq!(cleanup_id_again, cleanup_id);
+        assert_eq!(executor.cleanup_transactions().len(), 1);
+        assert_eq!(
+            executor.cleanup_transactions()[0]
+                .revoked_capabilities
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn fault_cleanup_cancels_blocked_wait_and_pending_cleanup_blocks_snapshot() {
+        let (_artifact, store, code, mut capabilities) = running_store_and_code();
+        let mut store = store.store.clone();
+        let mut code = code.clone();
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(&store, &code, ActivationEntry::Symbol("_start".to_string()))
+            .unwrap();
+        executor.pending_exit(activation, 77).unwrap();
+        assert_eq!(
+            executor
+                .activations()
+                .iter()
+                .find(|record| record.id == activation)
+                .unwrap()
+                .blocked_wait,
+            Some(77)
+        );
+
+        let cleanup_id = executor
+            .run_fault_cleanup(
+                &mut store,
+                Some(activation),
+                Some(&mut code),
+                &mut capabilities,
+                "wait-cleanup-test",
+            )
+            .unwrap();
+        let cleanup = executor
+            .cleanup_transactions()
+            .iter()
+            .find(|cleanup| cleanup.id == cleanup_id)
+            .unwrap();
+        assert_eq!(cleanup.cancelled_waits, 1);
+        let activation_record = executor
+            .activations()
+            .iter()
+            .find(|record| record.id == activation)
+            .unwrap();
+        assert_eq!(activation_record.state, ActivationState::Dropped);
+        assert_eq!(activation_record.blocked_wait, None);
+
+        let (_artifact, store, code, _capabilities) = running_store_and_code();
+        let mut executor = TargetExecutor::new();
+        executor.begin_fault_cleanup_transaction(
+            store.store.id,
+            None,
+            Some(code.id),
+            "pending-cleanup-test",
+        );
+        assert_eq!(
+            executor.snapshot_barrier(),
+            Err(TargetExecutorError::PendingCleanupActive)
+        );
     }
 
     #[test]

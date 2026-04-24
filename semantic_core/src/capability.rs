@@ -301,6 +301,18 @@ impl CapabilityLedger {
         self.revoke_subject_report(subject).count()
     }
 
+    pub fn revoke_owner_store(&mut self, owner_store: StoreId) -> Vec<CapabilityId> {
+        let mut revoked = Vec::new();
+        for record in &mut self.records {
+            if record.owner_store == Some(owner_store) && !record.revoked {
+                record.revoked = true;
+                record.generation += 1;
+                revoked.push(record.id);
+            }
+        }
+        revoked
+    }
+
     pub fn revoke_subject_report(&mut self, subject: &str) -> CapabilityRevocationReport {
         let mut revoked_ids = Vec::new();
         for record in &mut self.records {

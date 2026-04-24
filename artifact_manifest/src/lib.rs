@@ -219,6 +219,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub contract_violation_count: usize,
     #[serde(default)]
+    pub cleanup_transaction_count: usize,
+    #[serde(default)]
     pub target_artifacts: Vec<TargetArtifactImageManifest>,
     #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
@@ -234,6 +236,8 @@ pub struct SemanticSnapshotManifest {
     pub tombstones: Vec<TombstoneManifest>,
     #[serde(default)]
     pub contract_violations: Vec<ContractViolationManifest>,
+    #[serde(default)]
+    pub cleanup_transactions: Vec<CleanupTransactionManifest>,
     #[serde(default)]
     pub network_socket_count: u32,
     #[serde(default)]
@@ -280,6 +284,8 @@ pub struct SemanticRootSetManifest {
     pub tombstone_roots: Vec<String>,
     #[serde(default)]
     pub contract_violation_roots: Vec<String>,
+    #[serde(default)]
+    pub cleanup_roots: Vec<String>,
     #[serde(default)]
     pub event_log_tail: Vec<String>,
 }
@@ -499,6 +505,31 @@ pub struct ContractViolationManifest {
     pub from: ContractObjectRefManifest,
     pub to: Option<ContractObjectRefManifest>,
     pub detail: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CleanupStepManifest {
+    pub step: String,
+    pub state: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CleanupTransactionManifest {
+    pub id: u64,
+    pub store: u64,
+    pub activation: Option<u64>,
+    pub code_object: Option<u64>,
+    pub generation: u64,
+    pub state: String,
+    pub reason: String,
+    pub released_dmw_leases: u32,
+    pub cancelled_waits: u32,
+    pub revoked_capabilities: Vec<u64>,
+    pub dropped_resources: u32,
+    pub unbound_code_object: bool,
+    pub effect: String,
+    pub steps: Vec<CleanupStepManifest>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
