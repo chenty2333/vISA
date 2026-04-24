@@ -1,12 +1,20 @@
-#![allow(unused_imports)]
+#![allow(dead_code, unused_imports)]
 
-mod api;
+mod adapter;
+mod contract;
+mod legacy_stub;
+mod state;
 
-pub(crate) use api::{
-    ArtifactFormat, ArtifactInstance, ArtifactLoadError, BufferedArtifactInstance, BufferedModule,
-    ExecutorHostcallTable, ExecutorInstanceHandle, ExecutorLoadPlan, ExecutorMemoryLayout,
-    ExecutorPlanError, ExecutorRuntimeState, ExecutorStorePlan, ExecutorStoreState,
-    ExecutorTableState, ExecutorTransitionError, ExecutorTransitionReport, ExecutorTrapSurface,
-    ExecutorTrapSurfaceState, ModuleInstance, RuntimeOnlyExecutor, RuntimeOnlyProfile,
-    SupervisorArtifact, SupervisorEngine, WasmFn, expect_len, expect_ok,
+pub(crate) use adapter::{ExecutorLoadPlan, ExecutorStorePlan, RuntimeOnlyExecutor};
+pub(crate) use contract::{
+    ArtifactFormat, ArtifactLoadError, ExecutorPlanError, RuntimeOnlyProfile, SupervisorArtifact,
+};
+pub(crate) use legacy_stub::{
+    ArtifactInstance, BufferedArtifactInstance, BufferedModule, ModuleInstance, SupervisorEngine,
+    WasmFn, expect_len, expect_ok,
+};
+pub(crate) use state::{
+    ExecutorHostcallTable, ExecutorInstanceHandle, ExecutorMemoryLayout, ExecutorRuntimeState,
+    ExecutorStoreState, ExecutorTableState, ExecutorTransitionError, ExecutorTransitionReport,
+    ExecutorTrapSurface, ExecutorTrapSurfaceState,
 };

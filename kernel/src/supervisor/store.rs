@@ -1,8 +1,8 @@
 use semantic_core::{StoreDropReport, StoreId, StoreRebindReport, TrapClass};
 
+use super::authority_rebind::{StoreAuthorityRebindRequest, plan_store_authority_rebind};
 use super::fault::{ClassifiedFault, classify_service_trap};
 use super::runtime::PrototypeRuntime;
-use super::store_manager::StoreAuthorityRebindRequest;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn store_lifecycle_line(&self, package: &str) -> Option<alloc::string::String> {
@@ -34,13 +34,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         report: StoreRebindReport,
     ) -> Result<(), &'static str> {
-        let Some(request) = self.store_manager.authority_rebind_request(report.store) else {
+        let Some(request) = plan_store_authority_rebind(&self.store_manager, report) else {
             return Ok(());
         };
         match request {
-            StoreAuthorityRebindRequest::NetworkDriver { .. } => self
+            StoreAuthorityRebindRequest::NetworkDriver { store, package } => self
                 .net
-                .bind_driver_resources(&self.authority, &mut self.semantic),
+                .bind_driver_resources(&self.authority, &mut self.semantic, store, package),
         }
     }
 

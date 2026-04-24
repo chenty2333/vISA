@@ -1,11 +1,14 @@
 mod artifacts;
 mod authority;
+mod authority_rebind;
 mod boundary;
 mod demos;
 mod engine;
 mod events;
 mod fault;
 mod linux;
+mod linux_dispatch;
+mod linux_fd;
 mod net;
 mod pulse;
 mod recovery;

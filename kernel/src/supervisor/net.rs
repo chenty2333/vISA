@@ -2,6 +2,8 @@ use semantic_core::{ResourceHandle, ResourceId, ResourceKind, SemanticGraph, Sto
 
 use super::authority::{AuthorityPlane, SubstrateAuthorityClass, SubstrateAuthoritySpec};
 
+const DEFAULT_DRIVER_PACKAGE: &str = "driver_virtio_net";
+
 pub(crate) struct NetworkPlane {
     pub(crate) device: ResourceHandle,
     pub(crate) interface: ResourceHandle,
@@ -16,10 +18,11 @@ impl NetworkPlane {
         authority: &AuthorityPlane,
         semantic: &mut SemanticGraph,
     ) -> Result<Self, &'static str> {
-        let driver_store = semantic.store_id("driver_virtio_net");
+        let driver_store = semantic.store_id(DEFAULT_DRIVER_PACKAGE);
         let device = bind_network_authority(
             authority,
             semantic,
+            DEFAULT_DRIVER_PACKAGE,
             driver_store,
             SubstrateAuthorityClass::PacketDevice,
             "packet-device:net0",
@@ -31,6 +34,7 @@ impl NetworkPlane {
         let irq = bind_network_authority(
             authority,
             semantic,
+            DEFAULT_DRIVER_PACKAGE,
             driver_store,
             SubstrateAuthorityClass::IrqLine,
             "irq:net0",
@@ -40,6 +44,7 @@ impl NetworkPlane {
         let dma_buffer = bind_network_authority(
             authority,
             semantic,
+            DEFAULT_DRIVER_PACKAGE,
             driver_store,
             SubstrateAuthorityClass::DmaBuffer,
             "dma:net0-rx",
@@ -49,6 +54,7 @@ impl NetworkPlane {
         let mmio_region = bind_network_authority(
             authority,
             semantic,
+            DEFAULT_DRIVER_PACKAGE,
             driver_store,
             SubstrateAuthorityClass::MmioRegion,
             "mmio:virtio-net0",
@@ -58,6 +64,7 @@ impl NetworkPlane {
         let virtio_queue = bind_network_authority(
             authority,
             semantic,
+            DEFAULT_DRIVER_PACKAGE,
             driver_store,
             SubstrateAuthorityClass::VirtioQueue,
             "virtqueue:net0-rx",
@@ -81,12 +88,14 @@ impl NetworkPlane {
         &mut self,
         authority: &AuthorityPlane,
         semantic: &mut SemanticGraph,
+        driver_store: StoreId,
+        driver_package: &'static str,
     ) -> Result<(), &'static str> {
-        let driver_store = semantic.store_id("driver_virtio_net");
         self.device = bind_network_authority(
             authority,
             semantic,
-            driver_store,
+            driver_package,
+            Some(driver_store),
             SubstrateAuthorityClass::PacketDevice,
             "packet-device:net0",
             "packet-device.net0",
@@ -95,7 +104,8 @@ impl NetworkPlane {
         self.irq = bind_network_authority(
             authority,
             semantic,
-            driver_store,
+            driver_package,
+            Some(driver_store),
             SubstrateAuthorityClass::IrqLine,
             "irq:net0",
             "irq.net0",
@@ -104,7 +114,8 @@ impl NetworkPlane {
         self.dma_buffer = bind_network_authority(
             authority,
             semantic,
-            driver_store,
+            driver_package,
+            Some(driver_store),
             SubstrateAuthorityClass::DmaBuffer,
             "dma:net0-rx",
             "dma.pool.net0",
@@ -113,7 +124,8 @@ impl NetworkPlane {
         self.mmio_region = bind_network_authority(
             authority,
             semantic,
-            driver_store,
+            driver_package,
+            Some(driver_store),
             SubstrateAuthorityClass::MmioRegion,
             "mmio:virtio-net0",
             "mmio.virtio-net0",
@@ -122,7 +134,8 @@ impl NetworkPlane {
         self.virtio_queue = bind_network_authority(
             authority,
             semantic,
-            driver_store,
+            driver_package,
+            Some(driver_store),
             SubstrateAuthorityClass::VirtioQueue,
             "virtqueue:net0-rx",
             "virtqueue.net0",
@@ -136,6 +149,7 @@ impl NetworkPlane {
 fn bind_network_authority(
     authority: &AuthorityPlane,
     semantic: &mut SemanticGraph,
+    subject: &'static str,
     owner_store: Option<StoreId>,
     class: SubstrateAuthorityClass,
     label: &'static str,
@@ -147,7 +161,7 @@ fn bind_network_authority(
             semantic,
             SubstrateAuthoritySpec {
                 class,
-                subject: "driver_virtio_net",
+                subject,
                 object,
                 operations,
                 lifetime: "store",

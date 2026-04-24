@@ -1,0 +1,269 @@
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use super::*;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactProfile {
+    pub artifact_profile: String,
+    pub target_arch: String,
+    pub machine_abi_version: String,
+    pub supervisor_abi_version: String,
+    pub wasm_feature_profile: String,
+    pub memory64: bool,
+    pub multi_memory: bool,
+    pub dmw_layout: String,
+    pub network_contract_version: String,
+    pub compiler_engine: String,
+    pub compiler_execution_mode: String,
+    pub artifact_format: String,
+    pub runtime_executor_abi: String,
+}
+
+impl ArtifactProfile {
+    pub fn summary(&self) -> String {
+        format!(
+            "artifact_profile={} target_arch={} machine_abi={} supervisor_abi={} wasm_profile={} dmw_layout={} network={} engine={} mode={} format={} runtime_executor={}",
+            self.artifact_profile,
+            self.target_arch,
+            self.machine_abi_version,
+            self.supervisor_abi_version,
+            self.wasm_feature_profile,
+            self.dmw_layout,
+            self.network_contract_version,
+            self.compiler_engine,
+            self.compiler_execution_mode,
+            self.artifact_format,
+            self.runtime_executor_abi
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuestStateSnapshot {
+    pub canonical_isa: CanonicalGuestIsa,
+    pub register_count: u32,
+    pub memory_page_count: u64,
+    pub vma_count: u32,
+    pub signal_queue_count: u32,
+    pub note: String,
+}
+
+impl GuestStateSnapshot {
+    pub fn riscv64_placeholder() -> Self {
+        Self {
+            canonical_isa: CanonicalGuestIsa::Riscv64,
+            register_count: 33,
+            memory_page_count: 0,
+            vma_count: 0,
+            signal_queue_count: 0,
+            note: "placeholder canonical guest state; real VM state is not implemented in prototype v0"
+                .to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubstrateBoundarySnapshot {
+    pub timer_epoch: u64,
+    pub pending_irq_causes: u32,
+    pub pending_dma_completions: u32,
+    pub active_dmw_lease_count: u32,
+    pub active_mmio_authority_count: u32,
+    pub active_dma_authority_count: u32,
+    pub active_irq_authority_count: u32,
+    pub active_packet_device_authority_count: u32,
+    pub active_virtio_queue_authority_count: u32,
+    pub pending_network_inputs: u32,
+    pub random_epoch: u64,
+    pub scheduler_decision_cursor: u64,
+    pub cow_epoch: u64,
+    pub background_copy_pages: u64,
+    pub native_state_policy: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotBarrierSnapshot {
+    pub id: SnapshotBarrierId,
+    pub event_log_cursor: EventId,
+    pub pending_wait_count: usize,
+    pub live_resource_count: usize,
+    pub active_transaction_count: usize,
+    pub active_dmw_lease_count: u32,
+    pub dmw_quiescent: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SemanticSnapshot {
+    pub barrier: SnapshotBarrierSnapshot,
+    pub tasks: Vec<TaskRecord>,
+    pub resources: Vec<ResourceRecord>,
+    pub authority_bindings: Vec<AuthorityBindingRecord>,
+    pub waits: Vec<WaitRecord>,
+    pub fault_domains: Vec<FaultDomainRecord>,
+    pub stores: Vec<StoreRecord>,
+    pub transactions: Vec<SemanticTransactionRecord>,
+    pub fast_path_plans: Vec<FastPathPlanRecord>,
+    pub boundaries: Vec<BoundaryRecord>,
+    pub artifact_verifications: Vec<ArtifactVerificationRecord>,
+    pub store_activations: Vec<StoreActivationRecord>,
+    pub capabilities: Vec<CapabilityRecord>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MigrationPackage {
+    pub schema_version: u32,
+    pub package_id: String,
+    pub source_host_arch: String,
+    pub target_host_arch_hint: String,
+    pub required_artifact_profile: ArtifactProfile,
+    pub guest: GuestStateSnapshot,
+    pub substrate_boundary: SubstrateBoundarySnapshot,
+    pub semantic: SemanticSnapshot,
+}
+
+impl MigrationPackage {
+    pub fn validate_portability(&self) -> Result<(), MigrationValidationError> {
+        if self.schema_version != 1 {
+            return Err(MigrationValidationError::UnsupportedSchema);
+        }
+        if self.semantic.barrier.active_dmw_lease_count != 0 || !self.semantic.barrier.dmw_quiescent
+        {
+            return Err(MigrationValidationError::ActiveDmwLease);
+        }
+        if self.substrate_boundary.pending_dma_completions != 0 {
+            return Err(MigrationValidationError::InFlightDma);
+        }
+        if self.substrate_boundary.active_mmio_authority_count != 0 {
+            return Err(MigrationValidationError::ActiveMmioAuthority);
+        }
+        if self.substrate_boundary.active_dma_authority_count != 0 {
+            return Err(MigrationValidationError::ActiveDmaAuthority);
+        }
+        if self.substrate_boundary.active_irq_authority_count != 0 {
+            return Err(MigrationValidationError::ActiveIrqAuthority);
+        }
+        if self.substrate_boundary.active_packet_device_authority_count != 0 {
+            return Err(MigrationValidationError::ActivePacketDeviceAuthority);
+        }
+        if self.substrate_boundary.active_virtio_queue_authority_count != 0 {
+            return Err(MigrationValidationError::ActiveVirtioQueueAuthority);
+        }
+        if self.semantic.barrier.active_transaction_count != 0 {
+            return Err(MigrationValidationError::ActiveSemanticTransaction);
+        }
+        if self.guest.canonical_isa != CanonicalGuestIsa::Riscv64 {
+            return Err(MigrationValidationError::UnsupportedGuestIsa);
+        }
+        Ok(())
+    }
+
+    pub fn summary_lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        lines.push(format!(
+            "migration package: id={} source_host={} target_hint={} guest_isa={}",
+            self.package_id,
+            self.source_host_arch,
+            self.target_host_arch_hint,
+            self.guest.canonical_isa.as_str()
+        ));
+        lines.push(format!(
+            "snapshot barrier: id={} cursor={} pending_waits={} live_resources={} active_transactions={} active_dmw_leases={} active_mmio={} active_dma={} active_irq={} active_packet_device={} active_virtqueue={} pending_net={} cow_epoch={} background_pages={}",
+            self.semantic.barrier.id,
+            self.semantic.barrier.event_log_cursor,
+            self.semantic.barrier.pending_wait_count,
+            self.semantic.barrier.live_resource_count,
+            self.semantic.barrier.active_transaction_count,
+            self.semantic.barrier.active_dmw_lease_count,
+            self.substrate_boundary.active_mmio_authority_count,
+            self.substrate_boundary.active_dma_authority_count,
+            self.substrate_boundary.active_irq_authority_count,
+            self.substrate_boundary.active_packet_device_authority_count,
+            self.substrate_boundary.active_virtio_queue_authority_count,
+            self.substrate_boundary.pending_network_inputs,
+            self.substrate_boundary.cow_epoch,
+            self.substrate_boundary.background_copy_pages
+        ));
+        lines.push(format!(
+            "semantic roots: tasks={} resources={} authorities={} waits={} capabilities={} fault_domains={} stores={} transactions={} fastpath_plans={} boundaries={} artifacts={} activations={}",
+            self.semantic.tasks.len(),
+            self.semantic.resources.len(),
+            self.semantic.authority_bindings.len(),
+            self.semantic.waits.len(),
+            self.semantic.capabilities.len(),
+            self.semantic.fault_domains.len(),
+            self.semantic.stores.len(),
+            self.semantic.transactions.len(),
+            self.semantic.fast_path_plans.len(),
+            self.semantic.boundaries.len(),
+            self.semantic.artifact_verifications.len(),
+            self.semantic.store_activations.len()
+        ));
+        lines.push(format!(
+            "required artifacts: {}",
+            self.required_artifact_profile.summary()
+        ));
+        lines.push(
+            "not migrated: raw pointers, native stacks, active semantic transactions, active DMW leases, DMA mappings, MMIO mappings, IRQ registrations, translated code cache"
+                .to_string(),
+        );
+        lines
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MigrationValidationError {
+    UnsupportedSchema,
+    ActiveDmwLease,
+    InFlightDma,
+    ActiveMmioAuthority,
+    ActiveDmaAuthority,
+    ActiveIrqAuthority,
+    ActivePacketDeviceAuthority,
+    ActiveVirtioQueueAuthority,
+    ActiveSemanticTransaction,
+    UnsupportedGuestIsa,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SemanticInvariantError {
+    TaskReferencesMissingResource {
+        task: TaskId,
+        resource: ResourceId,
+    },
+    ResourceReferencesMissingTask {
+        resource: ResourceId,
+        task: TaskId,
+    },
+    ResourceReferencesMissingStore {
+        resource: ResourceId,
+        store: StoreId,
+    },
+    WaitReferencesMissingTask {
+        wait: WaitId,
+        task: TaskId,
+    },
+    StoreReferencesMissingFaultDomain {
+        store: StoreId,
+        fault_domain: FaultDomainId,
+    },
+    LiveStoreMissingResource {
+        store: StoreId,
+    },
+    StoreReferencesDeadResource {
+        store: StoreId,
+        resource: ResourceId,
+    },
+    AuthorityReferencesMissingResource {
+        authority: AuthorityId,
+        resource: ResourceId,
+    },
+    AuthorityReferencesDeadResource {
+        authority: AuthorityId,
+        resource: ResourceId,
+    },
+    AuthorityCapabilityMissing {
+        authority: AuthorityId,
+    },
+}

@@ -84,14 +84,6 @@ pub(crate) struct StoreMicroReboot {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StoreAuthorityRebindRequest {
-    NetworkDriver {
-        store: StoreId,
-        package: &'static str,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StoreExecutorActivationError {
     StoreMissing,
     InvalidTransition(&'static str),
@@ -514,21 +506,6 @@ impl StoreManager {
             .iter()
             .find(|record| record.package == package)
             .map(|record| record.store)
-    }
-
-    pub(crate) fn authority_rebind_request(
-        &self,
-        store: StoreId,
-    ) -> Option<StoreAuthorityRebindRequest> {
-        let record = self.records.iter().find(|record| record.store == store)?;
-        if record.package == "driver_virtio_net" {
-            Some(StoreAuthorityRebindRequest::NetworkDriver {
-                store,
-                package: record.package,
-            })
-        } else {
-            None
-        }
     }
 
     fn verify_publish_artifact(

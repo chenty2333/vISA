@@ -3,6 +3,7 @@ use core::fmt::Write;
 
 use crate::serial;
 use crate::serial_println;
+use semantic_core::ResourceHandle;
 use vmos_abi::{
     EPOLL_CTL_ADD, EPOLLIN, ERR_EPERM, FD_STDOUT, FUTEX_WAIT, FUTEX_WAKE, PackedStep,
     SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_FUTEX, SYS_SENDTO, StepTag,
@@ -11,7 +12,7 @@ use vmos_abi::{
 
 use super::linux::LinuxCallResult;
 use super::runtime::PrototypeRuntime;
-use super::types::{InjectedFault, WaitRestartClass, WaitToken};
+use super::types::{FdEntry, FdResource, InjectedFault, WaitRestartClass, WaitToken};
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn run_prototype_demos(&mut self) -> Result<(), &'static str> {
@@ -231,7 +232,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let old_generation = self
             .capability_generation("linux_syscall", "timer.sleep")
             .ok_or("timer.sleep capability generation was missing")?;
-        self.revoke_capability_for_demo("linux_syscall", "timer.sleep")?;
+        self.revoke_capability("linux_syscall", "timer.sleep")?;
 
         match self.dispatch_linux_sleep_ms_raw("capability_denied_sleep", 1)? {
             LinuxCallResult::Ret(ret) if ret == -(ERR_EPERM as i64) => {
@@ -240,7 +241,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             _ => return Err("revoked timer.sleep did not deny nanosleep"),
         }
 
-        self.grant_capability_for_demo(
+        self.grant_capability(
             "linux_syscall",
             "timer.sleep",
             &["arm", "cancel"],
@@ -297,6 +298,42 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         serial_println!("dmw slot reuse blocked within one activation");
         Ok(())
+    }
+
+    fn fd_handle_for_demo(&self, fd: u32) -> Option<ResourceHandle> {
+        self.fd_handle(fd)
+    }
+
+    fn open_demo_socket_for_demo(&mut self) -> Result<u32, &'static str> {
+        let socket_id = self
+            .net_core
+            .create_socket(vmos_abi::AF_INET, vmos_abi::SOCK_STREAM, 0)
+            .map_err(|_| "net_core failed to create demo socket")?;
+        let ready_key = self
+            .net_core
+            .ready_key(socket_id)
+            .map_err(|_| "net_core did not return a socket ready key")?;
+        self.linux_socket
+            .register_socket(
+                socket_id,
+                vmos_abi::AF_INET,
+                vmos_abi::SOCK_STREAM,
+                0,
+                ready_key,
+            )
+            .map_err(|_| "linux_socket_service failed to register demo socket")?;
+        let fd = self.alloc_fd(FdEntry {
+            resource: FdResource::Socket {
+                socket_id: socket_id as u64,
+                ready_key,
+            },
+            cursor: 0,
+        });
+        let handle = self
+            .fd_handle(fd)
+            .ok_or("demo socket fd did not publish a resource handle")?;
+        self.semantic.record_socket_state_changed(handle.id, "open");
+        Ok(fd)
     }
 
     fn run_futex_demo(&mut self) -> Result<(), &'static str> {

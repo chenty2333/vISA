@@ -1,0 +1,677 @@
+use super::*;
+use alloc::string::ToString;
+
+#[test]
+fn capability_attenuation_cannot_expand_rights() {
+    let mut ledger = CapabilityLedger::new();
+    let parent = ledger.grant("driver", "mmio-bar0", &["read"], "store");
+
+    assert!(
+        ledger
+            .attenuate(parent, "helper", &["read"], "activation")
+            .is_some()
+    );
+    let helper = ledger
+        .check("helper", "mmio-bar0", "read")
+        .expect("attenuated capability");
+    assert_eq!(helper.source, "attenuated");
+    assert!(
+        ledger
+            .attenuate(parent, "helper", &["write"], "activation")
+            .is_none()
+    );
+}
+
+#[test]
+fn runtime_modes_publish_contract_policies() {
+    let graph = SemanticGraph::with_runtime_mode(RuntimeMode::Replay);
+
+    assert_eq!(graph.runtime_mode(), RuntimeMode::Replay);
+    assert_eq!(graph.runtime_mode().event_log_policy(), "deterministic");
+    assert!(graph.runtime_mode().deterministic_boundary());
+    assert!(!graph.runtime_mode().fast_path_enabled());
+}
+
+#[test]
+fn boundary_status_is_queryable_and_versioned() {
+    let mut graph = SemanticGraph::new();
+    let boundary = graph.publish_boundary(
+        "target-cwasm",
+        BoundaryKind::RuntimeExecutor,
+        BoundaryStatus::NotLinked,
+        "runtime-only-executor-v1",
+        Some("code-publish"),
+    );
+
+    assert_eq!(graph.boundary_count(), 1);
+    assert_eq!(graph.boundaries()[0].id, boundary);
+    assert_eq!(graph.boundaries()[0].status, BoundaryStatus::NotLinked);
+
+    let same_boundary = graph.publish_boundary(
+        "target-cwasm",
+        BoundaryKind::RuntimeExecutor,
+        BoundaryStatus::RuntimeContract,
+        "runtime-only-executor-v1",
+        Some("hostcall-trampoline"),
+    );
+
+    assert_eq!(same_boundary, boundary);
+    assert_eq!(graph.boundary_count(), 1);
+    assert_eq!(graph.boundaries()[0].generation, 2);
+    assert_eq!(
+        graph.boundaries()[0].summary(),
+        "boundary target-cwasm kind=runtime-executor status=runtime-contract backend=runtime-only-executor-v1 blocked=hostcall-trampoline generation=2"
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BoundaryPublished boundary=1 name=target-cwasm kind=runtime-executor status=runtime-contract backend=runtime-only-executor-v1 blocked=hostcall-trampoline generation=2"
+    );
+}
+
+#[test]
+fn artifact_verification_is_queryable_and_versioned() {
+    let mut graph = SemanticGraph::new();
+    let artifact = graph.record_artifact_verification(
+        "vfs_service",
+        "vfs",
+        "binding-a",
+        "cwasm-a",
+        "abi-a",
+        "prototype-self-signed-sha256",
+        "target_executor",
+        ArtifactVerificationState::ManifestVerified,
+        Some("target-cwasm-loader-not-linked"),
+    );
+    let same_artifact = graph.record_artifact_verification(
+        "vfs_service",
+        "vfs",
+        "binding-a",
+        "cwasm-a",
+        "abi-a",
+        "prototype-self-signed-sha256",
+        "target_executor",
+        ArtifactVerificationState::HostValidated,
+        Some("target-runtime-only-loader"),
+    );
+
+    assert_eq!(same_artifact, artifact);
+    assert_eq!(graph.artifact_verification_count(), 1);
+    assert_eq!(graph.artifact_verifications()[0].generation, 2);
+    assert_eq!(
+        graph.artifact_verifications()[0].summary(),
+        "artifact vfs_service name=vfs state=host-validated binding=binding-a cwasm=cwasm-a abi=abi-a signature=prototype-self-signed-sha256 signer=target_executor blocked=target-runtime-only-loader generation=2"
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "ArtifactVerificationRecorded artifact=1 package=vfs_service name=vfs state=host-validated binding=binding-a blocked=target-runtime-only-loader generation=2"
+    );
+}
+
+#[test]
+fn store_activation_roots_and_handles_are_generation_checked() {
+    let mut graph = SemanticGraph::new();
+    let store = graph.register_store("vfs_service", "vfs", "service", "restartable");
+    graph.record_store_activation(
+        store,
+        "vfs_service",
+        "binding-a",
+        "cwasm-a",
+        CodePublishState::NotPublished,
+        MemoryLayoutState::Verified,
+        HostcallLinkState::NotLinked,
+        TrapSurfaceState::ContractDeclared,
+        EntrypointState::NotRunnable,
+        Some("code-publish-not-linked"),
+    );
+    let handle = graph
+        .store_activation_handle(store)
+        .expect("activation handle");
+    assert_eq!(graph.validate_store_activation_handle(handle), Ok(()));
+
+    graph.record_store_activation(
+        store,
+        "vfs_service",
+        "binding-a",
+        "cwasm-a",
+        CodePublishState::Published,
+        MemoryLayoutState::Verified,
+        HostcallLinkState::NotLinked,
+        TrapSurfaceState::ContractDeclared,
+        EntrypointState::NotRunnable,
+        Some("hostcall-table-not-linked"),
+    );
+
+    assert_eq!(graph.store_activation_count(), 1);
+    assert_eq!(
+        graph.validate_store_activation_handle(handle),
+        Err(GenerationCheckError::GenerationMismatch {
+            expected: 1,
+            actual: Some(2)
+        })
+    );
+    assert_eq!(
+        graph.store_activations()[0].summary(),
+        "store-activation store=1 package=vfs_service binding=binding-a cwasm=cwasm-a code=published memory=verified hostcalls=not-linked traps=contract-declared entry=not-runnable blocked=hostcall-table-not-linked generation=2"
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "StoreActivationHandleRejected store=1 expected=1 actual=2 reason=generation-mismatch"
+    );
+}
+
+#[test]
+fn capability_ledger_reports_owner_recovery_state() {
+    let mut graph = SemanticGraph::new();
+    let store = graph.register_store("driver", "driver", "driver", "restartable");
+    graph.grant_manifest_capability("driver", "mmio.bar0", &["read", "write"], "store");
+    graph.grant_capability("driver", "irq11", &["ack"], "store");
+    let mmio = graph
+        .capabilities()
+        .check("driver", "mmio.bar0", "read")
+        .expect("manifest capability");
+    assert_eq!(mmio.class, CapabilityClass::MmioRegion);
+    assert_eq!(mmio.source, "artifact-manifest");
+    assert_eq!(mmio.owner_store, Some(store));
+
+    let report = graph.revoke_capabilities_for_subject("driver");
+    let summary = graph.capability_owner_summary("driver");
+
+    assert_eq!(report.count(), 2);
+    assert_eq!(summary.active, 0);
+    assert_eq!(summary.revoked, 2);
+    assert_eq!(
+        graph.check_capability("driver", "mmio.bar0", "read"),
+        Err(CapabilityDenyReason::Revoked)
+    );
+}
+
+#[test]
+fn capability_check_records_denial_and_generation_mismatch() {
+    let mut graph = SemanticGraph::new();
+    let generation = {
+        graph.grant_capability("linux_syscall", "timer.sleep", &["arm"], "wait-token");
+        graph
+            .capability_generation("linux_syscall", "timer.sleep")
+            .expect("capability generation")
+    };
+
+    assert!(
+        graph
+            .check_capability("linux_syscall", "timer.sleep", "arm")
+            .is_ok()
+    );
+    graph.revoke_capability_by_subject_object("linux_syscall", "timer.sleep");
+    assert_eq!(
+        graph.check_capability("linux_syscall", "timer.sleep", "arm"),
+        Err(CapabilityDenyReason::Revoked)
+    );
+    graph.grant_capability("linux_syscall", "timer.sleep", &["arm"], "wait-token");
+    assert_eq!(
+        graph.check_capability_generation("linux_syscall", "timer.sleep", "arm", generation),
+        Err(CapabilityDenyReason::GenerationMismatch)
+    );
+}
+
+#[test]
+fn wait_flow_is_recorded_in_event_log() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "guest");
+    graph.set_task_state(7, TaskState::Running);
+
+    graph.record_wait_created(11, 7, SemanticWaitKind::Futex, 1);
+    graph.record_wait_resolved(11, "ready");
+
+    assert_eq!(graph.wait_count(), 1);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "WaitResolved wait=11 reason=ready"
+    );
+}
+
+#[test]
+fn stale_resource_handles_are_rejected() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::Fd, None, "fd:/sandbox/hello.txt");
+    let handle = graph.resource_handle(resource).expect("resource handle");
+
+    assert_eq!(graph.validate_resource_handle(handle), Ok(()));
+    graph.close_resource(resource);
+    assert_eq!(
+        graph.validate_resource_handle(handle),
+        Err(GenerationCheckError::GenerationMismatch {
+            expected: 1,
+            actual: Some(2),
+        })
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "ResourceHandleRejected resource=1 expected=1 actual=2 reason=generation-mismatch"
+    );
+}
+
+#[test]
+fn stale_wait_tokens_are_rejected() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "guest");
+    graph.record_wait_created(11, 7, SemanticWaitKind::Timer, 3);
+    let handle = graph.wait_handle(11).expect("wait handle");
+
+    assert_eq!(graph.validate_wait_handle(handle), Ok(()));
+    assert_eq!(
+        graph.validate_wait_handle(WaitHandle::new(11, 2)),
+        Err(GenerationCheckError::GenerationMismatch {
+            expected: 2,
+            actual: Some(3),
+        })
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "WaitTokenRejected wait=11 expected=2 actual=3 reason=generation-mismatch"
+    );
+}
+
+#[test]
+fn store_lifecycle_rebinds_instance_resource() {
+    let mut graph = SemanticGraph::new();
+    let store = graph.register_store("procfs_service", "procfs", "service", "restartable");
+
+    graph.set_store_state(store, StoreState::Instantiating);
+    graph.set_store_state(store, StoreState::Running);
+    let first_resource = graph.store_resource(store).expect("initial store resource");
+
+    graph.record_store_trap(store, "injected procfs read fault");
+    graph.set_store_state(store, StoreState::Draining);
+    graph.set_store_state(store, StoreState::Restarting);
+    let drop_report = graph
+        .drop_store_instance(store)
+        .expect("dropped store instance");
+    assert_eq!(drop_report.previous_resource, Some(first_resource));
+    assert_eq!(drop_report.closed_resources, 1);
+    assert_eq!(
+        graph.validate_resource_handle(ResourceHandle::new(first_resource, 1)),
+        Err(GenerationCheckError::GenerationMismatch {
+            expected: 1,
+            actual: Some(2),
+        })
+    );
+
+    let rebind_report = graph
+        .rebind_store_instance(store)
+        .expect("rebound store resource");
+    let second_resource = rebind_report.resource;
+    graph.set_store_state(store, StoreState::Running);
+
+    assert_ne!(first_resource, second_resource);
+    assert_eq!(graph.store_count(), 1);
+    assert_eq!(graph.live_resource_count(), 1);
+    assert_eq!(graph.stores()[0].restart_count, 1);
+    assert_eq!(graph.stores()[0].state, StoreState::Running);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "FaultDomainRestarted domain=1"
+    );
+}
+
+#[test]
+fn store_executor_transitions_are_recorded_in_event_log() {
+    let mut graph = SemanticGraph::new();
+    let store = graph.register_store("vfs_service", "vfs", "service", "restartable");
+
+    graph.record_store_executor_transition(
+        store,
+        "artifact-verified",
+        "draining",
+        Some("store-draining"),
+        "not-linked",
+        "contract-declared",
+    );
+
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "StoreExecutorTransition store=1 artifact-verified->draining blocked=store-draining hostcalls=not-linked traps=contract-declared"
+    );
+    assert_eq!(graph.store_executor_transition_count(), 1);
+    assert!(
+        graph.store_executor_transition_tail(1)[0].contains(
+            "source=executor StoreExecutorTransition store=1 artifact-verified->draining blocked=store-draining hostcalls=not-linked traps=contract-declared"
+        )
+    );
+}
+
+#[test]
+fn transaction_rollback_and_store_owned_resource_cleanup_are_recorded() {
+    let mut graph = SemanticGraph::new();
+    let store = graph.register_store("devfs_service", "devfs", "service", "restartable");
+    graph.set_store_state(store, StoreState::Running);
+    let scratch = graph.register_resource_for_store(
+        ResourceKind::Device,
+        None,
+        Some(store),
+        "device:pulse-shadow",
+    );
+    let authority = graph
+        .bind_authority_resource(
+            scratch,
+            "devfs_service",
+            "device.pulse-shadow",
+            &["read"],
+            "store",
+        )
+        .expect("store-owned device authority");
+    let transaction = graph.begin_transaction("devfs.read_device", Some(store), Some(9));
+
+    graph.rollback_transaction(transaction, "devfs_service trapped");
+    graph.record_store_trap_class(store, TrapClass::ServiceTrap, "devfs_service trapped");
+    let cleanup = graph.cleanup_resources_owned_by_store(store);
+    assert_eq!(cleanup.closed_resources, 2);
+    assert_eq!(cleanup.revoked_authorities, 1);
+    assert_eq!(
+        graph
+            .authority_bindings()
+            .iter()
+            .find(|binding| binding.id == authority)
+            .expect("authority binding")
+            .state,
+        AuthorityState::Revoked
+    );
+
+    assert_eq!(
+        graph.validate_resource_handle(ResourceHandle::new(scratch, 1)),
+        Err(GenerationCheckError::GenerationMismatch {
+            expected: 1,
+            actual: Some(2),
+        })
+    );
+    assert_eq!(graph.transactions()[0].state, TransactionState::RolledBack);
+    assert!(graph.event_log_tail(32).iter().any(|event| matches!(
+        event.kind,
+        EventKind::FaultClassified {
+            trap: TrapClass::ServiceTrap,
+            class: FaultClass::Service,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn network_events_are_recorded_as_semantic_state() {
+    let mut graph = SemanticGraph::new();
+    let device = graph.register_resource(ResourceKind::PacketDevice, None, "packet-device:net0");
+    let interface = graph.register_resource(ResourceKind::NetInterface, None, "net-interface:net0");
+    let socket = graph.register_resource(ResourceKind::NetSocket, Some(7), "socket:tcp:1");
+    let irq = graph.register_resource(ResourceKind::IrqLine, None, "irq:net0");
+    let dma = graph.register_resource(ResourceKind::DmaBuffer, None, "dma:net0-rx");
+
+    graph.record_net_interface_state_changed(interface, true);
+    graph.record_device_irq_delivered(irq, device, "rx");
+    graph.record_dma_submitted(dma, device, 64);
+    graph.record_dma_completed(dma, device, 64);
+    graph.record_packet_received(interface, Some(socket), 0x6e6574307278, 64);
+
+    assert!(graph.event_log_tail(8).iter().any(|event| matches!(
+        event.kind,
+        EventKind::PacketReceived {
+            interface: recorded_interface,
+            socket: Some(recorded_socket),
+            len: 64,
+            ..
+        } if recorded_interface == interface && recorded_socket == socket
+    )));
+}
+
+#[test]
+fn authority_bindings_drive_resource_and_capability_lifecycle() {
+    let mut graph = SemanticGraph::new();
+    let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");
+    let authority = graph
+        .bind_authority_resource(
+            mmio,
+            "driver_virtio_net",
+            "mmio.virtio-net0",
+            &["read", "write"],
+            "store",
+        )
+        .expect("authority binding");
+
+    assert_eq!(graph.authority_count(), 1);
+    assert_eq!(graph.active_authority_count(), 1);
+    assert!(
+        graph
+            .check_capability("driver_virtio_net", "mmio.virtio-net0", "write")
+            .is_ok()
+    );
+    assert_eq!(graph.check_invariants(), Ok(()));
+
+    assert!(graph.release_authority_binding(authority, "driver micro-reboot"));
+    assert_eq!(graph.active_authority_count(), 0);
+    assert_eq!(
+        graph.check_capability("driver_virtio_net", "mmio.virtio-net0", "write"),
+        Err(CapabilityDenyReason::Revoked)
+    );
+    assert_eq!(
+        graph.validate_resource_handle(ResourceHandle::new(mmio, 1)),
+        Err(GenerationCheckError::GenerationMismatch {
+            expected: 1,
+            actual: Some(2),
+        })
+    );
+    assert!(graph.event_log_tail(8).iter().any(|event| matches!(
+        event.kind,
+        EventKind::AuthorityReleased {
+            authority: recorded,
+            resource: recorded_resource,
+            ..
+        } if recorded == authority && recorded_resource == mmio
+    )));
+    assert_eq!(graph.check_invariants(), Ok(()));
+}
+
+#[test]
+fn packet_device_authority_is_part_of_the_hardware_ledger() {
+    let mut graph = SemanticGraph::new();
+    let device = graph.register_resource(ResourceKind::PacketDevice, None, "packet-device:net0");
+    let authority = graph
+        .bind_authority_resource(
+            device,
+            "driver_virtio_net",
+            "packet-device.net0",
+            &["rx", "tx", "poll"],
+            "store",
+        )
+        .expect("packet device authority binding");
+
+    assert_eq!(
+        graph.authority_bindings()[0].kind,
+        AuthorityKind::PacketDevice
+    );
+    assert!(
+        graph
+            .check_capability("driver_virtio_net", "packet-device.net0", "rx")
+            .is_ok()
+    );
+    assert!(graph.revoke_authority_binding(authority, "driver restart"));
+    assert_eq!(
+        graph.check_capability("driver_virtio_net", "packet-device.net0", "rx"),
+        Err(CapabilityDenyReason::Revoked)
+    );
+}
+
+#[test]
+fn invariants_reject_bound_authority_without_capability() {
+    let mut graph = SemanticGraph::new();
+    let irq = graph.register_resource(ResourceKind::IrqLine, None, "irq:net0");
+    let authority = graph
+        .bind_authority_resource(irq, "driver_virtio_net", "irq.net0", &["ack"], "store")
+        .expect("authority binding");
+
+    graph.revoke_capability_by_subject_object("driver_virtio_net", "irq.net0");
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::AuthorityCapabilityMissing { authority })
+    );
+}
+
+#[test]
+fn migration_package_rejects_active_dmw_leases() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
+    graph.record_snapshot_barrier_enter(1);
+    graph.record_snapshot_barrier_exit(1);
+
+    let package = graph.migration_package(
+        "test",
+        "x86_64",
+        "aarch64",
+        test_artifact_profile(),
+        GuestStateSnapshot::riscv64_placeholder(),
+        SubstrateBoundarySnapshot {
+            timer_epoch: 0,
+            pending_irq_causes: 0,
+            pending_dma_completions: 0,
+            active_dmw_lease_count: 1,
+            active_mmio_authority_count: 0,
+            active_dma_authority_count: 0,
+            active_irq_authority_count: 0,
+            active_packet_device_authority_count: 0,
+            active_virtio_queue_authority_count: 0,
+            pending_network_inputs: 0,
+            random_epoch: 0,
+            scheduler_decision_cursor: 0,
+            cow_epoch: 0,
+            background_copy_pages: 0,
+            native_state_policy: "rebuild".to_string(),
+        },
+        1,
+        false,
+    );
+
+    assert_eq!(
+        package.validate_portability(),
+        Err(MigrationValidationError::ActiveDmwLease)
+    );
+}
+
+#[test]
+fn migration_package_rejects_active_semantic_transactions() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
+    graph.begin_transaction("net.recvmsg", None, Some(1));
+
+    let package = graph.migration_package(
+        "test",
+        "x86_64",
+        "aarch64",
+        test_artifact_profile(),
+        GuestStateSnapshot::riscv64_placeholder(),
+        SubstrateBoundarySnapshot {
+            timer_epoch: 0,
+            pending_irq_causes: 0,
+            pending_dma_completions: 0,
+            active_dmw_lease_count: 0,
+            active_mmio_authority_count: 0,
+            active_dma_authority_count: 0,
+            active_irq_authority_count: 0,
+            active_packet_device_authority_count: 0,
+            active_virtio_queue_authority_count: 0,
+            pending_network_inputs: 0,
+            random_epoch: 0,
+            scheduler_decision_cursor: 0,
+            cow_epoch: 0,
+            background_copy_pages: 0,
+            native_state_policy: "rebuild".to_string(),
+        },
+        1,
+        true,
+    );
+
+    assert_eq!(
+        package.validate_portability(),
+        Err(MigrationValidationError::ActiveSemanticTransaction)
+    );
+}
+
+#[test]
+fn migration_package_rejects_active_substrate_authorities() {
+    let cases: [(fn(&mut SubstrateBoundarySnapshot), MigrationValidationError); 5] = [
+        (
+            |boundary| boundary.active_mmio_authority_count = 1,
+            MigrationValidationError::ActiveMmioAuthority,
+        ),
+        (
+            |boundary| boundary.active_dma_authority_count = 1,
+            MigrationValidationError::ActiveDmaAuthority,
+        ),
+        (
+            |boundary| boundary.active_irq_authority_count = 1,
+            MigrationValidationError::ActiveIrqAuthority,
+        ),
+        (
+            |boundary| boundary.active_packet_device_authority_count = 1,
+            MigrationValidationError::ActivePacketDeviceAuthority,
+        ),
+        (
+            |boundary| boundary.active_virtio_queue_authority_count = 1,
+            MigrationValidationError::ActiveVirtioQueueAuthority,
+        ),
+    ];
+
+    for (set_active, expected) in cases {
+        let mut graph = SemanticGraph::new();
+        graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
+        graph.record_snapshot_barrier_enter(1);
+        graph.record_snapshot_barrier_exit(1);
+        let mut boundary = test_substrate_boundary();
+        set_active(&mut boundary);
+        let package = graph.migration_package(
+            "test",
+            "x86_64",
+            "aarch64",
+            test_artifact_profile(),
+            GuestStateSnapshot::riscv64_placeholder(),
+            boundary,
+            1,
+            true,
+        );
+
+        assert_eq!(package.validate_portability(), Err(expected));
+    }
+}
+
+fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
+    SubstrateBoundarySnapshot {
+        timer_epoch: 0,
+        pending_irq_causes: 0,
+        pending_dma_completions: 0,
+        active_dmw_lease_count: 0,
+        active_mmio_authority_count: 0,
+        active_dma_authority_count: 0,
+        active_irq_authority_count: 0,
+        active_packet_device_authority_count: 0,
+        active_virtio_queue_authority_count: 0,
+        pending_network_inputs: 0,
+        random_epoch: 0,
+        scheduler_decision_cursor: 0,
+        cow_epoch: 0,
+        background_copy_pages: 0,
+        native_state_policy: "rebuild".to_string(),
+    }
+}
+
+fn test_artifact_profile() -> ArtifactProfile {
+    ArtifactProfile {
+        artifact_profile: "test".to_string(),
+        target_arch: "target-native".to_string(),
+        machine_abi_version: "machine".to_string(),
+        supervisor_abi_version: "supervisor".to_string(),
+        wasm_feature_profile: "wasm32".to_string(),
+        memory64: false,
+        multi_memory: false,
+        dmw_layout: "dmw".to_string(),
+        network_contract_version: "network".to_string(),
+        compiler_engine: "wasmtime".to_string(),
+        compiler_execution_mode: "precompiled-core-module".to_string(),
+        artifact_format: "cwasm".to_string(),
+        runtime_executor_abi: "vmos-runtime-only-executor-v0".to_string(),
+    }
+}

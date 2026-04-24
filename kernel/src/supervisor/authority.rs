@@ -417,7 +417,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.authority.generation(&self.semantic, subject, object)
     }
 
-    pub(crate) fn revoke_capability_for_demo(
+    pub(crate) fn revoke_capability(
         &mut self,
         subject: &str,
         object: &str,
@@ -440,7 +440,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.authority.substrate_authority_line(&self.semantic)
     }
 
-    pub(crate) fn grant_capability_for_demo(
+    pub(crate) fn grant_capability(
         &mut self,
         subject: &str,
         object: &str,

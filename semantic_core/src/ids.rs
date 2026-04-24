@@ -1,0 +1,15 @@
+pub type TaskId = u32;
+pub type ResourceId = u64;
+pub type CapabilityId = u64;
+pub type FaultDomainId = u64;
+pub type EventId = u64;
+pub type WaitId = u64;
+pub type Generation = u64;
+pub type SnapshotBarrierId = u64;
+pub type StoreId = u64;
+pub type TransactionId = u64;
+pub type PlanId = u64;
+pub type AuthorityId = u64;
+pub type BoundaryId = u64;
+pub type ArtifactId = u64;
+pub type StoreActivationId = u64;

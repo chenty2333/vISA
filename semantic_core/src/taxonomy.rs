@@ -1,0 +1,376 @@
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrontendKind {
+    Supervisor,
+    LinuxElf,
+    WasmApp,
+    FutureRuntime,
+}
+
+impl FrontendKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Supervisor => "supervisor",
+            Self::LinuxElf => "linux-elf",
+            Self::WasmApp => "wasm-app",
+            Self::FutureRuntime => "future-runtime",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskState {
+    Runnable,
+    Running,
+    Pending,
+    Cancelled,
+    Faulted,
+    Exited,
+    SnapshotFrozen,
+}
+
+impl TaskState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Runnable => "runnable",
+            Self::Running => "running",
+            Self::Pending => "pending",
+            Self::Cancelled => "cancelled",
+            Self::Faulted => "faulted",
+            Self::Exited => "exited",
+            Self::SnapshotFrozen => "snapshot-frozen",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResourceKind {
+    Fd,
+    Timer,
+    Futex,
+    Epoll,
+    Device,
+    PacketDevice,
+    NetInterface,
+    NetSocket,
+    SocketQueue,
+    DmaPool,
+    DmaBuffer,
+    IrqLine,
+    MmioRegion,
+    PciDevice,
+    AcpiTable,
+    VirtioQueue,
+    DmwWindow,
+    GuestMemory,
+    WindowLease,
+    ServiceStore,
+}
+
+impl ResourceKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fd => "fd",
+            Self::Timer => "timer",
+            Self::Futex => "futex",
+            Self::Epoll => "epoll",
+            Self::Device => "device",
+            Self::PacketDevice => "packet-device",
+            Self::NetInterface => "net-interface",
+            Self::NetSocket => "net-socket",
+            Self::SocketQueue => "socket-queue",
+            Self::DmaPool => "dma-pool",
+            Self::DmaBuffer => "dma-buffer",
+            Self::IrqLine => "irq-line",
+            Self::MmioRegion => "mmio-region",
+            Self::PciDevice => "pci-device",
+            Self::AcpiTable => "acpi-table",
+            Self::VirtioQueue => "virtio-queue",
+            Self::DmwWindow => "dmw-window",
+            Self::GuestMemory => "guest-memory",
+            Self::WindowLease => "window-lease",
+            Self::ServiceStore => "service-store",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthorityKind {
+    Device,
+    PacketDevice,
+    DmwWindow,
+    MmioRegion,
+    DmaPool,
+    DmaBuffer,
+    IrqLine,
+    VirtioQueue,
+}
+
+impl AuthorityKind {
+    pub const fn from_resource_kind(kind: ResourceKind) -> Option<Self> {
+        match kind {
+            ResourceKind::Device => Some(Self::Device),
+            ResourceKind::PacketDevice => Some(Self::PacketDevice),
+            ResourceKind::DmwWindow => Some(Self::DmwWindow),
+            ResourceKind::MmioRegion => Some(Self::MmioRegion),
+            ResourceKind::DmaPool => Some(Self::DmaPool),
+            ResourceKind::DmaBuffer => Some(Self::DmaBuffer),
+            ResourceKind::IrqLine => Some(Self::IrqLine),
+            ResourceKind::VirtioQueue => Some(Self::VirtioQueue),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Device => "device",
+            Self::PacketDevice => "packet-device",
+            Self::DmwWindow => "dmw-window",
+            Self::MmioRegion => "mmio-region",
+            Self::DmaPool => "dma-pool",
+            Self::DmaBuffer => "dma-buffer",
+            Self::IrqLine => "irq-line",
+            Self::VirtioQueue => "virtio-queue",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthorityState {
+    Bound,
+    Released,
+    Revoked,
+}
+
+impl AuthorityState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bound => "bound",
+            Self::Released => "released",
+            Self::Revoked => "revoked",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SemanticWaitKind {
+    Timer,
+    Futex,
+    Epoll,
+    FdReadable,
+    FdWritable,
+    PacketRx,
+    PacketTx,
+    SocketReadable,
+    SocketWritable,
+    SocketAccept,
+    DeviceIrq,
+    DriverCompletion,
+    Signal,
+    ChildExit,
+}
+
+impl SemanticWaitKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Timer => "timer",
+            Self::Futex => "futex",
+            Self::Epoll => "epoll",
+            Self::FdReadable => "fd-readable",
+            Self::FdWritable => "fd-writable",
+            Self::PacketRx => "packet-rx",
+            Self::PacketTx => "packet-tx",
+            Self::SocketReadable => "socket-readable",
+            Self::SocketWritable => "socket-writable",
+            Self::SocketAccept => "socket-accept",
+            Self::DeviceIrq => "device-irq",
+            Self::DriverCompletion => "driver-completion",
+            Self::Signal => "signal",
+            Self::ChildExit => "child-exit",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaitState {
+    Pending,
+    Ready,
+    Cancelled,
+    Restarted,
+}
+
+impl WaitState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Ready => "ready",
+            Self::Cancelled => "cancelled",
+            Self::Restarted => "restarted",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FaultDomainState {
+    Created,
+    Initializing,
+    Running,
+    Degraded,
+    Draining,
+    Restarting,
+    Dead,
+}
+
+impl FaultDomainState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Initializing => "initializing",
+            Self::Running => "running",
+            Self::Degraded => "degraded",
+            Self::Draining => "draining",
+            Self::Restarting => "restarting",
+            Self::Dead => "dead",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoreState {
+    Created,
+    Instantiating,
+    Running,
+    Degraded,
+    Draining,
+    Restarting,
+    Rebinding,
+    Dead,
+}
+
+impl StoreState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Instantiating => "instantiating",
+            Self::Running => "running",
+            Self::Degraded => "degraded",
+            Self::Draining => "draining",
+            Self::Restarting => "restarting",
+            Self::Rebinding => "rebinding",
+            Self::Dead => "dead",
+        }
+    }
+
+    pub const fn fault_domain_state(self) -> FaultDomainState {
+        match self {
+            Self::Created => FaultDomainState::Created,
+            Self::Instantiating | Self::Rebinding => FaultDomainState::Initializing,
+            Self::Running => FaultDomainState::Running,
+            Self::Degraded => FaultDomainState::Degraded,
+            Self::Draining => FaultDomainState::Draining,
+            Self::Restarting => FaultDomainState::Restarting,
+            Self::Dead => FaultDomainState::Dead,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FaultClass {
+    Guest,
+    Service,
+    Driver,
+    Supervisor,
+    Substrate,
+}
+
+impl FaultClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Guest => "guest",
+            Self::Service => "service",
+            Self::Driver => "driver",
+            Self::Supervisor => "supervisor",
+            Self::Substrate => "substrate",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrapClass {
+    GuestSegfault,
+    GuestIllegalInstruction,
+    WasmBoundsTrap,
+    WasmUnreachableTrap,
+    WindowViolationTrap,
+    MmioPermissionTrap,
+    DmaPermissionTrap,
+    CapabilityDenied,
+    ServiceTrap,
+    DriverTrap,
+    SubstrateFault,
+}
+
+impl TrapClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GuestSegfault => "guest-segfault",
+            Self::GuestIllegalInstruction => "guest-illegal-instruction",
+            Self::WasmBoundsTrap => "wasm-bounds-trap",
+            Self::WasmUnreachableTrap => "wasm-unreachable-trap",
+            Self::WindowViolationTrap => "window-violation-trap",
+            Self::MmioPermissionTrap => "mmio-permission-trap",
+            Self::DmaPermissionTrap => "dma-permission-trap",
+            Self::CapabilityDenied => "capability-denied",
+            Self::ServiceTrap => "service-trap",
+            Self::DriverTrap => "driver-trap",
+            Self::SubstrateFault => "substrate-fault",
+        }
+    }
+
+    pub const fn fault_class(self) -> FaultClass {
+        match self {
+            Self::GuestSegfault | Self::GuestIllegalInstruction => FaultClass::Guest,
+            Self::DriverTrap | Self::MmioPermissionTrap | Self::DmaPermissionTrap => {
+                FaultClass::Driver
+            }
+            Self::SubstrateFault => FaultClass::Substrate,
+            Self::CapabilityDenied | Self::WindowViolationTrap => FaultClass::Supervisor,
+            Self::WasmBoundsTrap | Self::WasmUnreachableTrap | Self::ServiceTrap => {
+                FaultClass::Service
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CanonicalGuestIsa {
+    Riscv64,
+    Wasm32,
+    None,
+}
+
+impl CanonicalGuestIsa {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Riscv64 => "riscv64",
+            Self::Wasm32 => "wasm32",
+            Self::None => "none",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostcallClass {
+    PureQuery,
+    ImmediatePrivilegedOp,
+    AsyncOp,
+}
+
+impl HostcallClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PureQuery => "pure-query",
+            Self::ImmediatePrivilegedOp => "immediate-privileged-op",
+            Self::AsyncOp => "async-op",
+        }
+    }
+}
