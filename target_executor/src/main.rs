@@ -11,11 +11,11 @@ use artifact_manifest::{
     SemanticRootSetManifest, SemanticSnapshotManifest, SubstrateBoundaryManifest,
 };
 use contract_core::{
-    validate_artifact_manifest, validate_migration_against_manifest, validate_replay_quiescent,
+    ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
+    validate_migration_against_manifest, validate_replay_quiescent,
 };
 use runtime::RuntimeOnlyExecutor;
-use semantic_core::{FrontendKind, SemanticGraph, StoreState, TaskState};
-use supervisor_catalog::{SUPERVISOR_WASM_MODULES, WasmModuleSpec};
+use semantic_core::{FrontendKind, RuntimeMode, SemanticGraph, StoreState, TaskState};
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
 
@@ -34,25 +34,26 @@ fn run() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| workspace_root.join(DEFAULT_ARTIFACT_ROOT));
     let migration_path = env::args().nth(2).map(PathBuf::from);
     let manifest = read_manifest(&artifact_root)?;
+    let plan = validate_bundle_manifest(&manifest)?;
     let executor = RuntimeOnlyExecutor::host_validation(workspace_root.clone())?;
-    let mut semantic = SemanticGraph::new();
-    let mut stores = Vec::with_capacity(SUPERVISOR_WASM_MODULES.len());
+    let mut semantic = SemanticGraph::with_runtime_mode(runtime_mode_from_plan(&plan));
+    let mut stores = Vec::with_capacity(plan.module_count());
 
-    validate_bundle_manifest(&manifest)?;
     semantic.ensure_task(1, FrontendKind::Supervisor, "target-executor-bootstrap");
     semantic.set_task_state(1, TaskState::Running);
 
-    for spec in SUPERVISOR_WASM_MODULES {
-        let store = executor.load_store(&manifest, spec)?;
-        register_store_semantics(&mut semantic, spec);
+    for entry in &plan.modules {
+        let store = executor.load_store(entry)?;
+        register_store_semantics(&mut semantic, entry);
         stores.push(store);
     }
 
     println!(
-        "target executor loaded {} runtime-only stores with {} capability grants across {} fault domains",
+        "target executor loaded {} runtime-only stores with {} capability grants across {} fault domains in {} mode",
         stores.len(),
         semantic.capability_count(),
-        semantic.fault_domain_count()
+        semantic.fault_domain_count(),
+        semantic.runtime_mode().as_str()
     );
     println!(
         "semantic store graph contains {} stores",
@@ -64,15 +65,20 @@ fn run() -> Result<(), Box<dyn Error>> {
     );
     for store in stores {
         println!(
-            "store {} role={} fault_policy={}",
-            store.package, store.role, store.fault_policy
+            "store {} role={} fault_policy={} abi={} binding={}",
+            store.package,
+            store.role,
+            store.fault_policy,
+            short_hash(&store.abi_fingerprint),
+            short_hash(&store.manifest_binding_hash)
         );
     }
-    let network_store_count = SUPERVISOR_WASM_MODULES
+    let network_store_count = plan
+        .modules
         .iter()
-        .filter(|module| {
+        .filter(|entry| {
             matches!(
-                module.package,
+                entry.package.as_str(),
                 "driver_virtio_net" | "net_core" | "linux_socket_service"
             )
         })
@@ -82,26 +88,39 @@ fn run() -> Result<(), Box<dyn Error>> {
         prepare_migration_package(&artifact_root, migration_path, &manifest, &semantic)?;
     let migration = read_migration_package(&migration_path)?;
     validate_migration_package(&migration, &manifest)?;
-    restore_migration_package(&migration, &semantic)?;
+    restore_migration_package(&migration, &semantic, &plan)?;
 
     Ok(())
 }
 
-fn register_store_semantics(semantic: &mut SemanticGraph, spec: &WasmModuleSpec) {
+fn runtime_mode_from_plan(plan: &ValidatedArtifactPlan) -> RuntimeMode {
+    match plan.runtime_mode.as_str() {
+        "production" => RuntimeMode::Production,
+        "replay" => RuntimeMode::Replay,
+        _ => RuntimeMode::Research,
+    }
+}
+
+fn register_store_semantics(semantic: &mut SemanticGraph, entry: &ValidatedArtifactEntry) {
     let store = semantic.register_store(
-        spec.package,
-        spec.artifact_name,
-        spec.role.as_str(),
-        spec.fault_policy.as_str(),
+        &entry.package,
+        &entry.artifact_name,
+        &entry.role,
+        &entry.fault_policy,
     );
     semantic.set_store_state(store, StoreState::Instantiating);
     semantic.set_store_state(store, StoreState::Running);
-    for capability in spec.capabilities {
+    for capability in &entry.capabilities {
+        let rights = capability
+            .rights
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
         semantic.grant_capability(
-            spec.package,
-            capability.name,
-            capability.rights,
-            capability.lifetime,
+            &entry.package,
+            &capability.name,
+            &rights,
+            &capability.lifetime,
         );
     }
 }
@@ -287,8 +306,10 @@ fn semantic_roots(
     }
 }
 
-fn validate_bundle_manifest(manifest: &ArtifactBundleManifest) -> Result<(), Box<dyn Error>> {
-    validate_artifact_manifest(manifest).map_err(Into::into)
+fn validate_bundle_manifest(
+    manifest: &ArtifactBundleManifest,
+) -> Result<ValidatedArtifactPlan, Box<dyn Error>> {
+    build_validated_artifact_plan(manifest).map_err(Into::into)
 }
 
 fn validate_migration_package(
@@ -303,6 +324,7 @@ fn validate_migration_package(
 fn restore_migration_package(
     package: &MigrationPackageManifest,
     semantic: &SemanticGraph,
+    plan: &ValidatedArtifactPlan,
 ) -> Result<(), Box<dyn Error>> {
     if package.semantic.fault_domain_count > semantic.fault_domain_count() {
         return Err(
@@ -318,12 +340,9 @@ fn restore_migration_package(
         );
     }
     for capability in &package.logical_capabilities {
-        let Some(module) = SUPERVISOR_WASM_MODULES
-            .iter()
-            .find(|module| module.package == capability.subject)
-        else {
+        let Some(module) = plan.entry(&capability.subject) else {
             return Err(format!(
-                "migration package capability subject {} is not in target catalog",
+                "migration package capability subject {} is not in target load plan",
                 capability.subject
             )
             .into());
@@ -404,6 +423,10 @@ fn restore_migration_package(
         package.not_migrated.join(", ")
     );
     Ok(())
+}
+
+fn short_hash(hash: &str) -> &str {
+    hash.get(..12).unwrap_or(hash)
 }
 
 fn read_manifest(artifact_root: &Path) -> Result<ArtifactBundleManifest, Box<dyn Error>> {

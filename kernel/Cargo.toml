@@ -22,4 +22,7 @@ x86_64.workspace = true
 xmas-elf.workspace = true
 
 [build-dependencies]
+contract_core.workspace = true
+hex.workspace = true
+sha2.workspace = true
 supervisor_catalog.workspace = true

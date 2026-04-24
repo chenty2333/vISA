@@ -14,12 +14,16 @@ use supervisor_catalog::{
 };
 
 use super::artifacts::ArtifactLoadPlan;
+use super::authority::{AuthorityPlane, SubstrateAuthorityClass, SubstrateAuthoritySpec};
 use super::events::Event;
 use super::runtime::PrototypeRuntime;
 use super::types::{FdResource, WaitKind, WaitRestartClass, WaitToken};
 
-pub(super) fn bootstrap_graph(load_plan: &ArtifactLoadPlan) -> SemanticGraph {
-    let mut graph = SemanticGraph::new();
+pub(super) fn bootstrap_graph(
+    load_plan: &ArtifactLoadPlan,
+    authority: &AuthorityPlane,
+) -> Result<SemanticGraph, &'static str> {
+    let mut graph = SemanticGraph::with_runtime_mode(load_plan.runtime_mode);
     graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
     graph.set_task_state(1, TaskState::Running);
 
@@ -39,14 +43,18 @@ pub(super) fn bootstrap_graph(load_plan: &ArtifactLoadPlan) -> SemanticGraph {
             );
         }
     }
-    let dmw_window = graph.register_resource(ResourceKind::DmwWindow, None, "dmw:window-plane");
-    graph.bind_authority_resource(
-        dmw_window,
-        "linux_elf_frontend",
-        "dmw.window",
-        &["acquire"],
-        "activation",
-    );
+    authority.bind_substrate_authority(
+        &mut graph,
+        SubstrateAuthoritySpec {
+            class: SubstrateAuthorityClass::DmwWindow,
+            subject: "linux_elf_frontend",
+            object: "dmw.window",
+            operations: &["acquire"],
+            lifetime: "activation",
+            label: "dmw:window-plane",
+            owner_store: None,
+        },
+    )?;
     graph.grant_capability(
         "snapshot_manager",
         "snapshot.barrier",
@@ -66,7 +74,7 @@ pub(super) fn bootstrap_graph(load_plan: &ArtifactLoadPlan) -> SemanticGraph {
         "fault-recovery",
     );
 
-    graph
+    Ok(graph)
 }
 
 pub(super) fn fd_resource_kind(resource: &FdResource) -> ResourceKind {
@@ -92,7 +100,9 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn semantic_debug_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
         lines.push(format!(
-            "semantic graph: tasks={} resources={} authority={}/{} waits={} capabilities={} fault_domains={} events={}",
+            "semantic graph: mode={} event_policy={} tasks={} resources={} authority={}/{} waits={} capabilities={} fault_domains={} events={}",
+            self.semantic.runtime_mode().as_str(),
+            self.semantic.runtime_mode().event_log_policy(),
             self.semantic.task_count(),
             self.semantic.resource_count(),
             self.semantic.active_authority_count(),
@@ -113,7 +123,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         ));
         let profile = self.artifacts.profile();
         lines.push(format!(
-            "artifact registry: artifacts={} contract={} world={} engine={} mode={} format={} runtime_executor={} network={}",
+            "artifact registry: profile={} runtime_mode={} artifacts={} contract={} world={} engine={} mode={} format={} runtime_executor={} network={}",
+            self.artifacts.artifact_profile(),
+            self.artifacts.runtime_mode().as_str(),
             self.artifacts.artifacts().len(),
             profile.contract_version,
             profile.supervisor_world,
@@ -123,8 +135,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             profile.runtime_executor_abi,
             profile.network_contract
         ));
+        lines.push(self.executor_plan.summary_line());
+        lines.push(self.substrate_authority_line());
         lines.push(format!(
-            "runtime stores: records={} first_role={} first_policy={}",
+            "runtime stores: records={} first_role={} first_policy={} first_owner={} first_cleanup={} first_executor={} first_hostcalls={} first_manifest_source={} first_signature={}",
             self.store_manager.records().len(),
             self.store_manager
                 .records()
@@ -135,8 +149,39 @@ impl<'engine> PrototypeRuntime<'engine> {
                 .records()
                 .first()
                 .map(|record| record.fault_policy)
+                .unwrap_or("none"),
+            self.store_manager
+                .records()
+                .first()
+                .map(|record| record.capability_owner)
+                .unwrap_or("none"),
+            self.store_manager
+                .records()
+                .first()
+                .map(|record| record.cleanup_policy)
+                .unwrap_or("none"),
+            self.store_manager
+                .records()
+                .first()
+                .map(|record| record.executor_state.as_str())
+                .unwrap_or("none"),
+            self.store_manager
+                .records()
+                .first()
+                .map(|record| record.executor_hostcalls.state.as_str())
+                .unwrap_or("none"),
+            self.store_manager
+                .records()
+                .first()
+                .map(|record| record.manifest_binding.source)
+                .unwrap_or("none"),
+            self.store_manager
+                .records()
+                .first()
+                .map(|record| record.manifest_binding.signature_profile)
                 .unwrap_or("none")
         ));
+        lines.push(self.capability_owner_line("driver_virtio_net"));
         lines.push("event log tail:".to_string());
         for event in self.semantic.event_log_tail(16) {
             lines.push(event.summary());

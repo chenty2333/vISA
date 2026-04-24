@@ -1,7 +1,16 @@
-use semantic_core::{CapabilityDenyReason, Generation, HostcallClass, SemanticGraph};
+use alloc::format;
+use alloc::string::String;
+
+use semantic_core::{
+    AuthorityId, AuthorityKind, AuthorityState, CapabilityDenyReason, CapabilityOwnerSummary,
+    Generation, HostcallClass, ResourceHandle, ResourceId, ResourceKind, SemanticGraph, StoreId,
+};
 use vmos_abi::PlanKind;
 
 use super::runtime::PrototypeRuntime;
+
+pub(crate) const SUBSTRATE_AUTHORITY_CONTRACT_VERSION: &str =
+    "vmos-substrate-authority-contract-v2";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HostcallBinding {
@@ -9,6 +18,48 @@ pub(crate) struct HostcallBinding {
     pub(crate) subject: &'static str,
     pub(crate) object: &'static str,
     pub(crate) operation: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SubstrateAuthorityClass {
+    DmwWindow,
+    PacketDevice,
+    MmioRegion,
+    DmaBuffer,
+    IrqLine,
+    VirtioQueue,
+}
+
+impl SubstrateAuthorityClass {
+    pub(crate) const fn resource_kind(self) -> ResourceKind {
+        match self {
+            Self::DmwWindow => ResourceKind::DmwWindow,
+            Self::PacketDevice => ResourceKind::PacketDevice,
+            Self::MmioRegion => ResourceKind::MmioRegion,
+            Self::DmaBuffer => ResourceKind::DmaBuffer,
+            Self::IrqLine => ResourceKind::IrqLine,
+            Self::VirtioQueue => ResourceKind::VirtioQueue,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SubstrateAuthoritySpec {
+    pub(crate) class: SubstrateAuthorityClass,
+    pub(crate) subject: &'static str,
+    pub(crate) object: &'static str,
+    pub(crate) operations: &'static [&'static str],
+    pub(crate) lifetime: &'static str,
+    pub(crate) label: &'static str,
+    pub(crate) owner_store: Option<StoreId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SubstrateAuthorityLease {
+    pub(crate) class: SubstrateAuthorityClass,
+    pub(crate) resource: ResourceId,
+    pub(crate) authority: AuthorityId,
+    pub(crate) handle: ResourceHandle,
 }
 
 pub(crate) struct AuthorityPlane;
@@ -80,6 +131,14 @@ impl AuthorityPlane {
             .ok_or("capability to revoke was not present")
     }
 
+    pub(crate) fn owner_summary(
+        &self,
+        semantic: &SemanticGraph,
+        subject: &str,
+    ) -> CapabilityOwnerSummary {
+        semantic.capability_owner_summary(subject)
+    }
+
     pub(crate) fn grant(
         &self,
         semantic: &mut SemanticGraph,
@@ -89,6 +148,81 @@ impl AuthorityPlane {
         lifetime: &str,
     ) {
         semantic.grant_capability(subject, object, operations, lifetime);
+    }
+
+    pub(crate) fn bind_substrate_authority(
+        &self,
+        semantic: &mut SemanticGraph,
+        spec: SubstrateAuthoritySpec,
+    ) -> Result<SubstrateAuthorityLease, &'static str> {
+        let resource = semantic.register_resource_for_store(
+            spec.class.resource_kind(),
+            None,
+            spec.owner_store,
+            spec.label,
+        );
+        self.bind_existing_substrate_authority(semantic, resource, spec)
+    }
+
+    pub(crate) fn bind_existing_substrate_authority(
+        &self,
+        semantic: &mut SemanticGraph,
+        resource: ResourceId,
+        spec: SubstrateAuthoritySpec,
+    ) -> Result<SubstrateAuthorityLease, &'static str> {
+        let authority = semantic
+            .bind_authority_resource(
+                resource,
+                spec.subject,
+                spec.object,
+                spec.operations,
+                spec.lifetime,
+            )
+            .ok_or("substrate authority resource could not be bound")?;
+        let handle = semantic
+            .resource_handle(resource)
+            .ok_or("substrate authority resource did not publish a handle")?;
+        Ok(SubstrateAuthorityLease {
+            class: spec.class,
+            resource,
+            authority,
+            handle,
+        })
+    }
+
+    pub(crate) fn substrate_authority_line(&self, semantic: &SemanticGraph) -> String {
+        let mut dmw = 0usize;
+        let mut device = 0usize;
+        let mut mmio = 0usize;
+        let mut dma = 0usize;
+        let mut irq = 0usize;
+        let mut virtqueue = 0usize;
+        for authority in semantic
+            .authority_bindings()
+            .iter()
+            .filter(|authority| authority.state == AuthorityState::Bound)
+        {
+            match authority.kind {
+                AuthorityKind::DmwWindow => dmw += 1,
+                AuthorityKind::Device | AuthorityKind::PacketDevice => device += 1,
+                AuthorityKind::MmioRegion => mmio += 1,
+                AuthorityKind::DmaPool | AuthorityKind::DmaBuffer => dma += 1,
+                AuthorityKind::IrqLine => irq += 1,
+                AuthorityKind::VirtioQueue => virtqueue += 1,
+            }
+        }
+        format!(
+            "substrate authority contract={} active={}/{} device={} mmio={} dma={} irq={} virtqueue={} dmw={}",
+            SUBSTRATE_AUTHORITY_CONTRACT_VERSION,
+            semantic.active_authority_count(),
+            semantic.authority_count(),
+            device,
+            mmio,
+            dma,
+            irq,
+            virtqueue,
+            dmw
+        )
     }
 }
 
@@ -289,6 +423,21 @@ impl<'engine> PrototypeRuntime<'engine> {
         object: &str,
     ) -> Result<(), &'static str> {
         self.authority.revoke(&mut self.semantic, subject, object)
+    }
+
+    pub(crate) fn capability_owner_line(&self, subject: &str) -> alloc::string::String {
+        let summary = self.authority.owner_summary(&self.semantic, subject);
+        alloc::format!(
+            "capability owner {} active={} revoked={} generation_high={}",
+            summary.subject,
+            summary.active,
+            summary.revoked,
+            summary.generation_high_watermark
+        )
+    }
+
+    pub(crate) fn substrate_authority_line(&self) -> alloc::string::String {
+        self.authority.substrate_authority_line(&self.semantic)
     }
 
     pub(crate) fn grant_capability_for_demo(

@@ -58,6 +58,7 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) console: ConsoleService,
     pub(super) vfs: VfsService,
     pub(super) engine: &'engine RuntimeOnlyExecutor,
+    pub(super) executor_plan: super::engine::ExecutorLoadPlan,
     pub(super) procfs: Option<ProcfsService>,
     pub(super) devfs: DevfsService,
     pub(super) epoll: EpollService,
@@ -84,21 +85,29 @@ pub(crate) struct PrototypeRuntime<'engine> {
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn new(engine: &'engine RuntimeOnlyExecutor) -> Result<Self, &'static str> {
         crate::kdebug!("validating supervisor artifact registry");
-        let artifacts = ArtifactRegistry::from_catalog().map_err(|err| err.message())?;
+        let artifacts =
+            ArtifactRegistry::from_embedded_manifest_plan().map_err(|err| err.message())?;
         let load_plan = artifacts.load_plan();
+        let executor_plan = engine
+            .prepare_load_plan(&load_plan)
+            .map_err(|err| err.message())?;
         let plan_profile = load_plan.profile;
         crate::kdebug!(
-            "artifact load plan engine={} mode={} runtime={}",
+            "artifact load plan profile={} runtime_mode={} engine={} mode={} runtime={}",
+            load_plan.artifact_profile,
+            load_plan.runtime_mode.as_str(),
             plan_profile.compiler_engine,
             plan_profile.execution_mode,
             plan_profile.runtime_executor_abi
         );
-        crate::kdebug!("bootstrapping semantic graph");
-        let mut semantic = bootstrap_graph(&load_plan);
-        let store_manager = StoreManager::from_load_plan(&load_plan, &mut semantic)?;
-        crate::kdebug!("bootstrapping network plane");
-        let net = NetworkPlane::new(&mut semantic);
+        crate::kdebug!("{}", executor_plan.summary_line());
         let authority = AuthorityPlane::new();
+        crate::kdebug!("bootstrapping semantic graph");
+        let mut semantic = bootstrap_graph(&load_plan, &authority)?;
+        let store_manager =
+            StoreManager::from_load_plan(&load_plan, &executor_plan, &mut semantic)?;
+        crate::kdebug!("bootstrapping network plane");
+        let net = NetworkPlane::new(&authority, &mut semantic)?;
         crate::kdebug!("instantiating console_service");
         let console = ConsoleService::new(engine)?;
         crate::kdebug!("instantiating vfs_service");
@@ -129,6 +138,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             console,
             vfs,
             engine,
+            executor_plan,
             procfs: Some(procfs),
             devfs,
             epoll,

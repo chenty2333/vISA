@@ -2,8 +2,8 @@ use std::error::Error;
 use std::fmt;
 
 use artifact_manifest::{
-    ArtifactBundleManifest, MigrationPackageManifest, ModuleArtifactManifest,
-    SupervisorContractManifest,
+    ArtifactBundleManifest, CapabilityManifest, MigrationPackageManifest, ModuleArtifactManifest,
+    ResourceLimitsManifest, SupervisorContractManifest,
 };
 use service_core::net_contract::NETWORK_CONTRACT_VERSION;
 use sha2::{Digest, Sha256};
@@ -38,6 +38,68 @@ impl Error for ContractError {}
 
 pub type ContractResult<T> = Result<T, ContractError>;
 
+pub const RUNTIME_MODE_RESEARCH: &str = "research";
+pub const RUNTIME_MODE_PRODUCTION: &str = "production";
+pub const RUNTIME_MODE_REPLAY: &str = "replay";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidatedArtifactPlan {
+    pub artifact_profile: String,
+    pub runtime_mode: String,
+    pub contract_version: String,
+    pub supervisor_world: String,
+    pub target_arch: String,
+    pub compiler_engine: String,
+    pub compiler_execution_mode: String,
+    pub artifact_format: String,
+    pub runtime_executor_abi: String,
+    pub modules: Vec<ValidatedArtifactEntry>,
+}
+
+impl ValidatedArtifactPlan {
+    pub fn module_count(&self) -> usize {
+        self.modules.len()
+    }
+
+    pub fn capability_count(&self) -> usize {
+        self.modules
+            .iter()
+            .map(|entry| entry.capabilities.len())
+            .sum()
+    }
+
+    pub fn expected_export_count(&self) -> usize {
+        self.modules
+            .iter()
+            .map(|entry| entry.expected_exports.len())
+            .sum()
+    }
+
+    pub fn entry(&self, package: &str) -> Option<&ValidatedArtifactEntry> {
+        self.modules.iter().find(|entry| entry.package == package)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidatedArtifactEntry {
+    pub package: String,
+    pub artifact_name: String,
+    pub role: String,
+    pub fault_policy: String,
+    pub wasm_path: String,
+    pub cwasm_path: String,
+    pub wasm_sha256: String,
+    pub cwasm_sha256: String,
+    pub expected_exports: Vec<String>,
+    pub capabilities: Vec<CapabilityManifest>,
+    pub abi_fingerprint: String,
+    pub service_dependencies: Vec<String>,
+    pub resource_limits: ResourceLimitsManifest,
+    pub signature_scheme: String,
+    pub signer: String,
+    pub manifest_binding_hash: String,
+}
+
 pub fn contract_hex(value: u64) -> String {
     format!("{value:016x}")
 }
@@ -60,6 +122,7 @@ pub fn validate_artifact_manifest(manifest: &ArtifactBundleManifest) -> Contract
     if manifest.schema_version != 1 {
         return Err(ContractError::new("unsupported manifest schema version"));
     }
+    validate_runtime_mode(&manifest.runtime_mode)?;
     validate_supervisor_contract(manifest)?;
     if manifest.compiler.engine != SUPERVISOR_COMPILER_ENGINE {
         return Err(ContractError::new("manifest compiler engine mismatch"));
@@ -96,7 +159,95 @@ pub fn validate_artifact_manifest(manifest: &ArtifactBundleManifest) -> Contract
     if manifest.target.network_contract_version != NETWORK_CONTRACT_VERSION {
         return Err(ContractError::new("manifest network contract mismatch"));
     }
+    for spec in SUPERVISOR_WASM_MODULES {
+        let entry = manifest_entry_for_spec(manifest, spec)?;
+        validate_manifest_entry(spec, entry)?;
+    }
     Ok(())
+}
+
+pub fn build_validated_artifact_plan(
+    manifest: &ArtifactBundleManifest,
+) -> ContractResult<ValidatedArtifactPlan> {
+    validate_artifact_manifest(manifest)?;
+    let modules = SUPERVISOR_WASM_MODULES
+        .iter()
+        .map(|spec| {
+            let entry = manifest_entry_for_spec(manifest, spec)?;
+            Ok(ValidatedArtifactEntry {
+                package: entry.package.clone(),
+                artifact_name: entry.artifact_name.clone(),
+                role: entry.role.clone(),
+                fault_policy: entry.fault_policy.clone(),
+                wasm_path: entry.wasm_path.clone(),
+                cwasm_path: entry.cwasm_path.clone(),
+                wasm_sha256: entry.wasm_sha256.clone(),
+                cwasm_sha256: entry.cwasm_sha256.clone(),
+                expected_exports: entry.expected_exports.clone(),
+                capabilities: entry.capabilities.clone(),
+                abi_fingerprint: entry.abi_fingerprint.clone(),
+                service_dependencies: entry.service_dependencies.clone(),
+                resource_limits: entry.resource_limits.clone(),
+                signature_scheme: entry.signature.scheme.clone(),
+                signer: entry.signature.signer.clone(),
+                manifest_binding_hash: entry.signature.manifest_binding_hash.clone(),
+            })
+        })
+        .collect::<ContractResult<Vec<_>>>()?;
+
+    Ok(ValidatedArtifactPlan {
+        artifact_profile: manifest.artifact_profile.clone(),
+        runtime_mode: normalized_runtime_mode(&manifest.runtime_mode).to_owned(),
+        contract_version: manifest.contract.contract_version.clone(),
+        supervisor_world: manifest.contract.supervisor_world.clone(),
+        target_arch: manifest.target.arch.clone(),
+        compiler_engine: manifest.compiler.engine.clone(),
+        compiler_execution_mode: manifest.compiler.execution_mode.clone(),
+        artifact_format: manifest.compiler.artifact_format.clone(),
+        runtime_executor_abi: manifest.compiler.runtime_executor_abi.clone(),
+        modules,
+    })
+}
+
+pub fn manifest_entry_for_package<'a>(
+    manifest: &'a ArtifactBundleManifest,
+    package: &str,
+) -> ContractResult<&'a ModuleArtifactManifest> {
+    manifest
+        .modules
+        .iter()
+        .find(|entry| entry.package == package)
+        .ok_or_else(|| ContractError::new(format!("manifest is missing {package}")))
+}
+
+pub fn normalized_runtime_mode(mode: &str) -> &'static str {
+    if mode.is_empty() {
+        RUNTIME_MODE_RESEARCH
+    } else if mode == RUNTIME_MODE_PRODUCTION {
+        RUNTIME_MODE_PRODUCTION
+    } else if mode == RUNTIME_MODE_REPLAY {
+        RUNTIME_MODE_REPLAY
+    } else {
+        RUNTIME_MODE_RESEARCH
+    }
+}
+
+fn manifest_entry_for_spec<'a>(
+    manifest: &'a ArtifactBundleManifest,
+    spec: &WasmModuleSpec,
+) -> ContractResult<&'a ModuleArtifactManifest> {
+    manifest_entry_for_package(manifest, spec.package)
+}
+
+fn validate_runtime_mode(mode: &str) -> ContractResult<()> {
+    if mode.is_empty()
+        || mode == RUNTIME_MODE_RESEARCH
+        || mode == RUNTIME_MODE_PRODUCTION
+        || mode == RUNTIME_MODE_REPLAY
+    {
+        return Ok(());
+    }
+    Err(ContractError::new("unsupported runtime mode"))
 }
 
 pub fn validate_supervisor_contract(manifest: &ArtifactBundleManifest) -> ContractResult<()> {
@@ -464,4 +615,149 @@ fn rights_vec(capability: &CapabilitySpec) -> Vec<String> {
         .iter()
         .map(|right| (*right).to_owned())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use artifact_manifest::{CompilerManifest, ExternManifest, SignatureManifest, TargetManifest};
+
+    fn valid_manifest() -> ArtifactBundleManifest {
+        let modules = SUPERVISOR_WASM_MODULES
+            .iter()
+            .map(|spec| {
+                let wasm_sha256 = format!("{}-wasm", spec.package);
+                let cwasm_sha256 = format!("{}-cwasm", spec.package);
+                let abi_fingerprint = module_abi_fingerprint(spec);
+                let manifest_binding_hash =
+                    manifest_binding_hash(spec, &wasm_sha256, &cwasm_sha256, &abi_fingerprint);
+                ModuleArtifactManifest {
+                    package: spec.package.to_owned(),
+                    artifact_name: spec.artifact_name.to_owned(),
+                    role: spec.role.as_str().to_owned(),
+                    fault_policy: spec.fault_policy.as_str().to_owned(),
+                    wasm_path: format!("target/test/{}.wasm", spec.package),
+                    cwasm_path: format!("target/test/{}.cwasm", spec.package),
+                    wasm_sha256,
+                    cwasm_sha256: cwasm_sha256.clone(),
+                    expected_exports: spec
+                        .expected_exports
+                        .iter()
+                        .map(|export| (*export).to_owned())
+                        .collect(),
+                    exports: spec
+                        .expected_exports
+                        .iter()
+                        .map(|export| ExternManifest {
+                            name: (*export).to_owned(),
+                            kind: if *export == "memory" {
+                                "memory"
+                            } else {
+                                "func"
+                            }
+                            .to_owned(),
+                        })
+                        .collect(),
+                    imports: Vec::new(),
+                    capabilities: spec
+                        .capabilities
+                        .iter()
+                        .map(|capability| CapabilityManifest {
+                            name: capability.name.to_owned(),
+                            rights: capability
+                                .rights
+                                .iter()
+                                .map(|right| (*right).to_owned())
+                                .collect(),
+                            lifetime: capability.lifetime.to_owned(),
+                        })
+                        .collect(),
+                    abi_fingerprint,
+                    service_dependencies: module_dependencies(spec)
+                        .iter()
+                        .map(|dependency| (*dependency).to_owned())
+                        .collect(),
+                    resource_limits: ResourceLimitsManifest {
+                        max_memory_pages: 16,
+                        max_table_elements: 0,
+                        max_hostcalls_per_activation: 64,
+                    },
+                    signature: SignatureManifest {
+                        scheme: ARTIFACT_SIGNATURE_PROFILE.to_owned(),
+                        artifact_hash: cwasm_sha256,
+                        manifest_binding_hash,
+                        signer: "test-signer".to_owned(),
+                        public_key_hint: "test-key".to_owned(),
+                        signature: "test-signature".to_owned(),
+                    },
+                }
+            })
+            .collect();
+
+        ArtifactBundleManifest {
+            schema_version: 1,
+            artifact_profile: "host-validation".to_owned(),
+            runtime_mode: RUNTIME_MODE_RESEARCH.to_owned(),
+            contract: expected_supervisor_contract(),
+            target: TargetManifest {
+                arch: "x86_64".to_owned(),
+                machine_abi_version: MACHINE_ABI_VERSION.to_owned(),
+                supervisor_abi_version: SUPERVISOR_ABI_VERSION.to_owned(),
+                wasm_feature_profile: WASM_FEATURE_PROFILE.to_owned(),
+                memory64: false,
+                multi_memory: false,
+                dmw_layout: DMW_LAYOUT.to_owned(),
+                linux_abi_profile: LINUX_ABI_PROFILE.to_owned(),
+                artifact_signature_profile: ARTIFACT_SIGNATURE_PROFILE.to_owned(),
+                network_contract_version: NETWORK_CONTRACT_VERSION.to_owned(),
+            },
+            compiler: CompilerManifest {
+                engine: SUPERVISOR_COMPILER_ENGINE.to_owned(),
+                engine_version: "test".to_owned(),
+                execution_mode: SUPERVISOR_EXECUTION_MODE.to_owned(),
+                artifact_format: SUPERVISOR_ARTIFACT_FORMAT.to_owned(),
+                runtime_executor_abi: RUNTIME_ONLY_EXECUTOR_ABI.to_owned(),
+            },
+            modules,
+        }
+    }
+
+    #[test]
+    fn validated_plan_preserves_manifest_order_and_totals() {
+        let manifest = valid_manifest();
+        let plan = build_validated_artifact_plan(&manifest).expect("valid plan");
+
+        assert_eq!(plan.module_count(), SUPERVISOR_WASM_MODULES.len());
+        assert_eq!(plan.runtime_mode, RUNTIME_MODE_RESEARCH);
+        assert_eq!(plan.modules[0].package, SUPERVISOR_WASM_MODULES[0].package);
+        assert_eq!(
+            plan.capability_count(),
+            SUPERVISOR_WASM_MODULES
+                .iter()
+                .map(|spec| spec.capabilities.len())
+                .sum()
+        );
+    }
+
+    #[test]
+    fn manifest_validation_rejects_bad_entry_binding() {
+        let mut manifest = valid_manifest();
+        manifest.modules[0].signature.manifest_binding_hash = "stale-binding".to_owned();
+
+        let err = validate_artifact_manifest(&manifest).expect_err("bad binding must fail");
+        assert!(err.to_string().contains("manifest binding hash mismatch"));
+    }
+
+    #[test]
+    fn manifest_validation_rejects_unknown_runtime_mode() {
+        let mut manifest = valid_manifest();
+        manifest.runtime_mode = "max-debug-production-replay".to_owned();
+
+        assert_eq!(
+            validate_artifact_manifest(&manifest)
+                .unwrap_err()
+                .to_string(),
+            "unsupported runtime mode"
+        );
+    }
 }

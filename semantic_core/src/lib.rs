@@ -22,6 +22,53 @@ pub type PlanId = u64;
 pub type AuthorityId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeMode {
+    Research,
+    Production,
+    Replay,
+}
+
+impl RuntimeMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Research => "research",
+            Self::Production => "production",
+            Self::Replay => "replay",
+        }
+    }
+
+    pub const fn event_log_policy(self) -> &'static str {
+        match self {
+            Self::Research => "full",
+            Self::Production => "sampled",
+            Self::Replay => "deterministic",
+        }
+    }
+
+    pub const fn dmw_policy(self) -> &'static str {
+        match self {
+            Self::Research => "strict-quarantine",
+            Self::Production => "aggressive-reuse",
+            Self::Replay => "barrier-locked",
+        }
+    }
+
+    pub const fn fast_path_enabled(self) -> bool {
+        matches!(self, Self::Production)
+    }
+
+    pub const fn deterministic_boundary(self) -> bool {
+        matches!(self, Self::Replay)
+    }
+}
+
+impl Default for RuntimeMode {
+    fn default() -> Self {
+        Self::Research
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResourceHandle {
     pub id: ResourceId,
     pub generation: Generation,
@@ -176,6 +223,8 @@ impl ResourceKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthorityKind {
+    Device,
+    PacketDevice,
     DmwWindow,
     MmioRegion,
     DmaPool,
@@ -187,6 +236,8 @@ pub enum AuthorityKind {
 impl AuthorityKind {
     pub const fn from_resource_kind(kind: ResourceKind) -> Option<Self> {
         match kind {
+            ResourceKind::Device => Some(Self::Device),
+            ResourceKind::PacketDevice => Some(Self::PacketDevice),
             ResourceKind::DmwWindow => Some(Self::DmwWindow),
             ResourceKind::MmioRegion => Some(Self::MmioRegion),
             ResourceKind::DmaPool => Some(Self::DmaPool),
@@ -199,6 +250,8 @@ impl AuthorityKind {
 
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Device => "device",
+            Self::PacketDevice => "packet-device",
             Self::DmwWindow => "dmw-window",
             Self::MmioRegion => "mmio-region",
             Self::DmaPool => "dma-pool",
@@ -471,6 +524,26 @@ pub struct CapabilityRecord {
     pub revoked: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityOwnerSummary {
+    pub subject: String,
+    pub active: usize,
+    pub revoked: usize,
+    pub generation_high_watermark: Generation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityRevocationReport {
+    pub subject: String,
+    pub revoked: Vec<CapabilityId>,
+}
+
+impl CapabilityRevocationReport {
+    pub fn count(&self) -> usize {
+        self.revoked.len()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CapabilityLedger {
     next_id: CapabilityId,
@@ -572,15 +645,46 @@ impl CapabilityLedger {
     }
 
     pub fn revoke_subject(&mut self, subject: &str) -> usize {
-        let mut revoked = 0;
+        self.revoke_subject_report(subject).count()
+    }
+
+    pub fn revoke_subject_report(&mut self, subject: &str) -> CapabilityRevocationReport {
+        let mut revoked_ids = Vec::new();
         for record in &mut self.records {
             if record.subject == subject && !record.revoked {
                 record.revoked = true;
                 record.generation += 1;
-                revoked += 1;
+                revoked_ids.push(record.id);
             }
         }
-        revoked
+        CapabilityRevocationReport {
+            subject: subject.to_string(),
+            revoked: revoked_ids,
+        }
+    }
+
+    pub fn owner_summary(&self, subject: &str) -> CapabilityOwnerSummary {
+        let mut active = 0;
+        let mut revoked = 0;
+        let mut generation_high_watermark = 0;
+        for record in self
+            .records
+            .iter()
+            .filter(|record| record.subject == subject)
+        {
+            if record.revoked {
+                revoked += 1;
+            } else {
+                active += 1;
+            }
+            generation_high_watermark = generation_high_watermark.max(record.generation);
+        }
+        CapabilityOwnerSummary {
+            subject: subject.to_string(),
+            active,
+            revoked,
+            generation_high_watermark,
+        }
     }
 
     pub fn active(&self, id: CapabilityId) -> Option<&CapabilityRecord> {
@@ -1413,6 +1517,7 @@ impl EventRecord {
 pub struct EventLog {
     next_id: EventId,
     epoch: u64,
+    runtime_mode: RuntimeMode,
     events: Vec<EventRecord>,
 }
 
@@ -1421,8 +1526,22 @@ impl EventLog {
         Self {
             next_id: 1,
             epoch: 0,
+            runtime_mode: RuntimeMode::Research,
             events: Vec::new(),
         }
+    }
+
+    pub const fn with_runtime_mode(runtime_mode: RuntimeMode) -> Self {
+        Self {
+            next_id: 1,
+            epoch: 0,
+            runtime_mode,
+            events: Vec::new(),
+        }
+    }
+
+    pub const fn runtime_mode(&self) -> RuntimeMode {
+        self.runtime_mode
     }
 
     pub fn push(&mut self, source: &str, kind: EventKind) -> EventId {
@@ -1485,6 +1604,10 @@ pub struct SemanticGraph {
 
 impl SemanticGraph {
     pub fn new() -> Self {
+        Self::with_runtime_mode(RuntimeMode::Research)
+    }
+
+    pub fn with_runtime_mode(runtime_mode: RuntimeMode) -> Self {
         Self {
             tasks: Vec::new(),
             resources: Vec::new(),
@@ -1495,7 +1618,7 @@ impl SemanticGraph {
             transactions: Vec::new(),
             fast_path_plans: Vec::new(),
             capabilities: CapabilityLedger::new(),
-            event_log: EventLog::new(),
+            event_log: EventLog::with_runtime_mode(runtime_mode),
             next_resource_id: 1,
             next_authority_id: 1,
             next_fault_domain_id: 1,
@@ -1503,6 +1626,10 @@ impl SemanticGraph {
             next_transaction_id: 1,
             next_plan_id: 1,
         }
+    }
+
+    pub fn runtime_mode(&self) -> RuntimeMode {
+        self.event_log.runtime_mode()
     }
 
     pub fn ensure_task(&mut self, id: TaskId, frontend: FrontendKind, label: &str) {
@@ -2239,6 +2366,15 @@ impl SemanticGraph {
         Some(cap)
     }
 
+    pub fn revoke_capabilities_for_subject(&mut self, subject: &str) -> CapabilityRevocationReport {
+        let report = self.capabilities.revoke_subject_report(subject);
+        for cap in &report.revoked {
+            self.event_log
+                .push("capability", EventKind::CapabilityRevoked { cap: *cap });
+        }
+        report
+    }
+
     pub fn check_capability(
         &mut self,
         subject: &str,
@@ -2329,6 +2465,10 @@ impl SemanticGraph {
 
     pub fn capability_generation(&self, subject: &str, object: &str) -> Option<Generation> {
         self.capabilities.generation_of(subject, object)
+    }
+
+    pub fn capability_owner_summary(&self, subject: &str) -> CapabilityOwnerSummary {
+        self.capabilities.owner_summary(subject)
     }
 
     pub fn record_hostcall(
@@ -3094,6 +3234,34 @@ mod tests {
     }
 
     #[test]
+    fn runtime_modes_publish_contract_policies() {
+        let graph = SemanticGraph::with_runtime_mode(RuntimeMode::Replay);
+
+        assert_eq!(graph.runtime_mode(), RuntimeMode::Replay);
+        assert_eq!(graph.runtime_mode().event_log_policy(), "deterministic");
+        assert!(graph.runtime_mode().deterministic_boundary());
+        assert!(!graph.runtime_mode().fast_path_enabled());
+    }
+
+    #[test]
+    fn capability_ledger_reports_owner_recovery_state() {
+        let mut graph = SemanticGraph::new();
+        graph.grant_capability("driver", "mmio-bar0", &["read", "write"], "store");
+        graph.grant_capability("driver", "irq11", &["ack"], "store");
+
+        let report = graph.revoke_capabilities_for_subject("driver");
+        let summary = graph.capability_owner_summary("driver");
+
+        assert_eq!(report.count(), 2);
+        assert_eq!(summary.active, 0);
+        assert_eq!(summary.revoked, 2);
+        assert_eq!(
+            graph.check_capability("driver", "mmio-bar0", "read"),
+            Err(CapabilityDenyReason::Revoked)
+        );
+    }
+
+    #[test]
     fn capability_check_records_denial_and_generation_mismatch() {
         let mut graph = SemanticGraph::new();
         let generation = {
@@ -3323,6 +3491,37 @@ mod tests {
             } if recorded == authority && recorded_resource == mmio
         )));
         assert_eq!(graph.check_invariants(), Ok(()));
+    }
+
+    #[test]
+    fn packet_device_authority_is_part_of_the_hardware_ledger() {
+        let mut graph = SemanticGraph::new();
+        let device =
+            graph.register_resource(ResourceKind::PacketDevice, None, "packet-device:net0");
+        let authority = graph
+            .bind_authority_resource(
+                device,
+                "driver_virtio_net",
+                "packet-device.net0",
+                &["rx", "tx", "poll"],
+                "store",
+            )
+            .expect("packet device authority binding");
+
+        assert_eq!(
+            graph.authority_bindings()[0].kind,
+            AuthorityKind::PacketDevice
+        );
+        assert!(
+            graph
+                .check_capability("driver_virtio_net", "packet-device.net0", "rx")
+                .is_ok()
+        );
+        assert!(graph.revoke_authority_binding(authority, "driver restart"));
+        assert_eq!(
+            graph.check_capability("driver_virtio_net", "packet-device.net0", "rx"),
+            Err(CapabilityDenyReason::Revoked)
+        );
     }
 
     #[test]

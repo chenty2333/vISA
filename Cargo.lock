@@ -613,10 +613,13 @@ name = "kernel"
 version = "0.1.0"
 dependencies = [
  "bootloader_api",
+ "contract_core",
+ "hex",
  "linked_list_allocator",
  "pic8259",
  "semantic_core",
  "service_core",
+ "sha2",
  "spin",
  "supervisor_catalog",
  "uart_16550",

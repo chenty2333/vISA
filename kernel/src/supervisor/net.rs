@@ -1,4 +1,6 @@
-use semantic_core::{ResourceHandle, ResourceKind, SemanticGraph};
+use semantic_core::{ResourceHandle, ResourceId, ResourceKind, SemanticGraph, StoreId};
+
+use super::authority::{AuthorityPlane, SubstrateAuthorityClass, SubstrateAuthoritySpec};
 
 pub(crate) struct NetworkPlane {
     pub(crate) device: ResourceHandle,
@@ -10,168 +12,155 @@ pub(crate) struct NetworkPlane {
 }
 
 impl NetworkPlane {
-    pub(crate) fn new(semantic: &mut SemanticGraph) -> Self {
+    pub(crate) fn new(
+        authority: &AuthorityPlane,
+        semantic: &mut SemanticGraph,
+    ) -> Result<Self, &'static str> {
         let driver_store = semantic.store_id("driver_virtio_net");
-        let device = semantic.register_resource_for_store(
-            ResourceKind::PacketDevice,
-            None,
+        let device = bind_network_authority(
+            authority,
+            semantic,
             driver_store,
+            SubstrateAuthorityClass::PacketDevice,
             "packet-device:net0",
-        );
+            "packet-device.net0",
+            &["rx", "tx", "poll", "irq", "dma"],
+        )?;
         let interface =
             semantic.register_resource(ResourceKind::NetInterface, None, "net-interface:net0");
-        let irq = semantic.register_resource_for_store(
-            ResourceKind::IrqLine,
-            None,
+        let irq = bind_network_authority(
+            authority,
+            semantic,
             driver_store,
+            SubstrateAuthorityClass::IrqLine,
             "irq:net0",
-        );
-        let dma_buffer = semantic.register_resource_for_store(
-            ResourceKind::DmaBuffer,
-            None,
-            driver_store,
-            "dma:net0-rx",
-        );
-        let mmio_region = semantic.register_resource_for_store(
-            ResourceKind::MmioRegion,
-            None,
-            driver_store,
-            "mmio:virtio-net0",
-        );
-        let virtio_queue = semantic.register_resource_for_store(
-            ResourceKind::VirtioQueue,
-            None,
-            driver_store,
-            "virtqueue:net0-rx",
-        );
-        semantic.bind_authority_resource(
-            irq,
-            "driver_virtio_net",
             "irq.net0",
             &["ack", "mask", "unmask"],
-            "store",
-        );
-        semantic.bind_authority_resource(
-            dma_buffer,
-            "driver_virtio_net",
+        )?;
+        let dma_buffer = bind_network_authority(
+            authority,
+            semantic,
+            driver_store,
+            SubstrateAuthorityClass::DmaBuffer,
+            "dma:net0-rx",
             "dma.pool.net0",
             &["submit", "complete", "cancel"],
-            "store",
-        );
-        semantic.bind_authority_resource(
-            mmio_region,
-            "driver_virtio_net",
+        )?;
+        let mmio_region = bind_network_authority(
+            authority,
+            semantic,
+            driver_store,
+            SubstrateAuthorityClass::MmioRegion,
+            "mmio:virtio-net0",
             "mmio.virtio-net0",
             &["read", "write"],
-            "store",
-        );
-        semantic.bind_authority_resource(
-            virtio_queue,
-            "driver_virtio_net",
+        )?;
+        let virtio_queue = bind_network_authority(
+            authority,
+            semantic,
+            driver_store,
+            SubstrateAuthorityClass::VirtioQueue,
+            "virtqueue:net0-rx",
             "virtqueue.net0",
             &["read", "write", "kick"],
-            "store",
-        );
-        semantic.record_net_interface_state_changed(interface, true);
+        )?;
+        let interface = resource_handle(semantic, interface)?;
+        semantic.record_net_interface_state_changed(interface.id, true);
 
-        Self {
-            device: semantic
-                .resource_handle(device)
-                .expect("fresh packet device should have a resource handle"),
-            interface: semantic
-                .resource_handle(interface)
-                .expect("fresh net interface should have a resource handle"),
-            irq: semantic
-                .resource_handle(irq)
-                .expect("fresh irq line should have a resource handle"),
-            dma_buffer: semantic
-                .resource_handle(dma_buffer)
-                .expect("fresh dma buffer should have a resource handle"),
-            mmio_region: semantic
-                .resource_handle(mmio_region)
-                .expect("fresh mmio region should have a resource handle"),
-            virtio_queue: semantic
-                .resource_handle(virtio_queue)
-                .expect("fresh virtio queue should have a resource handle"),
-        }
+        Ok(Self {
+            device,
+            interface,
+            irq,
+            dma_buffer,
+            mmio_region,
+            virtio_queue,
+        })
     }
 
     pub(crate) fn rebind_driver_authority(
         &mut self,
+        authority: &AuthorityPlane,
         semantic: &mut SemanticGraph,
     ) -> Result<(), &'static str> {
         let driver_store = semantic.store_id("driver_virtio_net");
-        let device = semantic.register_resource_for_store(
-            ResourceKind::PacketDevice,
-            None,
+        self.device = bind_network_authority(
+            authority,
+            semantic,
             driver_store,
+            SubstrateAuthorityClass::PacketDevice,
             "packet-device:net0",
-        );
-        let irq = semantic.register_resource_for_store(
-            ResourceKind::IrqLine,
-            None,
+            "packet-device.net0",
+            &["rx", "tx", "poll", "irq", "dma"],
+        )?;
+        self.irq = bind_network_authority(
+            authority,
+            semantic,
             driver_store,
+            SubstrateAuthorityClass::IrqLine,
             "irq:net0",
-        );
-        let dma_buffer = semantic.register_resource_for_store(
-            ResourceKind::DmaBuffer,
-            None,
-            driver_store,
-            "dma:net0-rx",
-        );
-        let mmio_region = semantic.register_resource_for_store(
-            ResourceKind::MmioRegion,
-            None,
-            driver_store,
-            "mmio:virtio-net0",
-        );
-        let virtio_queue = semantic.register_resource_for_store(
-            ResourceKind::VirtioQueue,
-            None,
-            driver_store,
-            "virtqueue:net0-rx",
-        );
-        semantic.bind_authority_resource(
-            irq,
-            "driver_virtio_net",
             "irq.net0",
             &["ack", "mask", "unmask"],
-            "store",
-        );
-        semantic.bind_authority_resource(
-            dma_buffer,
-            "driver_virtio_net",
+        )?;
+        self.dma_buffer = bind_network_authority(
+            authority,
+            semantic,
+            driver_store,
+            SubstrateAuthorityClass::DmaBuffer,
+            "dma:net0-rx",
             "dma.pool.net0",
             &["submit", "complete", "cancel"],
-            "store",
-        );
-        semantic.bind_authority_resource(
-            mmio_region,
-            "driver_virtio_net",
+        )?;
+        self.mmio_region = bind_network_authority(
+            authority,
+            semantic,
+            driver_store,
+            SubstrateAuthorityClass::MmioRegion,
+            "mmio:virtio-net0",
             "mmio.virtio-net0",
             &["read", "write"],
-            "store",
-        );
-        semantic.bind_authority_resource(
-            virtio_queue,
-            "driver_virtio_net",
+        )?;
+        self.virtio_queue = bind_network_authority(
+            authority,
+            semantic,
+            driver_store,
+            SubstrateAuthorityClass::VirtioQueue,
+            "virtqueue:net0-rx",
             "virtqueue.net0",
             &["read", "write", "kick"],
-            "store",
-        );
-        self.device = resource_handle(semantic, device)?;
-        self.irq = resource_handle(semantic, irq)?;
-        self.dma_buffer = resource_handle(semantic, dma_buffer)?;
-        self.mmio_region = resource_handle(semantic, mmio_region)?;
-        self.virtio_queue = resource_handle(semantic, virtio_queue)?;
+        )?;
         semantic.record_net_interface_state_changed(self.interface.id, true);
         Ok(())
     }
 }
 
+fn bind_network_authority(
+    authority: &AuthorityPlane,
+    semantic: &mut SemanticGraph,
+    owner_store: Option<StoreId>,
+    class: SubstrateAuthorityClass,
+    label: &'static str,
+    object: &'static str,
+    operations: &'static [&'static str],
+) -> Result<ResourceHandle, &'static str> {
+    Ok(authority
+        .bind_substrate_authority(
+            semantic,
+            SubstrateAuthoritySpec {
+                class,
+                subject: "driver_virtio_net",
+                object,
+                operations,
+                lifetime: "store",
+                label,
+                owner_store,
+            },
+        )?
+        .handle)
+}
+
 fn resource_handle(
     semantic: &SemanticGraph,
-    resource: semantic_core::ResourceId,
+    resource: ResourceId,
 ) -> Result<ResourceHandle, &'static str> {
     semantic
         .resource_handle(resource)

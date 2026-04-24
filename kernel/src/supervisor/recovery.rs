@@ -89,7 +89,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.rebind_store_instance(store)
             .map_err(ServiceCallError::Invalid)?;
         self.net
-            .rebind_driver_authority(&mut self.semantic)
+            .rebind_driver_authority(&self.authority, &mut self.semantic)
             .map_err(ServiceCallError::Invalid)?;
         self.net_driver
             .reset_sequence(crate::interrupts::tick_count())?;

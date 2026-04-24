@@ -5,6 +5,8 @@ pub struct ArtifactBundleManifest {
     pub schema_version: u32,
     pub artifact_profile: String,
     #[serde(default)]
+    pub runtime_mode: String,
+    #[serde(default)]
     pub contract: SupervisorContractManifest,
     pub target: TargetManifest,
     pub compiler: CompilerManifest,
@@ -71,7 +73,7 @@ pub struct ModuleArtifactManifest {
     pub signature: SignatureManifest,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub struct ResourceLimitsManifest {
     pub max_memory_pages: u32,
     pub max_table_elements: u32,
@@ -91,7 +93,7 @@ pub struct ImportManifest {
     pub kind: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct CapabilityManifest {
     pub name: String,
     pub rights: Vec<String>,

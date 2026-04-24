@@ -2,14 +2,12 @@ use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
 
-use artifact_manifest::{ArtifactBundleManifest, ModuleArtifactManifest};
-use contract_core::validate_manifest_entry;
+use contract_core::ValidatedArtifactEntry;
 use service_core::net_contract::{
     NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
     VIRTIO_NET0_TX_QUEUE_DEPTH,
 };
 use sha2::{Digest, Sha256};
-use supervisor_catalog::WasmModuleSpec;
 use wasmtime::{Config, Engine, Instance, Module, Precompiled, Store};
 
 pub struct RuntimeOnlyExecutor {
@@ -27,70 +25,60 @@ impl RuntimeOnlyExecutor {
 
     pub fn load_store(
         &self,
-        manifest: &ArtifactBundleManifest,
-        spec: &WasmModuleSpec,
+        entry: &ValidatedArtifactEntry,
     ) -> Result<LoadedRuntimeStore, Box<dyn Error>> {
-        let entry = find_entry(manifest, spec)?;
-        validate_manifest_entry(spec, entry)?;
         let module_path = self.workspace_root.join(&entry.cwasm_path);
         let module_bytes = fs::read(&module_path)?;
         if sha256_hex(&module_bytes) != entry.cwasm_sha256 {
-            return Err(format!("{} cwasm hash mismatch", spec.package).into());
+            return Err(format!("{} cwasm hash mismatch", entry.package).into());
         }
 
         match Engine::detect_precompiled(&module_bytes) {
             Some(Precompiled::Module) => {}
             Some(Precompiled::Component) => {
-                return Err(format!("{} is a component artifact", spec.package).into());
+                return Err(format!("{} is a component artifact", entry.package).into());
             }
-            None => return Err(format!("{} is not a precompiled artifact", spec.package).into()),
+            None => return Err(format!("{} is not a precompiled artifact", entry.package).into()),
         }
 
         let module = unsafe { Module::deserialize(&self.engine, &module_bytes)? };
-        validate_exports(spec, &module)?;
+        validate_exports(entry, &module)?;
         let mut store = Store::new(&self.engine, ());
         let instance = Instance::new(&mut store, &module, &[])?;
-        smoke_instance(spec, &instance, &mut store)?;
+        smoke_instance(entry, &instance, &mut store)?;
         Ok(LoadedRuntimeStore {
-            package: spec.package,
-            role: spec.role.as_str(),
-            fault_policy: spec.fault_policy.as_str(),
+            package: entry.package.clone(),
+            role: entry.role.clone(),
+            fault_policy: entry.fault_policy.clone(),
+            abi_fingerprint: entry.abi_fingerprint.clone(),
+            manifest_binding_hash: entry.manifest_binding_hash.clone(),
         })
     }
 }
 
 pub struct LoadedRuntimeStore {
-    pub package: &'static str,
-    pub role: &'static str,
-    pub fault_policy: &'static str,
+    pub package: String,
+    pub role: String,
+    pub fault_policy: String,
+    pub abi_fingerprint: String,
+    pub manifest_binding_hash: String,
 }
 
-fn find_entry<'a>(
-    manifest: &'a ArtifactBundleManifest,
-    spec: &WasmModuleSpec,
-) -> Result<&'a ModuleArtifactManifest, Box<dyn Error>> {
-    manifest
-        .modules
-        .iter()
-        .find(|entry| entry.package == spec.package)
-        .ok_or_else(|| format!("manifest is missing {}", spec.package).into())
-}
-
-fn validate_exports(spec: &WasmModuleSpec, module: &Module) -> Result<(), Box<dyn Error>> {
+fn validate_exports(entry: &ValidatedArtifactEntry, module: &Module) -> Result<(), Box<dyn Error>> {
     let export_names = module
         .exports()
         .map(|export| export.name().to_owned())
         .collect::<Vec<_>>();
-    for expected in spec.expected_exports {
+    for expected in &entry.expected_exports {
         if !export_names.iter().any(|name| name == expected) {
-            return Err(format!("{} missing export `{expected}`", spec.package).into());
+            return Err(format!("{} missing export `{expected}`", entry.package).into());
         }
     }
     Ok(())
 }
 
 fn smoke_instance(
-    spec: &WasmModuleSpec,
+    entry: &ValidatedArtifactEntry,
     instance: &Instance,
     store: &mut Store<()>,
 ) -> Result<(), Box<dyn Error>> {
@@ -105,7 +93,7 @@ fn smoke_instance(
     check_u32_export(instance, store, "arg_buffer_ptr")?;
     check_u32_export(instance, store, "result_buffer_ptr")?;
 
-    if spec.package == "console_service" {
+    if entry.package == "console_service" {
         if let Ok(func) = instance.get_typed_func::<(u32, u32), i32>(&mut *store, "commit_write") {
             let rc = func.call(&mut *store, (0, 0))?;
             if rc != 0 {
@@ -113,13 +101,13 @@ fn smoke_instance(
             }
         }
     }
-    if spec.package == "wasm_app" {
+    if entry.package == "wasm_app" {
         if let Ok(func) = instance.get_typed_func::<(), u64>(&mut *store, "run") {
             let _ = func.call(&mut *store, ())?;
         }
     }
     if matches!(
-        spec.package,
+        entry.package.as_str(),
         "driver_virtio_net" | "net_core" | "linux_socket_service"
     ) {
         check_u32_export_eq(
@@ -129,7 +117,7 @@ fn smoke_instance(
             NETWORK_CONTRACT_ABI_VERSION,
         )?;
     }
-    if matches!(spec.package, "driver_virtio_net" | "net_core") {
+    if matches!(entry.package.as_str(), "driver_virtio_net" | "net_core") {
         check_u32_export_eq(instance, store, "packet_mtu", VIRTIO_NET0_MTU)?;
         check_u32_export_eq(
             instance,

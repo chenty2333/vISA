@@ -5,8 +5,8 @@ use std::path::Path;
 
 use artifact_manifest::{ArtifactBundleManifest, MigrationPackageManifest};
 use contract_core::{
-    validate_artifact_manifest, validate_migration_against_manifest, validate_migration_package,
-    validate_replay_quiescent,
+    ValidatedArtifactPlan, build_validated_artifact_plan, validate_migration_against_manifest,
+    validate_migration_package, validate_replay_quiescent,
 };
 
 fn main() {
@@ -35,6 +35,21 @@ fn run() -> Result<(), Box<dyn Error>> {
                 return Err("check requires a manifest/package JSON path".into());
             };
             check_path(Path::new(&path))
+        }
+        "plan" => {
+            let mut json = false;
+            let mut path = None;
+            for arg in args {
+                if arg == "--json" {
+                    json = true;
+                } else if path.is_none() {
+                    path = Some(arg);
+                } else {
+                    return Err("plan received too many positional paths".into());
+                }
+            }
+            let path = path.ok_or("plan requires a manifest JSON path")?;
+            print_plan(Path::new(&path), json)
         }
         "replay" => {
             let Some(until_flag) = args.next() else {
@@ -86,6 +101,7 @@ fn print_usage() {
     eprintln!("usage:");
     eprintln!("  osctl summary <manifest-or-migration.json>");
     eprintln!("  osctl check <manifest-or-migration.json>");
+    eprintln!("  osctl plan [--json] <manifest.json>");
     eprintln!(
         "  osctl replay --until <event-cursor> [--manifest <manifest.json>] [--json] <migration.json>"
     );
@@ -98,7 +114,7 @@ fn print_summary(path: &Path) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&bytes)?;
-    print_artifact_summary(&manifest);
+    print_artifact_summary(&manifest)?;
     Ok(())
 }
 
@@ -113,12 +129,58 @@ fn check_path(path: &Path) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&bytes)?;
-    validate_artifact_manifest(&manifest)?;
+    let plan = build_validated_artifact_plan(&manifest)?;
     println!(
-        "manifest check ok profile={} modules={}",
+        "manifest check ok profile={} mode={} modules={} caps={} exports={}",
         manifest.artifact_profile,
-        manifest.modules.len()
+        plan.runtime_mode,
+        plan.module_count(),
+        plan.capability_count(),
+        plan.expected_export_count()
     );
+    Ok(())
+}
+
+fn print_plan(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
+    let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&fs::read(path)?)?;
+    let plan = build_validated_artifact_plan(&manifest)?;
+    if json {
+        let value = serde_json::json!({
+            "artifact_profile": &plan.artifact_profile,
+            "runtime_mode": &plan.runtime_mode,
+            "contract_version": &plan.contract_version,
+            "target_arch": &plan.target_arch,
+            "compiler": {
+                "engine": &plan.compiler_engine,
+                "execution_mode": &plan.compiler_execution_mode,
+                "artifact_format": &plan.artifact_format,
+                "runtime_executor_abi": &plan.runtime_executor_abi
+            },
+            "module_count": plan.module_count(),
+            "capability_count": plan.capability_count(),
+            "expected_export_count": plan.expected_export_count(),
+            "modules": plan.modules.iter().map(|module| serde_json::json!({
+                "package": &module.package,
+                "artifact_name": &module.artifact_name,
+                "role": &module.role,
+                "fault_policy": &module.fault_policy,
+                "cwasm_path": &module.cwasm_path,
+                "cwasm_sha256": &module.cwasm_sha256,
+                "abi_fingerprint": &module.abi_fingerprint,
+                "manifest_binding_hash": &module.manifest_binding_hash,
+                "capabilities": module.capabilities.len(),
+                "dependencies": module.service_dependencies.len(),
+                "resource_limits": {
+                    "max_memory_pages": module.resource_limits.max_memory_pages,
+                    "max_table_elements": module.resource_limits.max_table_elements,
+                    "max_hostcalls_per_activation": module.resource_limits.max_hostcalls_per_activation
+                }
+            })).collect::<Vec<_>>()
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
+    print_plan_text(&plan);
     Ok(())
 }
 
@@ -242,10 +304,12 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
     );
 }
 
-fn print_artifact_summary(manifest: &ArtifactBundleManifest) {
+fn print_artifact_summary(manifest: &ArtifactBundleManifest) -> Result<(), Box<dyn Error>> {
+    let plan = build_validated_artifact_plan(manifest)?;
     println!(
-        "artifact bundle profile={} arch={} engine={} mode={} runtime_executor={} signature_profile={}",
+        "artifact bundle profile={} runtime_mode={} arch={} engine={} mode={} runtime_executor={} signature_profile={}",
         manifest.artifact_profile,
+        plan.runtime_mode,
         manifest.target.arch,
         manifest.compiler.engine,
         manifest.compiler.execution_mode,
@@ -267,16 +331,61 @@ fn print_artifact_summary(manifest: &ArtifactBundleManifest) {
         manifest.target.wasm_feature_profile,
         manifest.target.network_contract_version
     );
-    println!("modules={}", manifest.modules.len());
-    for module in &manifest.modules {
+    println!(
+        "modules={} caps={} exports={}",
+        plan.module_count(),
+        plan.capability_count(),
+        plan.expected_export_count()
+    );
+    for module in &plan.modules {
         println!(
-            "module {} role={} exports={} caps={} abi={} signer={}",
+            "module {} role={} exports={} caps={} deps={} abi={} binding={} signer={}",
             module.package,
             module.role,
             module.expected_exports.len(),
             module.capabilities.len(),
+            module.service_dependencies.len(),
             short_hash(&module.abi_fingerprint),
-            module.signature.signer
+            short_hash(&module.manifest_binding_hash),
+            module.signer
+        );
+    }
+    Ok(())
+}
+
+fn print_plan_text(plan: &ValidatedArtifactPlan) {
+    println!(
+        "load plan profile={} mode={} contract={} world={} target={} engine={} exec_mode={} format={} runtime={}",
+        plan.artifact_profile,
+        plan.runtime_mode,
+        plan.contract_version,
+        plan.supervisor_world,
+        plan.target_arch,
+        plan.compiler_engine,
+        plan.compiler_execution_mode,
+        plan.artifact_format,
+        plan.runtime_executor_abi
+    );
+    println!(
+        "load plan modules={} caps={} exports={}",
+        plan.module_count(),
+        plan.capability_count(),
+        plan.expected_export_count()
+    );
+    for module in &plan.modules {
+        println!(
+            "load {} artifact={} role={} policy={} path={} hash={} abi={} binding={} limits=mem{} table{} hostcalls{}",
+            module.package,
+            module.artifact_name,
+            module.role,
+            module.fault_policy,
+            module.cwasm_path,
+            short_hash(&module.cwasm_sha256),
+            short_hash(&module.abi_fingerprint),
+            short_hash(&module.manifest_binding_hash),
+            module.resource_limits.max_memory_pages,
+            module.resource_limits.max_table_elements,
+            module.resource_limits.max_hostcalls_per_activation
         );
     }
 }

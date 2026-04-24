@@ -9,8 +9,8 @@ use artifact_manifest::{
     ModuleArtifactManifest, ResourceLimitsManifest, SignatureManifest, TargetManifest,
 };
 use contract_core::{
+    RUNTIME_MODE_RESEARCH, ValidatedArtifactEntry, build_validated_artifact_plan,
     expected_supervisor_contract, manifest_binding_hash, module_abi_fingerprint,
-    validate_artifact_manifest, validate_manifest_entry,
 };
 use service_core::net_contract::{
     NETWORK_CONTRACT_ABI_VERSION, NETWORK_CONTRACT_VERSION, VIRTIO_NET0_MTU,
@@ -21,7 +21,7 @@ use supervisor_catalog::{
     ARTIFACT_SIGNATURE_PROFILE, DMW_LAYOUT, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
     RUNTIME_ONLY_EXECUTOR_ABI, SUPERVISOR_ABI_VERSION, SUPERVISOR_ARTIFACT_FORMAT,
     SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_EXECUTION_MODE, SUPERVISOR_WASM_MODULES,
-    WASM_FEATURE_PROFILE, WasmModuleSpec, module_dependencies,
+    WASM_FEATURE_PROFILE, module_dependencies,
 };
 use wasmtime::{Config, Engine, ExternType, Instance, Module, Precompiled, Store, Strategy};
 
@@ -259,6 +259,7 @@ fn compile_artifacts(
     let manifest = ArtifactBundleManifest {
         schema_version: 1,
         artifact_profile: HOST_ARTIFACT_PROFILE.to_owned(),
+        runtime_mode: RUNTIME_MODE_RESEARCH.to_owned(),
         contract: expected_supervisor_contract(),
         target: TargetManifest {
             arch: env::consts::ARCH.to_owned(),
@@ -283,6 +284,7 @@ fn compile_artifacts(
     };
     let manifest_path = artifact_root.join("manifest.json");
     fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    build_validated_artifact_plan(&manifest)?;
     println!(
         "wrote {}",
         relative_to_workspace(workspace_root, &manifest_path)
@@ -293,62 +295,52 @@ fn compile_artifacts(
 
 fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {
     let engine = runtime_engine()?;
+    let workspace_root = workspace_root()?;
     let manifest = read_manifest(artifact_root)?;
-    validate_artifact_manifest(&manifest)?;
+    let plan = build_validated_artifact_plan(&manifest)?;
 
-    for module in SUPERVISOR_WASM_MODULES {
-        let Some(entry) = manifest
-            .modules
-            .iter()
-            .find(|entry| entry.package == module.package)
-        else {
-            return Err(format!("manifest is missing {}", module.package).into());
-        };
-        validate_manifest_entry(module, entry)?;
-        let artifact_path = artifact_root.join(format!("{}.cwasm", module.package));
+    for entry in &plan.modules {
+        let artifact_path = workspace_root.join(&entry.cwasm_path);
         let artifact = fs::read(&artifact_path)?;
         if sha256_hex(&artifact) != entry.cwasm_sha256 {
-            return Err(format!("{} cwasm hash mismatch", module.package).into());
+            return Err(format!("{} cwasm hash mismatch", entry.package).into());
         }
         match Engine::detect_precompiled_file(&artifact_path)? {
             Some(Precompiled::Module) => {}
             Some(Precompiled::Component) => {
-                return Err(format!(
-                    "{} was compiled as a component unexpectedly",
-                    module.package
-                )
-                .into());
+                return Err(
+                    format!("{} was compiled as a component unexpectedly", entry.package).into(),
+                );
             }
             None => {
                 return Err(
-                    format!("{} is not a valid precompiled artifact", module.package).into(),
+                    format!("{} is not a valid precompiled artifact", entry.package).into(),
                 );
             }
         }
 
         let module_binary = unsafe { Module::deserialize_file(&engine, &artifact_path)? };
-        verify_exports(module, &module_binary)?;
+        verify_exports(entry, &module_binary)?;
 
         let mut store = Store::new(&engine, ());
         let instance = Instance::new(&mut store, &module_binary, &[])?;
-        run_smoke_checks(module, &instance, &mut store)?;
+        run_smoke_checks(entry, &instance, &mut store)?;
     }
 
-    println!(
-        "verified {} host-side artifacts",
-        SUPERVISOR_WASM_MODULES.len()
-    );
+    println!("verified {} host-side artifacts", plan.module_count());
     Ok(())
 }
 
-fn verify_exports(spec: &WasmModuleSpec, module: &Module) -> Result<(), Box<dyn Error>> {
+fn verify_exports(entry: &ValidatedArtifactEntry, module: &Module) -> Result<(), Box<dyn Error>> {
     let export_names = module
         .exports()
         .map(|export| export.name().to_owned())
         .collect::<Vec<_>>();
-    for expected in spec.expected_exports {
+    for expected in &entry.expected_exports {
         if !export_names.iter().any(|name| name == expected) {
-            return Err(format!("{} is missing expected export `{expected}`", spec.package).into());
+            return Err(
+                format!("{} is missing expected export `{expected}`", entry.package).into(),
+            );
         }
     }
     Ok(())
@@ -360,7 +352,7 @@ fn read_manifest(artifact_root: &Path) -> Result<ArtifactBundleManifest, Box<dyn
 }
 
 fn run_smoke_checks(
-    spec: &WasmModuleSpec,
+    entry: &ValidatedArtifactEntry,
     instance: &Instance,
     store: &mut Store<()>,
 ) -> Result<(), Box<dyn Error>> {
@@ -375,7 +367,7 @@ fn run_smoke_checks(
     check_u32_export(instance, store, "arg_buffer_ptr")?;
     check_u32_export(instance, store, "result_buffer_ptr")?;
 
-    if spec.package == "console_service" {
+    if entry.package == "console_service" {
         if let Ok(func) = instance.get_typed_func::<(u32, u32), i32>(&mut *store, "commit_write") {
             let rc = func.call(&mut *store, (0, 0))?;
             if rc != 0 {
@@ -386,13 +378,13 @@ fn run_smoke_checks(
         }
     }
 
-    if spec.package == "wasm_app" {
+    if entry.package == "wasm_app" {
         if let Ok(func) = instance.get_typed_func::<(), u64>(&mut *store, "run") {
             let _ = func.call(&mut *store, ())?;
         }
     }
     if matches!(
-        spec.package,
+        entry.package.as_str(),
         "driver_virtio_net" | "net_core" | "linux_socket_service"
     ) {
         check_u32_export_eq(
@@ -402,7 +394,7 @@ fn run_smoke_checks(
             NETWORK_CONTRACT_ABI_VERSION,
         )?;
     }
-    if matches!(spec.package, "driver_virtio_net" | "net_core") {
+    if matches!(entry.package.as_str(), "driver_virtio_net" | "net_core") {
         check_u32_export_eq(instance, store, "packet_mtu", VIRTIO_NET0_MTU)?;
         check_u32_export_eq(
             instance,
