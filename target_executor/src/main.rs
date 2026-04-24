@@ -496,7 +496,7 @@ fn run_activation_harness(
             frame = frame.with_cap_args(vec![cap_arg]);
         }
         executor
-            .invoke_hostcall(code, frame, ledger)
+            .invoke_hostcall(code, frame.to_wire_frame(), ledger)
             .map_err(|error| error.message())?;
     }
     executor
@@ -529,7 +529,8 @@ fn run_activation_harness(
                 .map_err(|error| error.message())?;
             let _ = executor.invoke_hostcall(
                 code,
-                HostcallFrame::new_bound(denied, &store.store, code, number, object, operation, 1),
+                HostcallFrame::new_bound(denied, &store.store, code, number, object, operation, 1)
+                    .to_wire_frame(),
                 ledger,
             );
         }
@@ -544,7 +545,7 @@ fn run_activation_harness(
             let generation = ledger
                 .generation_of(&code.package, &spec.object)
                 .unwrap_or(1);
-            let mut frame = HostcallFrame::new_bound(
+            let frame = HostcallFrame::new_bound(
                 bad_abi,
                 &store.store,
                 code,
@@ -553,8 +554,9 @@ fn run_activation_harness(
                 &spec.operation,
                 generation,
             );
-            frame.abi_version = "bad-hostcall-abi".to_owned();
-            let _ = executor.invoke_hostcall(code, frame, ledger);
+            let mut wire_frame = frame.to_wire_frame();
+            wire_frame.abi_version = 0;
+            let _ = executor.invoke_hostcall(code, wire_frame, ledger);
 
             let bad_frame_size = executor
                 .start_activation(
@@ -563,7 +565,7 @@ fn run_activation_harness(
                     ActivationEntry::Symbol("bad_hostcall_frame_size".to_owned()),
                 )
                 .map_err(|error| error.message())?;
-            let mut frame = HostcallFrame::new_bound(
+            let frame = HostcallFrame::new_bound(
                 bad_frame_size,
                 &store.store,
                 code,
@@ -572,8 +574,9 @@ fn run_activation_harness(
                 &spec.operation,
                 generation,
             );
-            frame.frame_size = HostcallFrame::FRAME_SIZE + 8;
-            let _ = executor.invoke_hostcall(code, frame, ledger);
+            let mut wire_frame = frame.to_wire_frame();
+            wire_frame.frame_size = HostcallFrame::FRAME_SIZE + 8;
+            let _ = executor.invoke_hostcall(code, wire_frame, ledger);
 
             if let Some(mut cap_arg) = capability_handle_arg_for(ledger, &code.package, spec) {
                 let bad_cap_arg = executor
@@ -594,7 +597,7 @@ fn run_activation_harness(
                     generation,
                 )
                 .with_cap_args(vec![cap_arg]);
-                let _ = executor.invoke_hostcall(code, frame, ledger);
+                let _ = executor.invoke_hostcall(code, frame.to_wire_frame(), ledger);
             }
         }
 
@@ -610,7 +613,8 @@ fn run_activation_harness(
             .map_err(|error| error.message())?;
         let _ = executor.invoke_hostcall(
             code,
-            HostcallFrame::new_bound(dmw, &store.store, code, 9005, "wait.timer", "park", 1),
+            HostcallFrame::new_bound(dmw, &store.store, code, 9005, "wait.timer", "park", 1)
+                .to_wire_frame(),
             ledger,
         );
         executor
@@ -1126,6 +1130,38 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        target_store_record_roots: target_v1
+            .store_records
+            .iter()
+            .map(|store| {
+                format!(
+                    "target-store id={} package={} artifact={} state={} generation={} fault_domain={}",
+                    store.id,
+                    store.package,
+                    store.artifact,
+                    store.state,
+                    store.generation,
+                    store.fault_domain
+                )
+            })
+            .collect(),
+        target_capability_record_roots: target_v1
+            .capability_records
+            .iter()
+            .map(|capability| {
+                format!(
+                    "target-capability id={} subject={} object={} class={} rights={} generation={} revoked={} source={}",
+                    capability.id,
+                    capability.subject,
+                    capability.object,
+                    capability.class,
+                    capability.rights.join("+"),
+                    capability.generation,
+                    capability.revoked,
+                    capability.source
+                )
+            })
+            .collect(),
         fast_path_roots: semantic
             .fast_path_plans()
             .iter()
@@ -1303,16 +1339,19 @@ fn semantic_roots(
             .iter()
             .map(|cleanup| {
                 format!(
-                    "cleanup id={} store={} activation={} code={} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
+                    "cleanup id={} store={}@{} activation={} code={} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
                     cleanup.id,
                     cleanup.store,
+                    cleanup.store_generation,
                     cleanup
                         .activation
-                        .map(|activation| activation.to_string())
+                        .zip(cleanup.activation_generation)
+                        .map(|(activation, generation)| format!("{activation}@{generation}"))
                         .unwrap_or_else(|| "none".to_owned()),
                     cleanup
                         .code_object
-                        .map(|code| code.to_string())
+                        .zip(cleanup.code_generation)
+                        .map(|(code, generation)| format!("{code}@{generation}"))
                         .unwrap_or_else(|| "none".to_owned()),
                     cleanup.generation,
                     cleanup.state,
@@ -1581,14 +1620,23 @@ fn cleanup_transaction_manifest(
     CleanupTransactionManifest {
         id: cleanup.id,
         store: cleanup.store,
+        store_generation: cleanup.store_generation,
         activation: cleanup.activation,
+        activation_generation: cleanup.activation_generation,
         code_object: cleanup.code_object,
+        code_generation: cleanup.code_generation,
         generation: cleanup.generation,
         state: cleanup.state.as_str().to_owned(),
         reason: cleanup.reason.clone(),
         released_dmw_leases: cleanup.released_dmw_leases,
         cancelled_waits: cleanup.cancelled_waits,
         revoked_capabilities: cleanup.revoked_capabilities.clone(),
+        revoked_capability_refs: cleanup
+            .revoked_capability_refs
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
         dropped_resources: cleanup.dropped_resources,
         unbound_code_object: cleanup.unbound_code_object,
         effect: cleanup.effect.summary(),

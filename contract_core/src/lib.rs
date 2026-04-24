@@ -567,8 +567,18 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     if package.semantic.store_records.len() != package.semantic.store_record_count {
         return Err(ContractError::new("store record count mismatch"));
     }
+    if roots.target_store_record_roots.len() != package.semantic.store_record_count {
+        return Err(ContractError::new(
+            "target store record root/count mismatch",
+        ));
+    }
     if package.semantic.capability_records.len() != package.semantic.capability_record_count {
         return Err(ContractError::new("capability record count mismatch"));
+    }
+    if roots.target_capability_record_roots.len() != package.semantic.capability_record_count {
+        return Err(ContractError::new(
+            "target capability record root/count mismatch",
+        ));
     }
     if roots.activation_record_roots.len() != package.semantic.activation_record_count
         || package.semantic.activation_records.len() != package.semantic.activation_record_count

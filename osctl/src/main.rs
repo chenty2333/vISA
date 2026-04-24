@@ -517,7 +517,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
 fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
     println!(
-        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={}",
+        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.task_roots.len(),
@@ -525,6 +525,8 @@ fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
         package.semantic.roots.authority_roots.len(),
         package.semantic.roots.store_roots.len(),
         package.semantic.roots.capability_roots.len(),
+        package.semantic.roots.target_store_record_roots.len(),
+        package.semantic.roots.target_capability_record_roots.len(),
         package.semantic.roots.fast_path_roots.len(),
         package.semantic.roots.boundary_roots.len(),
         package.semantic.roots.artifact_verification_roots.len(),
@@ -544,6 +546,14 @@ fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
     print_roots("authority", &package.semantic.roots.authority_roots);
     print_roots("store", &package.semantic.roots.store_roots);
     print_roots("capability", &package.semantic.roots.capability_roots);
+    print_roots(
+        "target-store",
+        &package.semantic.roots.target_store_record_roots,
+    );
+    print_roots(
+        "target-capability",
+        &package.semantic.roots.target_capability_record_roots,
+    );
     print_roots("fastpath", &package.semantic.roots.fast_path_roots);
     print_roots("boundary", &package.semantic.roots.boundary_roots);
     print_roots(
@@ -974,6 +984,8 @@ fn inspect_package_object(
             for cleanup in &package.semantic.cleanup_transactions {
                 let activation = display_option_u64(cleanup.activation);
                 let code = display_option_u64(cleanup.code_object);
+                let activation_generation = display_option_u64(cleanup.activation_generation);
+                let code_generation = display_option_u64(cleanup.code_generation);
                 let steps = cleanup
                     .steps
                     .iter()
@@ -981,11 +993,14 @@ fn inspect_package_object(
                     .collect::<Vec<_>>()
                     .join("|");
                 let line = format!(
-                    "cleanup id={} store={} activation={} code={} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
+                    "cleanup id={} store={}@{} activation={}@{} code={}@{} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
                     cleanup.id,
                     cleanup.store,
+                    cleanup.store_generation,
                     activation,
+                    activation_generation,
                     code,
+                    code_generation,
                     cleanup.generation,
                     cleanup.state,
                     cleanup.reason,
@@ -1091,7 +1106,7 @@ fn inspect_package_object_json(
                 .iter()
                 .map(serde_json::to_value)
                 .collect::<Result<Vec<_>, _>>()?,
-            serde_json::json!({ "root_count": package.semantic.roots.store_roots.len() }),
+            serde_json::json!({ "root_count": package.semantic.roots.target_store_record_roots.len() }),
         ),
         "activation" => (
             "activation",
@@ -1125,7 +1140,13 @@ fn inspect_package_object_json(
                     .map(serde_json::to_value)
                     .collect::<Result<Vec<_>, _>>()?
             },
-            serde_json::json!({ "root_count": package.semantic.roots.capability_roots.len() }),
+            serde_json::json!({
+                "root_count": if package.semantic.capability_records.is_empty() {
+                    package.semantic.roots.capability_roots.len()
+                } else {
+                    package.semantic.roots.target_capability_record_roots.len()
+                }
+            }),
         ),
         "wait" => (
             "wait",
@@ -1517,12 +1538,14 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: tasks={} resources={} authorities={} stores={} caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} event_tail={}",
+        "replay roots: tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} event_tail={}",
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
         package.semantic.roots.authority_roots.len(),
         package.semantic.roots.store_roots.len(),
         package.semantic.roots.capability_roots.len(),
+        package.semantic.roots.target_store_record_roots.len(),
+        package.semantic.roots.target_capability_record_roots.len(),
         package.semantic.roots.boundary_roots.len(),
         package.semantic.roots.artifact_verification_roots.len(),
         package.semantic.roots.store_activation_roots.len(),
@@ -1552,6 +1575,12 @@ fn replay_until(
     }
     for code in &package.semantic.roots.code_object_roots {
         println!("replay code-object {code}");
+    }
+    for store in &package.semantic.roots.target_store_record_roots {
+        println!("replay target-store {store}");
+    }
+    for capability in &package.semantic.roots.target_capability_record_roots {
+        println!("replay target-capability {capability}");
     }
     for activation in &package.semantic.roots.activation_record_roots {
         println!("replay activation-record {activation}");
@@ -1604,6 +1633,8 @@ fn print_replay_json(
             "authorities": package.semantic.roots.authority_roots.len(),
             "stores": package.semantic.roots.store_roots.len(),
             "capabilities": package.semantic.roots.capability_roots.len(),
+            "target_stores": package.semantic.roots.target_store_record_roots.len(),
+            "target_capabilities": package.semantic.roots.target_capability_record_roots.len(),
             "boundaries": package.semantic.roots.boundary_roots.len(),
             "artifacts": package.semantic.roots.artifact_verification_roots.len(),
             "activations": package.semantic.roots.store_activation_roots.len(),
@@ -1626,6 +1657,8 @@ fn print_replay_json(
             "store_activation_roots": &package.semantic.roots.store_activation_roots,
             "executor_transition_roots": &package.semantic.roots.executor_transition_roots,
             "target_artifact_roots": &package.semantic.roots.target_artifact_roots,
+            "target_store_record_roots": &package.semantic.roots.target_store_record_roots,
+            "target_capability_record_roots": &package.semantic.roots.target_capability_record_roots,
             "code_object_roots": &package.semantic.roots.code_object_roots,
             "activation_record_roots": &package.semantic.roots.activation_record_roots,
             "trap_roots": &package.semantic.roots.trap_roots,

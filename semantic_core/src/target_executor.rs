@@ -1311,6 +1311,19 @@ impl HostcallReturnTag {
     pub const fn as_u16(self) -> u16 {
         self as u16
     }
+
+    pub const fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            0 => Some(Self::Ok),
+            1 => Some(Self::Errno),
+            2 => Some(Self::Pending),
+            3 => Some(Self::Trap),
+            4 => Some(Self::KillStore),
+            5 => Some(Self::RestartSyscall),
+            6 => Some(Self::BadAbi),
+            _ => None,
+        }
+    }
 }
 
 #[repr(u16)]
@@ -1336,6 +1349,17 @@ impl RecordMode {
 
     pub const fn as_u16(self) -> u16 {
         self as u16
+    }
+
+    pub const fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            0 => Some(Self::Deterministic),
+            1 => Some(Self::RecordInput),
+            2 => Some(Self::RecordOutput),
+            3 => Some(Self::RecordInputOutput),
+            4 => Some(Self::ForbiddenDuringReplay),
+            _ => None,
+        }
     }
 }
 
@@ -1479,6 +1503,39 @@ impl HostcallFrameV1 {
     pub const MAGIC: u32 = 0x564d_4843;
     pub const ABI_VERSION: u16 = 1;
     pub const FRAME_SIZE: u16 = core::mem::size_of::<Self>() as u16;
+    pub const CAP_ARG_CAPACITY: usize = 4;
+
+    pub const fn activation_id(&self) -> ActivationId {
+        self.activation.0.id
+    }
+
+    pub const fn activation_generation(&self) -> Generation {
+        self.activation.0.generation
+    }
+
+    pub const fn store_id(&self) -> StoreId {
+        self.store.0.id
+    }
+
+    pub const fn store_generation(&self) -> Generation {
+        self.store.0.generation
+    }
+
+    pub const fn code_object_id(&self) -> CodeObjectId {
+        self.code_object.0.id
+    }
+
+    pub const fn code_generation(&self) -> Generation {
+        self.code_object.0.generation
+    }
+
+    pub const fn artifact_id(&self) -> TargetArtifactId {
+        self.artifact.0.id
+    }
+
+    pub const fn artifact_generation(&self) -> Generation {
+        self.artifact.0.generation
+    }
 }
 
 impl Default for HostcallFrameV1 {
@@ -1762,6 +1819,56 @@ impl HostcallFrame {
         self.cap_args = cap_args;
         self
     }
+
+    pub fn to_wire_frame(&self) -> HostcallFrameV1 {
+        let mut frame = HostcallFrameV1 {
+            flags: self.flags,
+            record_mode: self.record_mode.as_u16(),
+            ret_tag: self.ret_tag.as_u16(),
+            activation: ActivationRefV1(WireObjectRef::new(
+                self.activation,
+                self.activation_generation,
+            )),
+            store: StoreRefV1(WireObjectRef::new(self.store, self.store_generation)),
+            code_object: CodeObjectRefV1(WireObjectRef::new(
+                self.code_object,
+                self.code_generation,
+            )),
+            artifact: ArtifactRefV1(WireObjectRef::new(self.artifact, 1)),
+            hostcall_number: self.hostcall_number,
+            hostcall_seq: self.hostcall_seq,
+            caller_offset: self.caller_offset,
+            args: self.args,
+            ret0: self.ret0,
+            ret1: self.ret1,
+            trap_out: self
+                .trap_out
+                .map_or(TrapRefV1(WireObjectRef::NULL), |trap| {
+                    TrapRefV1(WireObjectRef::new(trap, 1))
+                }),
+            wait_token_out: self
+                .wait_token_out
+                .map_or(WaitTokenRefV1(WireObjectRef::NULL), |wait| {
+                    WaitTokenRefV1(WireObjectRef::new(wait, 1))
+                }),
+            ..HostcallFrameV1::default()
+        };
+        frame.cap_arg_count = self.cap_args.len().min(HostcallFrameV1::CAP_ARG_CAPACITY) as u16;
+        for (slot, arg) in self
+            .cap_args
+            .iter()
+            .take(HostcallFrameV1::CAP_ARG_CAPACITY)
+            .enumerate()
+        {
+            frame.cap_args[slot] = CapabilityHandleV1 {
+                capability: CapabilityRefV1(WireObjectRef::new(arg.id, arg.generation)),
+                rights_mask: arg.rights_mask,
+                object_class: CapabilityClass::from_object(&arg.object).as_u16(),
+                reserved: [0; 3],
+            };
+        }
+        frame
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1995,8 +2102,11 @@ impl CleanupTransactionState {
 pub struct FaultCleanupTransaction {
     pub id: CleanupTransactionId,
     pub store: StoreId,
+    pub store_generation: Generation,
     pub activation: Option<ActivationId>,
+    pub activation_generation: Option<Generation>,
     pub code_object: Option<CodeObjectId>,
+    pub code_generation: Option<Generation>,
     pub generation: Generation,
     pub state: CleanupTransactionState,
     pub reason: String,
@@ -2004,6 +2114,7 @@ pub struct FaultCleanupTransaction {
     pub released_dmw_leases: u32,
     pub cancelled_waits: u32,
     pub revoked_capabilities: Vec<CapabilityId>,
+    pub revoked_capability_refs: Vec<ContractObjectRef>,
     pub dropped_resources: u32,
     pub unbound_code_object: bool,
     pub effect: FailureEffect,
@@ -2012,14 +2123,17 @@ pub struct FaultCleanupTransaction {
 impl FaultCleanupTransaction {
     pub fn summary(&self) -> String {
         format!(
-            "cleanup id={} store={} activation={} code={} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
+            "cleanup id={} store={}@{} activation={} code={} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
             self.id,
             self.store,
+            self.store_generation,
             self.activation
-                .map(|activation| activation.to_string())
+                .zip(self.activation_generation)
+                .map(|(activation, generation)| format!("{activation}@{generation}"))
                 .unwrap_or_else(|| "none".to_string()),
             self.code_object
-                .map(|code| code.to_string())
+                .zip(self.code_generation)
+                .map(|(code, generation)| format!("{code}@{generation}"))
                 .unwrap_or_else(|| "none".to_string()),
             self.generation,
             self.state.as_str(),
@@ -2147,61 +2261,166 @@ impl TargetExecutor {
         Ok(id)
     }
 
-    fn bad_abi_reason(frame: &HostcallFrame) -> Option<&'static str> {
-        if frame.abi_version != HostcallFrame::ABI_VERSION {
+    fn bad_abi_reason(frame: &HostcallFrameV1) -> Option<&'static str> {
+        if frame.magic != HostcallFrameV1::MAGIC {
+            Some("bad-hostcall-magic")
+        } else if frame.abi_version != HostcallFrameV1::ABI_VERSION {
             Some("bad-hostcall-abi")
-        } else if frame.frame_size != HostcallFrame::FRAME_SIZE {
+        } else if frame.frame_size != HostcallFrameV1::FRAME_SIZE {
             Some("bad-frame-size")
+        } else if frame.cap_arg_count as usize > HostcallFrameV1::CAP_ARG_CAPACITY {
+            Some("bad-cap-arg-count")
+        } else if RecordMode::from_u16(frame.record_mode).is_none() {
+            Some("bad-record-mode")
+        } else if HostcallReturnTag::from_u16(frame.ret_tag).is_none() {
+            Some("bad-return-tag")
         } else {
             None
         }
     }
 
+    fn semantic_frame_from_wire(
+        wire: &HostcallFrameV1,
+        code: &CodeObject,
+        spec: &HostcallSpec,
+        capabilities: &CapabilityLedger,
+    ) -> (HostcallFrame, Option<&'static str>) {
+        let (cap_args, cap_arg_decode_error) = Self::decode_capability_handles(wire, capabilities);
+        let generation = cap_args
+            .iter()
+            .find(|arg| arg.object == spec.object)
+            .map(|arg| arg.generation)
+            .or_else(|| capabilities.generation_of(&code.package, &spec.object))
+            .unwrap_or(0);
+        (
+            HostcallFrame {
+                abi_version: if wire.abi_version == HostcallFrameV1::ABI_VERSION {
+                    HostcallFrame::ABI_VERSION.to_string()
+                } else {
+                    format!("wire-v{}", wire.abi_version)
+                },
+                frame_size: wire.frame_size,
+                flags: wire.flags,
+                activation: wire.activation_id(),
+                activation_generation: wire.activation_generation(),
+                store: wire.store_id(),
+                store_generation: wire.store_generation(),
+                code_object: wire.code_object_id(),
+                code_generation: wire.code_generation(),
+                artifact: wire.artifact_id(),
+                hostcall_number: wire.hostcall_number,
+                hostcall_seq: wire.hostcall_seq,
+                caller_offset: wire.caller_offset,
+                subject: code.package.clone(),
+                object: spec.object.clone(),
+                operation: spec.operation.clone(),
+                generation,
+                args: wire.args,
+                cap_args,
+                record_mode: RecordMode::from_u16(wire.record_mode)
+                    .unwrap_or(RecordMode::Deterministic),
+                ret_tag: HostcallReturnTag::from_u16(wire.ret_tag).unwrap_or(HostcallReturnTag::Ok),
+                ret0: wire.ret0,
+                ret1: wire.ret1,
+                trap_out: (wire.trap_out.0.id != 0).then_some(wire.trap_out.0.id),
+                wait_token_out: (wire.wait_token_out.0.id != 0).then_some(wire.wait_token_out.0.id),
+            },
+            cap_arg_decode_error,
+        )
+    }
+
+    fn decode_capability_handles(
+        wire: &HostcallFrameV1,
+        capabilities: &CapabilityLedger,
+    ) -> (Vec<CapabilityHandleArg>, Option<&'static str>) {
+        let mut args = Vec::new();
+        let mut decode_error = None;
+        for handle in wire.cap_args.iter().take(wire.cap_arg_count as usize) {
+            let capability_id = handle.capability.0.id;
+            let capability_generation = handle.capability.0.generation;
+            let Some(record) = capabilities.active(capability_id) else {
+                decode_error.get_or_insert("cap-arg-missing");
+                args.push(CapabilityHandleArg {
+                    id: capability_id,
+                    object: "<missing-capability>".to_string(),
+                    generation: capability_generation,
+                    rights_mask: handle.rights_mask,
+                    rights: Vec::new(),
+                });
+                continue;
+            };
+            match CapabilityClass::from_u16(handle.object_class) {
+                Some(class) if class == record.class => {}
+                Some(_) => {
+                    decode_error.get_or_insert("cap-arg-object-class");
+                }
+                None => {
+                    decode_error.get_or_insert("cap-arg-object-class");
+                }
+            }
+            let rights = match Self::capability_rights_from_mask(record, handle.rights_mask) {
+                Some(rights) => rights,
+                None => {
+                    decode_error.get_or_insert("cap-arg-rights-mask");
+                    Vec::new()
+                }
+            };
+            args.push(CapabilityHandleArg {
+                id: capability_id,
+                object: record.object.clone(),
+                generation: capability_generation,
+                rights_mask: handle.rights_mask,
+                rights,
+            });
+        }
+        (args, decode_error)
+    }
+
     pub fn invoke_hostcall(
         &mut self,
         code: &CodeObject,
-        frame: HostcallFrame,
+        wire_frame: HostcallFrameV1,
         capabilities: &CapabilityLedger,
     ) -> Result<(), TargetExecutorError> {
-        let bad_abi = Self::bad_abi_reason(&frame);
+        let bad_abi = Self::bad_abi_reason(&wire_frame);
         if let Some(reason) = bad_abi {
             self.event_log.push(format!(
                 "HostcallAbiMismatch activation={} reason={} abi={} expected={} frame_size={} expected_frame_size={}",
-                frame.activation,
+                wire_frame.activation_id(),
                 reason,
-                frame.abi_version,
-                HostcallFrame::ABI_VERSION,
-                frame.frame_size,
-                HostcallFrame::FRAME_SIZE
+                wire_frame.abi_version,
+                HostcallFrameV1::ABI_VERSION,
+                wire_frame.frame_size,
+                HostcallFrameV1::FRAME_SIZE
             ));
         }
-        let activation_index = self.activation_index(frame.activation)?;
+        let activation_index = self.activation_index(wire_frame.activation_id())?;
         let activation = self.activations[activation_index].clone();
         if activation.state != ActivationState::Running {
             return Err(TargetExecutorError::ActivationNotRunning);
         }
-        if activation.store != frame.store
-            || activation.store_generation != frame.store_generation
-            || activation.generation != frame.activation_generation
+        if activation.store != wire_frame.store_id()
+            || activation.store_generation != wire_frame.store_generation()
+            || activation.generation != wire_frame.activation_generation()
         {
             return Err(TargetExecutorError::ActivationStoreMismatch);
         }
         if activation.code_object != code.id
             || activation.code_generation != code.generation
             || activation.artifact != code.artifact_id
-            || frame.code_object != code.id
-            || frame.code_generation != code.generation
-            || frame.artifact != code.artifact_id
-            || code.bound_store != Some(frame.store)
+            || wire_frame.code_object_id() != code.id
+            || wire_frame.code_generation() != code.generation
+            || wire_frame.artifact_id() != code.artifact_id
+            || code.bound_store != Some(wire_frame.store_id())
         {
             self.record_trap_for_activation(
                 activation_index,
                 TargetTrapClass::CodeObjectTrap,
                 Some(code),
-                Some(format!("hostcall#{}", frame.hostcall_number)),
+                Some(format!("hostcall#{}", wire_frame.hostcall_number)),
                 "attribution-failure",
                 FailureEffect::CompleteWithErrno(5),
-                "hostcall frame did not match activation code object attribution",
+                "hostcall wire frame did not match activation code object attribution",
             );
             return Err(TargetExecutorError::CodeObjectMismatch);
         }
@@ -2210,18 +2429,19 @@ impl TargetExecutor {
             let spec = code
                 .hostcalls
                 .iter()
-                .find(|spec| spec.number == frame.hostcall_number)
+                .find(|spec| spec.number == wire_frame.hostcall_number)
                 .cloned()
                 .unwrap_or_else(|| {
                     HostcallSpec::new(
-                        frame.hostcall_number,
+                        wire_frame.hostcall_number,
                         "hostcall.bad-abi",
                         HostcallCategory::Service,
-                        &frame.object,
-                        &frame.operation,
+                        "hostcall.bad-abi",
+                        "decode",
                         false,
                     )
                 });
+            let (frame, _) = Self::semantic_frame_from_wire(&wire_frame, code, &spec, capabilities);
             let trap = self.record_trap_for_activation(
                 activation_index,
                 TargetTrapClass::HostcallTrap,
@@ -2245,27 +2465,30 @@ impl TargetExecutor {
         let Some(spec) = code
             .hostcalls
             .iter()
-            .find(|spec| spec.number == frame.hostcall_number)
+            .find(|spec| spec.number == wire_frame.hostcall_number)
         else {
+            let placeholder = HostcallSpec::new(
+                wire_frame.hostcall_number,
+                "hostcall.undeclared",
+                HostcallCategory::Service,
+                "hostcall.undeclared",
+                "decode",
+                false,
+            );
+            let (frame, _) =
+                Self::semantic_frame_from_wire(&wire_frame, code, &placeholder, capabilities);
             let trap = self.record_trap_for_activation(
                 activation_index,
                 TargetTrapClass::HostcallTrap,
                 Some(code),
-                Some(format!("hostcall#{}", frame.hostcall_number)),
+                Some(format!("hostcall#{}", wire_frame.hostcall_number)),
                 "restart",
                 FailureEffect::CompleteWithErrno(38),
                 "hostcall not declared by artifact",
             );
             self.record_trace(
                 &frame,
-                &HostcallSpec::new(
-                    frame.hostcall_number,
-                    "hostcall.undeclared",
-                    HostcallCategory::Service,
-                    &frame.object,
-                    &frame.operation,
-                    false,
-                ),
+                &placeholder,
                 false,
                 "undeclared",
                 HostcallReturnTag::BadAbi,
@@ -2274,52 +2497,8 @@ impl TargetExecutor {
             );
             return Err(TargetExecutorError::HostcallNotDeclared);
         };
-        if frame.object != spec.object || frame.operation != spec.operation {
-            let trap = self.record_trap_for_activation(
-                activation_index,
-                TargetTrapClass::HostcallTrap,
-                Some(code),
-                Some(spec.name.clone()),
-                "frame-mismatch",
-                FailureEffect::CompleteWithErrno(22),
-                "hostcall frame object/operation did not match manifest declaration",
-            );
-            self.record_trace(
-                &frame,
-                spec,
-                false,
-                "frame-mismatch",
-                HostcallReturnTag::BadAbi,
-                Some(trap),
-                None,
-            );
-            return Err(TargetExecutorError::HostcallFrameMismatch);
-        }
-        if frame.subject != derived_subject {
-            self.event_log.push(format!(
-                "HostcallSubjectMismatch activation={} subject={} expected={}",
-                frame.activation, frame.subject, derived_subject
-            ));
-            let trap = self.record_trap_for_activation(
-                activation_index,
-                TargetTrapClass::CapabilityTrap,
-                Some(code),
-                Some(spec.name.clone()),
-                "subject-mismatch",
-                FailureEffect::CompleteWithErrno(1),
-                "hostcall subject did not match activation code object package",
-            );
-            self.record_trace(
-                &frame,
-                spec,
-                false,
-                "subject-mismatch",
-                HostcallReturnTag::Trap,
-                Some(trap),
-                None,
-            );
-            return Err(TargetExecutorError::HostcallSubjectMismatch);
-        }
+        let (frame, cap_arg_decode_error) =
+            Self::semantic_frame_from_wire(&wire_frame, code, spec, capabilities);
         self.event_log.push(format!(
             "HostcallEntered activation={} name={} category={} subject={} object={} op={}",
             frame.activation,
@@ -2329,27 +2508,6 @@ impl TargetExecutor {
             frame.object,
             frame.operation
         ));
-        if spec.may_pending && self.activations[activation_index].active_dmw_leases != 0 {
-            let trap = self.record_trap_for_activation(
-                activation_index,
-                TargetTrapClass::WindowTrap,
-                Some(code),
-                Some(spec.name.clone()),
-                "restart",
-                FailureEffect::CompleteWithErrno(14),
-                "pending hostcall attempted with active DMW lease",
-            );
-            self.record_trace(
-                &frame,
-                spec,
-                false,
-                "dmw-lease-active",
-                HostcallReturnTag::Trap,
-                Some(trap),
-                None,
-            );
-            return Err(TargetExecutorError::DmwLeaseActive);
-        }
         let declared_capability = capabilities
             .generation_of(derived_subject, &frame.object)
             .is_some();
@@ -2391,9 +2549,9 @@ impl TargetExecutor {
             .as_deref()
             .unwrap_or(&frame.operation);
         if authority.requires_capability {
-            if let Some(reason) =
+            if let Some(reason) = cap_arg_decode_error.or_else(|| {
                 Self::cap_arg_denial_reason(&frame, derived_subject, required_right, capabilities)
-            {
+            }) {
                 self.event_log.push(format!(
                     "CapabilityDenied activation={} subject={} object={} op={} required_right={} reason={reason}",
                     frame.activation, derived_subject, frame.object, frame.operation, required_right
@@ -2489,6 +2647,27 @@ impl TargetExecutor {
                     return Err(TargetExecutorError::CapabilityDenied);
                 }
             }
+        }
+        if spec.may_pending && self.activations[activation_index].active_dmw_leases != 0 {
+            let trap = self.record_trap_for_activation(
+                activation_index,
+                TargetTrapClass::WindowTrap,
+                Some(code),
+                Some(spec.name.clone()),
+                "restart",
+                FailureEffect::CompleteWithErrno(14),
+                "pending hostcall attempted with active DMW lease",
+            );
+            self.record_trace(
+                &frame,
+                spec,
+                false,
+                "dmw-lease-active",
+                HostcallReturnTag::Trap,
+                Some(trap),
+                None,
+            );
+            return Err(TargetExecutorError::DmwLeaseActive);
         }
         self.record_trace(
             &frame,
@@ -2712,14 +2891,24 @@ impl TargetExecutor {
 
     pub fn begin_fault_cleanup_transaction(
         &mut self,
-        store: StoreId,
+        store: &StoreRecord,
         activation: Option<ActivationId>,
-        code_object: Option<CodeObjectId>,
+        code: Option<&CodeObject>,
         reason: &str,
     ) -> CleanupTransactionId {
+        let activation_generation = activation.and_then(|activation| {
+            self.activations
+                .iter()
+                .find(|record| record.id == activation)
+                .map(|record| record.generation)
+        });
+        let code_object = code.map(|code| code.id);
+        let code_generation = code.map(|code| code.generation);
         if let Some(existing) = self.cleanup_transactions.iter().find(|cleanup| {
-            cleanup.store == store
+            cleanup.store == store.id
+                && cleanup.store_generation == store.generation
                 && cleanup.activation == activation
+                && cleanup.activation_generation == activation_generation
                 && cleanup.reason == reason
                 && cleanup.state == CleanupTransactionState::Pending
         }) {
@@ -2729,9 +2918,12 @@ impl TargetExecutor {
         self.next_cleanup_id += 1;
         self.cleanup_transactions.push(FaultCleanupTransaction {
             id,
-            store,
+            store: store.id,
+            store_generation: store.generation,
             activation,
+            activation_generation,
             code_object,
+            code_generation,
             generation: 1,
             state: CleanupTransactionState::Pending,
             reason: reason.to_string(),
@@ -2754,14 +2946,18 @@ impl TargetExecutor {
             released_dmw_leases: 0,
             cancelled_waits: 0,
             revoked_capabilities: Vec::new(),
+            revoked_capability_refs: Vec::new(),
             dropped_resources: 0,
             unbound_code_object: false,
             effect: FailureEffect::CompleteWithErrno(5),
         });
         self.event_log.push(format!(
-            "FaultCleanupStarted cleanup={id} store={store} activation={} reason={reason}",
+            "FaultCleanupStarted cleanup={id} store={}@{} activation={} reason={reason}",
+            store.id,
+            store.generation,
             activation
-                .map(|activation| activation.to_string())
+                .zip(activation_generation)
+                .map(|(activation, generation)| format!("{activation}@{generation}"))
                 .unwrap_or_else(|| "none".to_string())
         ));
         id
@@ -2783,12 +2979,12 @@ impl TargetExecutor {
         }) {
             return Ok(existing.id);
         }
-        let code_object = code.as_ref().map(|code| code.id);
-        let id = self.begin_fault_cleanup_transaction(store.id, activation, code_object, reason);
+        let id = self.begin_fault_cleanup_transaction(store, activation, code.as_deref(), reason);
         let released = activation
             .map(|activation| self.release_all_leases_for_activation_id(activation, reason))
             .unwrap_or(0);
         let mut cancelled_waits = 0;
+        let mut final_activation_generation = None;
         if let Some(activation) = activation {
             if let Some(index) = self
                 .activations
@@ -2811,10 +3007,21 @@ impl TargetExecutor {
                     (record.generation, cancelled)
                 };
                 cancelled_waits += cancelled;
+                final_activation_generation = Some(activation_generation);
                 self.refresh_hostcall_activation_generation(activation, activation_generation);
             }
         }
         let revoked = capabilities.revoke_owner_store(store.id);
+        let revoked_refs = revoked
+            .iter()
+            .filter_map(|capability_id| {
+                capabilities
+                    .records()
+                    .iter()
+                    .find(|record| record.id == *capability_id)
+                    .map(CapabilityRecord::object_ref)
+            })
+            .collect::<Vec<_>>();
         let mut unbound = false;
         let mut code_generation = None;
         if let Some(code) = code {
@@ -2848,9 +3055,14 @@ impl TargetExecutor {
             .expect("cleanup transaction must exist");
         cleanup.state = CleanupTransactionState::Completed;
         cleanup.generation += 1;
+        cleanup.store_generation = store.generation;
+        cleanup.activation_generation =
+            final_activation_generation.or(cleanup.activation_generation);
+        cleanup.code_generation = code_generation.or(cleanup.code_generation);
         cleanup.released_dmw_leases = released;
         cleanup.cancelled_waits = cancelled_waits;
         cleanup.revoked_capabilities = revoked;
+        cleanup.revoked_capability_refs = revoked_refs;
         cleanup.dropped_resources = 1;
         cleanup.unbound_code_object = unbound;
         cleanup.effect = FailureEffect::CompleteWithErrno(5);
@@ -3035,6 +3247,30 @@ impl TargetExecutor {
             mask |= 1u64 << index;
         }
         Some(mask)
+    }
+
+    fn capability_rights_from_mask(
+        record: &CapabilityRecord,
+        rights_mask: u64,
+    ) -> Option<Vec<String>> {
+        if rights_mask == 0 {
+            return None;
+        }
+        let mut rights = Vec::new();
+        for (index, operation) in record.operations.as_slice().iter().enumerate() {
+            if index >= u64::BITS as usize {
+                return None;
+            }
+            if rights_mask & (1u64 << index) != 0 {
+                rights.push(operation.clone());
+            }
+        }
+        let known_mask = Self::capability_rights_mask(record, &rights)?;
+        if known_mask == rights_mask {
+            Some(rights)
+        } else {
+            None
+        }
     }
 
     fn record_trace(
@@ -3541,7 +3777,8 @@ mod tests {
                     "map",
                     1,
                 )
-                .with_cap_args(cap_args),
+                .with_cap_args(cap_args)
+                .to_wire_frame(),
                 &capabilities,
             )
             .unwrap();
@@ -3581,7 +3818,8 @@ mod tests {
                         object,
                         operation,
                         1,
-                    ),
+                    )
+                    .to_wire_frame(),
                     &capabilities,
                 ),
                 Err(TargetExecutorError::CapabilityDenied)
@@ -3626,7 +3864,8 @@ mod tests {
                     "mmio.virtio-net",
                     "map",
                     1,
-                ),
+                )
+                .to_wire_frame(),
                 &capabilities,
             ),
             Err(TargetExecutorError::CodeObjectMismatch)
@@ -3635,7 +3874,7 @@ mod tests {
     }
 
     #[test]
-    fn hostcall_rejects_spoofed_subject_and_bad_abi_with_trace() {
+    fn hostcall_derives_subject_from_code_and_reports_bad_abi_with_trace() {
         let (_artifact, store, code, capabilities) = running_store_and_code();
         let mut executor = TargetExecutor::new();
         let activation = executor
@@ -3654,13 +3893,20 @@ mod tests {
             "map",
             1,
         );
+        let mut cap_args = Vec::new();
+        cap_args.push(cap_arg_for(
+            &capabilities,
+            "driver_virtio_net",
+            "mmio.virtio-net",
+            "map",
+        ));
+        frame = frame.with_cap_args(cap_args);
         frame.subject = "other_store".to_string();
-        assert_eq!(
-            executor.invoke_hostcall(&code, frame, &capabilities),
-            Err(TargetExecutorError::HostcallSubjectMismatch)
-        );
-        assert_eq!(executor.traps()[0].class, TargetTrapClass::CapabilityTrap);
-        assert_eq!(executor.hostcall_trace()[0].result, "subject-mismatch");
+        executor
+            .invoke_hostcall(&code, frame.to_wire_frame(), &capabilities)
+            .unwrap();
+        assert_eq!(executor.hostcall_trace()[0].subject, code.package);
+        assert!(executor.hostcall_trace()[0].allowed);
 
         let activation = executor
             .start_activation(
@@ -3669,7 +3915,7 @@ mod tests {
                 ActivationEntry::Symbol("_start".to_string()),
             )
             .unwrap();
-        let mut frame = HostcallFrame::new_bound(
+        let frame = HostcallFrame::new_bound(
             activation,
             &store.store,
             &code,
@@ -3678,9 +3924,10 @@ mod tests {
             "map",
             1,
         );
-        frame.abi_version = "bad-hostcall-abi".to_string();
+        let mut wire_frame = frame.to_wire_frame();
+        wire_frame.abi_version = 0;
         assert_eq!(
-            executor.invoke_hostcall(&code, frame, &capabilities),
+            executor.invoke_hostcall(&code, wire_frame, &capabilities),
             Err(TargetExecutorError::HostcallAbiMismatch)
         );
         assert!(
@@ -3704,7 +3951,7 @@ mod tests {
                 ActivationEntry::Symbol("_start".to_string()),
             )
             .unwrap();
-        let mut frame = HostcallFrame::new_bound(
+        let frame = HostcallFrame::new_bound(
             activation,
             &store.store,
             &code,
@@ -3713,9 +3960,10 @@ mod tests {
             "map",
             1,
         );
-        frame.frame_size = HostcallFrame::FRAME_SIZE + 8;
+        let mut wire_frame = frame.to_wire_frame();
+        wire_frame.frame_size = HostcallFrame::FRAME_SIZE + 8;
         assert_eq!(
-            executor.invoke_hostcall(&code, frame, &capabilities),
+            executor.invoke_hostcall(&code, wire_frame, &capabilities),
             Err(TargetExecutorError::HostcallAbiMismatch)
         );
         assert!(
@@ -3762,7 +4010,8 @@ mod tests {
                     "map",
                     cap.generation,
                 )
-                .with_cap_args(cap_args),
+                .with_cap_args(cap_args)
+                .to_wire_frame(),
                 &capabilities,
             )
             .unwrap();
@@ -3794,7 +4043,8 @@ mod tests {
                     "map",
                     cap.generation,
                 )
-                .with_cap_args(stale_cap_args),
+                .with_cap_args(stale_cap_args)
+                .to_wire_frame(),
                 &capabilities,
             ),
             Err(TargetExecutorError::CapabilityDenied)
@@ -3833,7 +4083,8 @@ mod tests {
                     "map",
                     cap.generation,
                 )
-                .with_cap_args(bad_mask_cap_args),
+                .with_cap_args(bad_mask_cap_args)
+                .to_wire_frame(),
                 &capabilities,
             ),
             Err(TargetExecutorError::CapabilityDenied)
@@ -3984,8 +4235,11 @@ mod tests {
         let cleanup = FaultCleanupTransaction {
             id: 7,
             store: store.store.id,
+            store_generation: store.store.generation,
             activation: None,
+            activation_generation: None,
             code_object: Some(code.id),
+            code_generation: Some(code.generation),
             generation: 1,
             state: CleanupTransactionState::Completed,
             reason: "inconsistent-cleanup".to_string(),
@@ -3995,6 +4249,11 @@ mod tests {
             revoked_capabilities: {
                 let mut revoked = Vec::new();
                 revoked.push(capabilities.records()[0].id);
+                revoked
+            },
+            revoked_capability_refs: {
+                let mut revoked = Vec::new();
+                revoked.push(capabilities.records()[0].object_ref());
                 revoked
             },
             dropped_resources: 1,
@@ -4041,6 +4300,102 @@ mod tests {
         assert!(violations.iter().any(|violation| {
             violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
                 && violation.edge == "cleanup->capability"
+        }));
+    }
+
+    #[test]
+    fn contract_graph_validator_allows_historical_hostcall_to_tombstoned_generation() {
+        let (artifact, store, code, capabilities) = running_store_and_code();
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("_start".to_string()),
+            )
+            .unwrap();
+        let mut cap_args = Vec::new();
+        cap_args.push(cap_arg_for(
+            &capabilities,
+            "driver_virtio_net",
+            "mmio.virtio-net",
+            "map",
+        ));
+        executor
+            .invoke_hostcall(
+                &code,
+                HostcallFrame::new_bound(
+                    activation,
+                    &store.store,
+                    &code,
+                    1,
+                    "mmio.virtio-net",
+                    "map",
+                    1,
+                )
+                .with_cap_args(cap_args)
+                .to_wire_frame(),
+                &capabilities,
+            )
+            .unwrap();
+        let mut current_code = code.clone();
+        let historical_generation = current_code.generation;
+        current_code.generation += 1;
+        let mut activation_record = executor.activations()[0].clone();
+        activation_record.code_generation = current_code.generation;
+        let mut trace = executor.hostcall_trace()[0].clone();
+        trace.activation_generation = activation_record.generation;
+        trace.code_generation = historical_generation;
+        let snapshot = ContractGraphSnapshot {
+            artifacts: {
+                let mut artifacts = Vec::new();
+                artifacts.push(artifact);
+                artifacts
+            },
+            code_objects: {
+                let mut objects = Vec::new();
+                objects.push(current_code);
+                objects
+            },
+            stores: {
+                let mut stores = Vec::new();
+                stores.push(store.store);
+                stores
+            },
+            activations: {
+                let mut activations = Vec::new();
+                activations.push(activation_record);
+                activations
+            },
+            traps: Vec::new(),
+            hostcalls: {
+                let mut hostcalls = Vec::new();
+                hostcalls.push(trace);
+                hostcalls
+            },
+            capabilities: Vec::new(),
+            waits: Vec::new(),
+            cleanup_transactions: Vec::new(),
+            tombstones: {
+                let mut tombstones = Vec::new();
+                tombstones.push(TombstoneRecord::new(
+                    ContractObjectKind::CodeObject,
+                    code.id,
+                    historical_generation,
+                    99,
+                    "code-generation-retired",
+                ));
+                tombstones
+            },
+        };
+        let violations = validate_contract_graph(&snapshot);
+        assert!(!violations.iter().any(|violation| {
+            violation.edge == "hostcall->code"
+                && matches!(
+                    violation.kind,
+                    ContractViolationKind::GenerationMismatch
+                        | ContractViolationKind::TombstoneReferencedByLiveEdge
+                )
         }));
     }
 
@@ -4172,9 +4527,9 @@ mod tests {
         let (_artifact, store, code, _capabilities) = running_store_and_code();
         let mut executor = TargetExecutor::new();
         executor.begin_fault_cleanup_transaction(
-            store.store.id,
+            &store.store,
             None,
-            Some(code.id),
+            Some(&code),
             "pending-cleanup-test",
         );
         assert_eq!(
@@ -4212,7 +4567,8 @@ mod tests {
                     "wait.timer",
                     "park",
                     1,
-                ),
+                )
+                .to_wire_frame(),
                 &capabilities,
             ),
             Err(TargetExecutorError::DmwLeaseActive)

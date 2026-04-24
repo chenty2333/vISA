@@ -111,6 +111,51 @@ impl CapabilityClass {
             Self::GuestMemoryAccess => "guest-memory-access",
         }
     }
+
+    pub const fn as_u16(self) -> u16 {
+        match self {
+            Self::ServiceImport => 0,
+            Self::Device => 1,
+            Self::PacketDevice => 2,
+            Self::CodePublish => 3,
+            Self::MmioRegion => 4,
+            Self::DmaBuffer => 5,
+            Self::IrqLine => 6,
+            Self::VirtioQueue => 7,
+            Self::DmwWindow => 8,
+            Self::Timer => 9,
+            Self::Snapshot => 10,
+            Self::FaultDomain => 11,
+            Self::EventLog => 12,
+            Self::StoreControl => 13,
+            Self::NetInterface => 14,
+            Self::NetSocket => 15,
+            Self::GuestMemoryAccess => 16,
+        }
+    }
+
+    pub const fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            0 => Some(Self::ServiceImport),
+            1 => Some(Self::Device),
+            2 => Some(Self::PacketDevice),
+            3 => Some(Self::CodePublish),
+            4 => Some(Self::MmioRegion),
+            5 => Some(Self::DmaBuffer),
+            6 => Some(Self::IrqLine),
+            7 => Some(Self::VirtioQueue),
+            8 => Some(Self::DmwWindow),
+            9 => Some(Self::Timer),
+            10 => Some(Self::Snapshot),
+            11 => Some(Self::FaultDomain),
+            12 => Some(Self::EventLog),
+            13 => Some(Self::StoreControl),
+            14 => Some(Self::NetInterface),
+            15 => Some(Self::NetSocket),
+            16 => Some(Self::GuestMemoryAccess),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

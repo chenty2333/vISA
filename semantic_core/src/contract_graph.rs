@@ -85,6 +85,12 @@ pub fn validate_contract_graph(snapshot: &ContractGraphSnapshot) -> Vec<Contract
 
 pub struct ContractGraphValidator;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EdgeSemantics {
+    Live,
+    Historical,
+}
+
 impl ContractGraphValidator {
     pub fn validate(snapshot: &ContractGraphSnapshot) -> Vec<ContractViolation> {
         let mut violations = Vec::new();
@@ -378,6 +384,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::Activation,
                 hostcall.activation,
                 hostcall.activation_generation,
+                EdgeSemantics::Historical,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -387,6 +394,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::Store,
                 hostcall.store,
                 hostcall.store_generation,
+                EdgeSemantics::Historical,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -396,6 +404,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::CodeObject,
                 hostcall.code_object,
                 hostcall.code_generation,
+                EdgeSemantics::Historical,
             );
         }
     }
@@ -456,6 +465,16 @@ impl ContractGraphValidator {
     ) {
         for cleanup in &snapshot.cleanup_transactions {
             let from = cleanup.object_ref();
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "cleanup->store",
+                ContractObjectKind::Store,
+                cleanup.store,
+                cleanup.store_generation,
+                EdgeSemantics::Historical,
+            );
             match snapshot
                 .stores
                 .iter()
@@ -487,25 +506,51 @@ impl ContractGraphValidator {
                 )),
             }
             if let Some(activation_id) = cleanup.activation {
-                if snapshot
-                    .activations
-                    .iter()
-                    .all(|activation| activation.id != activation_id)
-                {
-                    violations.push(ContractViolation::new(
-                        ContractViolationKind::DanglingEdge,
-                        "cleanup->activation",
+                match cleanup.activation_generation {
+                    Some(generation) => Self::check_generation_edge(
+                        snapshot,
+                        violations,
                         from,
-                        Some(ContractObjectRef::new(
-                            ContractObjectKind::Activation,
-                            activation_id,
-                            0,
-                        )),
-                        "cleanup references missing activation",
-                    ));
+                        "cleanup->activation",
+                        ContractObjectKind::Activation,
+                        activation_id,
+                        generation,
+                        EdgeSemantics::Historical,
+                    ),
+                    None => {
+                        if snapshot
+                            .activations
+                            .iter()
+                            .all(|activation| activation.id != activation_id)
+                        {
+                            violations.push(ContractViolation::new(
+                                ContractViolationKind::DanglingEdge,
+                                "cleanup->activation",
+                                from,
+                                Some(ContractObjectRef::new(
+                                    ContractObjectKind::Activation,
+                                    activation_id,
+                                    0,
+                                )),
+                                "cleanup references missing activation",
+                            ));
+                        }
+                    }
                 }
             }
             if let Some(code_id) = cleanup.code_object {
+                if let Some(generation) = cleanup.code_generation {
+                    Self::check_generation_edge(
+                        snapshot,
+                        violations,
+                        from,
+                        "cleanup->code",
+                        ContractObjectKind::CodeObject,
+                        code_id,
+                        generation,
+                        EdgeSemantics::Historical,
+                    );
+                }
                 match snapshot.code_objects.iter().find(|code| code.id == code_id) {
                     Some(code) => {
                         if cleanup.state == CleanupTransactionState::Completed {
@@ -549,14 +594,25 @@ impl ContractGraphValidator {
                     )),
                 }
             }
-            for capability_id in &cleanup.revoked_capabilities {
+            for capability_ref in &cleanup.revoked_capability_refs {
                 match snapshot
                     .capabilities
                     .iter()
-                    .find(|capability| capability.id == *capability_id)
+                    .find(|capability| capability.id == capability_ref.id)
                 {
-                    Some(capability) if cleanup.state == CleanupTransactionState::Completed => {
-                        if !capability.revoked {
+                    Some(capability) if capability.generation != capability_ref.generation => {
+                        violations.push(ContractViolation::new(
+                            ContractViolationKind::GenerationMismatch,
+                            "cleanup->capability",
+                            from,
+                            Some(capability.object_ref()),
+                            "cleanup capability generation is stale",
+                        ));
+                    }
+                    Some(capability) => {
+                        if cleanup.state == CleanupTransactionState::Completed
+                            && !capability.revoked
+                        {
                             violations.push(ContractViolation::new(
                                 ContractViolationKind::LiveObjectReferencesDeadObject,
                                 "cleanup->capability",
@@ -566,18 +622,46 @@ impl ContractGraphValidator {
                             ));
                         }
                     }
-                    Some(_) => {}
                     None => violations.push(ContractViolation::new(
                         ContractViolationKind::DanglingEdge,
                         "cleanup->capability",
                         from,
-                        Some(ContractObjectRef::new(
-                            ContractObjectKind::Capability,
-                            *capability_id,
-                            0,
-                        )),
+                        Some(*capability_ref),
                         "cleanup references missing capability",
                     )),
+                }
+            }
+            if cleanup.revoked_capability_refs.is_empty() {
+                for capability_id in &cleanup.revoked_capabilities {
+                    match snapshot
+                        .capabilities
+                        .iter()
+                        .find(|capability| capability.id == *capability_id)
+                    {
+                        Some(capability) if cleanup.state == CleanupTransactionState::Completed => {
+                            if !capability.revoked {
+                                violations.push(ContractViolation::new(
+                                    ContractViolationKind::LiveObjectReferencesDeadObject,
+                                    "cleanup->capability",
+                                    from,
+                                    Some(capability.object_ref()),
+                                    "completed cleanup listed an active capability as revoked",
+                                ));
+                            }
+                        }
+                        Some(_) => {}
+                        None => violations.push(ContractViolation::new(
+                            ContractViolationKind::DanglingEdge,
+                            "cleanup->capability",
+                            from,
+                            Some(ContractObjectRef::new(
+                                ContractObjectKind::Capability,
+                                *capability_id,
+                                0,
+                            )),
+                            "cleanup references missing capability",
+                        )),
+                    }
                 }
             }
         }
@@ -591,6 +675,7 @@ impl ContractGraphValidator {
         kind: ContractObjectKind,
         id: u64,
         generation: Generation,
+        semantics: EdgeSemantics,
     ) {
         let target = match kind {
             ContractObjectKind::Activation => snapshot
@@ -612,24 +697,47 @@ impl ContractGraphValidator {
         };
         match target {
             Some(target) if target.generation != generation => {
-                violations.push(ContractViolation::new(
-                    ContractViolationKind::GenerationMismatch,
-                    edge,
-                    from,
-                    Some(target),
-                    "edge generation does not match target object",
-                ))
+                let has_historical_tombstone = semantics == EdgeSemantics::Historical
+                    && snapshot.tombstones.iter().any(|tombstone| {
+                        tombstone.kind == kind
+                            && tombstone.id == id
+                            && tombstone.generation == generation
+                    });
+                if !has_historical_tombstone {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        edge,
+                        from,
+                        Some(target),
+                        "edge generation does not match target object",
+                    ));
+                }
             }
-            Some(target) => {
-                Self::check_tombstone_live_edge(snapshot, violations, from, edge, target, true)
-            }
-            None => violations.push(ContractViolation::new(
-                ContractViolationKind::DanglingEdge,
-                edge,
+            Some(target) => Self::check_tombstone_live_edge(
+                snapshot,
+                violations,
                 from,
-                Some(ContractObjectRef::new(kind, id, generation)),
-                "edge references missing target",
-            )),
+                edge,
+                target,
+                semantics == EdgeSemantics::Live,
+            ),
+            None => {
+                let has_historical_tombstone = semantics == EdgeSemantics::Historical
+                    && snapshot.tombstones.iter().any(|tombstone| {
+                        tombstone.kind == kind
+                            && tombstone.id == id
+                            && tombstone.generation == generation
+                    });
+                if !has_historical_tombstone {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::DanglingEdge,
+                        edge,
+                        from,
+                        Some(ContractObjectRef::new(kind, id, generation)),
+                        "edge references missing target",
+                    ));
+                }
+            }
         }
     }
 
