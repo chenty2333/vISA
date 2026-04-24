@@ -84,7 +84,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn semantic_debug_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
         lines.push(format!(
-            "semantic graph: mode={} event_policy={} tasks={} resources={} authority={}/{} waits={} capabilities={} fault_domains={} boundaries={} events={}",
+            "semantic graph: mode={} event_policy={} tasks={} resources={} authority={}/{} waits={} capabilities={} fault_domains={} boundaries={} artifacts={} events={}",
             self.semantic.runtime_mode().as_str(),
             self.semantic.runtime_mode().event_log_policy(),
             self.semantic.task_count(),
@@ -95,6 +95,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.semantic.capability_count(),
             self.semantic.fault_domain_count(),
             self.semantic.boundary_count(),
+            self.semantic.artifact_verification_count(),
             self.semantic.event_count()
         ));
         lines.push(format!(
@@ -125,6 +126,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         lines.push("boundary status:".to_string());
         for boundary in self.semantic.boundaries().iter().take(16) {
             lines.push(boundary.summary());
+        }
+        lines.push("artifact verification roots:".to_string());
+        for artifact in self.semantic.artifact_verifications().iter().take(16) {
+            lines.push(artifact.summary());
         }
         lines.push(format!(
             "executor transitions: count={}",

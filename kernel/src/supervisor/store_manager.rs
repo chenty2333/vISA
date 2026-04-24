@@ -3,8 +3,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use semantic_core::{
-    FaultDomainId, ResourceId, SemanticGraph, StoreDropReport, StoreId, StoreRebindReport,
-    StoreState, TrapClass,
+    ArtifactVerificationState, FaultDomainId, ResourceId, SemanticGraph, StoreDropReport, StoreId,
+    StoreRebindReport, StoreState, TrapClass,
 };
 
 use super::artifacts::{ArtifactLoadPlan, ArtifactManifestBinding, StoreLoadBlueprint};
@@ -152,6 +152,17 @@ impl StoreManager {
             executor.blocked_by,
             executor.hostcall_table.state.as_str(),
             executor.trap_surface.state.as_str(),
+        );
+        semantic.record_artifact_verification(
+            blueprint.package,
+            blueprint.artifact_name,
+            blueprint.binding.manifest_binding_hash,
+            blueprint.binding.cwasm_sha256,
+            blueprint.binding.abi_fingerprint,
+            blueprint.binding.signature_profile,
+            blueprint.binding.signer,
+            ArtifactVerificationState::ManifestVerified,
+            Some("target-cwasm-loader-not-linked"),
         );
         for capability in blueprint.capabilities {
             semantic.grant_manifest_capability(

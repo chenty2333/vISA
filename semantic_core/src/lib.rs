@@ -21,6 +21,7 @@ pub type TransactionId = u64;
 pub type PlanId = u64;
 pub type AuthorityId = u64;
 pub type BoundaryId = u64;
+pub type ArtifactId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeMode {
@@ -208,6 +209,65 @@ impl BoundaryRecord {
             self.kind.as_str(),
             self.status.as_str(),
             self.backend,
+            blocked_by,
+            self.generation
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArtifactVerificationState {
+    Planned,
+    ManifestBound,
+    ManifestVerified,
+    HostValidated,
+    Rejected,
+}
+
+impl ArtifactVerificationState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::ManifestBound => "manifest-bound",
+            Self::ManifestVerified => "manifest-verified",
+            Self::HostValidated => "host-validated",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactVerificationRecord {
+    pub id: ArtifactId,
+    pub package: String,
+    pub artifact_name: String,
+    pub manifest_binding_hash: String,
+    pub cwasm_sha256: String,
+    pub abi_fingerprint: String,
+    pub signature_profile: String,
+    pub signer: String,
+    pub state: ArtifactVerificationState,
+    pub blocked_by: Option<String>,
+    pub generation: Generation,
+}
+
+impl ArtifactVerificationRecord {
+    pub fn summary(&self) -> String {
+        let blocked_by = self
+            .blocked_by
+            .as_ref()
+            .map(String::as_str)
+            .unwrap_or("none");
+        format!(
+            "artifact {} name={} state={} binding={} cwasm={} abi={} signature={} signer={} blocked={} generation={}",
+            self.package,
+            self.artifact_name,
+            self.state.as_str(),
+            self.manifest_binding_hash,
+            self.cwasm_sha256,
+            self.abi_fingerprint,
+            self.signature_profile,
+            self.signer,
             blocked_by,
             self.generation
         )
@@ -1258,6 +1318,15 @@ pub enum EventKind {
         blocked_by: Option<String>,
         generation: Generation,
     },
+    ArtifactVerificationRecorded {
+        artifact: ArtifactId,
+        package: String,
+        artifact_name: String,
+        state: ArtifactVerificationState,
+        manifest_binding_hash: String,
+        blocked_by: Option<String>,
+        generation: Generation,
+    },
     WaitCreated {
         wait: WaitId,
         task: TaskId,
@@ -1542,6 +1611,21 @@ impl EventKind {
                     "BoundaryPublished boundary={boundary} name={name} kind={} status={} backend={backend} blocked={blocked_by} generation={generation}",
                     kind.as_str(),
                     status.as_str()
+                )
+            }
+            Self::ArtifactVerificationRecorded {
+                artifact,
+                package,
+                artifact_name,
+                state,
+                manifest_binding_hash,
+                blocked_by,
+                generation,
+            } => {
+                let blocked_by = blocked_by.as_deref().unwrap_or("none");
+                format!(
+                    "ArtifactVerificationRecorded artifact={artifact} package={package} name={artifact_name} state={} binding={manifest_binding_hash} blocked={blocked_by} generation={generation}",
+                    state.as_str()
                 )
             }
             Self::WaitCreated {
@@ -1932,6 +2016,7 @@ pub struct SemanticGraph {
     transactions: Vec<SemanticTransactionRecord>,
     fast_path_plans: Vec<FastPathPlanRecord>,
     boundaries: Vec<BoundaryRecord>,
+    artifact_verifications: Vec<ArtifactVerificationRecord>,
     capabilities: CapabilityLedger,
     event_log: EventLog,
     next_resource_id: ResourceId,
@@ -1941,6 +2026,7 @@ pub struct SemanticGraph {
     next_transaction_id: TransactionId,
     next_plan_id: PlanId,
     next_boundary_id: BoundaryId,
+    next_artifact_id: ArtifactId,
 }
 
 impl SemanticGraph {
@@ -1959,6 +2045,7 @@ impl SemanticGraph {
             transactions: Vec::new(),
             fast_path_plans: Vec::new(),
             boundaries: Vec::new(),
+            artifact_verifications: Vec::new(),
             capabilities: CapabilityLedger::new(),
             event_log: EventLog::with_runtime_mode(runtime_mode),
             next_resource_id: 1,
@@ -1968,6 +2055,7 @@ impl SemanticGraph {
             next_transaction_id: 1,
             next_plan_id: 1,
             next_boundary_id: 1,
+            next_artifact_id: 1,
         }
     }
 
@@ -2037,6 +2125,82 @@ impl SemanticGraph {
             },
         );
         self.boundaries.push(boundary);
+        id
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_artifact_verification(
+        &mut self,
+        package: &str,
+        artifact_name: &str,
+        manifest_binding_hash: &str,
+        cwasm_sha256: &str,
+        abi_fingerprint: &str,
+        signature_profile: &str,
+        signer: &str,
+        state: ArtifactVerificationState,
+        blocked_by: Option<&str>,
+    ) -> ArtifactId {
+        if let Some(index) = self
+            .artifact_verifications
+            .iter()
+            .position(|record| record.package == package)
+        {
+            self.artifact_verifications[index].artifact_name = artifact_name.to_string();
+            self.artifact_verifications[index].manifest_binding_hash =
+                manifest_binding_hash.to_string();
+            self.artifact_verifications[index].cwasm_sha256 = cwasm_sha256.to_string();
+            self.artifact_verifications[index].abi_fingerprint = abi_fingerprint.to_string();
+            self.artifact_verifications[index].signature_profile = signature_profile.to_string();
+            self.artifact_verifications[index].signer = signer.to_string();
+            self.artifact_verifications[index].state = state;
+            self.artifact_verifications[index].blocked_by =
+                blocked_by.map(|value| value.to_string());
+            self.artifact_verifications[index].generation += 1;
+            let record = &self.artifact_verifications[index];
+            self.event_log.push(
+                "artifact",
+                EventKind::ArtifactVerificationRecorded {
+                    artifact: record.id,
+                    package: record.package.clone(),
+                    artifact_name: record.artifact_name.clone(),
+                    state,
+                    manifest_binding_hash: record.manifest_binding_hash.clone(),
+                    blocked_by: record.blocked_by.clone(),
+                    generation: record.generation,
+                },
+            );
+            return record.id;
+        }
+
+        let id = self.next_artifact_id;
+        self.next_artifact_id += 1;
+        let record = ArtifactVerificationRecord {
+            id,
+            package: package.to_string(),
+            artifact_name: artifact_name.to_string(),
+            manifest_binding_hash: manifest_binding_hash.to_string(),
+            cwasm_sha256: cwasm_sha256.to_string(),
+            abi_fingerprint: abi_fingerprint.to_string(),
+            signature_profile: signature_profile.to_string(),
+            signer: signer.to_string(),
+            state,
+            blocked_by: blocked_by.map(|value| value.to_string()),
+            generation: 1,
+        };
+        self.event_log.push(
+            "artifact",
+            EventKind::ArtifactVerificationRecorded {
+                artifact: id,
+                package: record.package.clone(),
+                artifact_name: record.artifact_name.clone(),
+                state,
+                manifest_binding_hash: record.manifest_binding_hash.clone(),
+                blocked_by: record.blocked_by.clone(),
+                generation: record.generation,
+            },
+        );
+        self.artifact_verifications.push(record);
         id
     }
 
@@ -3273,6 +3437,7 @@ impl SemanticGraph {
                 transactions: self.transactions.clone(),
                 fast_path_plans: self.fast_path_plans.clone(),
                 boundaries: self.boundaries.clone(),
+                artifact_verifications: self.artifact_verifications.clone(),
                 capabilities: self.capabilities.records().to_vec(),
             },
         }
@@ -3308,6 +3473,10 @@ impl SemanticGraph {
 
     pub fn boundary_count(&self) -> usize {
         self.boundaries.len()
+    }
+
+    pub fn artifact_verification_count(&self) -> usize {
+        self.artifact_verifications.len()
     }
 
     pub fn active_fast_path_plan_count(&self) -> usize {
@@ -3405,6 +3574,10 @@ impl SemanticGraph {
 
     pub fn boundaries(&self) -> &[BoundaryRecord] {
         &self.boundaries
+    }
+
+    pub fn artifact_verifications(&self) -> &[ArtifactVerificationRecord] {
+        &self.artifact_verifications
     }
 
     pub fn event_log_tail(&self, count: usize) -> &[EventRecord] {
@@ -3618,6 +3791,7 @@ pub struct SemanticSnapshot {
     pub transactions: Vec<SemanticTransactionRecord>,
     pub fast_path_plans: Vec<FastPathPlanRecord>,
     pub boundaries: Vec<BoundaryRecord>,
+    pub artifact_verifications: Vec<ArtifactVerificationRecord>,
     pub capabilities: Vec<CapabilityRecord>,
 }
 
@@ -3696,7 +3870,7 @@ impl MigrationPackage {
             self.substrate_boundary.background_copy_pages
         ));
         lines.push(format!(
-            "semantic roots: tasks={} resources={} authorities={} waits={} capabilities={} fault_domains={} stores={} transactions={} fastpath_plans={} boundaries={}",
+            "semantic roots: tasks={} resources={} authorities={} waits={} capabilities={} fault_domains={} stores={} transactions={} fastpath_plans={} boundaries={} artifacts={}",
             self.semantic.tasks.len(),
             self.semantic.resources.len(),
             self.semantic.authority_bindings.len(),
@@ -3706,7 +3880,8 @@ impl MigrationPackage {
             self.semantic.stores.len(),
             self.semantic.transactions.len(),
             self.semantic.fast_path_plans.len(),
-            self.semantic.boundaries.len()
+            self.semantic.boundaries.len(),
+            self.semantic.artifact_verifications.len()
         ));
         lines.push(format!(
             "required artifacts: {}",
@@ -3850,6 +4025,45 @@ mod tests {
         assert_eq!(
             graph.event_log_tail(1)[0].kind.summary(),
             "BoundaryPublished boundary=1 name=target-cwasm kind=runtime-executor status=runtime-contract backend=runtime-only-executor-v1 blocked=hostcall-trampoline generation=2"
+        );
+    }
+
+    #[test]
+    fn artifact_verification_is_queryable_and_versioned() {
+        let mut graph = SemanticGraph::new();
+        let artifact = graph.record_artifact_verification(
+            "vfs_service",
+            "vfs",
+            "binding-a",
+            "cwasm-a",
+            "abi-a",
+            "prototype-self-signed-sha256",
+            "target_executor",
+            ArtifactVerificationState::ManifestVerified,
+            Some("target-cwasm-loader-not-linked"),
+        );
+        let same_artifact = graph.record_artifact_verification(
+            "vfs_service",
+            "vfs",
+            "binding-a",
+            "cwasm-a",
+            "abi-a",
+            "prototype-self-signed-sha256",
+            "target_executor",
+            ArtifactVerificationState::HostValidated,
+            Some("target-runtime-only-loader"),
+        );
+
+        assert_eq!(same_artifact, artifact);
+        assert_eq!(graph.artifact_verification_count(), 1);
+        assert_eq!(graph.artifact_verifications()[0].generation, 2);
+        assert_eq!(
+            graph.artifact_verifications()[0].summary(),
+            "artifact vfs_service name=vfs state=host-validated binding=binding-a cwasm=cwasm-a abi=abi-a signature=prototype-self-signed-sha256 signer=target_executor blocked=target-runtime-only-loader generation=2"
+        );
+        assert_eq!(
+            graph.event_log_tail(1)[0].kind.summary(),
+            "ArtifactVerificationRecorded artifact=1 package=vfs_service name=vfs state=host-validated binding=binding-a blocked=target-runtime-only-loader generation=2"
         );
     }
 

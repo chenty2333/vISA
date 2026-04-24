@@ -466,6 +466,13 @@ pub fn validate_migration_against_manifest(
             "package compiler/artifact mode mismatch",
         ));
     }
+    if package.semantic.artifact_verification_count != 0
+        && package.semantic.artifact_verification_count != manifest.modules.len()
+    {
+        return Err(ContractError::new(
+            "package artifact verification count does not match manifest",
+        ));
+    }
     Ok(())
 }
 
@@ -526,6 +533,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     }
     if roots.boundary_roots.len() != package.semantic.boundary_count {
         return Err(ContractError::new("boundary root/count mismatch"));
+    }
+    if roots.artifact_verification_roots.len() != package.semantic.artifact_verification_count {
+        return Err(ContractError::new(
+            "artifact verification root/count mismatch",
+        ));
     }
     if roots.executor_transition_roots.len() != package.semantic.executor_transition_count {
         return Err(ContractError::new(
