@@ -730,8 +730,23 @@ fn inspect_package_object(
                 package.package_id, package.semantic.hostcall_trace_count
             );
             for trace in &package.semantic.hostcall_trace {
+                let cap_args = trace
+                    .cap_args
+                    .iter()
+                    .map(|cap| {
+                        format!(
+                            "{}:{}:{}:{}:{}",
+                            cap.id,
+                            cap.object,
+                            cap.generation,
+                            cap.rights_mask,
+                            cap.rights.join("+")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
                 let line = format!(
-                    "hostcall abi={} activation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} object={} op={} allowed={} result={} ret={} trap_out={} wait_out={}",
+                    "hostcall abi={} activation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} subject={} object={} op={} cap_args=[{}] allowed={} result={} ret={} trap_out={} wait_out={}",
                     trace.abi_version,
                     trace.activation,
                     trace.store,
@@ -742,8 +757,10 @@ fn inspect_package_object(
                     trace.hostcall_number,
                     trace.name,
                     trace.category,
+                    trace.subject,
                     trace.object,
                     trace.operation,
+                    cap_args,
                     trace.allowed,
                     trace.result,
                     display_default(&trace.ret_tag, "none"),

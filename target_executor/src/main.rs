@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 mod runtime;
 
 use artifact_manifest::{
-    ActivationRecordManifest, ArtifactBundleManifest, CodeObjectManifest, GuestStateManifest,
-    HostcallSpecManifest, HostcallTraceManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, RequiredArtifactProfileManifest, SemanticRootSetManifest,
-    SemanticSnapshotManifest, SubstrateBoundaryManifest, TargetAddressMapEntryManifest,
-    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
-    TargetTrapMetadataManifest, TrapRecordManifest,
+    ActivationRecordManifest, ArtifactBundleManifest, CapabilityHandleArgManifest,
+    CodeObjectManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, RequiredArtifactProfileManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SubstrateBoundaryManifest,
+    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
+    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TrapRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -21,13 +21,13 @@ use contract_core::{
 use runtime::RuntimeOnlyExecutor;
 use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, BoundaryKind, BoundaryStatus,
-    CapabilityClass, CapabilityLedger, CodeObject, CodePublishState, CodePublisher,
-    EntrypointState, ExpectedTargetArtifact, FrontendKind, HostcallCategory, HostcallFrame,
-    HostcallLinkState, HostcallSpec, HostcallTraceRecord, ManagedStoreRecord, MemoryLayoutState,
-    MigrationObjectRecord, RuntimeMode, SemanticGraph, StoreState, TargetAddressMapEntry,
-    TargetArtifactImage, TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan,
-    TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState, TrapSurfaceState,
-    VerifiedArtifact,
+    CapabilityClass, CapabilityHandleArg, CapabilityLedger, CodeObject, CodePublishState,
+    CodePublisher, EntrypointState, ExpectedTargetArtifact, FrontendKind, HostcallCategory,
+    HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, ManagedStoreRecord,
+    MemoryLayoutState, MigrationObjectRecord, RuntimeMode, SemanticGraph, StoreState,
+    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
+    TrapSurfaceState, VerifiedArtifact,
 };
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
@@ -335,7 +335,6 @@ fn run_activation_harness(
                     &store.store,
                     code,
                     spec.number,
-                    &code.package,
                     &spec.object,
                     &spec.operation,
                     generation,
@@ -365,18 +364,32 @@ fn run_activation_harness(
                 .map_err(|error| error.message())?;
             let _ = executor.invoke_hostcall(
                 code,
-                HostcallFrame::new_bound(
-                    denied,
-                    &store.store,
-                    code,
-                    number,
-                    &code.package,
-                    object,
-                    operation,
-                    1,
-                ),
+                HostcallFrame::new_bound(denied, &store.store, code, number, object, operation, 1),
                 ledger,
             );
+        }
+        if let Some(spec) = code.hostcalls.iter().find(|spec| spec.number < 9000) {
+            let bad_abi = executor
+                .start_activation(
+                    &store.store,
+                    code,
+                    ActivationEntry::Symbol("bad_hostcall_abi".to_owned()),
+                )
+                .map_err(|error| error.message())?;
+            let generation = ledger
+                .generation_of(&code.package, &spec.object)
+                .unwrap_or(1);
+            let mut frame = HostcallFrame::new_bound(
+                bad_abi,
+                &store.store,
+                code,
+                spec.number,
+                &spec.object,
+                &spec.operation,
+                generation,
+            );
+            frame.abi_version = "bad-hostcall-abi".to_owned();
+            let _ = executor.invoke_hostcall(code, frame, ledger);
         }
 
         let dmw = executor
@@ -391,16 +404,7 @@ fn run_activation_harness(
             .map_err(|error| error.message())?;
         let _ = executor.invoke_hostcall(
             code,
-            HostcallFrame::new_bound(
-                dmw,
-                &store.store,
-                code,
-                9005,
-                &code.package,
-                "wait.timer",
-                "park",
-                1,
-            ),
+            HostcallFrame::new_bound(dmw, &store.store, code, 9005, "wait.timer", "park", 1),
             ledger,
         );
         executor
@@ -906,15 +910,17 @@ fn semantic_roots(
             .iter()
             .map(|trace| {
                 format!(
-                    "hostcall abi={} activation={} store={} code={} number={} category={} object={} op={} allowed={} result={} ret={}",
+                    "hostcall abi={} activation={} store={} code={} number={} category={} subject={} object={} op={} cap_args={} allowed={} result={} ret={}",
                     trace.abi_version,
                     trace.activation,
                     trace.store,
                     trace.code_object,
                     trace.hostcall_number,
                     trace.category,
+                    trace.subject,
                     trace.object,
                     trace.operation,
+                    trace.cap_args.len(),
                     trace.allowed,
                     trace.result,
                     trace.ret_tag
@@ -1052,10 +1058,11 @@ fn hostcall_trace_manifest(trace: &HostcallTraceRecord) -> HostcallTraceManifest
         hostcall_number: trace.hostcall_number,
         name: trace.name.clone(),
         category: trace.category.as_str().to_owned(),
+        subject: trace.subject.clone(),
         object: trace.object.clone(),
         operation: trace.operation.clone(),
         args: trace.args,
-        cap_args: trace.cap_args.clone(),
+        cap_args: trace.cap_args.iter().map(cap_arg_manifest).collect(),
         allowed: trace.allowed,
         result: trace.result.clone(),
         ret_tag: trace.ret_tag.as_str().to_owned(),
@@ -1063,6 +1070,16 @@ fn hostcall_trace_manifest(trace: &HostcallTraceRecord) -> HostcallTraceManifest
         ret1: trace.ret1,
         trap_out: trace.trap_out,
         wait_token_out: trace.wait_token_out,
+    }
+}
+
+fn cap_arg_manifest(arg: &CapabilityHandleArg) -> CapabilityHandleArgManifest {
+    CapabilityHandleArgManifest {
+        id: arg.id,
+        object: arg.object.clone(),
+        generation: arg.generation,
+        rights_mask: arg.rights_mask,
+        rights: arg.rights.clone(),
     }
 }
 

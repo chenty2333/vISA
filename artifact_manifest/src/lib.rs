@@ -410,12 +410,14 @@ pub struct HostcallTraceManifest {
     pub hostcall_number: u32,
     pub name: String,
     pub category: String,
+    #[serde(default)]
+    pub subject: String,
     pub object: String,
     pub operation: String,
     #[serde(default)]
     pub args: [u64; 6],
     #[serde(default)]
-    pub cap_args: Vec<u64>,
+    pub cap_args: Vec<CapabilityHandleArgManifest>,
     pub allowed: bool,
     pub result: String,
     #[serde(default)]
@@ -428,6 +430,15 @@ pub struct HostcallTraceManifest {
     pub trap_out: Option<u64>,
     #[serde(default)]
     pub wait_token_out: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CapabilityHandleArgManifest {
+    pub id: u64,
+    pub object: String,
+    pub generation: u64,
+    pub rights_mask: u64,
+    pub rights: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

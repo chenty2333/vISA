@@ -1128,6 +1128,33 @@ impl TargetTrapRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityHandleArg {
+    pub id: CapabilityId,
+    pub object: String,
+    pub generation: Generation,
+    pub rights_mask: u64,
+    pub rights: Vec<String>,
+}
+
+impl CapabilityHandleArg {
+    pub fn new(
+        id: CapabilityId,
+        object: &str,
+        generation: Generation,
+        rights_mask: u64,
+        rights: &[&str],
+    ) -> Self {
+        Self {
+            id,
+            object: object.to_string(),
+            generation,
+            rights_mask,
+            rights: rights.iter().map(|right| (*right).to_string()).collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostcallFrame {
     pub abi_version: String,
     pub flags: u32,
@@ -1143,7 +1170,7 @@ pub struct HostcallFrame {
     pub operation: String,
     pub generation: Generation,
     pub args: [u64; 6],
-    pub cap_args: Vec<CapabilityId>,
+    pub cap_args: Vec<CapabilityHandleArg>,
     pub ret_tag: HostcallReturnTag,
     pub ret0: u64,
     pub ret1: u64,
@@ -1192,7 +1219,6 @@ impl HostcallFrame {
         store: &StoreRecord,
         code: &CodeObject,
         hostcall_number: u32,
-        subject: &str,
         object: &str,
         operation: &str,
         generation: Generation,
@@ -1201,7 +1227,7 @@ impl HostcallFrame {
             activation,
             store.id,
             hostcall_number,
-            subject,
+            &code.package,
             object,
             operation,
             generation,
@@ -1218,7 +1244,7 @@ impl HostcallFrame {
         self
     }
 
-    pub fn with_cap_args(mut self, cap_args: Vec<CapabilityId>) -> Self {
+    pub fn with_cap_args(mut self, cap_args: Vec<CapabilityHandleArg>) -> Self {
         self.cap_args = cap_args;
         self
     }
@@ -1237,10 +1263,11 @@ pub struct HostcallTraceRecord {
     pub hostcall_number: u32,
     pub name: String,
     pub category: HostcallCategory,
+    pub subject: String,
     pub object: String,
     pub operation: String,
     pub args: [u64; 6],
-    pub cap_args: Vec<CapabilityId>,
+    pub cap_args: Vec<CapabilityHandleArg>,
     pub allowed: bool,
     pub result: String,
     pub ret_tag: HostcallReturnTag,
@@ -1253,7 +1280,7 @@ pub struct HostcallTraceRecord {
 impl HostcallTraceRecord {
     pub fn summary(&self) -> String {
         format!(
-            "hostcall abi={} activation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} object={} op={} allowed={} result={} ret={}",
+            "hostcall abi={} activation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} subject={} object={} op={} allowed={} result={} ret={}",
             self.abi_version,
             self.activation,
             self.store,
@@ -1264,6 +1291,7 @@ impl HostcallTraceRecord {
             self.hostcall_number,
             self.name,
             self.category.as_str(),
+            self.subject,
             self.object,
             self.operation,
             self.allowed,
@@ -1343,6 +1371,7 @@ pub enum TargetExecutorError {
     ActivationStoreMismatch,
     CodeObjectMismatch,
     HostcallFrameMismatch,
+    HostcallSubjectMismatch,
     HostcallAbiMismatch,
     HostcallNotDeclared,
     CapabilityDenied,
@@ -1360,6 +1389,7 @@ impl TargetExecutorError {
             Self::ActivationStoreMismatch => "activation/store mismatch",
             Self::CodeObjectMismatch => "activation/code object attribution mismatch",
             Self::HostcallFrameMismatch => "hostcall frame does not match declared hostcall",
+            Self::HostcallSubjectMismatch => "hostcall subject does not match code object package",
             Self::HostcallAbiMismatch => "hostcall frame ABI version mismatch",
             Self::HostcallNotDeclared => "hostcall is not declared by code object",
             Self::CapabilityDenied => "hostcall capability gate denied access",
@@ -1438,8 +1468,14 @@ impl TargetExecutor {
         frame: HostcallFrame,
         capabilities: &CapabilityLedger,
     ) -> Result<(), TargetExecutorError> {
-        if frame.abi_version != HostcallFrame::ABI_VERSION {
-            return Err(TargetExecutorError::HostcallAbiMismatch);
+        let abi_mismatch = frame.abi_version != HostcallFrame::ABI_VERSION;
+        if abi_mismatch {
+            self.event_log.push(format!(
+                "HostcallAbiMismatch activation={} abi={} expected={}",
+                frame.activation,
+                frame.abi_version,
+                HostcallFrame::ABI_VERSION
+            ));
         }
         let activation_index = self.activation_index(frame.activation)?;
         let activation = self.activations[activation_index].clone();
@@ -1468,6 +1504,42 @@ impl TargetExecutor {
                 "hostcall frame did not match activation code object attribution",
             );
             return Err(TargetExecutorError::CodeObjectMismatch);
+        }
+        if abi_mismatch {
+            let spec = code
+                .hostcalls
+                .iter()
+                .find(|spec| spec.number == frame.hostcall_number)
+                .cloned()
+                .unwrap_or_else(|| {
+                    HostcallSpec::new(
+                        frame.hostcall_number,
+                        "hostcall.bad-abi",
+                        HostcallCategory::Service,
+                        &frame.object,
+                        &frame.operation,
+                        false,
+                    )
+                });
+            let trap = self.record_trap_for_activation(
+                activation_index,
+                TargetTrapClass::HostcallTrap,
+                Some(code),
+                Some(spec.name.clone()),
+                "bad-hostcall-abi",
+                FailureEffect::CompleteWithErrno(22),
+                "hostcall frame ABI version mismatch",
+            );
+            self.record_trace(
+                &frame,
+                &spec,
+                false,
+                "bad-hostcall-abi",
+                HostcallReturnTag::Trap,
+                Some(trap),
+                None,
+            );
+            return Err(TargetExecutorError::HostcallAbiMismatch);
         }
         let Some(spec) = code
             .hostcalls
@@ -1522,6 +1594,31 @@ impl TargetExecutor {
             );
             return Err(TargetExecutorError::HostcallFrameMismatch);
         }
+        if frame.subject != code.package {
+            self.event_log.push(format!(
+                "HostcallSubjectMismatch activation={} subject={} expected={}",
+                frame.activation, frame.subject, code.package
+            ));
+            let trap = self.record_trap_for_activation(
+                activation_index,
+                TargetTrapClass::CapabilityTrap,
+                Some(code),
+                Some(spec.name.clone()),
+                "subject-mismatch",
+                FailureEffect::CompleteWithErrno(1),
+                "hostcall subject did not match activation code object package",
+            );
+            self.record_trace(
+                &frame,
+                spec,
+                false,
+                "subject-mismatch",
+                HostcallReturnTag::Trap,
+                Some(trap),
+                None,
+            );
+            return Err(TargetExecutorError::HostcallSubjectMismatch);
+        }
         self.event_log.push(format!(
             "HostcallEntered activation={} name={} category={} subject={} object={} op={}",
             frame.activation,
@@ -1557,6 +1654,31 @@ impl TargetExecutor {
                 .generation_of(&frame.subject, &frame.object)
                 .is_some();
         if requires_capability {
+            if let Some(reason) = Self::cap_arg_denial_reason(&frame, spec, capabilities) {
+                self.event_log.push(format!(
+                    "CapabilityDenied activation={} subject={} object={} op={} reason={reason}",
+                    frame.activation, frame.subject, frame.object, frame.operation
+                ));
+                let trap = self.record_trap_for_activation(
+                    activation_index,
+                    TargetTrapClass::CapabilityTrap,
+                    Some(code),
+                    Some(spec.name.clone()),
+                    "capability-handle",
+                    FailureEffect::CompleteWithErrno(1),
+                    "hostcall capability handle argument failed validation",
+                );
+                self.record_trace(
+                    &frame,
+                    spec,
+                    false,
+                    reason,
+                    HostcallReturnTag::Trap,
+                    Some(trap),
+                    None,
+                );
+                return Err(TargetExecutorError::CapabilityDenied);
+            }
             match capabilities.check(&frame.subject, &frame.object, &frame.operation) {
                 Ok(capability) => {
                     if capability.generation != frame.generation {
@@ -1865,6 +1987,73 @@ impl TargetExecutor {
         &self.event_log
     }
 
+    fn cap_arg_denial_reason(
+        frame: &HostcallFrame,
+        spec: &HostcallSpec,
+        capabilities: &CapabilityLedger,
+    ) -> Option<&'static str> {
+        if frame.cap_args.is_empty() {
+            return None;
+        }
+        let mut matched_frame_object = false;
+        for handle in &frame.cap_args {
+            let Some(record) = capabilities.active(handle.id) else {
+                return Some("cap-arg-missing");
+            };
+            if record.subject != frame.subject {
+                return Some("cap-arg-subject");
+            }
+            if record.object != handle.object {
+                return Some("cap-arg-object");
+            }
+            if record.generation != handle.generation {
+                return Some("cap-arg-generation");
+            }
+            if handle.rights.is_empty() {
+                return Some("cap-arg-empty-rights");
+            }
+            if handle.rights_mask == 0 {
+                return Some("cap-arg-rights-mask");
+            }
+            for right in &handle.rights {
+                if !record.operations.contains(right) {
+                    return Some("cap-arg-rights");
+                }
+            }
+            let Some(rights_mask) = Self::capability_rights_mask(record, &handle.rights) else {
+                return Some("cap-arg-rights-mask");
+            };
+            if rights_mask != handle.rights_mask {
+                return Some("cap-arg-rights-mask");
+            }
+            if handle.object == frame.object
+                && handle.rights.iter().any(|right| right == &frame.operation)
+            {
+                matched_frame_object = true;
+            }
+        }
+        if spec.requires_capability() && !matched_frame_object {
+            return Some("cap-arg-frame-right");
+        }
+        None
+    }
+
+    fn capability_rights_mask(record: &CapabilityRecord, rights: &[String]) -> Option<u64> {
+        let mut mask = 0u64;
+        for right in rights {
+            let index = record
+                .operations
+                .as_slice()
+                .iter()
+                .position(|operation| operation == right)?;
+            if index >= u64::BITS as usize {
+                return None;
+            }
+            mask |= 1u64 << index;
+        }
+        Some(mask)
+    }
+
     fn record_trace(
         &mut self,
         frame: &HostcallFrame,
@@ -1887,6 +2076,7 @@ impl TargetExecutor {
             hostcall_number: spec.number,
             name: spec.name.clone(),
             category: spec.category,
+            subject: frame.subject.clone(),
             object: spec.object.clone(),
             operation: spec.operation.clone(),
             args: frame.args,
@@ -2222,7 +2412,6 @@ mod tests {
                     &store.store,
                     &code,
                     1,
-                    "driver_virtio_net",
                     "mmio.virtio-net",
                     "map",
                     1,
@@ -2255,7 +2444,6 @@ mod tests {
                         &store.store,
                         &code,
                         number,
-                        "driver_virtio_net",
                         object,
                         operation,
                         1,
@@ -2301,7 +2489,6 @@ mod tests {
                     &store.store,
                     &other_code,
                     1,
-                    "driver_virtio_net",
                     "mmio.virtio-net",
                     "map",
                     1,
@@ -2311,6 +2498,189 @@ mod tests {
             Err(TargetExecutorError::CodeObjectMismatch)
         );
         assert_eq!(executor.traps()[0].class, TargetTrapClass::CodeObjectTrap);
+    }
+
+    #[test]
+    fn hostcall_rejects_spoofed_subject_and_bad_abi_with_trace() {
+        let (_artifact, store, code, capabilities) = running_store_and_code();
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("_start".to_string()),
+            )
+            .unwrap();
+        let mut frame = HostcallFrame::new_bound(
+            activation,
+            &store.store,
+            &code,
+            1,
+            "mmio.virtio-net",
+            "map",
+            1,
+        );
+        frame.subject = "other_store".to_string();
+        assert_eq!(
+            executor.invoke_hostcall(&code, frame, &capabilities),
+            Err(TargetExecutorError::HostcallSubjectMismatch)
+        );
+        assert_eq!(executor.traps()[0].class, TargetTrapClass::CapabilityTrap);
+        assert_eq!(executor.hostcall_trace()[0].result, "subject-mismatch");
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("_start".to_string()),
+            )
+            .unwrap();
+        let mut frame = HostcallFrame::new_bound(
+            activation,
+            &store.store,
+            &code,
+            1,
+            "mmio.virtio-net",
+            "map",
+            1,
+        );
+        frame.abi_version = "bad-hostcall-abi".to_string();
+        assert_eq!(
+            executor.invoke_hostcall(&code, frame, &capabilities),
+            Err(TargetExecutorError::HostcallAbiMismatch)
+        );
+        assert!(
+            executor
+                .hostcall_trace()
+                .iter()
+                .any(|trace| trace.result == "bad-hostcall-abi")
+        );
+        assert!(
+            executor
+                .traps()
+                .iter()
+                .any(|trap| trap.class == TargetTrapClass::HostcallTrap
+                    && trap.fault_policy == "bad-hostcall-abi")
+        );
+    }
+
+    #[test]
+    fn cap_args_are_checked_against_ledger_generation_and_rights() {
+        let (_artifact, store, code, capabilities) = running_store_and_code();
+        let cap = capabilities
+            .check("driver_virtio_net", "mmio.virtio-net", "map")
+            .unwrap()
+            .clone();
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("_start".to_string()),
+            )
+            .unwrap();
+        let mut cap_args = Vec::new();
+        cap_args.push(CapabilityHandleArg::new(
+            cap.id,
+            &cap.object,
+            cap.generation,
+            1,
+            &["map"],
+        ));
+        executor
+            .invoke_hostcall(
+                &code,
+                HostcallFrame::new_bound(
+                    activation,
+                    &store.store,
+                    &code,
+                    1,
+                    "mmio.virtio-net",
+                    "map",
+                    cap.generation,
+                )
+                .with_cap_args(cap_args),
+                &capabilities,
+            )
+            .unwrap();
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("_start".to_string()),
+            )
+            .unwrap();
+        let mut stale_cap_args = Vec::new();
+        stale_cap_args.push(CapabilityHandleArg::new(
+            cap.id,
+            &cap.object,
+            cap.generation + 1,
+            1,
+            &["map"],
+        ));
+        assert_eq!(
+            executor.invoke_hostcall(
+                &code,
+                HostcallFrame::new_bound(
+                    activation,
+                    &store.store,
+                    &code,
+                    1,
+                    "mmio.virtio-net",
+                    "map",
+                    cap.generation,
+                )
+                .with_cap_args(stale_cap_args),
+                &capabilities,
+            ),
+            Err(TargetExecutorError::CapabilityDenied)
+        );
+        assert!(
+            executor
+                .hostcall_trace()
+                .iter()
+                .any(|trace| trace.result == "cap-arg-generation")
+        );
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("_start".to_string()),
+            )
+            .unwrap();
+        let mut bad_mask_cap_args = Vec::new();
+        bad_mask_cap_args.push(CapabilityHandleArg::new(
+            cap.id,
+            &cap.object,
+            cap.generation,
+            0,
+            &["map"],
+        ));
+        assert_eq!(
+            executor.invoke_hostcall(
+                &code,
+                HostcallFrame::new_bound(
+                    activation,
+                    &store.store,
+                    &code,
+                    1,
+                    "mmio.virtio-net",
+                    "map",
+                    cap.generation,
+                )
+                .with_cap_args(bad_mask_cap_args),
+                &capabilities,
+            ),
+            Err(TargetExecutorError::CapabilityDenied)
+        );
+        assert!(
+            executor
+                .hostcall_trace()
+                .iter()
+                .any(|trace| trace.result == "cap-arg-rights-mask")
+        );
     }
 
     #[test]
@@ -2339,7 +2709,6 @@ mod tests {
                     &store.store,
                     &code,
                     8,
-                    "driver_virtio_net",
                     "wait.timer",
                     "park",
                     1,
