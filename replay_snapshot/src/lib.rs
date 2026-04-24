@@ -7,14 +7,14 @@ extern crate std;
 use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
 
-use vmos_abi::{ERR_EAGAIN, ERR_EFAULT};
+use service_core::replay::ReplaySnapshotState;
 
 const REQUEST_CAPACITY: usize = 128;
 const RESPONSE_CAPACITY: usize = 256;
 
 static mut REQUEST: [u8; REQUEST_CAPACITY] = [0; REQUEST_CAPACITY];
 static mut RESPONSE: [u8; RESPONSE_CAPACITY] = [0; RESPONSE_CAPACITY];
-static mut LAST_CURSOR: u64 = 0;
+static mut STATE: ReplaySnapshotState = ReplaySnapshotState::new();
 
 #[unsafe(no_mangle)]
 pub extern "C" fn request_ptr() -> u32 {
@@ -43,27 +43,31 @@ pub extern "C" fn validate_barrier(
     active_dmw_leases: u32,
     pending_dma: u32,
 ) -> i32 {
-    if active_dmw_leases != 0 || pending_dma != 0 {
-        return -ERR_EFAULT;
+    match unsafe {
+        state().validate_barrier(
+            pending_waits,
+            active_transactions,
+            active_dmw_leases,
+            pending_dma,
+        )
+    } {
+        Ok(()) => 0,
+        Err(errno) => -errno,
     }
-    if active_transactions != 0 {
-        return -ERR_EAGAIN;
-    }
-    let _ = pending_waits;
-    0
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn replay_until(cursor: u64) -> u64 {
-    unsafe {
-        LAST_CURSOR = cursor;
-        LAST_CURSOR
-    }
+    unsafe { state().replay_until(cursor) }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn last_replay_cursor() -> u64 {
-    unsafe { LAST_CURSOR }
+    unsafe { state().last_replay_cursor() }
+}
+
+unsafe fn state() -> &'static mut ReplaySnapshotState {
+    unsafe { &mut *addr_of_mut!(STATE) }
 }
 
 #[cfg(target_arch = "wasm32")]

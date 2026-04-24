@@ -19,6 +19,7 @@ members = [
     "replay_snapshot",
     "runner",
     "semantic_core",
+    "service_core",
     "supervisor_catalog",
     "target_executor",
     "vfs_service",
@@ -34,6 +35,7 @@ pic8259 = "0.10.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 semantic_core = { path = "semantic_core" }
+service_core = { path = "service_core" }
 sha2 = "0.10"
 spin = "0.9.8"
 supervisor_catalog = { path = "supervisor_catalog" }

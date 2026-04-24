@@ -375,7 +375,7 @@ dependencies = [
 name = "driver_virtio_net"
 version = "0.1.0"
 dependencies = [
- "vmos_abi",
+ "service_core",
 ]
 
 [[package]]
@@ -603,6 +603,7 @@ dependencies = [
  "linked_list_allocator",
  "pic8259",
  "semantic_core",
+ "service_core",
  "spin",
  "supervisor_catalog",
  "uart_16550",
@@ -649,6 +650,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 name = "linux_socket_service"
 version = "0.1.0"
 dependencies = [
+ "service_core",
  "vmos_abi",
 ]
 
@@ -715,6 +717,7 @@ dependencies = [
 name = "net_core"
 version = "0.1.0"
 dependencies = [
+ "service_core",
  "vmos_abi",
 ]
 
@@ -856,6 +859,7 @@ dependencies = [
 name = "replay_snapshot"
 version = "0.1.0"
 dependencies = [
+ "service_core",
  "vmos_abi",
 ]
 
@@ -949,6 +953,13 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "service_core"
+version = "0.1.0"
+dependencies = [
+ "vmos_abi",
 ]
 
 [[package]]

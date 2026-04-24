@@ -7,39 +7,14 @@ extern crate std;
 use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
 
-use vmos_abi::{ERR_EBADF, ERR_EIO, ERR_EOPNOTSUPP};
+use service_core::linux_socket::LinuxSocketState;
 
 const REQUEST_CAPACITY: usize = 512;
 const RESPONSE_CAPACITY: usize = 512;
-const MAX_SOCKETS: usize = 16;
 
 static mut REQUEST: [u8; REQUEST_CAPACITY] = [0; REQUEST_CAPACITY];
 static mut RESPONSE: [u8; RESPONSE_CAPACITY] = [0; RESPONSE_CAPACITY];
-static mut SOCKETS: [LinuxSocket; MAX_SOCKETS] = [LinuxSocket::EMPTY; MAX_SOCKETS];
-
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-struct LinuxSocket {
-    socket_id: u32,
-    domain: u32,
-    ty: u32,
-    protocol: u32,
-    ready_key: u64,
-    state: u32,
-    active: bool,
-}
-
-impl LinuxSocket {
-    const EMPTY: Self = Self {
-        socket_id: 0,
-        domain: 0,
-        ty: 0,
-        protocol: 0,
-        ready_key: 0,
-        state: 0,
-        active: false,
-    };
-}
+static mut STATE: LinuxSocketState = LinuxSocketState::new();
 
 #[unsafe(no_mangle)]
 pub extern "C" fn request_ptr() -> u32 {
@@ -69,127 +44,80 @@ pub extern "C" fn register_socket(
     protocol: u32,
     ready_key: u64,
 ) -> i32 {
-    unsafe {
-        let sockets = addr_of_mut!(SOCKETS) as *mut LinuxSocket;
-        for index in 0..MAX_SOCKETS {
-            let slot = sockets.add(index);
-            if !(*slot).active {
-                *slot = LinuxSocket {
-                    socket_id,
-                    domain,
-                    ty,
-                    protocol,
-                    ready_key,
-                    state: 1,
-                    active: true,
-                };
-                return 0;
-            }
-        }
-    }
-    -ERR_EIO
+    result_unit(unsafe { state().register_socket(socket_id, domain, ty, protocol, ready_key) })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn close_socket(socket_id: u32) -> i32 {
-    with_socket_mut(socket_id, |socket| {
-        *socket = LinuxSocket::EMPTY;
-        0
-    })
+    result_unit(unsafe { state().close_socket(socket_id) })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn bind_socket(socket_id: u32, _addr_len: u32) -> i32 {
-    with_socket_mut(socket_id, |socket| {
-        socket.state = 2;
-        0
-    })
+pub extern "C" fn bind_socket(socket_id: u32, addr_len: u32) -> i32 {
+    result_unit(unsafe { state().bind_socket(socket_id, addr_len) })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn connect_socket(socket_id: u32, _addr_len: u32) -> i32 {
-    with_socket_mut(socket_id, |socket| {
-        socket.state = 3;
-        0
-    })
+pub extern "C" fn connect_socket(socket_id: u32, addr_len: u32) -> i32 {
+    result_unit(unsafe { state().connect_socket(socket_id, addr_len) })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn listen_socket(socket_id: u32, _backlog: u32) -> i32 {
-    with_socket_mut(socket_id, |socket| {
-        socket.state = 4;
-        0
-    })
+pub extern "C" fn listen_socket(socket_id: u32, backlog: u32) -> i32 {
+    result_unit(unsafe { state().listen_socket(socket_id, backlog) })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn accept_socket(_socket_id: u32) -> i32 {
-    -ERR_EOPNOTSUPP
+pub extern "C" fn accept_socket(socket_id: u32) -> i32 {
+    result_i32(unsafe { state().accept_socket(socket_id) })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn send_socket(socket_id: u32, len: u32) -> i32 {
-    with_socket(socket_id, |_| len as i32)
+    result_i32(unsafe { state().send_socket(socket_id, len) })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn recv_socket(socket_id: u32, len: u32) -> i32 {
-    with_socket(socket_id, |_| len as i32)
+    result_i32(unsafe { state().recv_socket(socket_id, len) })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn setsockopt(_socket_id: u32, _level: u32, _optname: u32, _optlen: u32) -> i32 {
-    0
+pub extern "C" fn setsockopt(socket_id: u32, level: u32, optname: u32, optlen: u32) -> i32 {
+    result_unit(unsafe { state().setsockopt(socket_id, level, optname, optlen) })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn getsockopt(_socket_id: u32, _level: u32, _optname: u32) -> i32 {
-    0
+pub extern "C" fn getsockopt(socket_id: u32, level: u32, optname: u32) -> i32 {
+    result_i32(unsafe { state().getsockopt(socket_id, level, optname) })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fcntl(_fd: u32, _cmd: u32, _arg: u64) -> i32 {
-    0
+pub extern "C" fn fcntl(fd: u32, cmd: u32, arg: u64) -> i32 {
+    result_i32(unsafe { state().fcntl(fd, cmd, arg) })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn socket_count() -> u32 {
-    let mut count = 0;
-    unsafe {
-        let sockets = addr_of_mut!(SOCKETS) as *mut LinuxSocket;
-        for index in 0..MAX_SOCKETS {
-            if (*sockets.add(index)).active {
-                count += 1;
-            }
-        }
-    }
-    count
+    unsafe { state().socket_count() }
 }
 
-fn with_socket(socket_id: u32, f: impl FnOnce(LinuxSocket) -> i32) -> i32 {
-    unsafe {
-        let sockets = addr_of_mut!(SOCKETS) as *mut LinuxSocket;
-        for index in 0..MAX_SOCKETS {
-            let socket = sockets.add(index);
-            if (*socket).active && (*socket).socket_id == socket_id {
-                return f(*socket);
-            }
-        }
-    }
-    -ERR_EBADF
+unsafe fn state() -> &'static mut LinuxSocketState {
+    unsafe { &mut *addr_of_mut!(STATE) }
 }
 
-fn with_socket_mut(socket_id: u32, f: impl FnOnce(&mut LinuxSocket) -> i32) -> i32 {
-    unsafe {
-        let sockets = addr_of_mut!(SOCKETS) as *mut LinuxSocket;
-        for index in 0..MAX_SOCKETS {
-            let socket = sockets.add(index);
-            if (*socket).active && (*socket).socket_id == socket_id {
-                return f(&mut *socket);
-            }
-        }
+fn result_i32(result: Result<u32, i32>) -> i32 {
+    match result {
+        Ok(value) => value as i32,
+        Err(errno) => -errno,
     }
-    -ERR_EBADF
+}
+
+fn result_unit(result: Result<(), i32>) -> i32 {
+    match result {
+        Ok(()) => 0,
+        Err(errno) => -errno,
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

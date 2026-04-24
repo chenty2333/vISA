@@ -8,4 +8,4 @@ crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
-vmos_abi.workspace = true
+service_core.workspace = true

@@ -77,7 +77,9 @@ pub(crate) struct PrototypeRuntime<'engine> {
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn new(engine: &'engine SupervisorEngine) -> Result<Self, &'static str> {
+        crate::kdebug!("bootstrapping semantic graph");
         let mut semantic = bootstrap_graph();
+        crate::kdebug!("bootstrapping network plane");
         let net = NetworkPlane::new(&mut semantic);
         crate::kdebug!("instantiating console_service");
         let console = ConsoleService::new(engine)?;
