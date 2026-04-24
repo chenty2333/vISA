@@ -158,6 +158,9 @@ pub enum BoundaryStatus {
     PackageOnly,
     ManagerOwned,
     LifecycleObject,
+    CodePublished,
+    HostcallsLinked,
+    Runnable,
 }
 
 impl BoundaryStatus {
@@ -174,6 +177,9 @@ impl BoundaryStatus {
             Self::PackageOnly => "package-only",
             Self::ManagerOwned => "manager-owned",
             Self::LifecycleObject => "lifecycle-object",
+            Self::CodePublished => "code-published",
+            Self::HostcallsLinked => "hostcalls-linked",
+            Self::Runnable => "runnable",
         }
     }
 }
@@ -3576,6 +3582,11 @@ pub struct SubstrateBoundarySnapshot {
     pub pending_irq_causes: u32,
     pub pending_dma_completions: u32,
     pub active_dmw_lease_count: u32,
+    pub active_mmio_authority_count: u32,
+    pub active_dma_authority_count: u32,
+    pub active_irq_authority_count: u32,
+    pub active_packet_device_authority_count: u32,
+    pub active_virtio_queue_authority_count: u32,
     pub pending_network_inputs: u32,
     pub random_epoch: u64,
     pub scheduler_decision_cursor: u64,
@@ -3634,6 +3645,21 @@ impl MigrationPackage {
         if self.substrate_boundary.pending_dma_completions != 0 {
             return Err(MigrationValidationError::InFlightDma);
         }
+        if self.substrate_boundary.active_mmio_authority_count != 0 {
+            return Err(MigrationValidationError::ActiveMmioAuthority);
+        }
+        if self.substrate_boundary.active_dma_authority_count != 0 {
+            return Err(MigrationValidationError::ActiveDmaAuthority);
+        }
+        if self.substrate_boundary.active_irq_authority_count != 0 {
+            return Err(MigrationValidationError::ActiveIrqAuthority);
+        }
+        if self.substrate_boundary.active_packet_device_authority_count != 0 {
+            return Err(MigrationValidationError::ActivePacketDeviceAuthority);
+        }
+        if self.substrate_boundary.active_virtio_queue_authority_count != 0 {
+            return Err(MigrationValidationError::ActiveVirtioQueueAuthority);
+        }
         if self.semantic.barrier.active_transaction_count != 0 {
             return Err(MigrationValidationError::ActiveSemanticTransaction);
         }
@@ -3653,13 +3679,18 @@ impl MigrationPackage {
             self.guest.canonical_isa.as_str()
         ));
         lines.push(format!(
-            "snapshot barrier: id={} cursor={} pending_waits={} live_resources={} active_transactions={} active_dmw_leases={} pending_net={} cow_epoch={} background_pages={}",
+            "snapshot barrier: id={} cursor={} pending_waits={} live_resources={} active_transactions={} active_dmw_leases={} active_mmio={} active_dma={} active_irq={} active_packet_device={} active_virtqueue={} pending_net={} cow_epoch={} background_pages={}",
             self.semantic.barrier.id,
             self.semantic.barrier.event_log_cursor,
             self.semantic.barrier.pending_wait_count,
             self.semantic.barrier.live_resource_count,
             self.semantic.barrier.active_transaction_count,
             self.semantic.barrier.active_dmw_lease_count,
+            self.substrate_boundary.active_mmio_authority_count,
+            self.substrate_boundary.active_dma_authority_count,
+            self.substrate_boundary.active_irq_authority_count,
+            self.substrate_boundary.active_packet_device_authority_count,
+            self.substrate_boundary.active_virtio_queue_authority_count,
             self.substrate_boundary.pending_network_inputs,
             self.substrate_boundary.cow_epoch,
             self.substrate_boundary.background_copy_pages
@@ -3694,6 +3725,11 @@ pub enum MigrationValidationError {
     UnsupportedSchema,
     ActiveDmwLease,
     InFlightDma,
+    ActiveMmioAuthority,
+    ActiveDmaAuthority,
+    ActiveIrqAuthority,
+    ActivePacketDeviceAuthority,
+    ActiveVirtioQueueAuthority,
     ActiveSemanticTransaction,
     UnsupportedGuestIsa,
 }
@@ -4191,6 +4227,11 @@ mod tests {
                 pending_irq_causes: 0,
                 pending_dma_completions: 0,
                 active_dmw_lease_count: 1,
+                active_mmio_authority_count: 0,
+                active_dma_authority_count: 0,
+                active_irq_authority_count: 0,
+                active_packet_device_authority_count: 0,
+                active_virtio_queue_authority_count: 0,
                 pending_network_inputs: 0,
                 random_epoch: 0,
                 scheduler_decision_cursor: 0,
@@ -4225,6 +4266,11 @@ mod tests {
                 pending_irq_causes: 0,
                 pending_dma_completions: 0,
                 active_dmw_lease_count: 0,
+                active_mmio_authority_count: 0,
+                active_dma_authority_count: 0,
+                active_irq_authority_count: 0,
+                active_packet_device_authority_count: 0,
+                active_virtio_queue_authority_count: 0,
                 pending_network_inputs: 0,
                 random_epoch: 0,
                 scheduler_decision_cursor: 0,
@@ -4240,6 +4286,73 @@ mod tests {
             package.validate_portability(),
             Err(MigrationValidationError::ActiveSemanticTransaction)
         );
+    }
+
+    #[test]
+    fn migration_package_rejects_active_substrate_authorities() {
+        let cases: [(fn(&mut SubstrateBoundarySnapshot), MigrationValidationError); 5] = [
+            (
+                |boundary| boundary.active_mmio_authority_count = 1,
+                MigrationValidationError::ActiveMmioAuthority,
+            ),
+            (
+                |boundary| boundary.active_dma_authority_count = 1,
+                MigrationValidationError::ActiveDmaAuthority,
+            ),
+            (
+                |boundary| boundary.active_irq_authority_count = 1,
+                MigrationValidationError::ActiveIrqAuthority,
+            ),
+            (
+                |boundary| boundary.active_packet_device_authority_count = 1,
+                MigrationValidationError::ActivePacketDeviceAuthority,
+            ),
+            (
+                |boundary| boundary.active_virtio_queue_authority_count = 1,
+                MigrationValidationError::ActiveVirtioQueueAuthority,
+            ),
+        ];
+
+        for (set_active, expected) in cases {
+            let mut graph = SemanticGraph::new();
+            graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
+            graph.record_snapshot_barrier_enter(1);
+            graph.record_snapshot_barrier_exit(1);
+            let mut boundary = test_substrate_boundary();
+            set_active(&mut boundary);
+            let package = graph.migration_package(
+                "test",
+                "x86_64",
+                "aarch64",
+                test_artifact_profile(),
+                GuestStateSnapshot::riscv64_placeholder(),
+                boundary,
+                1,
+                true,
+            );
+
+            assert_eq!(package.validate_portability(), Err(expected));
+        }
+    }
+
+    fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
+        SubstrateBoundarySnapshot {
+            timer_epoch: 0,
+            pending_irq_causes: 0,
+            pending_dma_completions: 0,
+            active_dmw_lease_count: 0,
+            active_mmio_authority_count: 0,
+            active_dma_authority_count: 0,
+            active_irq_authority_count: 0,
+            active_packet_device_authority_count: 0,
+            active_virtio_queue_authority_count: 0,
+            pending_network_inputs: 0,
+            random_epoch: 0,
+            scheduler_decision_cursor: 0,
+            cow_epoch: 0,
+            background_copy_pages: 0,
+            native_state_policy: "rebuild".to_string(),
+        }
     }
 
     fn test_artifact_profile() -> ArtifactProfile {

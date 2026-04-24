@@ -474,6 +474,17 @@ pub fn validate_replay_quiescent(package: &MigrationPackageManifest) -> Contract
     if package.substrate_boundary.pending_dma_completions != 0
         || package.substrate_boundary.pending_network_inputs != 0
         || package.substrate_boundary.active_dmw_lease_count != 0
+        || package.substrate_boundary.active_mmio_authority_count != 0
+        || package.substrate_boundary.active_dma_authority_count != 0
+        || package.substrate_boundary.active_irq_authority_count != 0
+        || package
+            .substrate_boundary
+            .active_packet_device_authority_count
+            != 0
+        || package
+            .substrate_boundary
+            .active_virtio_queue_authority_count
+            != 0
     {
         return Err(ContractError::new("package is not replay-quiescent"));
     }

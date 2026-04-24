@@ -30,6 +30,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.run_capability_enforcement_demo()?;
         self.run_generation_plane_demo()?;
         self.run_fastpath_plan_demo()?;
+        self.run_executor_activation_demo()?;
         self.run_snapshot_migration_demo()?;
         self.run_semantic_debug_demo()?;
         Ok(())
@@ -201,6 +202,27 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err("fastpath plan invalidation did not take effect");
         }
         serial_println!("fastpath plan install/invalidate recorded");
+        Ok(())
+    }
+
+    fn run_executor_activation_demo(&mut self) -> Result<(), &'static str> {
+        serial_println!("== executor activation boundary demo ==");
+        expect_activation_stub(
+            self.try_publish_store_code("console_service"),
+            "target code publish",
+        )?;
+        expect_activation_stub(
+            self.try_link_store_hostcalls("console_service"),
+            "target hostcall link",
+        )?;
+        expect_activation_stub(
+            self.try_mark_store_runnable("console_service"),
+            "target runnable entry",
+        )?;
+        if let Some(line) = self.store_lifecycle_line("console_service") {
+            serial_println!("{}", line);
+        }
+        serial_println!("executor activation states advanced to runnable-stub boundary");
         Ok(())
     }
 
@@ -505,4 +527,17 @@ fn format_hex(bytes: &[u8]) -> String {
         let _ = write!(&mut out, "{:02x}", byte);
     }
     out
+}
+
+fn expect_activation_stub(
+    result: Result<(), &'static str>,
+    label: &str,
+) -> Result<(), &'static str> {
+    match result {
+        Err(reason) => {
+            serial_println!("{} blocked: {}", label, reason);
+            Ok(())
+        }
+        Ok(()) => Err("executor activation unexpectedly completed on stub boundary"),
+    }
 }

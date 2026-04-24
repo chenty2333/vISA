@@ -342,13 +342,22 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.not_migrated.join(", ")
         );
         println!(
-            "replay boundary scheduler_cursor={} random_epoch={} irq={} dma={} net_inputs={} dmw_leases={} cow_epoch={} background_pages={}",
+            "replay boundary scheduler_cursor={} random_epoch={} irq={} dma={} net_inputs={} dmw_leases={} active_mmio={} active_dma={} active_irq={} active_packet_device={} active_virtqueue={} cow_epoch={} background_pages={}",
             package.substrate_boundary.scheduler_decision_cursor,
             package.substrate_boundary.random_epoch,
             package.substrate_boundary.pending_irq_causes,
             package.substrate_boundary.pending_dma_completions,
             package.substrate_boundary.pending_network_inputs,
             package.substrate_boundary.active_dmw_lease_count,
+            package.substrate_boundary.active_mmio_authority_count,
+            package.substrate_boundary.active_dma_authority_count,
+            package.substrate_boundary.active_irq_authority_count,
+            package
+                .substrate_boundary
+                .active_packet_device_authority_count,
+            package
+                .substrate_boundary
+                .active_virtio_queue_authority_count,
             package.substrate_boundary.cow_epoch,
             package.substrate_boundary.background_copy_pages
         );
@@ -515,6 +524,16 @@ fn print_replay_json(
             "sockets": package.semantic.network_socket_count,
             "rx_bytes": package.semantic.network_rx_queue_bytes
         },
+        "substrate_boundary": {
+            "pending_irq_causes": package.substrate_boundary.pending_irq_causes,
+            "pending_dma_completions": package.substrate_boundary.pending_dma_completions,
+            "active_dmw_lease_count": package.substrate_boundary.active_dmw_lease_count,
+            "active_mmio_authority_count": package.substrate_boundary.active_mmio_authority_count,
+            "active_dma_authority_count": package.substrate_boundary.active_dma_authority_count,
+            "active_irq_authority_count": package.substrate_boundary.active_irq_authority_count,
+            "active_packet_device_authority_count": package.substrate_boundary.active_packet_device_authority_count,
+            "active_virtio_queue_authority_count": package.substrate_boundary.active_virtio_queue_authority_count
+        },
         "roots": {
             "tasks": package.semantic.roots.task_roots.len(),
             "resources": package.semantic.roots.resource_roots.len(),
@@ -557,11 +576,20 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.executor_transition_count
     );
     println!(
-        "substrate boundary: irq={} dma={} net_inputs={} dmw={} cow_epoch={} background_pages={}",
+        "substrate boundary: irq={} dma={} net_inputs={} dmw={} active_mmio={} active_dma={} active_irq={} active_packet_device={} active_virtqueue={} cow_epoch={} background_pages={}",
         package.substrate_boundary.pending_irq_causes,
         package.substrate_boundary.pending_dma_completions,
         package.substrate_boundary.pending_network_inputs,
         package.substrate_boundary.active_dmw_lease_count,
+        package.substrate_boundary.active_mmio_authority_count,
+        package.substrate_boundary.active_dma_authority_count,
+        package.substrate_boundary.active_irq_authority_count,
+        package
+            .substrate_boundary
+            .active_packet_device_authority_count,
+        package
+            .substrate_boundary
+            .active_virtio_queue_authority_count,
         package.substrate_boundary.cow_epoch,
         package.substrate_boundary.background_copy_pages
     );

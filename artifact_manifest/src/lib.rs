@@ -235,6 +235,16 @@ pub struct SubstrateBoundaryManifest {
     pub pending_dma_completions: u32,
     pub active_dmw_lease_count: u32,
     #[serde(default)]
+    pub active_mmio_authority_count: u32,
+    #[serde(default)]
+    pub active_dma_authority_count: u32,
+    #[serde(default)]
+    pub active_irq_authority_count: u32,
+    #[serde(default)]
+    pub active_packet_device_authority_count: u32,
+    #[serde(default)]
+    pub active_virtio_queue_authority_count: u32,
+    #[serde(default)]
     pub pending_network_inputs: u32,
     #[serde(default)]
     pub random_epoch: u64,

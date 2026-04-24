@@ -2,6 +2,7 @@ use semantic_core::{StoreDropReport, StoreId, StoreRebindReport, TrapClass};
 
 use super::fault::{ClassifiedFault, classify_service_trap};
 use super::runtime::PrototypeRuntime;
+use super::store_manager::StoreAuthorityRebindRequest;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn store_lifecycle_line(&self, package: &str) -> Option<alloc::string::String> {
@@ -27,6 +28,65 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<StoreRebindReport, &'static str> {
         self.store_manager
             .rebind_instance(&mut self.semantic, store)
+    }
+
+    pub(crate) fn rebind_store_authorities(
+        &mut self,
+        report: StoreRebindReport,
+    ) -> Result<(), &'static str> {
+        let Some(request) = self.store_manager.authority_rebind_request(report.store) else {
+            return Ok(());
+        };
+        match request {
+            StoreAuthorityRebindRequest::NetworkDriver { .. } => self
+                .net
+                .bind_driver_resources(&self.authority, &mut self.semantic),
+        }
+    }
+
+    pub(crate) fn try_publish_store_code(&mut self, package: &str) -> Result<(), &'static str> {
+        let store = self
+            .store_id(package)
+            .ok_or("store was not registered in store manager")?;
+        let result = self
+            .store_manager
+            .try_publish_code(&mut self.semantic, store)
+            .map_err(|error| error.message());
+        super::boundary::publish_code_published_boundary(
+            &mut self.semantic,
+            self.executor_plan.profile.runtime_executor_abi,
+        );
+        result
+    }
+
+    pub(crate) fn try_link_store_hostcalls(&mut self, package: &str) -> Result<(), &'static str> {
+        let store = self
+            .store_id(package)
+            .ok_or("store was not registered in store manager")?;
+        let result = self
+            .store_manager
+            .try_link_hostcalls(&mut self.semantic, store)
+            .map_err(|error| error.message());
+        super::boundary::publish_hostcalls_linked_boundary(
+            &mut self.semantic,
+            self.executor_plan.profile.runtime_executor_abi,
+        );
+        result
+    }
+
+    pub(crate) fn try_mark_store_runnable(&mut self, package: &str) -> Result<(), &'static str> {
+        let store = self
+            .store_id(package)
+            .ok_or("store was not registered in store manager")?;
+        let result = self
+            .store_manager
+            .try_mark_runnable(&mut self.semantic, store)
+            .map_err(|error| error.message());
+        super::boundary::publish_runnable_blocked_boundary(
+            &mut self.semantic,
+            self.executor_plan.profile.runtime_executor_abi,
+        );
+        result
     }
 
     pub(crate) fn record_service_trap(

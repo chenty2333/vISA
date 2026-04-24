@@ -93,10 +93,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.execute_failure_effect(FailureEffect::CompleteWithErrno(ERR_EIO));
             ServiceCallError::Errno(ERR_EIO)
         })?;
-        self.rebind_store_instance(reboot.store)
+        let rebind = self
+            .rebind_store_instance(reboot.store)
             .map_err(ServiceCallError::Invalid)?;
-        self.net
-            .rebind_driver_authority(&self.authority, &mut self.semantic)
+        self.rebind_store_authorities(rebind)
             .map_err(ServiceCallError::Invalid)?;
         self.net_driver
             .reset_sequence(crate::interrupts::tick_count())?;

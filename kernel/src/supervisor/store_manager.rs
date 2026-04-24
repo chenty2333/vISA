@@ -81,6 +81,41 @@ pub(crate) struct StoreMicroReboot {
     pub(crate) trap: TrapClass,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StoreAuthorityRebindRequest {
+    NetworkDriver {
+        store: StoreId,
+        package: &'static str,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StoreExecutorActivationError {
+    StoreMissing,
+    InvalidTransition(&'static str),
+    CodePublishNotLinked,
+    HostcallTrampolineNotLinked,
+    RunnableEntryNotLinked,
+}
+
+impl StoreExecutorActivationError {
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::StoreMissing => "store was not registered in store manager",
+            Self::InvalidTransition(message) => message,
+            Self::CodePublishNotLinked => {
+                "target code publish is stubbed; executable cwasm memory is not installed"
+            }
+            Self::HostcallTrampolineNotLinked => {
+                "target hostcall trampoline is stubbed; hostcalls are not executable"
+            }
+            Self::RunnableEntryNotLinked => {
+                "target runnable entry trampoline is stubbed; store cannot execute yet"
+            }
+        }
+    }
+}
+
 impl StoreManager {
     pub(crate) fn from_load_plan(
         plan: &ArtifactLoadPlan,
@@ -264,6 +299,56 @@ impl StoreManager {
         self.set_state(semantic, store, StoreState::Running)
     }
 
+    pub(crate) fn try_publish_code(
+        &mut self,
+        semantic: &mut SemanticGraph,
+        store: StoreId,
+    ) -> Result<(), StoreExecutorActivationError> {
+        let transition = self
+            .record_mut(store)
+            .map_err(|_| StoreExecutorActivationError::StoreMissing)?
+            .executor_runtime
+            .publish_code()
+            .map_err(|error| StoreExecutorActivationError::InvalidTransition(error.message()))?;
+        record_executor_transition(semantic, store, transition);
+        Err(StoreExecutorActivationError::CodePublishNotLinked)
+    }
+
+    pub(crate) fn try_link_hostcalls(
+        &mut self,
+        semantic: &mut SemanticGraph,
+        store: StoreId,
+    ) -> Result<(), StoreExecutorActivationError> {
+        let transition = self
+            .record_mut(store)
+            .map_err(|_| StoreExecutorActivationError::StoreMissing)?
+            .executor_runtime
+            .link_hostcalls()
+            .map_err(|error| StoreExecutorActivationError::InvalidTransition(error.message()))?;
+        record_executor_transition(semantic, store, transition);
+        Err(StoreExecutorActivationError::HostcallTrampolineNotLinked)
+    }
+
+    pub(crate) fn try_mark_runnable(
+        &mut self,
+        semantic: &mut SemanticGraph,
+        store: StoreId,
+    ) -> Result<(), StoreExecutorActivationError> {
+        let transition = {
+            let record = self
+                .record_mut(store)
+                .map_err(|_| StoreExecutorActivationError::StoreMissing)?;
+            let mut transition = record.executor_runtime.mark_runnable().map_err(|error| {
+                StoreExecutorActivationError::InvalidTransition(error.message())
+            })?;
+            record.executor_runtime.blocked_by = Some("target-entry-trampoline-not-linked");
+            transition.blocked_by = record.executor_runtime.blocked_by;
+            transition
+        };
+        record_executor_transition(semantic, store, transition);
+        Err(StoreExecutorActivationError::RunnableEntryNotLinked)
+    }
+
     pub(crate) fn record_trap(
         &mut self,
         semantic: &mut SemanticGraph,
@@ -292,6 +377,21 @@ impl StoreManager {
             .iter()
             .find(|record| record.package == package)
             .map(|record| record.store)
+    }
+
+    pub(crate) fn authority_rebind_request(
+        &self,
+        store: StoreId,
+    ) -> Option<StoreAuthorityRebindRequest> {
+        let record = self.records.iter().find(|record| record.store == store)?;
+        if record.package == "driver_virtio_net" {
+            Some(StoreAuthorityRebindRequest::NetworkDriver {
+                store,
+                package: record.package,
+            })
+        } else {
+            None
+        }
     }
 
     fn record_index(&self, store: StoreId) -> Result<usize, &'static str> {

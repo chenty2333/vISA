@@ -108,6 +108,45 @@ pub(super) fn publish_boot_boundaries(
     );
 }
 
+pub(super) fn publish_code_published_boundary(
+    graph: &mut SemanticGraph,
+    runtime_executor_abi: &'static str,
+) {
+    graph.publish_boundary(
+        "target-cwasm",
+        BoundaryKind::RuntimeExecutor,
+        BoundaryStatus::CodePublished,
+        runtime_executor_abi,
+        Some("target-code-publish-stub"),
+    );
+}
+
+pub(super) fn publish_hostcalls_linked_boundary(
+    graph: &mut SemanticGraph,
+    runtime_executor_abi: &'static str,
+) {
+    graph.publish_boundary(
+        "hostcall-table",
+        BoundaryKind::HostcallTable,
+        BoundaryStatus::HostcallsLinked,
+        runtime_executor_abi,
+        Some("hostcall-trampoline-stub"),
+    );
+}
+
+pub(super) fn publish_runnable_blocked_boundary(
+    graph: &mut SemanticGraph,
+    runtime_executor_abi: &'static str,
+) {
+    graph.publish_boundary(
+        "target-cwasm",
+        BoundaryKind::RuntimeExecutor,
+        BoundaryStatus::Runnable,
+        runtime_executor_abi,
+        Some("target-entry-trampoline-not-linked"),
+    );
+}
+
 fn hostcall_table_status(executor_plan: &ExecutorLoadPlan) -> BoundaryStatus {
     if executor_plan
         .stores()

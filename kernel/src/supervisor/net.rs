@@ -77,7 +77,7 @@ impl NetworkPlane {
         })
     }
 
-    pub(crate) fn rebind_driver_authority(
+    pub(crate) fn bind_driver_resources(
         &mut self,
         authority: &AuthorityPlane,
         semantic: &mut SemanticGraph,
