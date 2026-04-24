@@ -215,6 +215,10 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub migration_object_count: usize,
     #[serde(default)]
+    pub tombstone_count: usize,
+    #[serde(default)]
+    pub contract_violation_count: usize,
+    #[serde(default)]
     pub target_artifacts: Vec<TargetArtifactImageManifest>,
     #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
@@ -226,6 +230,10 @@ pub struct SemanticSnapshotManifest {
     pub hostcall_trace: Vec<HostcallTraceManifest>,
     #[serde(default)]
     pub migration_objects: Vec<MigrationObjectManifest>,
+    #[serde(default)]
+    pub tombstones: Vec<TombstoneManifest>,
+    #[serde(default)]
+    pub contract_violations: Vec<ContractViolationManifest>,
     #[serde(default)]
     pub network_socket_count: u32,
     #[serde(default)]
@@ -268,6 +276,10 @@ pub struct SemanticRootSetManifest {
     pub hostcall_trace_roots: Vec<String>,
     #[serde(default)]
     pub migration_object_roots: Vec<String>,
+    #[serde(default)]
+    pub tombstone_roots: Vec<String>,
+    #[serde(default)]
+    pub contract_violation_roots: Vec<String>,
     #[serde(default)]
     pub event_log_tail: Vec<String>,
 }
@@ -378,6 +390,8 @@ pub struct ActivationRecordManifest {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct TrapRecordManifest {
     pub id: u64,
+    #[serde(default)]
+    pub generation: u64,
     pub class: String,
     pub store: Option<u64>,
     pub activation: Option<u64>,
@@ -392,6 +406,10 @@ pub struct TrapRecordManifest {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct HostcallTraceManifest {
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default)]
+    pub generation: u64,
     #[serde(default)]
     pub abi_version: String,
     #[serde(default)]
@@ -456,6 +474,31 @@ pub struct MigrationObjectManifest {
     pub object: String,
     pub class: String,
     pub reason: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct TombstoneManifest {
+    pub kind: String,
+    pub id: u64,
+    pub generation: u64,
+    pub died_at: u64,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ContractObjectRefManifest {
+    pub kind: String,
+    pub id: u64,
+    pub generation: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ContractViolationManifest {
+    pub kind: String,
+    pub edge: String,
+    pub from: ContractObjectRefManifest,
+    pub to: Option<ContractObjectRefManifest>,
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

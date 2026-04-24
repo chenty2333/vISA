@@ -19,3 +19,4 @@ pub type ActivationId = u64;
 pub type HostcallTableId = u64;
 pub type TargetTrapId = u64;
 pub type DmwLeaseId = u64;
+pub type HostcallTraceId = u64;

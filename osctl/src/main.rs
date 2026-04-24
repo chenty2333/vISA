@@ -178,7 +178,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|event <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|event <manifest-or-migration.json> [filter]"
     );
     eprintln!(
         "  osctl replay --until <event-cursor> [--manifest <manifest.json>] [--json] <migration.json>"
@@ -442,7 +442,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
 fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
     println!(
-        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={}",
+        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.task_roots.len(),
@@ -460,7 +460,9 @@ fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
         package.semantic.roots.activation_record_roots.len(),
         package.semantic.roots.trap_roots.len(),
         package.semantic.roots.hostcall_trace_roots.len(),
-        package.semantic.roots.migration_object_roots.len()
+        package.semantic.roots.migration_object_roots.len(),
+        package.semantic.roots.tombstone_roots.len(),
+        package.semantic.roots.contract_violation_roots.len()
     );
     print_roots("task", &package.semantic.roots.task_roots);
     print_roots("resource", &package.semantic.roots.resource_roots);
@@ -496,6 +498,8 @@ fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
         "migration-object",
         &package.semantic.roots.migration_object_roots,
     );
+    print_roots("tombstone", &package.semantic.roots.tombstone_roots);
+    print_roots("contract", &package.semantic.roots.contract_violation_roots);
     Ok(())
 }
 
@@ -788,6 +792,56 @@ fn inspect_package_object(
                 print_if_matches(&line, filter);
             }
         }
+        "tombstone" => {
+            println!(
+                "inspect tombstone package={} count={}",
+                package.package_id, package.semantic.tombstone_count
+            );
+            for tombstone in &package.semantic.tombstones {
+                let line = format!(
+                    "tombstone kind={} id={} generation={} died_at={} reason={}",
+                    tombstone.kind,
+                    tombstone.id,
+                    tombstone.generation,
+                    tombstone.died_at,
+                    tombstone.reason
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.tombstones.is_empty() {
+                print_roots_filtered("tombstone", &package.semantic.roots.tombstone_roots, filter);
+            }
+        }
+        "contract" => {
+            println!(
+                "inspect contract package={} violations={}",
+                package.package_id, package.semantic.contract_violation_count
+            );
+            for violation in &package.semantic.contract_violations {
+                let to = violation.to.as_ref().map_or_else(
+                    || "none".to_owned(),
+                    |to| format!("{}:{}@{}", to.kind, to.id, to.generation),
+                );
+                let line = format!(
+                    "contract violation kind={} edge={} from={}:{}@{} to={} detail={}",
+                    violation.kind,
+                    violation.edge,
+                    violation.from.kind,
+                    violation.from.id,
+                    violation.from.generation,
+                    to,
+                    violation.detail
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.contract_violations.is_empty() {
+                print_roots_filtered(
+                    "contract",
+                    &package.semantic.roots.contract_violation_roots,
+                    filter,
+                );
+            }
+        }
         _ => return Err(format!("unknown inspect kind `{kind}`").into()),
     }
     Ok(())
@@ -1007,6 +1061,8 @@ fn print_replay_json(
             "traps": package.semantic.roots.trap_roots.len(),
             "hostcalls": package.semantic.roots.hostcall_trace_roots.len(),
             "migration_objects": package.semantic.roots.migration_object_roots.len(),
+            "tombstones": package.semantic.roots.tombstone_roots.len(),
+            "contract_violations": package.semantic.roots.contract_violation_roots.len(),
             "event_tail": package.semantic.roots.event_log_tail.len(),
             "boundary_roots": &package.semantic.roots.boundary_roots,
             "artifact_verification_roots": &package.semantic.roots.artifact_verification_roots,
@@ -1017,7 +1073,9 @@ fn print_replay_json(
             "activation_record_roots": &package.semantic.roots.activation_record_roots,
             "trap_roots": &package.semantic.roots.trap_roots,
             "hostcall_trace_roots": &package.semantic.roots.hostcall_trace_roots,
-            "migration_object_roots": &package.semantic.roots.migration_object_roots
+            "migration_object_roots": &package.semantic.roots.migration_object_roots,
+            "tombstone_roots": &package.semantic.roots.tombstone_roots,
+            "contract_violation_roots": &package.semantic.roots.contract_violation_roots
         }
     });
     println!("{}", serde_json::to_string_pretty(&value)?);

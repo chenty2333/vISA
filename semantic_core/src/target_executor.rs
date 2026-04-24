@@ -5,6 +5,102 @@ use alloc::vec::Vec;
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContractObjectKind {
+    Artifact,
+    CodeObject,
+    Store,
+    Activation,
+    Trap,
+    Hostcall,
+    Capability,
+    WaitToken,
+    MemoryObject,
+    Tombstone,
+    ExternalObject,
+}
+
+impl ContractObjectKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Artifact => "artifact",
+            Self::CodeObject => "code-object",
+            Self::Store => "store",
+            Self::Activation => "activation",
+            Self::Trap => "trap",
+            Self::Hostcall => "hostcall",
+            Self::Capability => "capability",
+            Self::WaitToken => "wait-token",
+            Self::MemoryObject => "memory-object",
+            Self::Tombstone => "tombstone",
+            Self::ExternalObject => "external-object",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContractObjectRef {
+    pub kind: ContractObjectKind,
+    pub id: u64,
+    pub generation: Generation,
+}
+
+impl ContractObjectRef {
+    pub const fn new(kind: ContractObjectKind, id: u64, generation: Generation) -> Self {
+        Self {
+            kind,
+            id,
+            generation,
+        }
+    }
+
+    pub fn summary(self) -> String {
+        format!("{}:{}@{}", self.kind.as_str(), self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TombstoneRecord {
+    pub kind: ContractObjectKind,
+    pub id: u64,
+    pub generation: Generation,
+    pub died_at: EventId,
+    pub reason: String,
+}
+
+impl TombstoneRecord {
+    pub fn new(
+        kind: ContractObjectKind,
+        id: u64,
+        generation: Generation,
+        died_at: EventId,
+        reason: &str,
+    ) -> Self {
+        Self {
+            kind,
+            id,
+            generation,
+            died_at,
+            reason: reason.to_string(),
+        }
+    }
+
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(self.kind, self.id, self.generation)
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "tombstone kind={} id={} generation={} died_at={} reason={}",
+            self.kind.as_str(),
+            self.id,
+            self.generation,
+            self.died_at,
+            self.reason
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetArtifactKind {
     Cwasm,
     SupervisorCore,
@@ -758,14 +854,18 @@ impl CodePublisherError {
 #[derive(Clone, Debug)]
 pub struct CodePublisher {
     next_code_id: CodeObjectId,
+    next_tombstone_event: EventId,
     objects: Vec<CodeObject>,
+    tombstones: Vec<TombstoneRecord>,
 }
 
 impl CodePublisher {
     pub const fn new() -> Self {
         Self {
             next_code_id: 1,
+            next_tombstone_event: 1,
             objects: Vec::new(),
+            tombstones: Vec::new(),
         }
     }
 
@@ -846,6 +946,13 @@ impl CodePublisher {
         }
         object.state = CodeObjectState::Faulted;
         object.generation += 1;
+        let generation = object.generation;
+        self.record_tombstone(
+            ContractObjectKind::CodeObject,
+            id,
+            generation,
+            "code-faulted",
+        );
         Ok(())
     }
 
@@ -856,6 +963,13 @@ impl CodePublisher {
         }
         object.state = CodeObjectState::Retired;
         object.generation += 1;
+        let generation = object.generation;
+        self.record_tombstone(
+            ContractObjectKind::CodeObject,
+            id,
+            generation,
+            "code-retired",
+        );
         Ok(())
     }
 
@@ -879,6 +993,10 @@ impl CodePublisher {
         &self.objects
     }
 
+    pub fn tombstones(&self) -> &[TombstoneRecord] {
+        &self.tombstones
+    }
+
     fn transition(
         &mut self,
         id: CodeObjectId,
@@ -899,6 +1017,19 @@ impl CodePublisher {
             .iter_mut()
             .find(|object| object.id == id)
             .ok_or(CodePublisherError::CodeObjectMissing)
+    }
+
+    fn record_tombstone(
+        &mut self,
+        kind: ContractObjectKind,
+        id: u64,
+        generation: Generation,
+        reason: &str,
+    ) {
+        let event = self.next_tombstone_event;
+        self.next_tombstone_event += 1;
+        self.tombstones
+            .push(TombstoneRecord::new(kind, id, generation, event, reason));
     }
 }
 
@@ -948,14 +1079,18 @@ impl TargetStoreManagerError {
 #[derive(Clone, Debug)]
 pub struct TargetStoreManager {
     next_store_id: StoreId,
+    next_tombstone_event: EventId,
     records: Vec<ManagedStoreRecord>,
+    tombstones: Vec<TombstoneRecord>,
 }
 
 impl TargetStoreManager {
     pub const fn new() -> Self {
         Self {
             next_store_id: 1,
+            next_tombstone_event: 1,
             records: Vec::new(),
+            tombstones: Vec::new(),
         }
     }
 
@@ -1006,7 +1141,14 @@ impl TargetStoreManager {
     }
 
     pub fn drop_store(&mut self, store: StoreId) -> Result<(), TargetStoreManagerError> {
-        self.set_state(store, StoreState::Dead)
+        self.set_state(store, StoreState::Dead)?;
+        let generation = self
+            .record(store)
+            .ok_or(TargetStoreManagerError::StoreMissing)?
+            .store
+            .generation;
+        self.record_tombstone(ContractObjectKind::Store, store, generation, "store-dead");
+        Ok(())
     }
 
     pub fn rebind_store(&mut self, store: StoreId) -> Result<(), TargetStoreManagerError> {
@@ -1031,6 +1173,10 @@ impl TargetStoreManager {
         &self.records
     }
 
+    pub fn tombstones(&self) -> &[TombstoneRecord] {
+        &self.tombstones
+    }
+
     fn set_state(
         &mut self,
         store: StoreId,
@@ -1050,6 +1196,19 @@ impl TargetStoreManager {
             .iter_mut()
             .find(|record| record.store.id == store)
             .ok_or(TargetStoreManagerError::StoreMissing)
+    }
+
+    fn record_tombstone(
+        &mut self,
+        kind: ContractObjectKind,
+        id: u64,
+        generation: Generation,
+        reason: &str,
+    ) {
+        let event = self.next_tombstone_event;
+        self.next_tombstone_event += 1;
+        self.tombstones
+            .push(TombstoneRecord::new(kind, id, generation, event, reason));
     }
 }
 
@@ -1236,6 +1395,7 @@ impl TargetTrapClass {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TargetTrapRecord {
     pub id: TargetTrapId,
+    pub generation: Generation,
     pub class: TargetTrapClass,
     pub store: Option<StoreId>,
     pub activation: Option<ActivationId>,
@@ -1272,8 +1432,9 @@ impl TargetTrapRecord {
             .unwrap_or_else(|| "none".to_string());
         let hostcall = self.hostcall.as_deref().unwrap_or("none");
         format!(
-            "trap id={} class={} store={} activation={} code={} artifact={} offset={} hostcall={} policy={} effect={} detail={}",
+            "trap id={} generation={} class={} store={} activation={} code={} artifact={} offset={} hostcall={} policy={} effect={} detail={}",
             self.id,
+            self.generation,
             self.class.as_str(),
             store,
             activation,
@@ -1439,6 +1600,8 @@ impl HostcallFrame {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostcallTraceRecord {
+    pub id: HostcallTraceId,
+    pub generation: Generation,
     pub abi_version: String,
     pub frame_size: u16,
     pub flags: u32,
@@ -1472,7 +1635,9 @@ pub struct HostcallTraceRecord {
 impl HostcallTraceRecord {
     pub fn summary(&self) -> String {
         format!(
-            "hostcall abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} subject={} object={} op={} allowed={} result={} ret={}",
+            "hostcall id={} generation={} abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} subject={} object={} op={} allowed={} result={} ret={}",
+            self.id,
+            self.generation,
             self.abi_version,
             self.frame_size,
             self.hostcall_seq,
@@ -1600,6 +1765,7 @@ impl TargetExecutorError {
 pub struct TargetExecutor {
     next_activation_id: ActivationId,
     next_trap_id: TargetTrapId,
+    next_hostcall_trace_id: HostcallTraceId,
     next_lease_id: DmwLeaseId,
     next_event_id: EventId,
     activations: Vec<ActivationRecord>,
@@ -1614,6 +1780,7 @@ impl TargetExecutor {
         Self {
             next_activation_id: 1,
             next_trap_id: 1,
+            next_hostcall_trace_id: 1,
             next_lease_id: 1,
             next_event_id: 1,
             activations: Vec::new(),
@@ -2090,12 +2257,15 @@ impl TargetExecutor {
             return Err(TargetExecutorError::DmwLeaseActive);
         }
         let exit_event = self.next_event("activation-pending");
-        let activation = &mut self.activations[activation_index];
-        activation.state = ActivationState::Pending;
-        activation.blocked_wait = Some(wait);
-        activation.return_tag = Some(HostcallReturnTag::Pending);
-        activation.exit_event = Some(exit_event);
-        activation.generation += 1;
+        let activation_id = activation;
+        let record = &mut self.activations[activation_index];
+        record.state = ActivationState::Pending;
+        record.blocked_wait = Some(wait);
+        record.return_tag = Some(HostcallReturnTag::Pending);
+        record.exit_event = Some(exit_event);
+        record.generation += 1;
+        let generation = record.generation;
+        self.refresh_hostcall_activation_generation(activation_id, generation);
         Ok(())
     }
 
@@ -2113,12 +2283,15 @@ impl TargetExecutor {
             );
             return Err(TargetExecutorError::DmwLeaseActive);
         }
+        let activation_id = activation;
         let exit_event = self.next_event("activation-returned");
-        let activation = &mut self.activations[activation_index];
-        activation.state = ActivationState::Returned;
-        activation.return_tag = Some(HostcallReturnTag::Ok);
-        activation.exit_event = Some(exit_event);
-        activation.generation += 1;
+        let record = &mut self.activations[activation_index];
+        record.state = ActivationState::Returned;
+        record.return_tag = Some(HostcallReturnTag::Ok);
+        record.exit_event = Some(exit_event);
+        record.generation += 1;
+        let generation = record.generation;
+        self.refresh_hostcall_activation_generation(activation_id, generation);
         Ok(())
     }
 
@@ -2166,6 +2339,7 @@ impl TargetExecutor {
         self.next_trap_id += 1;
         self.traps.push(TargetTrapRecord {
             id,
+            generation: 1,
             class,
             store: Some(store),
             activation,
@@ -2324,12 +2498,21 @@ impl TargetExecutor {
         trap_out: Option<TargetTrapId>,
         wait_token_out: Option<WaitId>,
     ) {
+        let id = self.next_hostcall_trace_id;
+        self.next_hostcall_trace_id += 1;
         self.hostcall_trace.push(HostcallTraceRecord {
+            id,
+            generation: 1,
             abi_version: frame.abi_version.clone(),
             frame_size: frame.frame_size,
             flags: frame.flags,
             activation: frame.activation,
-            activation_generation: frame.activation_generation,
+            activation_generation: self
+                .activations
+                .iter()
+                .find(|activation| activation.id == frame.activation)
+                .map(|activation| activation.generation)
+                .unwrap_or(frame.activation_generation),
             store: frame.store,
             store_generation: frame.store_generation,
             code_object: frame.code_object,
@@ -2373,6 +2556,7 @@ impl TargetExecutor {
         self.next_trap_id += 1;
         self.traps.push(TargetTrapRecord {
             id,
+            generation: 1,
             class,
             store: Some(store),
             activation: Some(activation_id),
@@ -2391,7 +2575,21 @@ impl TargetExecutor {
         activation.return_tag = Some(HostcallReturnTag::Trap);
         activation.exit_event = Some(exit_event);
         activation.generation += 1;
+        let generation = activation.generation;
+        self.refresh_hostcall_activation_generation(activation_id, generation);
         id
+    }
+
+    fn refresh_hostcall_activation_generation(
+        &mut self,
+        activation: ActivationId,
+        generation: Generation,
+    ) {
+        for trace in &mut self.hostcall_trace {
+            if trace.activation == activation {
+                trace.activation_generation = generation;
+            }
+        }
     }
 
     fn release_all_leases_for_activation_id(
@@ -3109,6 +3307,103 @@ mod tests {
             AuthorityMatrix::check("unknown", "op", false),
             Err(AuthorityMatrixError::UnknownObjectClass)
         );
+    }
+
+    #[test]
+    fn contract_graph_validator_reports_generation_dead_and_tombstone_edges() {
+        let (artifact, store, code, _capabilities) = running_store_and_code();
+        let mut executor = TargetExecutor::new();
+        let activation_id = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("_start".to_string()),
+            )
+            .unwrap();
+        let activation = executor
+            .activations()
+            .iter()
+            .find(|activation| activation.id == activation_id)
+            .unwrap()
+            .clone();
+        let mut stale_store = store.store.clone();
+        stale_store.generation += 1;
+        let mut retired_code = code.clone();
+        retired_code.state = CodeObjectState::Retired;
+        let tombstone = TombstoneRecord::new(
+            ContractObjectKind::CodeObject,
+            retired_code.id,
+            retired_code.generation,
+            42,
+            "code-retired",
+        );
+        let trap = TargetTrapRecord {
+            id: 99,
+            generation: 1,
+            class: TargetTrapClass::HostcallTrap,
+            store: Some(stale_store.id),
+            activation: Some(999),
+            code_object: Some(retired_code.id),
+            artifact: Some(retired_code.artifact_id),
+            offset: Some(0),
+            hostcall: Some("hostcall.bad".to_string()),
+            fault_policy: "debug".to_string(),
+            effect: FailureEffect::CompleteWithErrno(22),
+            detail: "dangling activation".to_string(),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: {
+                let mut artifacts = Vec::new();
+                artifacts.push(artifact);
+                artifacts
+            },
+            code_objects: {
+                let mut objects = Vec::new();
+                objects.push(retired_code);
+                objects
+            },
+            stores: {
+                let mut stores = Vec::new();
+                stores.push(stale_store);
+                stores
+            },
+            activations: {
+                let mut activations = Vec::new();
+                activations.push(activation);
+                activations
+            },
+            traps: {
+                let mut traps = Vec::new();
+                traps.push(trap);
+                traps
+            },
+            hostcalls: Vec::new(),
+            capabilities: Vec::new(),
+            waits: Vec::new(),
+            tombstones: {
+                let mut tombstones = Vec::new();
+                tombstones.push(tombstone);
+                tombstones
+            },
+        };
+        let violations = validate_contract_graph(&snapshot);
+        assert!(violations.len() >= 4);
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::GenerationMismatch
+                && violation.edge == "activation->store"
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+                && violation.edge == "activation->code"
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::TombstoneReferencedByLiveEdge
+                && violation.edge == "activation->code"
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::DanglingEdge
+                && violation.edge == "trap->activation"
+        }));
     }
 
     #[test]

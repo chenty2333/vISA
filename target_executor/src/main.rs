@@ -7,12 +7,13 @@ mod runtime;
 
 use artifact_manifest::{
     ActivationRecordManifest, ArtifactBundleManifest, CapabilityHandleArgManifest,
-    CodeObjectManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, RequiredArtifactProfileManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SubstrateBoundaryManifest,
-    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
-    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TrapRecordManifest,
+    CodeObjectManifest, ContractObjectRefManifest, ContractViolationManifest, GuestStateManifest,
+    HostcallSpecManifest, HostcallTraceManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, RequiredArtifactProfileManifest, SemanticRootSetManifest,
+    SemanticSnapshotManifest, SubstrateBoundaryManifest, TargetAddressMapEntryManifest,
+    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
+    TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -22,12 +23,13 @@ use runtime::RuntimeOnlyExecutor;
 use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, BoundaryKind, BoundaryStatus,
     CapabilityClass, CapabilityHandleArg, CapabilityLedger, CodeObject, CodePublishState,
-    CodePublisher, EntrypointState, ExpectedTargetArtifact, FrontendKind, HostcallCategory,
-    HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, ManagedStoreRecord,
-    MemoryLayoutState, MigrationObjectRecord, RuntimeMode, SemanticGraph, StoreState,
-    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
-    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
-    TrapSurfaceState, VerifiedArtifact,
+    CodePublisher, ContractGraphSnapshot, ContractObjectRef, ContractViolation, EntrypointState,
+    ExpectedTargetArtifact, FrontendKind, HostcallCategory, HostcallFrame, HostcallLinkState,
+    HostcallSpec, HostcallTraceRecord, ManagedStoreRecord, MemoryLayoutState,
+    MigrationObjectRecord, RuntimeMode, SemanticGraph, StoreState, TargetAddressMapEntry,
+    TargetArtifactImage, TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan,
+    TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState, TombstoneRecord,
+    TrapSurfaceState, VerifiedArtifact, validate_contract_graph,
 };
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
@@ -40,6 +42,8 @@ struct TargetExecutorV1Report {
     trap_records: Vec<TrapRecordManifest>,
     hostcall_trace: Vec<HostcallTraceManifest>,
     migration_objects: Vec<MigrationObjectManifest>,
+    tombstones: Vec<TombstoneManifest>,
+    contract_violations: Vec<ContractViolationManifest>,
     target_event_tail: Vec<String>,
 }
 
@@ -242,6 +246,7 @@ fn build_target_executor_v1(
     let mut executor = TargetExecutor::new();
     let mut ledger = CapabilityLedger::new();
     let mut report = TargetExecutorV1Report::default();
+    let mut verified_artifacts = Vec::new();
 
     for (index, entry) in plan.modules.iter().enumerate() {
         let image = target_artifact_image((index + 1) as u64, entry, plan);
@@ -249,6 +254,7 @@ fn build_target_executor_v1(
             .target_artifacts
             .push(target_artifact_manifest(&image));
         let verified = registry.verify(image).map_err(|error| error.message())?;
+        verified_artifacts.push(verified.clone());
         let store_id = semantic_store_id(semantic, &entry.package)?;
         let store_id = store_manager.register_verified_artifact_with_id(
             store_id,
@@ -305,6 +311,37 @@ fn build_target_executor_v1(
             .migration_objects
             .push(migration_object_manifest(&object));
     }
+    for tombstone in publisher
+        .tombstones()
+        .iter()
+        .chain(store_manager.tombstones().iter())
+    {
+        report.tombstones.push(tombstone_manifest(tombstone));
+    }
+    let contract_snapshot = ContractGraphSnapshot {
+        artifacts: verified_artifacts,
+        code_objects: publisher.objects().to_vec(),
+        stores: store_manager
+            .records()
+            .iter()
+            .map(|record| record.store.clone())
+            .collect(),
+        activations: executor.activations().to_vec(),
+        traps: executor.traps().to_vec(),
+        hostcalls: executor.hostcall_trace().to_vec(),
+        capabilities: ledger.records().to_vec(),
+        waits: Vec::new(),
+        tombstones: publisher
+            .tombstones()
+            .iter()
+            .chain(store_manager.tombstones().iter())
+            .cloned()
+            .collect(),
+    };
+    report.contract_violations = validate_contract_graph(&contract_snapshot)
+        .iter()
+        .map(contract_violation_manifest)
+        .collect();
     report.target_event_tail = executor.event_log().to_vec();
     Ok(report)
 }
@@ -865,12 +902,16 @@ fn demo_migration_package(
             trap_record_count: target_v1.trap_records.len(),
             hostcall_trace_count: target_v1.hostcall_trace.len(),
             migration_object_count: target_v1.migration_objects.len(),
+            tombstone_count: target_v1.tombstones.len(),
+            contract_violation_count: target_v1.contract_violations.len(),
             target_artifacts: target_v1.target_artifacts.clone(),
             code_objects: target_v1.code_objects.clone(),
             activation_records: target_v1.activation_records.clone(),
             trap_records: target_v1.trap_records.clone(),
             hostcall_trace: target_v1.hostcall_trace.clone(),
             migration_objects: target_v1.migration_objects.clone(),
+            tombstones: target_v1.tombstones.clone(),
+            contract_violations: target_v1.contract_violations.clone(),
             network_socket_count: 1,
             network_rx_queue_bytes: 0,
         },
@@ -1092,6 +1133,40 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        tombstone_roots: target_v1
+            .tombstones
+            .iter()
+            .map(|tombstone| {
+                format!(
+                    "tombstone kind={} id={} generation={} died_at={} reason={}",
+                    tombstone.kind,
+                    tombstone.id,
+                    tombstone.generation,
+                    tombstone.died_at,
+                    tombstone.reason
+                )
+            })
+            .collect(),
+        contract_violation_roots: target_v1
+            .contract_violations
+            .iter()
+            .map(|violation| {
+                let to = violation.to.as_ref().map_or_else(
+                    || "none".to_owned(),
+                    |to| format!("{}:{}@{}", to.kind, to.id, to.generation),
+                );
+                format!(
+                    "contract-violation kind={} edge={} from={}:{}@{} to={} detail={}",
+                    violation.kind,
+                    violation.edge,
+                    violation.from.kind,
+                    violation.from.id,
+                    violation.from.generation,
+                    to,
+                    violation.detail
+                )
+            })
+            .collect(),
         event_log_tail: semantic
             .event_log_tail(16)
             .iter()
@@ -1187,6 +1262,7 @@ fn activation_record_manifest(
 fn trap_record_manifest(trap: &semantic_core::TargetTrapRecord) -> TrapRecordManifest {
     TrapRecordManifest {
         id: trap.id,
+        generation: trap.generation,
         class: trap.class.as_str().to_owned(),
         store: trap.store,
         activation: trap.activation,
@@ -1202,6 +1278,8 @@ fn trap_record_manifest(trap: &semantic_core::TargetTrapRecord) -> TrapRecordMan
 
 fn hostcall_trace_manifest(trace: &HostcallTraceRecord) -> HostcallTraceManifest {
     HostcallTraceManifest {
+        id: trace.id,
+        generation: trace.generation,
         abi_version: trace.abi_version.clone(),
         frame_size: trace.frame_size,
         flags: trace.flags,
@@ -1248,6 +1326,34 @@ fn migration_object_manifest(record: &MigrationObjectRecord) -> MigrationObjectM
         object: record.object.clone(),
         class: record.class.as_str().to_owned(),
         reason: record.reason.clone(),
+    }
+}
+
+fn tombstone_manifest(record: &TombstoneRecord) -> TombstoneManifest {
+    TombstoneManifest {
+        kind: record.kind.as_str().to_owned(),
+        id: record.id,
+        generation: record.generation,
+        died_at: record.died_at,
+        reason: record.reason.clone(),
+    }
+}
+
+fn contract_object_ref_manifest(reference: ContractObjectRef) -> ContractObjectRefManifest {
+    ContractObjectRefManifest {
+        kind: reference.kind.as_str().to_owned(),
+        id: reference.id,
+        generation: reference.generation,
+    }
+}
+
+fn contract_violation_manifest(violation: &ContractViolation) -> ContractViolationManifest {
+    ContractViolationManifest {
+        kind: violation.kind.as_str().to_owned(),
+        edge: violation.edge.clone(),
+        from: contract_object_ref_manifest(violation.from),
+        to: violation.to.map(contract_object_ref_manifest),
+        detail: violation.detail.clone(),
     }
 }
 
