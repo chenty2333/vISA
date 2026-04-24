@@ -842,6 +842,21 @@ pub struct StoreRecord {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoreDropReport {
+    pub store: StoreId,
+    pub generation: Generation,
+    pub previous_resource: Option<ResourceId>,
+    pub closed_resources: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoreRebindReport {
+    pub store: StoreId,
+    pub generation: Generation,
+    pub resource: ResourceId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransactionState {
     Begun,
     Committed,
@@ -2163,12 +2178,10 @@ impl SemanticGraph {
         self.set_store_state(id, StoreState::Degraded);
     }
 
-    pub fn drop_store_instance(&mut self, id: StoreId) {
-        let Some(index) = self.stores.iter().position(|store| store.id == id) else {
-            return;
-        };
+    pub fn drop_store_instance(&mut self, id: StoreId) -> Option<StoreDropReport> {
+        let index = self.stores.iter().position(|store| store.id == id)?;
         let resource = self.stores[index].resource.take();
-        self.close_resources_owned_by_store(id);
+        let closed_resources = self.close_resources_owned_by_store(id);
         self.set_store_state(id, StoreState::Dead);
         let generation = self.stores[index].generation;
         self.event_log.push(
@@ -2179,9 +2192,15 @@ impl SemanticGraph {
                 resource,
             },
         );
+        Some(StoreDropReport {
+            store: id,
+            generation,
+            previous_resource: resource,
+            closed_resources,
+        })
     }
 
-    pub fn rebind_store_instance(&mut self, id: StoreId) -> Option<ResourceId> {
+    pub fn rebind_store_instance(&mut self, id: StoreId) -> Option<StoreRebindReport> {
         let index = self.stores.iter().position(|store| store.id == id)?;
         let package = self.stores[index].package.clone();
         let artifact = self.stores[index].artifact.clone();
@@ -2207,7 +2226,11 @@ impl SemanticGraph {
             self.stores[index].fault_domain,
             StoreState::Rebinding.fault_domain_state(),
         );
-        Some(resource)
+        Some(StoreRebindReport {
+            store: id,
+            generation,
+            resource,
+        })
     }
 
     pub fn record_driver_trap(&mut self, domain: Option<FaultDomainId>, trap: &str) {
@@ -3358,7 +3381,11 @@ mod tests {
         graph.record_store_trap(store, "injected procfs read fault");
         graph.set_store_state(store, StoreState::Draining);
         graph.set_store_state(store, StoreState::Restarting);
-        graph.drop_store_instance(store);
+        let drop_report = graph
+            .drop_store_instance(store)
+            .expect("dropped store instance");
+        assert_eq!(drop_report.previous_resource, Some(first_resource));
+        assert_eq!(drop_report.closed_resources, 1);
         assert_eq!(
             graph.validate_resource_handle(ResourceHandle::new(first_resource, 1)),
             Err(GenerationCheckError::GenerationMismatch {
@@ -3367,9 +3394,10 @@ mod tests {
             })
         );
 
-        let second_resource = graph
+        let rebind_report = graph
             .rebind_store_instance(store)
             .expect("rebound store resource");
+        let second_resource = rebind_report.resource;
         graph.set_store_state(store, StoreState::Running);
 
         assert_ne!(first_resource, second_resource);

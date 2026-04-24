@@ -1,4 +1,4 @@
-use semantic_core::{StoreId, StoreState, TrapClass};
+use semantic_core::{StoreDropReport, StoreId, StoreRebindReport, TrapClass};
 
 use super::fault::{ClassifiedFault, classify_service_trap};
 use super::runtime::PrototypeRuntime;
@@ -14,23 +14,19 @@ impl<'engine> PrototypeRuntime<'engine> {
             .or_else(|| self.semantic.store_id(package))
     }
 
-    pub(crate) fn set_store_state(&mut self, store: StoreId, state: StoreState) {
-        self.semantic.set_store_state(store, state);
-        self.store_manager.set_state(store, state, &self.semantic);
+    pub(crate) fn drop_store_instance(
+        &mut self,
+        store: StoreId,
+    ) -> Result<StoreDropReport, &'static str> {
+        self.store_manager.drop_instance(&mut self.semantic, store)
     }
 
-    pub(crate) fn drop_store_instance(&mut self, store: StoreId) {
-        self.semantic.drop_store_instance(store);
-        self.store_manager.mark_dropped(store, &self.semantic);
-    }
-
-    pub(crate) fn rebind_store_instance(&mut self, store: StoreId) -> Result<(), &'static str> {
-        self.semantic
-            .rebind_store_instance(store)
-            .map(|_| ())
-            .ok_or("store to rebind was not present")?;
-        self.store_manager.mark_rebound(store, &self.semantic);
-        Ok(())
+    pub(crate) fn rebind_store_instance(
+        &mut self,
+        store: StoreId,
+    ) -> Result<StoreRebindReport, &'static str> {
+        self.store_manager
+            .rebind_instance(&mut self.semantic, store)
     }
 
     pub(crate) fn record_service_trap(
@@ -40,12 +36,17 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Option<ClassifiedFault> {
         let fault = classify_service_trap(package, detail);
         let store = self.store_id(package)?;
-        self.record_store_trap(store, fault.trap, detail);
+        self.record_store_trap(store, fault.trap, detail).ok()?;
         Some(fault)
     }
 
-    pub(crate) fn record_store_trap(&mut self, store: StoreId, trap: TrapClass, detail: &str) {
-        self.semantic.record_store_trap_class(store, trap, detail);
-        self.store_manager.record_trap(store, trap);
+    pub(crate) fn record_store_trap(
+        &mut self,
+        store: StoreId,
+        trap: TrapClass,
+        detail: &str,
+    ) -> Result<(), &'static str> {
+        self.store_manager
+            .record_trap(&mut self.semantic, store, trap, detail)
     }
 }

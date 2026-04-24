@@ -2,12 +2,15 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use semantic_core::{SemanticGraph, StoreId, StoreState, TrapClass};
+use semantic_core::{
+    FaultDomainId, ResourceId, SemanticGraph, StoreDropReport, StoreId, StoreRebindReport,
+    StoreState, TrapClass,
+};
 
 use super::artifacts::{ArtifactLoadPlan, ArtifactManifestBinding, StoreLoadBlueprint};
 use super::engine::{
-    ExecutorHostcallTable, ExecutorLoadPlan, ExecutorMemoryLayout, ExecutorStorePlan,
-    ExecutorStoreState, ExecutorTrapSurface,
+    ExecutorHostcallTable, ExecutorInstanceHandle, ExecutorLoadPlan, ExecutorMemoryLayout,
+    ExecutorStorePlan, ExecutorStoreState, ExecutorTrapSurface,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,6 +57,7 @@ pub(crate) struct StoreRuntimeRecord {
     pub(crate) resource_arena: String,
     pub(crate) cleanup_policy: &'static str,
     pub(crate) rebind_policy: &'static str,
+    pub(crate) executor_instance: ExecutorInstanceHandle,
     pub(crate) executor_state: ExecutorStoreState,
     pub(crate) executor_memory: ExecutorMemoryLayout,
     pub(crate) executor_hostcalls: ExecutorHostcallTable,
@@ -62,10 +66,20 @@ pub(crate) struct StoreRuntimeRecord {
     pub(crate) expected_export_count: usize,
     pub(crate) manifest_binding: ArtifactManifestBinding,
     pub(crate) last_trap: Option<TrapClass>,
+    pub(crate) last_closed_resources: usize,
+    pub(crate) last_dropped_resource: Option<ResourceId>,
+    pub(crate) last_rebound_resource: Option<ResourceId>,
 }
 
 pub(crate) struct StoreManager {
     records: Vec<StoreRuntimeRecord>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StoreMicroReboot {
+    pub(crate) store: StoreId,
+    pub(crate) fault_domain: Option<FaultDomainId>,
+    pub(crate) trap: TrapClass,
 }
 
 impl StoreManager {
@@ -115,6 +129,7 @@ impl StoreManager {
             resource_arena: format!("store-arena:{}", blueprint.package),
             cleanup_policy: executor.cleanup_policy,
             rebind_policy: executor.rebind_policy,
+            executor_instance: executor.handle,
             executor_state: executor.state,
             executor_memory: executor.memory_layout,
             executor_hostcalls: executor.hostcall_table,
@@ -123,44 +138,113 @@ impl StoreManager {
             expected_export_count: blueprint.expected_export_count,
             manifest_binding: blueprint.binding,
             last_trap: None,
+            last_closed_resources: 0,
+            last_dropped_resource: None,
+            last_rebound_resource: semantic_store.resource,
         })
     }
 
     pub(crate) fn set_state(
         &mut self,
+        semantic: &mut SemanticGraph,
         store: StoreId,
         state: StoreState,
-        semantic: &SemanticGraph,
-    ) {
-        if let Some(record) = self.records.iter_mut().find(|record| record.store == store) {
-            record.state = StoreRuntimeState::from_semantic(state);
-            if let Some(semantic_store) = semantic.stores().iter().find(|item| item.id == store) {
-                record.generation = semantic_store.generation;
-                record.restart_count = semantic_store.restart_count;
-            }
-        }
+    ) -> Result<(), &'static str> {
+        self.record_index(store)?;
+        semantic.set_store_state(store, state);
+        self.sync_record(store, semantic)
     }
 
-    pub(crate) fn mark_dropped(&mut self, store: StoreId, semantic: &SemanticGraph) {
-        self.set_state(store, StoreState::Dead, semantic);
-        if let Some(record) = self.records.iter_mut().find(|record| record.store == store) {
-            record.executor_state = ExecutorStoreState::Dropped;
-        }
+    pub(crate) fn begin_micro_reboot(
+        &mut self,
+        semantic: &mut SemanticGraph,
+        package: &str,
+        trap: TrapClass,
+        detail: &str,
+    ) -> Result<StoreMicroReboot, &'static str> {
+        let store = self
+            .store_id(package)
+            .ok_or("store was not registered in store manager")?;
+        let fault_domain = semantic.fault_domain_id(package);
+        self.record_trap(semantic, store, trap, detail)?;
+        self.set_state(semantic, store, StoreState::Draining)?;
+        self.set_state(semantic, store, StoreState::Restarting)?;
+        Ok(StoreMicroReboot {
+            store,
+            fault_domain,
+            trap,
+        })
     }
 
-    pub(crate) fn mark_rebound(&mut self, store: StoreId, semantic: &SemanticGraph) {
-        self.set_state(store, StoreState::Rebinding, semantic);
-        if let Some(record) = self.records.iter_mut().find(|record| record.store == store) {
-            record.executor_state = ExecutorStoreState::CodeUnpublished;
-        }
+    pub(crate) fn drop_instance(
+        &mut self,
+        semantic: &mut SemanticGraph,
+        store: StoreId,
+    ) -> Result<StoreDropReport, &'static str> {
+        self.record_index(store)?;
+        let report = semantic
+            .drop_store_instance(store)
+            .ok_or("store to drop was not present")?;
+        self.sync_record(store, semantic)?;
+        let record = self.record_mut(store)?;
+        record.executor_state = ExecutorStoreState::Dropped;
+        record.executor_instance.generation += 1;
+        record.last_closed_resources = report.closed_resources;
+        record.last_dropped_resource = report.previous_resource;
+        record.last_rebound_resource = None;
+        Ok(report)
     }
 
-    pub(crate) fn record_trap(&mut self, store: StoreId, trap: TrapClass) {
-        if let Some(record) = self.records.iter_mut().find(|record| record.store == store) {
-            record.last_trap = Some(trap);
-            record.state = StoreRuntimeState::Draining;
-            record.executor_state = ExecutorStoreState::Draining;
-        }
+    pub(crate) fn fail_micro_reboot(
+        &mut self,
+        semantic: &mut SemanticGraph,
+        store: StoreId,
+    ) -> Result<StoreDropReport, &'static str> {
+        let report = self.drop_instance(semantic, store)?;
+        self.record_mut(store)?.executor_state = ExecutorStoreState::InstanceUnavailable;
+        Ok(report)
+    }
+
+    pub(crate) fn rebind_instance(
+        &mut self,
+        semantic: &mut SemanticGraph,
+        store: StoreId,
+    ) -> Result<StoreRebindReport, &'static str> {
+        self.record_index(store)?;
+        let report = semantic
+            .rebind_store_instance(store)
+            .ok_or("store to rebind was not present")?;
+        self.sync_record(store, semantic)?;
+        let record = self.record_mut(store)?;
+        record.executor_state = ExecutorStoreState::CodeUnpublished;
+        record.executor_instance.generation += 1;
+        record.last_rebound_resource = Some(report.resource);
+        Ok(report)
+    }
+
+    pub(crate) fn finish_micro_reboot(
+        &mut self,
+        semantic: &mut SemanticGraph,
+        store: StoreId,
+    ) -> Result<(), &'static str> {
+        self.set_state(semantic, store, StoreState::Running)
+    }
+
+    pub(crate) fn record_trap(
+        &mut self,
+        semantic: &mut SemanticGraph,
+        store: StoreId,
+        trap: TrapClass,
+        detail: &str,
+    ) -> Result<(), &'static str> {
+        self.record_index(store)?;
+        semantic.record_store_trap_class(store, trap, detail);
+        self.sync_record(store, semantic)?;
+        let record = self.record_mut(store)?;
+        record.last_trap = Some(trap);
+        record.state = StoreRuntimeState::Draining;
+        record.executor_state = ExecutorStoreState::Draining;
+        Ok(())
     }
 
     pub(crate) fn store_id(&self, package: &str) -> Option<StoreId> {
@@ -168,6 +252,35 @@ impl StoreManager {
             .iter()
             .find(|record| record.package == package)
             .map(|record| record.store)
+    }
+
+    fn record_index(&self, store: StoreId) -> Result<usize, &'static str> {
+        self.records
+            .iter()
+            .position(|record| record.store == store)
+            .ok_or("store was not registered in store manager")
+    }
+
+    fn record_mut(&mut self, store: StoreId) -> Result<&mut StoreRuntimeRecord, &'static str> {
+        let index = self.record_index(store)?;
+        Ok(&mut self.records[index])
+    }
+
+    fn sync_record(
+        &mut self,
+        store: StoreId,
+        semantic: &SemanticGraph,
+    ) -> Result<(), &'static str> {
+        let semantic_store = semantic
+            .stores()
+            .iter()
+            .find(|item| item.id == store)
+            .ok_or("semantic store was not registered")?;
+        let record = self.record_mut(store)?;
+        record.state = StoreRuntimeState::from_semantic(semantic_store.state);
+        record.generation = semantic_store.generation;
+        record.restart_count = semantic_store.restart_count;
+        Ok(())
     }
 
     pub(crate) fn lifecycle_line(&self, semantic: &SemanticGraph, package: &str) -> Option<String> {
@@ -179,12 +292,22 @@ impl StoreManager {
             .stores()
             .iter()
             .find(|item| item.id == record.store)?;
+        let last_dropped = record
+            .last_dropped_resource
+            .map(|resource| resource.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let last_rebound = record
+            .last_rebound_resource
+            .map(|resource| resource.to_string())
+            .unwrap_or_else(|| "none".to_string());
         Some(format!(
-            "store {} state={} runtime={} executor={} generation={} restarts={} resource={} arena={} cap_owner={} cleanup={} rebind={} artifact={} manifest_source={} wasm={} wasm_hash={} abi={} cwasm={} binding={} signature={} signer={} limits=mem{} table{} hostcalls{} executor_mem=pages{} table{} dmw={} publish={} hostcall_table={} max={} exports={} traps={}/{}/{} deps={} exports={} last_trap={}",
+            "store {} state={} runtime={} executor={} executor_instance={}@{} generation={} restarts={} resource={} arena={} cap_owner={} cleanup={} last_closed={} dropped={} rebound={} rebind={} artifact={} manifest_source={} wasm={} wasm_hash={} abi={} cwasm={} binding={} signature={} signer={} limits=mem{} table{} hostcalls{} executor_mem=pages{} table{} dmw={} publish={} hostcall_table={} max={} exports={} traps={}/{}/{} deps={} exports={} last_trap={}",
             record.package,
             semantic_store.state.as_str(),
             record.state.as_str(),
             record.executor_state.as_str(),
+            record.executor_instance.id,
+            record.executor_instance.generation,
             semantic_store.generation,
             semantic_store.restart_count,
             semantic_store
@@ -194,6 +317,9 @@ impl StoreManager {
             record.resource_arena,
             record.capability_owner,
             record.cleanup_policy,
+            record.last_closed_resources,
+            last_dropped,
+            last_rebound,
             record.rebind_policy,
             record.artifact_name,
             record.manifest_binding.source,
