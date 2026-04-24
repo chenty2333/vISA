@@ -104,6 +104,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let authority = AuthorityPlane::new();
         crate::kdebug!("bootstrapping semantic graph");
         let mut semantic = bootstrap_graph(&load_plan, &authority)?;
+        super::boundary::publish_boot_boundaries(&mut semantic, &load_plan, &executor_plan);
         let store_manager =
             StoreManager::from_load_plan(&load_plan, &executor_plan, &mut semantic)?;
         crate::kdebug!("bootstrapping network plane");

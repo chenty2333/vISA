@@ -1,5 +1,6 @@
 mod artifacts;
 mod authority;
+mod boundary;
 mod demos;
 mod engine;
 mod events;

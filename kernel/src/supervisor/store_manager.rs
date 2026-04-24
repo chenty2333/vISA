@@ -9,8 +9,8 @@ use semantic_core::{
 
 use super::artifacts::{ArtifactLoadPlan, ArtifactManifestBinding, StoreLoadBlueprint};
 use super::engine::{
-    ExecutorHostcallTable, ExecutorInstanceHandle, ExecutorLoadPlan, ExecutorMemoryLayout,
-    ExecutorStorePlan, ExecutorStoreState, ExecutorTrapSurface,
+    ExecutorInstanceHandle, ExecutorLoadPlan, ExecutorMemoryLayout, ExecutorRuntimeState,
+    ExecutorStorePlan, ExecutorTransitionReport,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,15 +58,14 @@ pub(crate) struct StoreRuntimeRecord {
     pub(crate) cleanup_policy: &'static str,
     pub(crate) rebind_policy: &'static str,
     pub(crate) executor_instance: ExecutorInstanceHandle,
-    pub(crate) executor_state: ExecutorStoreState,
+    pub(crate) executor_runtime: ExecutorRuntimeState,
     pub(crate) executor_memory: ExecutorMemoryLayout,
-    pub(crate) executor_hostcalls: ExecutorHostcallTable,
-    pub(crate) executor_traps: ExecutorTrapSurface,
     pub(crate) dependency_count: usize,
     pub(crate) expected_export_count: usize,
     pub(crate) manifest_binding: ArtifactManifestBinding,
     pub(crate) last_trap: Option<TrapClass>,
     pub(crate) last_closed_resources: usize,
+    pub(crate) last_revoked_authorities: usize,
     pub(crate) last_dropped_resource: Option<ResourceId>,
     pub(crate) last_rebound_resource: Option<ResourceId>,
 }
@@ -111,6 +110,22 @@ impl StoreManager {
         );
         semantic.set_store_state(store, StoreState::Instantiating);
         semantic.set_store_state(store, StoreState::Running);
+        semantic.record_store_executor_transition(
+            store,
+            "planned",
+            executor.state.as_str(),
+            executor.blocked_by,
+            executor.hostcall_table.state.as_str(),
+            executor.trap_surface.state.as_str(),
+        );
+        for capability in blueprint.capabilities {
+            semantic.grant_manifest_capability(
+                blueprint.package,
+                capability.name,
+                capability.rights,
+                capability.lifetime,
+            );
+        }
         let semantic_store = semantic
             .stores()
             .iter()
@@ -130,15 +145,14 @@ impl StoreManager {
             cleanup_policy: executor.cleanup_policy,
             rebind_policy: executor.rebind_policy,
             executor_instance: executor.handle,
-            executor_state: executor.state,
+            executor_runtime: ExecutorRuntimeState::from_plan(executor),
             executor_memory: executor.memory_layout,
-            executor_hostcalls: executor.hostcall_table,
-            executor_traps: executor.trap_surface,
             dependency_count: blueprint.dependency_count,
             expected_export_count: blueprint.expected_export_count,
             manifest_binding: blueprint.binding,
             last_trap: None,
             last_closed_resources: 0,
+            last_revoked_authorities: 0,
             last_dropped_resource: None,
             last_rebound_resource: semantic_store.resource,
         })
@@ -186,12 +200,20 @@ impl StoreManager {
             .drop_store_instance(store)
             .ok_or("store to drop was not present")?;
         self.sync_record(store, semantic)?;
-        let record = self.record_mut(store)?;
-        record.executor_state = ExecutorStoreState::Dropped;
-        record.executor_instance.generation += 1;
-        record.last_closed_resources = report.closed_resources;
-        record.last_dropped_resource = report.previous_resource;
-        record.last_rebound_resource = None;
+        let transition = {
+            let record = self.record_mut(store)?;
+            let transition = record
+                .executor_runtime
+                .mark_dropped()
+                .map_err(|error| error.message())?;
+            record.executor_instance.generation += 1;
+            record.last_closed_resources = report.closed_resources;
+            record.last_revoked_authorities = report.revoked_authorities;
+            record.last_dropped_resource = report.previous_resource;
+            record.last_rebound_resource = None;
+            transition
+        };
+        record_executor_transition(semantic, store, transition);
         Ok(report)
     }
 
@@ -201,7 +223,12 @@ impl StoreManager {
         store: StoreId,
     ) -> Result<StoreDropReport, &'static str> {
         let report = self.drop_instance(semantic, store)?;
-        self.record_mut(store)?.executor_state = ExecutorStoreState::InstanceUnavailable;
+        let transition = self
+            .record_mut(store)?
+            .executor_runtime
+            .mark_faulted()
+            .map_err(|error| error.message())?;
+        record_executor_transition(semantic, store, transition);
         Ok(report)
     }
 
@@ -215,10 +242,17 @@ impl StoreManager {
             .rebind_store_instance(store)
             .ok_or("store to rebind was not present")?;
         self.sync_record(store, semantic)?;
-        let record = self.record_mut(store)?;
-        record.executor_state = ExecutorStoreState::CodeUnpublished;
-        record.executor_instance.generation += 1;
-        record.last_rebound_resource = Some(report.resource);
+        let transition = {
+            let record = self.record_mut(store)?;
+            let transition = record
+                .executor_runtime
+                .mark_rebound()
+                .map_err(|error| error.message())?;
+            record.executor_instance.generation += 1;
+            record.last_rebound_resource = Some(report.resource);
+            transition
+        };
+        record_executor_transition(semantic, store, transition);
         Ok(report)
     }
 
@@ -240,10 +274,16 @@ impl StoreManager {
         self.record_index(store)?;
         semantic.record_store_trap_class(store, trap, detail);
         self.sync_record(store, semantic)?;
-        let record = self.record_mut(store)?;
-        record.last_trap = Some(trap);
-        record.state = StoreRuntimeState::Draining;
-        record.executor_state = ExecutorStoreState::Draining;
+        let transition = {
+            let record = self.record_mut(store)?;
+            record.last_trap = Some(trap);
+            record.state = StoreRuntimeState::Draining;
+            record
+                .executor_runtime
+                .begin_draining()
+                .map_err(|error| error.message())?
+        };
+        record_executor_transition(semantic, store, transition);
         Ok(())
     }
 
@@ -300,12 +340,14 @@ impl StoreManager {
             .last_rebound_resource
             .map(|resource| resource.to_string())
             .unwrap_or_else(|| "none".to_string());
+        let executor_blocked = record.executor_runtime.blocked_by.unwrap_or("none");
         Some(format!(
-            "store {} state={} runtime={} executor={} executor_instance={}@{} generation={} restarts={} resource={} arena={} cap_owner={} cleanup={} last_closed={} dropped={} rebound={} rebind={} artifact={} manifest_source={} wasm={} wasm_hash={} abi={} cwasm={} binding={} signature={} signer={} limits=mem{} table{} hostcalls{} executor_mem=pages{} table{} dmw={} publish={} hostcall_table={} max={} exports={} traps={}/{}/{} deps={} exports={} last_trap={}",
+            "store {} state={} runtime={} executor={} executor_blocked={} executor_instance={}@{} generation={} restarts={} resource={} arena={} cap_owner={} cleanup={} last_closed={} revoked_authorities={} dropped={} rebound={} rebind={} artifact={} manifest_source={} wasm={} wasm_hash={} abi={} cwasm={} binding={} signature={} signer={} limits=mem{} table{} hostcalls{} executor_mem=pages{} table{} dmw={} publish={} hostcall_table={} max={} exports={} trap_surface={} traps={}/{}/{} deps={} exports={} last_trap={}",
             record.package,
             semantic_store.state.as_str(),
             record.state.as_str(),
-            record.executor_state.as_str(),
+            record.executor_runtime.store.as_str(),
+            executor_blocked,
             record.executor_instance.id,
             record.executor_instance.generation,
             semantic_store.generation,
@@ -318,6 +360,7 @@ impl StoreManager {
             record.capability_owner,
             record.cleanup_policy,
             record.last_closed_resources,
+            record.last_revoked_authorities,
             last_dropped,
             last_rebound,
             record.rebind_policy,
@@ -340,12 +383,16 @@ impl StoreManager {
             record.executor_memory.max_table_elements,
             record.executor_memory.dmw_layout,
             record.executor_memory.publish_policy,
-            record.executor_hostcalls.state.as_str(),
-            record.executor_hostcalls.max_hostcalls_per_activation,
-            record.executor_hostcalls.expected_export_count,
-            record.executor_traps.guest_trap,
-            record.executor_traps.supervisor_trap,
-            record.executor_traps.substrate_fault,
+            record.executor_runtime.hostcall_table.state.as_str(),
+            record
+                .executor_runtime
+                .hostcall_table
+                .max_hostcalls_per_activation,
+            record.executor_runtime.hostcall_table.expected_export_count,
+            record.executor_runtime.trap_surface.state.as_str(),
+            record.executor_runtime.trap_surface.guest_trap,
+            record.executor_runtime.trap_surface.supervisor_trap,
+            record.executor_runtime.trap_surface.substrate_fault,
             record.dependency_count,
             record.expected_export_count,
             record
@@ -358,4 +405,19 @@ impl StoreManager {
     pub(crate) fn records(&self) -> &[StoreRuntimeRecord] {
         &self.records
     }
+}
+
+fn record_executor_transition(
+    semantic: &mut SemanticGraph,
+    store: StoreId,
+    transition: ExecutorTransitionReport,
+) {
+    semantic.record_store_executor_transition(
+        store,
+        transition.from.as_str(),
+        transition.to.as_str(),
+        transition.blocked_by,
+        transition.hostcall_table.as_str(),
+        transition.trap_surface.as_str(),
+    );
 }

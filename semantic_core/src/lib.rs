@@ -20,6 +20,7 @@ pub type StoreId = u64;
 pub type TransactionId = u64;
 pub type PlanId = u64;
 pub type AuthorityId = u64;
+pub type BoundaryId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeMode {
@@ -102,6 +103,108 @@ impl RuntimeMode {
 impl Default for RuntimeMode {
     fn default() -> Self {
         Self::Research
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoundaryKind {
+    ArtifactLoader,
+    RuntimeExecutor,
+    HostcallTable,
+    Dmw,
+    Dma,
+    Mmio,
+    Irq,
+    PacketDevice,
+    NetworkStack,
+    TargetExecutor,
+    FastPath,
+    SnapshotReplay,
+    StoreLifecycle,
+    AuthorityPlane,
+}
+
+impl BoundaryKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ArtifactLoader => "artifact-loader",
+            Self::RuntimeExecutor => "runtime-executor",
+            Self::HostcallTable => "hostcall-table",
+            Self::Dmw => "dmw",
+            Self::Dma => "dma",
+            Self::Mmio => "mmio",
+            Self::Irq => "irq",
+            Self::PacketDevice => "packet-device",
+            Self::NetworkStack => "network-stack",
+            Self::TargetExecutor => "target-executor",
+            Self::FastPath => "fastpath",
+            Self::SnapshotReplay => "snapshot-replay",
+            Self::StoreLifecycle => "store-lifecycle",
+            Self::AuthorityPlane => "authority-plane",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoundaryStatus {
+    ManifestBacked,
+    RuntimeContract,
+    NotLinked,
+    Logical,
+    SemanticResource,
+    Toy,
+    HostSide,
+    EventOnly,
+    PackageOnly,
+    ManagerOwned,
+    LifecycleObject,
+}
+
+impl BoundaryStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ManifestBacked => "manifest-backed",
+            Self::RuntimeContract => "runtime-contract",
+            Self::NotLinked => "not-linked",
+            Self::Logical => "logical",
+            Self::SemanticResource => "semantic-resource",
+            Self::Toy => "toy",
+            Self::HostSide => "host-side",
+            Self::EventOnly => "event-only",
+            Self::PackageOnly => "package-only",
+            Self::ManagerOwned => "manager-owned",
+            Self::LifecycleObject => "lifecycle-object",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundaryRecord {
+    pub id: BoundaryId,
+    pub name: String,
+    pub kind: BoundaryKind,
+    pub status: BoundaryStatus,
+    pub backend: String,
+    pub blocked_by: Option<String>,
+    pub generation: Generation,
+}
+
+impl BoundaryRecord {
+    pub fn summary(&self) -> String {
+        let blocked_by = self
+            .blocked_by
+            .as_ref()
+            .map(String::as_str)
+            .unwrap_or("none");
+        format!(
+            "boundary {} kind={} status={} backend={} blocked={} generation={}",
+            self.name,
+            self.kind.as_str(),
+            self.status.as_str(),
+            self.backend,
+            blocked_by,
+            self.generation
+        )
     }
 }
 
@@ -1008,6 +1111,7 @@ pub struct StoreDropReport {
     pub generation: Generation,
     pub previous_resource: Option<ResourceId>,
     pub closed_resources: usize,
+    pub revoked_authorities: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1015,6 +1119,13 @@ pub struct StoreRebindReport {
     pub store: StoreId,
     pub generation: Generation,
     pub resource: ResourceId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoreResourceCleanupReport {
+    pub store: StoreId,
+    pub closed_resources: usize,
+    pub revoked_authorities: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1131,6 +1242,15 @@ pub enum EventKind {
         resource: ResourceId,
         generation: Generation,
         reason: String,
+    },
+    BoundaryPublished {
+        boundary: BoundaryId,
+        name: String,
+        kind: BoundaryKind,
+        status: BoundaryStatus,
+        backend: String,
+        blocked_by: Option<String>,
+        generation: Generation,
     },
     WaitCreated {
         wait: WaitId,
@@ -1268,6 +1388,14 @@ pub enum EventKind {
         to: StoreState,
         generation: Generation,
     },
+    StoreExecutorTransition {
+        store: StoreId,
+        from: String,
+        to: String,
+        blocked_by: Option<String>,
+        hostcall_table: String,
+        trap_surface: String,
+    },
     StoreTrap {
         store: StoreId,
         trap: TrapClass,
@@ -1394,6 +1522,22 @@ impl EventKind {
             } => format!(
                 "AuthorityRevoked authority={authority} resource={resource} generation={generation} reason={reason}"
             ),
+            Self::BoundaryPublished {
+                boundary,
+                name,
+                kind,
+                status,
+                backend,
+                blocked_by,
+                generation,
+            } => {
+                let blocked_by = blocked_by.as_deref().unwrap_or("none");
+                format!(
+                    "BoundaryPublished boundary={boundary} name={name} kind={} status={} backend={backend} blocked={blocked_by} generation={generation}",
+                    kind.as_str(),
+                    status.as_str()
+                )
+            }
             Self::WaitCreated {
                 wait,
                 task,
@@ -1587,6 +1731,19 @@ impl EventKind {
                 from.as_str(),
                 to.as_str()
             ),
+            Self::StoreExecutorTransition {
+                store,
+                from,
+                to,
+                blocked_by,
+                hostcall_table,
+                trap_surface,
+            } => {
+                let blocked_by = blocked_by.as_deref().unwrap_or("none");
+                format!(
+                    "StoreExecutorTransition store={store} {from}->{to} blocked={blocked_by} hostcalls={hostcall_table} traps={trap_surface}"
+                )
+            }
             Self::StoreTrap {
                 store,
                 trap,
@@ -1768,6 +1925,7 @@ pub struct SemanticGraph {
     stores: Vec<StoreRecord>,
     transactions: Vec<SemanticTransactionRecord>,
     fast_path_plans: Vec<FastPathPlanRecord>,
+    boundaries: Vec<BoundaryRecord>,
     capabilities: CapabilityLedger,
     event_log: EventLog,
     next_resource_id: ResourceId,
@@ -1776,6 +1934,7 @@ pub struct SemanticGraph {
     next_store_id: StoreId,
     next_transaction_id: TransactionId,
     next_plan_id: PlanId,
+    next_boundary_id: BoundaryId,
 }
 
 impl SemanticGraph {
@@ -1793,6 +1952,7 @@ impl SemanticGraph {
             stores: Vec::new(),
             transactions: Vec::new(),
             fast_path_plans: Vec::new(),
+            boundaries: Vec::new(),
             capabilities: CapabilityLedger::new(),
             event_log: EventLog::with_runtime_mode(runtime_mode),
             next_resource_id: 1,
@@ -1801,11 +1961,77 @@ impl SemanticGraph {
             next_store_id: 1,
             next_transaction_id: 1,
             next_plan_id: 1,
+            next_boundary_id: 1,
         }
     }
 
     pub fn runtime_mode(&self) -> RuntimeMode {
         self.event_log.runtime_mode()
+    }
+
+    pub fn publish_boundary(
+        &mut self,
+        name: &str,
+        kind: BoundaryKind,
+        status: BoundaryStatus,
+        backend: &str,
+        blocked_by: Option<&str>,
+    ) -> BoundaryId {
+        if let Some(index) = self
+            .boundaries
+            .iter()
+            .position(|boundary| boundary.name == name)
+        {
+            self.boundaries[index].kind = kind;
+            self.boundaries[index].status = status;
+            self.boundaries[index].backend = backend.to_string();
+            self.boundaries[index].blocked_by = blocked_by.map(|value| value.to_string());
+            self.boundaries[index].generation += 1;
+            let id = self.boundaries[index].id;
+            let name = self.boundaries[index].name.clone();
+            let backend = self.boundaries[index].backend.clone();
+            let blocked_by = self.boundaries[index].blocked_by.clone();
+            let generation = self.boundaries[index].generation;
+            self.event_log.push(
+                "boundary",
+                EventKind::BoundaryPublished {
+                    boundary: id,
+                    name,
+                    kind,
+                    status,
+                    backend,
+                    blocked_by,
+                    generation,
+                },
+            );
+            return id;
+        }
+
+        let id = self.next_boundary_id;
+        self.next_boundary_id += 1;
+        let boundary = BoundaryRecord {
+            id,
+            name: name.to_string(),
+            kind,
+            status,
+            backend: backend.to_string(),
+            blocked_by: blocked_by.map(|value| value.to_string()),
+            generation: 1,
+        };
+        self.event_log.push(
+            "boundary",
+            EventKind::BoundaryPublished {
+                boundary: id,
+                name: boundary.name.clone(),
+                kind,
+                status,
+                backend: boundary.backend.clone(),
+                blocked_by: boundary.blocked_by.clone(),
+                generation: boundary.generation,
+            },
+        );
+        self.boundaries.push(boundary);
+        id
     }
 
     pub fn ensure_task(&mut self, id: TaskId, frontend: FrontendKind, label: &str) {
@@ -1919,6 +2145,14 @@ impl SemanticGraph {
     }
 
     pub fn close_resources_owned_by_store(&mut self, store: StoreId) -> usize {
+        self.cleanup_resources_owned_by_store(store)
+            .closed_resources
+    }
+
+    pub fn cleanup_resources_owned_by_store(
+        &mut self,
+        store: StoreId,
+    ) -> StoreResourceCleanupReport {
         let resources = self
             .resources
             .iter()
@@ -1926,8 +2160,10 @@ impl SemanticGraph {
             .map(|resource| resource.id)
             .collect::<Vec<_>>();
         let count = resources.len();
+        let mut revoked_authorities = 0usize;
         for resource in resources {
-            self.revoke_authority_for_resource(resource, "owner store dropped");
+            revoked_authorities +=
+                self.revoke_authority_for_resource(resource, "owner store dropped");
             if self
                 .resources
                 .iter()
@@ -1936,7 +2172,11 @@ impl SemanticGraph {
                 self.mark_resource_dead(resource);
             }
         }
-        count
+        StoreResourceCleanupReport {
+            store,
+            closed_resources: count,
+            revoked_authorities,
+        }
     }
 
     pub fn resource_handle(&self, id: ResourceId) -> Option<ResourceHandle> {
@@ -2314,6 +2554,31 @@ impl SemanticGraph {
         }
     }
 
+    pub fn record_store_executor_transition(
+        &mut self,
+        id: StoreId,
+        from: &str,
+        to: &str,
+        blocked_by: Option<&str>,
+        hostcall_table: &str,
+        trap_surface: &str,
+    ) {
+        if !self.stores.iter().any(|store| store.id == id) {
+            return;
+        }
+        self.event_log.push(
+            "executor",
+            EventKind::StoreExecutorTransition {
+                store: id,
+                from: from.to_string(),
+                to: to.to_string(),
+                blocked_by: blocked_by.map(|value| value.to_string()),
+                hostcall_table: hostcall_table.to_string(),
+                trap_surface: trap_surface.to_string(),
+            },
+        );
+    }
+
     pub fn record_store_trap(&mut self, id: StoreId, trap: &str) {
         self.record_store_trap_class(id, TrapClass::ServiceTrap, trap);
     }
@@ -2349,7 +2614,7 @@ impl SemanticGraph {
     pub fn drop_store_instance(&mut self, id: StoreId) -> Option<StoreDropReport> {
         let index = self.stores.iter().position(|store| store.id == id)?;
         let resource = self.stores[index].resource.take();
-        let closed_resources = self.close_resources_owned_by_store(id);
+        let cleanup = self.cleanup_resources_owned_by_store(id);
         self.set_store_state(id, StoreState::Dead);
         let generation = self.stores[index].generation;
         self.event_log.push(
@@ -2364,7 +2629,8 @@ impl SemanticGraph {
             store: id,
             generation,
             previous_resource: resource,
-            closed_resources,
+            closed_resources: cleanup.closed_resources,
+            revoked_authorities: cleanup.revoked_authorities,
         })
     }
 
@@ -3000,6 +3266,7 @@ impl SemanticGraph {
                 stores: self.stores.clone(),
                 transactions: self.transactions.clone(),
                 fast_path_plans: self.fast_path_plans.clone(),
+                boundaries: self.boundaries.clone(),
                 capabilities: self.capabilities.records().to_vec(),
             },
         }
@@ -3033,6 +3300,10 @@ impl SemanticGraph {
         self.fast_path_plans.len()
     }
 
+    pub fn boundary_count(&self) -> usize {
+        self.boundaries.len()
+    }
+
     pub fn active_fast_path_plan_count(&self) -> usize {
         self.fast_path_plans
             .iter()
@@ -3053,6 +3324,28 @@ impl SemanticGraph {
 
     pub fn event_count(&self) -> usize {
         self.event_log.len()
+    }
+
+    pub fn store_executor_transition_count(&self) -> usize {
+        self.event_log
+            .events
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::StoreExecutorTransition { .. }))
+            .count()
+    }
+
+    pub fn store_executor_transition_tail(&self, count: usize) -> Vec<String> {
+        let mut lines = Vec::new();
+        for event in self.event_log.events.iter().rev() {
+            if matches!(event.kind, EventKind::StoreExecutorTransition { .. }) {
+                lines.push(event.summary());
+                if lines.len() == count {
+                    break;
+                }
+            }
+        }
+        lines.reverse();
+        lines
     }
 
     pub fn pending_wait_count(&self) -> usize {
@@ -3102,6 +3395,10 @@ impl SemanticGraph {
 
     pub fn fast_path_plans(&self) -> &[FastPathPlanRecord] {
         &self.fast_path_plans
+    }
+
+    pub fn boundaries(&self) -> &[BoundaryRecord] {
+        &self.boundaries
     }
 
     pub fn event_log_tail(&self, count: usize) -> &[EventRecord] {
@@ -3309,6 +3606,7 @@ pub struct SemanticSnapshot {
     pub stores: Vec<StoreRecord>,
     pub transactions: Vec<SemanticTransactionRecord>,
     pub fast_path_plans: Vec<FastPathPlanRecord>,
+    pub boundaries: Vec<BoundaryRecord>,
     pub capabilities: Vec<CapabilityRecord>,
 }
 
@@ -3367,7 +3665,7 @@ impl MigrationPackage {
             self.substrate_boundary.background_copy_pages
         ));
         lines.push(format!(
-            "semantic roots: tasks={} resources={} authorities={} waits={} capabilities={} fault_domains={} stores={} transactions={} fastpath_plans={}",
+            "semantic roots: tasks={} resources={} authorities={} waits={} capabilities={} fault_domains={} stores={} transactions={} fastpath_plans={} boundaries={}",
             self.semantic.tasks.len(),
             self.semantic.resources.len(),
             self.semantic.authority_bindings.len(),
@@ -3376,7 +3674,8 @@ impl MigrationPackage {
             self.semantic.fault_domains.len(),
             self.semantic.stores.len(),
             self.semantic.transactions.len(),
-            self.semantic.fast_path_plans.len()
+            self.semantic.fast_path_plans.len(),
+            self.semantic.boundaries.len()
         ));
         lines.push(format!(
             "required artifacts: {}",
@@ -3480,6 +3779,42 @@ mod tests {
         assert_eq!(graph.runtime_mode().event_log_policy(), "deterministic");
         assert!(graph.runtime_mode().deterministic_boundary());
         assert!(!graph.runtime_mode().fast_path_enabled());
+    }
+
+    #[test]
+    fn boundary_status_is_queryable_and_versioned() {
+        let mut graph = SemanticGraph::new();
+        let boundary = graph.publish_boundary(
+            "target-cwasm",
+            BoundaryKind::RuntimeExecutor,
+            BoundaryStatus::NotLinked,
+            "runtime-only-executor-v1",
+            Some("code-publish"),
+        );
+
+        assert_eq!(graph.boundary_count(), 1);
+        assert_eq!(graph.boundaries()[0].id, boundary);
+        assert_eq!(graph.boundaries()[0].status, BoundaryStatus::NotLinked);
+
+        let same_boundary = graph.publish_boundary(
+            "target-cwasm",
+            BoundaryKind::RuntimeExecutor,
+            BoundaryStatus::RuntimeContract,
+            "runtime-only-executor-v1",
+            Some("hostcall-trampoline"),
+        );
+
+        assert_eq!(same_boundary, boundary);
+        assert_eq!(graph.boundary_count(), 1);
+        assert_eq!(graph.boundaries()[0].generation, 2);
+        assert_eq!(
+            graph.boundaries()[0].summary(),
+            "boundary target-cwasm kind=runtime-executor status=runtime-contract backend=runtime-only-executor-v1 blocked=hostcall-trampoline generation=2"
+        );
+        assert_eq!(
+            graph.event_log_tail(1)[0].kind.summary(),
+            "BoundaryPublished boundary=1 name=target-cwasm kind=runtime-executor status=runtime-contract backend=runtime-only-executor-v1 blocked=hostcall-trampoline generation=2"
+        );
     }
 
     #[test]
@@ -3636,6 +3971,32 @@ mod tests {
     }
 
     #[test]
+    fn store_executor_transitions_are_recorded_in_event_log() {
+        let mut graph = SemanticGraph::new();
+        let store = graph.register_store("vfs_service", "vfs", "service", "restartable");
+
+        graph.record_store_executor_transition(
+            store,
+            "artifact-verified",
+            "draining",
+            Some("store-draining"),
+            "not-linked",
+            "contract-declared",
+        );
+
+        assert_eq!(
+            graph.event_log_tail(1)[0].kind.summary(),
+            "StoreExecutorTransition store=1 artifact-verified->draining blocked=store-draining hostcalls=not-linked traps=contract-declared"
+        );
+        assert_eq!(graph.store_executor_transition_count(), 1);
+        assert!(
+            graph.store_executor_transition_tail(1)[0].contains(
+                "source=executor StoreExecutorTransition store=1 artifact-verified->draining blocked=store-draining hostcalls=not-linked traps=contract-declared"
+            )
+        );
+    }
+
+    #[test]
     fn transaction_rollback_and_store_owned_resource_cleanup_are_recorded() {
         let mut graph = SemanticGraph::new();
         let store = graph.register_store("devfs_service", "devfs", "service", "restartable");
@@ -3646,11 +4007,31 @@ mod tests {
             Some(store),
             "device:pulse-shadow",
         );
+        let authority = graph
+            .bind_authority_resource(
+                scratch,
+                "devfs_service",
+                "device.pulse-shadow",
+                &["read"],
+                "store",
+            )
+            .expect("store-owned device authority");
         let transaction = graph.begin_transaction("devfs.read_device", Some(store), Some(9));
 
         graph.rollback_transaction(transaction, "devfs_service trapped");
         graph.record_store_trap_class(store, TrapClass::ServiceTrap, "devfs_service trapped");
-        assert_eq!(graph.close_resources_owned_by_store(store), 2);
+        let cleanup = graph.cleanup_resources_owned_by_store(store);
+        assert_eq!(cleanup.closed_resources, 2);
+        assert_eq!(cleanup.revoked_authorities, 1);
+        assert_eq!(
+            graph
+                .authority_bindings()
+                .iter()
+                .find(|binding| binding.id == authority)
+                .expect("authority binding")
+                .state,
+            AuthorityState::Revoked
+        );
 
         assert_eq!(
             graph.validate_resource_handle(ResourceHandle::new(scratch, 1)),

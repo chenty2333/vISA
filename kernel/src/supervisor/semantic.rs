@@ -27,22 +27,6 @@ pub(super) fn bootstrap_graph(
     graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
     graph.set_task_state(1, TaskState::Running);
 
-    for blueprint in load_plan.stores() {
-        graph.register_store(
-            blueprint.package,
-            blueprint.artifact_name,
-            blueprint.role,
-            blueprint.fault_policy,
-        );
-        for capability in blueprint.capabilities {
-            graph.grant_manifest_capability(
-                blueprint.package,
-                capability.name,
-                capability.rights,
-                capability.lifetime,
-            );
-        }
-    }
     authority.bind_substrate_authority(
         &mut graph,
         SubstrateAuthoritySpec {
@@ -100,7 +84,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn semantic_debug_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
         lines.push(format!(
-            "semantic graph: mode={} event_policy={} tasks={} resources={} authority={}/{} waits={} capabilities={} fault_domains={} events={}",
+            "semantic graph: mode={} event_policy={} tasks={} resources={} authority={}/{} waits={} capabilities={} fault_domains={} boundaries={} events={}",
             self.semantic.runtime_mode().as_str(),
             self.semantic.runtime_mode().event_log_policy(),
             self.semantic.task_count(),
@@ -110,6 +94,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.semantic.wait_count(),
             self.semantic.capability_count(),
             self.semantic.fault_domain_count(),
+            self.semantic.boundary_count(),
             self.semantic.event_count()
         ));
         lines.push(format!(
@@ -137,6 +122,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         ));
         lines.push(self.executor_plan.summary_line());
         lines.push(self.substrate_authority_line());
+        lines.push("boundary status:".to_string());
+        for boundary in self.semantic.boundaries().iter().take(16) {
+            lines.push(boundary.summary());
+        }
+        lines.push(format!(
+            "executor transitions: count={}",
+            self.semantic.store_executor_transition_count()
+        ));
+        for transition in self.semantic.store_executor_transition_tail(6) {
+            lines.push(transition);
+        }
         lines.push(format!(
             "runtime stores: records={} first_role={} first_policy={} first_owner={} first_cleanup={} first_executor={} first_hostcalls={} first_manifest_source={} first_signature={}",
             self.store_manager.records().len(),
@@ -163,12 +159,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.store_manager
                 .records()
                 .first()
-                .map(|record| record.executor_state.as_str())
+                .map(|record| record.executor_runtime.store.as_str())
                 .unwrap_or("none"),
             self.store_manager
                 .records()
                 .first()
-                .map(|record| record.executor_hostcalls.state.as_str())
+                .map(|record| record.executor_runtime.hostcall_table.state.as_str())
                 .unwrap_or("none"),
             self.store_manager
                 .records()
