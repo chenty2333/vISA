@@ -35,6 +35,7 @@ pub enum CapabilityClass {
     ServiceImport,
     Device,
     PacketDevice,
+    CodePublish,
     MmioRegion,
     DmaBuffer,
     IrqLine,
@@ -43,6 +44,8 @@ pub enum CapabilityClass {
     Timer,
     Snapshot,
     FaultDomain,
+    EventLog,
+    StoreControl,
     NetInterface,
     NetSocket,
     GuestMemoryAccess,
@@ -52,6 +55,8 @@ impl CapabilityClass {
     pub fn from_object(object: &str) -> Self {
         if object.starts_with("packet-device.") {
             Self::PacketDevice
+        } else if object.starts_with("code-publish.") || object.starts_with("code-object.") {
+            Self::CodePublish
         } else if object.starts_with("device.") {
             Self::Device
         } else if object.starts_with("mmio.") {
@@ -70,6 +75,10 @@ impl CapabilityClass {
             Self::Snapshot
         } else if object.starts_with("fault-domain.") {
             Self::FaultDomain
+        } else if object.starts_with("event-log.") {
+            Self::EventLog
+        } else if object.starts_with("store-control.") {
+            Self::StoreControl
         } else if object.starts_with("net.interface") {
             Self::NetInterface
         } else if object.starts_with("net.socket") {
@@ -86,6 +95,7 @@ impl CapabilityClass {
             Self::ServiceImport => "service-import",
             Self::Device => "device",
             Self::PacketDevice => "packet-device",
+            Self::CodePublish => "code-publish",
             Self::MmioRegion => "mmio-region",
             Self::DmaBuffer => "dma-buffer",
             Self::IrqLine => "irq-line",
@@ -94,6 +104,8 @@ impl CapabilityClass {
             Self::Timer => "timer",
             Self::Snapshot => "snapshot",
             Self::FaultDomain => "fault-domain",
+            Self::EventLog => "event-log",
+            Self::StoreControl => "store-control",
             Self::NetInterface => "net-interface",
             Self::NetSocket => "net-socket",
             Self::GuestMemoryAccess => "guest-memory-access",

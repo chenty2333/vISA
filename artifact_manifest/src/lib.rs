@@ -395,8 +395,12 @@ pub struct HostcallTraceManifest {
     #[serde(default)]
     pub abi_version: String,
     #[serde(default)]
+    pub frame_size: u16,
+    #[serde(default)]
     pub flags: u32,
     pub activation: u64,
+    #[serde(default)]
+    pub activation_generation: u64,
     #[serde(default)]
     pub store: u64,
     #[serde(default)]
@@ -408,6 +412,10 @@ pub struct HostcallTraceManifest {
     #[serde(default)]
     pub artifact: u64,
     pub hostcall_number: u32,
+    #[serde(default)]
+    pub hostcall_seq: u64,
+    #[serde(default)]
+    pub caller_offset: u64,
     pub name: String,
     pub category: String,
     #[serde(default)]
@@ -418,6 +426,8 @@ pub struct HostcallTraceManifest {
     pub args: [u64; 6],
     #[serde(default)]
     pub cap_args: Vec<CapabilityHandleArgManifest>,
+    #[serde(default)]
+    pub record_mode: String,
     pub allowed: bool,
     pub result: String,
     #[serde(default)]

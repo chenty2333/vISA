@@ -128,6 +128,9 @@ pub enum HostcallCategory {
     Snapshot,
     GuestMemory,
     Timer,
+    FaultDomain,
+    EventLog,
+    StoreControl,
     Wait,
 }
 
@@ -146,6 +149,9 @@ impl HostcallCategory {
             Self::Snapshot => "snapshot",
             Self::GuestMemory => "guest-memory",
             Self::Timer => "timer",
+            Self::FaultDomain => "fault-domain",
+            Self::EventLog => "event-log",
+            Self::StoreControl => "store-control",
             Self::Wait => "wait",
         }
     }
@@ -163,6 +169,9 @@ impl HostcallCategory {
                 | Self::CodePublish
                 | Self::Snapshot
                 | Self::GuestMemory
+                | Self::FaultDomain
+                | Self::EventLog
+                | Self::StoreControl
                 | Self::Timer
         )
     }
@@ -173,6 +182,7 @@ pub const fn capability_class_requires_hostcall_gate(class: CapabilityClass) -> 
         class,
         CapabilityClass::Device
             | CapabilityClass::PacketDevice
+            | CapabilityClass::CodePublish
             | CapabilityClass::MmioRegion
             | CapabilityClass::DmaBuffer
             | CapabilityClass::IrqLine
@@ -180,6 +190,9 @@ pub const fn capability_class_requires_hostcall_gate(class: CapabilityClass) -> 
             | CapabilityClass::DmwWindow
             | CapabilityClass::Timer
             | CapabilityClass::Snapshot
+            | CapabilityClass::FaultDomain
+            | CapabilityClass::EventLog
+            | CapabilityClass::StoreControl
             | CapabilityClass::NetInterface
             | CapabilityClass::NetSocket
             | CapabilityClass::GuestMemoryAccess
@@ -229,6 +242,131 @@ impl HostcallSpec {
     pub fn requires_capability(&self) -> bool {
         self.category.requires_capability()
             || capability_class_requires_hostcall_gate(CapabilityClass::from_object(&self.object))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthorityMatrixError {
+    UnknownObjectClass,
+    UnknownOperation,
+}
+
+impl AuthorityMatrixError {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UnknownObjectClass => "authority-unknown-object-class",
+            Self::UnknownOperation => "authority-unknown-operation",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorityMatrixDecision {
+    pub class: CapabilityClass,
+    pub requires_capability: bool,
+    pub required_right: Option<String>,
+}
+
+pub struct AuthorityMatrix;
+
+impl AuthorityMatrix {
+    pub fn check(
+        object: &str,
+        operation: &str,
+        declared_capability: bool,
+    ) -> Result<AuthorityMatrixDecision, AuthorityMatrixError> {
+        let class = CapabilityClass::from_object(object);
+        let right = match class {
+            CapabilityClass::MmioRegion => match operation {
+                "read" | "read8" | "read16" | "read32" | "read64" => Some("read"),
+                "write" | "write8" | "write16" | "write32" | "write64" => Some("write"),
+                "fence" => Some("fence"),
+                "map" => Some("map"),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::DmaBuffer => match operation {
+                "device_addr" => Some("device_addr"),
+                "sync_for_device" | "sync_for_cpu" => Some("sync"),
+                "free" => Some("free"),
+                "submit" | "complete" | "cancel" | "map" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::IrqLine => match operation {
+                "bind" | "ack" | "mask" | "unmask" | "deliver" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::DmwWindow => match operation {
+                "map_user_window" => Some("map"),
+                "unmap_user_window" => Some("unmap"),
+                "read_window" | "write_window" => Some("access"),
+                "open" | "close" | "acquire" | "release" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::CodePublish => match operation {
+                "publish" | "retire" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::Snapshot => match operation {
+                "enter_barrier" => Some("enter"),
+                "export_package" => Some("export"),
+                "import_package" => Some("import"),
+                "enter" | "validate" | "replay" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::FaultDomain => match operation {
+                "kill_store" => Some("kill"),
+                "restart_store" => Some("restart"),
+                "kill" | "restart" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::PacketDevice => match operation {
+                "rx" | "tx" | "configure" | "poll" | "irq" | "dma" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::VirtioQueue => match operation {
+                "notify" => Some("kick"),
+                "consume" => Some("read"),
+                "reset" => Some("reset"),
+                "read" | "write" | "kick" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::Device => match operation {
+                "probe" | "read" | "configure" | "reset" | "poll" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::GuestMemoryAccess => match operation {
+                "read" | "write" | "map" | "unmap" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::Timer => match operation {
+                "arm" | "cancel" | "read" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::EventLog => match operation {
+                "append" | "inspect" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::StoreControl => match operation {
+                "start" | "stop" | "restart" | "kill" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::NetInterface | CapabilityClass::NetSocket => Some(operation),
+            CapabilityClass::ServiceImport => {
+                if object.contains('.') || declared_capability {
+                    Some(operation)
+                } else {
+                    return Err(AuthorityMatrixError::UnknownObjectClass);
+                }
+            }
+        };
+        let requires_capability = capability_class_requires_hostcall_gate(class)
+            || declared_capability
+            || class != CapabilityClass::ServiceImport;
+        Ok(AuthorityMatrixDecision {
+            class,
+            requires_capability,
+            required_right: right.map(ToString::to_string),
+        })
     }
 }
 
@@ -965,6 +1103,7 @@ pub enum HostcallReturnTag {
     Trap,
     KillStore,
     RestartSyscall,
+    BadAbi,
 }
 
 impl HostcallReturnTag {
@@ -976,6 +1115,28 @@ impl HostcallReturnTag {
             Self::Trap => "trap",
             Self::KillStore => "kill-store",
             Self::RestartSyscall => "restart-syscall",
+            Self::BadAbi => "bad-abi",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordMode {
+    Deterministic,
+    RecordInput,
+    RecordOutput,
+    RecordInputOutput,
+    ForbiddenDuringReplay,
+}
+
+impl RecordMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Deterministic => "deterministic",
+            Self::RecordInput => "record-input",
+            Self::RecordOutput => "record-output",
+            Self::RecordInputOutput => "record-input-output",
+            Self::ForbiddenDuringReplay => "forbidden-during-replay",
         }
     }
 }
@@ -1157,20 +1318,25 @@ impl CapabilityHandleArg {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostcallFrame {
     pub abi_version: String,
+    pub frame_size: u16,
     pub flags: u32,
     pub activation: ActivationId,
+    pub activation_generation: Generation,
     pub store: StoreId,
     pub store_generation: Generation,
     pub code_object: CodeObjectId,
     pub code_generation: Generation,
     pub artifact: TargetArtifactId,
     pub hostcall_number: u32,
+    pub hostcall_seq: u64,
+    pub caller_offset: u64,
     pub subject: String,
     pub object: String,
     pub operation: String,
     pub generation: Generation,
     pub args: [u64; 6],
     pub cap_args: Vec<CapabilityHandleArg>,
+    pub record_mode: RecordMode,
     pub ret_tag: HostcallReturnTag,
     pub ret0: u64,
     pub ret1: u64,
@@ -1180,6 +1346,7 @@ pub struct HostcallFrame {
 
 impl HostcallFrame {
     pub const ABI_VERSION: &'static str = "vmos-target-hostcall-frame-v1";
+    pub const FRAME_SIZE: u16 = 128;
 
     pub fn new(
         activation: ActivationId,
@@ -1192,20 +1359,25 @@ impl HostcallFrame {
     ) -> Self {
         Self {
             abi_version: Self::ABI_VERSION.to_string(),
+            frame_size: Self::FRAME_SIZE,
             flags: 0,
             activation,
+            activation_generation: 1,
             store,
             store_generation: 0,
             code_object: 0,
             code_generation: 0,
             artifact: 0,
             hostcall_number,
+            hostcall_seq: 1,
+            caller_offset: 0,
             subject: subject.to_string(),
             object: object.to_string(),
             operation: operation.to_string(),
             generation,
             args: [0; 6],
             cap_args: Vec::new(),
+            record_mode: RecordMode::Deterministic,
             ret_tag: HostcallReturnTag::Ok,
             ret0: 0,
             ret1: 0,
@@ -1244,6 +1416,21 @@ impl HostcallFrame {
         self
     }
 
+    pub fn with_hostcall_seq(mut self, hostcall_seq: u64) -> Self {
+        self.hostcall_seq = hostcall_seq;
+        self
+    }
+
+    pub fn with_caller_offset(mut self, caller_offset: u64) -> Self {
+        self.caller_offset = caller_offset;
+        self
+    }
+
+    pub fn with_record_mode(mut self, record_mode: RecordMode) -> Self {
+        self.record_mode = record_mode;
+        self
+    }
+
     pub fn with_cap_args(mut self, cap_args: Vec<CapabilityHandleArg>) -> Self {
         self.cap_args = cap_args;
         self
@@ -1253,14 +1440,18 @@ impl HostcallFrame {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostcallTraceRecord {
     pub abi_version: String,
+    pub frame_size: u16,
     pub flags: u32,
     pub activation: ActivationId,
+    pub activation_generation: Generation,
     pub store: StoreId,
     pub store_generation: Generation,
     pub code_object: CodeObjectId,
     pub code_generation: Generation,
     pub artifact: TargetArtifactId,
     pub hostcall_number: u32,
+    pub hostcall_seq: u64,
+    pub caller_offset: u64,
     pub name: String,
     pub category: HostcallCategory,
     pub subject: String,
@@ -1268,6 +1459,7 @@ pub struct HostcallTraceRecord {
     pub operation: String,
     pub args: [u64; 6],
     pub cap_args: Vec<CapabilityHandleArg>,
+    pub record_mode: RecordMode,
     pub allowed: bool,
     pub result: String,
     pub ret_tag: HostcallReturnTag,
@@ -1280,9 +1472,14 @@ pub struct HostcallTraceRecord {
 impl HostcallTraceRecord {
     pub fn summary(&self) -> String {
         format!(
-            "hostcall abi={} activation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} subject={} object={} op={} allowed={} result={} ret={}",
+            "hostcall abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} subject={} object={} op={} allowed={} result={} ret={}",
             self.abi_version,
+            self.frame_size,
+            self.hostcall_seq,
+            self.caller_offset,
+            self.record_mode.as_str(),
             self.activation,
+            self.activation_generation,
             self.store,
             self.store_generation,
             self.code_object,
@@ -1462,19 +1659,32 @@ impl TargetExecutor {
         Ok(id)
     }
 
+    fn bad_abi_reason(frame: &HostcallFrame) -> Option<&'static str> {
+        if frame.abi_version != HostcallFrame::ABI_VERSION {
+            Some("bad-hostcall-abi")
+        } else if frame.frame_size != HostcallFrame::FRAME_SIZE {
+            Some("bad-frame-size")
+        } else {
+            None
+        }
+    }
+
     pub fn invoke_hostcall(
         &mut self,
         code: &CodeObject,
         frame: HostcallFrame,
         capabilities: &CapabilityLedger,
     ) -> Result<(), TargetExecutorError> {
-        let abi_mismatch = frame.abi_version != HostcallFrame::ABI_VERSION;
-        if abi_mismatch {
+        let bad_abi = Self::bad_abi_reason(&frame);
+        if let Some(reason) = bad_abi {
             self.event_log.push(format!(
-                "HostcallAbiMismatch activation={} abi={} expected={}",
+                "HostcallAbiMismatch activation={} reason={} abi={} expected={} frame_size={} expected_frame_size={}",
                 frame.activation,
+                reason,
                 frame.abi_version,
-                HostcallFrame::ABI_VERSION
+                HostcallFrame::ABI_VERSION,
+                frame.frame_size,
+                HostcallFrame::FRAME_SIZE
             ));
         }
         let activation_index = self.activation_index(frame.activation)?;
@@ -1482,7 +1692,9 @@ impl TargetExecutor {
         if activation.state != ActivationState::Running {
             return Err(TargetExecutorError::ActivationNotRunning);
         }
-        if activation.store != frame.store || activation.store_generation != frame.store_generation
+        if activation.store != frame.store
+            || activation.store_generation != frame.store_generation
+            || activation.generation != frame.activation_generation
         {
             return Err(TargetExecutorError::ActivationStoreMismatch);
         }
@@ -1505,7 +1717,8 @@ impl TargetExecutor {
             );
             return Err(TargetExecutorError::CodeObjectMismatch);
         }
-        if abi_mismatch {
+        let derived_subject = code.package.as_str();
+        if let Some(reason) = bad_abi {
             let spec = code
                 .hostcalls
                 .iter()
@@ -1526,7 +1739,7 @@ impl TargetExecutor {
                 TargetTrapClass::HostcallTrap,
                 Some(code),
                 Some(spec.name.clone()),
-                "bad-hostcall-abi",
+                reason,
                 FailureEffect::CompleteWithErrno(22),
                 "hostcall frame ABI version mismatch",
             );
@@ -1534,8 +1747,8 @@ impl TargetExecutor {
                 &frame,
                 &spec,
                 false,
-                "bad-hostcall-abi",
-                HostcallReturnTag::Trap,
+                reason,
+                HostcallReturnTag::BadAbi,
                 Some(trap),
                 None,
             );
@@ -1567,7 +1780,7 @@ impl TargetExecutor {
                 ),
                 false,
                 "undeclared",
-                HostcallReturnTag::Trap,
+                HostcallReturnTag::BadAbi,
                 Some(trap),
                 None,
             );
@@ -1588,16 +1801,16 @@ impl TargetExecutor {
                 spec,
                 false,
                 "frame-mismatch",
-                HostcallReturnTag::Trap,
+                HostcallReturnTag::BadAbi,
                 Some(trap),
                 None,
             );
             return Err(TargetExecutorError::HostcallFrameMismatch);
         }
-        if frame.subject != code.package {
+        if frame.subject != derived_subject {
             self.event_log.push(format!(
                 "HostcallSubjectMismatch activation={} subject={} expected={}",
-                frame.activation, frame.subject, code.package
+                frame.activation, frame.subject, derived_subject
             ));
             let trap = self.record_trap_for_activation(
                 activation_index,
@@ -1624,7 +1837,7 @@ impl TargetExecutor {
             frame.activation,
             spec.name,
             spec.category.as_str(),
-            frame.subject,
+            derived_subject,
             frame.object,
             frame.operation
         ));
@@ -1649,45 +1862,91 @@ impl TargetExecutor {
             );
             return Err(TargetExecutorError::DmwLeaseActive);
         }
-        let requires_capability = spec.requires_capability()
-            || capabilities
-                .generation_of(&frame.subject, &frame.object)
-                .is_some();
-        if requires_capability {
-            if let Some(reason) = Self::cap_arg_denial_reason(&frame, spec, capabilities) {
+        let declared_capability = capabilities
+            .generation_of(derived_subject, &frame.object)
+            .is_some();
+        let authority =
+            match AuthorityMatrix::check(&frame.object, &frame.operation, declared_capability) {
+                Ok(authority) => authority,
+                Err(reason) => {
+                    self.event_log.push(format!(
+                        "AuthorityDenied activation={} subject={} object={} op={} reason={}",
+                        frame.activation,
+                        derived_subject,
+                        frame.object,
+                        frame.operation,
+                        reason.as_str()
+                    ));
+                    let trap = self.record_trap_for_activation(
+                        activation_index,
+                        TargetTrapClass::CapabilityTrap,
+                        Some(code),
+                        Some(spec.name.clone()),
+                        "authority-matrix",
+                        FailureEffect::CompleteWithErrno(1),
+                        "hostcall authority matrix rejected object/operation",
+                    );
+                    self.record_trace(
+                        &frame,
+                        spec,
+                        false,
+                        reason.as_str(),
+                        HostcallReturnTag::Trap,
+                        Some(trap),
+                        None,
+                    );
+                    return Err(TargetExecutorError::CapabilityDenied);
+                }
+            };
+        let required_right = authority
+            .required_right
+            .as_deref()
+            .unwrap_or(&frame.operation);
+        if authority.requires_capability {
+            if let Some(reason) =
+                Self::cap_arg_denial_reason(&frame, derived_subject, required_right, capabilities)
+            {
                 self.event_log.push(format!(
-                    "CapabilityDenied activation={} subject={} object={} op={} reason={reason}",
-                    frame.activation, frame.subject, frame.object, frame.operation
+                    "CapabilityDenied activation={} subject={} object={} op={} required_right={} reason={reason}",
+                    frame.activation, derived_subject, frame.object, frame.operation, required_right
                 ));
+                let (class, ret_tag, policy, detail) =
+                    if matches!(reason, "cap-arg-empty-rights" | "cap-arg-rights-mask") {
+                        (
+                            TargetTrapClass::HostcallTrap,
+                            HostcallReturnTag::BadAbi,
+                            "bad-capability-argument",
+                            "hostcall capability handle argument was malformed",
+                        )
+                    } else {
+                        (
+                            TargetTrapClass::CapabilityTrap,
+                            HostcallReturnTag::Trap,
+                            "capability-handle",
+                            "hostcall capability handle argument failed validation",
+                        )
+                    };
                 let trap = self.record_trap_for_activation(
                     activation_index,
-                    TargetTrapClass::CapabilityTrap,
+                    class,
                     Some(code),
                     Some(spec.name.clone()),
-                    "capability-handle",
+                    policy,
                     FailureEffect::CompleteWithErrno(1),
-                    "hostcall capability handle argument failed validation",
+                    detail,
                 );
-                self.record_trace(
-                    &frame,
-                    spec,
-                    false,
-                    reason,
-                    HostcallReturnTag::Trap,
-                    Some(trap),
-                    None,
-                );
+                self.record_trace(&frame, spec, false, reason, ret_tag, Some(trap), None);
                 return Err(TargetExecutorError::CapabilityDenied);
             }
-            match capabilities.check(&frame.subject, &frame.object, &frame.operation) {
+            match capabilities.check(derived_subject, &frame.object, required_right) {
                 Ok(capability) => {
                     if capability.generation != frame.generation {
                         self.event_log.push(format!(
                             "CapabilityGenerationMismatch activation={} subject={} object={} op={} expected={} actual={}",
                             frame.activation,
-                            frame.subject,
+                            derived_subject,
                             frame.object,
-                            frame.operation,
+                            required_right,
                             frame.generation,
                             capability.generation
                         ));
@@ -1716,9 +1975,9 @@ impl TargetExecutor {
                     self.event_log.push(format!(
                         "CapabilityDenied activation={} subject={} object={} op={} reason={}",
                         frame.activation,
-                        frame.subject,
+                        derived_subject,
                         frame.object,
-                        frame.operation,
+                        required_right,
                         reason.as_str()
                     ));
                     let trap = self.record_trap_for_activation(
@@ -1989,18 +2248,19 @@ impl TargetExecutor {
 
     fn cap_arg_denial_reason(
         frame: &HostcallFrame,
-        spec: &HostcallSpec,
+        subject: &str,
+        required_right: &str,
         capabilities: &CapabilityLedger,
     ) -> Option<&'static str> {
         if frame.cap_args.is_empty() {
-            return None;
+            return Some("cap-arg-required");
         }
         let mut matched_frame_object = false;
         for handle in &frame.cap_args {
             let Some(record) = capabilities.active(handle.id) else {
                 return Some("cap-arg-missing");
             };
-            if record.subject != frame.subject {
+            if record.subject != subject {
                 return Some("cap-arg-subject");
             }
             if record.object != handle.object {
@@ -2027,12 +2287,12 @@ impl TargetExecutor {
                 return Some("cap-arg-rights-mask");
             }
             if handle.object == frame.object
-                && handle.rights.iter().any(|right| right == &frame.operation)
+                && handle.rights.iter().any(|right| right == required_right)
             {
                 matched_frame_object = true;
             }
         }
-        if spec.requires_capability() && !matched_frame_object {
+        if !matched_frame_object {
             return Some("cap-arg-frame-right");
         }
         None
@@ -2066,14 +2326,18 @@ impl TargetExecutor {
     ) {
         self.hostcall_trace.push(HostcallTraceRecord {
             abi_version: frame.abi_version.clone(),
+            frame_size: frame.frame_size,
             flags: frame.flags,
             activation: frame.activation,
+            activation_generation: frame.activation_generation,
             store: frame.store,
             store_generation: frame.store_generation,
             code_object: frame.code_object,
             code_generation: frame.code_generation,
             artifact: frame.artifact,
             hostcall_number: spec.number,
+            hostcall_seq: frame.hostcall_seq,
+            caller_offset: frame.caller_offset,
             name: spec.name.clone(),
             category: spec.category,
             subject: frame.subject.clone(),
@@ -2081,6 +2345,7 @@ impl TargetExecutor {
             operation: spec.operation.clone(),
             args: frame.args,
             cap_args: frame.cap_args.clone(),
+            record_mode: frame.record_mode,
             allowed,
             result: result.to_string(),
             ret_tag,
@@ -2279,6 +2544,70 @@ mod tests {
             "park",
             true,
         ));
+        image.hostcalls.push(HostcallSpec::new(
+            9,
+            "hostcall.device.denied",
+            HostcallCategory::Device,
+            "device.denied",
+            "read",
+            false,
+        ));
+        image.hostcalls.push(HostcallSpec::new(
+            10,
+            "hostcall.virtqueue.denied",
+            HostcallCategory::Virtqueue,
+            "virtqueue.denied",
+            "kick",
+            false,
+        ));
+        image.hostcalls.push(HostcallSpec::new(
+            11,
+            "hostcall.timer.denied",
+            HostcallCategory::Timer,
+            "timer.denied",
+            "arm",
+            false,
+        ));
+        image.hostcalls.push(HostcallSpec::new(
+            12,
+            "hostcall.guest-memory.denied",
+            HostcallCategory::GuestMemory,
+            "guest-memory.denied",
+            "read",
+            false,
+        ));
+        image.hostcalls.push(HostcallSpec::new(
+            13,
+            "hostcall.snapshot.denied",
+            HostcallCategory::Snapshot,
+            "snapshot.denied",
+            "enter",
+            false,
+        ));
+        image.hostcalls.push(HostcallSpec::new(
+            14,
+            "hostcall.fault-domain.denied",
+            HostcallCategory::FaultDomain,
+            "fault-domain.denied",
+            "restart",
+            false,
+        ));
+        image.hostcalls.push(HostcallSpec::new(
+            15,
+            "hostcall.event-log.denied",
+            HostcallCategory::EventLog,
+            "event-log.denied",
+            "append",
+            false,
+        ));
+        image.hostcalls.push(HostcallSpec::new(
+            16,
+            "hostcall.store-control.denied",
+            HostcallCategory::StoreControl,
+            "store-control.denied",
+            "kill",
+            false,
+        ));
         image
     }
 
@@ -2316,6 +2645,28 @@ mod tests {
             stores.record(store_id).unwrap().clone(),
             publisher.object(code_id).unwrap().clone(),
             capabilities,
+        )
+    }
+
+    fn cap_arg_for(
+        capabilities: &CapabilityLedger,
+        subject: &str,
+        object: &str,
+        operation: &str,
+    ) -> CapabilityHandleArg {
+        let cap = capabilities.check(subject, object, operation).unwrap();
+        let index = cap
+            .operations
+            .as_slice()
+            .iter()
+            .position(|right| right == operation)
+            .unwrap();
+        CapabilityHandleArg::new(
+            cap.id,
+            &cap.object,
+            cap.generation,
+            1u64 << index,
+            &[operation],
         )
     }
 
@@ -2404,6 +2755,13 @@ mod tests {
                 ActivationEntry::Symbol("_start".to_string()),
             )
             .unwrap();
+        let mut cap_args = Vec::new();
+        cap_args.push(cap_arg_for(
+            &capabilities,
+            "driver_virtio_net",
+            "mmio.virtio-net",
+            "map",
+        ));
         executor
             .invoke_hostcall(
                 &code,
@@ -2415,7 +2773,8 @@ mod tests {
                     "mmio.virtio-net",
                     "map",
                     1,
-                ),
+                )
+                .with_cap_args(cap_args),
                 &capabilities,
             )
             .unwrap();
@@ -2428,6 +2787,14 @@ mod tests {
             (5, "dmw.denied", "open"),
             (6, "code-publish.denied", "publish"),
             (7, "packet-device.net0", "rx"),
+            (9, "device.denied", "read"),
+            (10, "virtqueue.denied", "kick"),
+            (11, "timer.denied", "arm"),
+            (12, "guest-memory.denied", "read"),
+            (13, "snapshot.denied", "enter"),
+            (14, "fault-domain.denied", "restart"),
+            (15, "event-log.denied", "append"),
+            (16, "store-control.denied", "kill"),
         ] {
             let activation = executor
                 .start_activation(
@@ -2453,7 +2820,7 @@ mod tests {
                 Err(TargetExecutorError::CapabilityDenied)
             );
         }
-        assert_eq!(executor.traps().len(), 6);
+        assert_eq!(executor.traps().len(), 14);
         assert!(
             executor
                 .traps()
@@ -2561,6 +2928,35 @@ mod tests {
                 .iter()
                 .any(|trap| trap.class == TargetTrapClass::HostcallTrap
                     && trap.fault_policy == "bad-hostcall-abi")
+        );
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("_start".to_string()),
+            )
+            .unwrap();
+        let mut frame = HostcallFrame::new_bound(
+            activation,
+            &store.store,
+            &code,
+            1,
+            "mmio.virtio-net",
+            "map",
+            1,
+        );
+        frame.frame_size = HostcallFrame::FRAME_SIZE + 8;
+        assert_eq!(
+            executor.invoke_hostcall(&code, frame, &capabilities),
+            Err(TargetExecutorError::HostcallAbiMismatch)
+        );
+        assert!(
+            executor
+                .hostcall_trace()
+                .iter()
+                .any(|trace| trace.result == "bad-frame-size"
+                    && trace.ret_tag == HostcallReturnTag::BadAbi)
         );
     }
 
@@ -2680,6 +3076,38 @@ mod tests {
                 .hostcall_trace()
                 .iter()
                 .any(|trace| trace.result == "cap-arg-rights-mask")
+        );
+    }
+
+    #[test]
+    fn authority_matrix_covers_privileged_object_classes_and_fails_closed() {
+        for (object, operation) in [
+            ("mmio.regs", "read32"),
+            ("dma.buf", "sync_for_device"),
+            ("irq.net0", "ack"),
+            ("dmw.window", "map_user_window"),
+            ("code-publish.object", "publish"),
+            ("snapshot.barrier", "enter"),
+            ("packet-device.net0", "rx"),
+            ("virtqueue.net0", "kick"),
+            ("device.pulse", "read"),
+            ("guest-memory.linear", "map"),
+            ("timer.sleep", "arm"),
+            ("fault-domain.driver", "restart"),
+            ("event-log.store", "append"),
+            ("store-control.driver", "kill"),
+        ] {
+            let decision = AuthorityMatrix::check(object, operation, false).unwrap();
+            assert!(decision.requires_capability, "{object}:{operation}");
+            assert!(decision.required_right.is_some(), "{object}:{operation}");
+        }
+        assert_eq!(
+            AuthorityMatrix::check("mmio.regs", "teleport", false),
+            Err(AuthorityMatrixError::UnknownOperation)
+        );
+        assert_eq!(
+            AuthorityMatrix::check("unknown", "op", false),
+            Err(AuthorityMatrixError::UnknownObjectClass)
         );
     }
 

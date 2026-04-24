@@ -746,9 +746,14 @@ fn inspect_package_object(
                     .collect::<Vec<_>>()
                     .join(",");
                 let line = format!(
-                    "hostcall abi={} activation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} subject={} object={} op={} cap_args=[{}] allowed={} result={} ret={} trap_out={} wait_out={}",
+                    "hostcall abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} subject={} object={} op={} cap_args=[{}] allowed={} result={} ret={} trap_out={} wait_out={}",
                     trace.abi_version,
+                    trace.frame_size,
+                    trace.hostcall_seq,
+                    trace.caller_offset,
+                    display_default(&trace.record_mode, "none"),
                     trace.activation,
+                    trace.activation_generation,
                     trace.store,
                     trace.store_generation,
                     trace.code_object,

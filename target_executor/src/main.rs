@@ -327,20 +327,20 @@ fn run_activation_harness(
         let generation = ledger
             .generation_of(&code.package, &spec.object)
             .unwrap_or(1);
+        let mut frame = HostcallFrame::new_bound(
+            activation,
+            &store.store,
+            code,
+            spec.number,
+            &spec.object,
+            &spec.operation,
+            generation,
+        );
+        if let Some(cap_arg) = capability_handle_arg_for(ledger, &code.package, spec) {
+            frame = frame.with_cap_args(vec![cap_arg]);
+        }
         executor
-            .invoke_hostcall(
-                code,
-                HostcallFrame::new_bound(
-                    activation,
-                    &store.store,
-                    code,
-                    spec.number,
-                    &spec.object,
-                    &spec.operation,
-                    generation,
-                ),
-                ledger,
-            )
+            .invoke_hostcall(code, frame, ledger)
             .map_err(|error| error.message())?;
     }
     executor
@@ -354,6 +354,15 @@ fn run_activation_harness(
             (9002, "irq.denied", "bind"),
             (9003, "dmw.denied", "open"),
             (9004, "code-publish.denied", "publish"),
+            (9006, "packet-device.denied", "rx"),
+            (9007, "device.denied", "read"),
+            (9008, "virtqueue.denied", "kick"),
+            (9009, "timer.denied", "arm"),
+            (9010, "guest-memory.denied", "read"),
+            (9011, "snapshot.denied", "enter"),
+            (9012, "fault-domain.denied", "restart"),
+            (9013, "event-log.denied", "append"),
+            (9014, "store-control.denied", "kill"),
         ] {
             let denied = executor
                 .start_activation(
@@ -390,6 +399,47 @@ fn run_activation_harness(
             );
             frame.abi_version = "bad-hostcall-abi".to_owned();
             let _ = executor.invoke_hostcall(code, frame, ledger);
+
+            let bad_frame_size = executor
+                .start_activation(
+                    &store.store,
+                    code,
+                    ActivationEntry::Symbol("bad_hostcall_frame_size".to_owned()),
+                )
+                .map_err(|error| error.message())?;
+            let mut frame = HostcallFrame::new_bound(
+                bad_frame_size,
+                &store.store,
+                code,
+                spec.number,
+                &spec.object,
+                &spec.operation,
+                generation,
+            );
+            frame.frame_size = HostcallFrame::FRAME_SIZE + 8;
+            let _ = executor.invoke_hostcall(code, frame, ledger);
+
+            if let Some(mut cap_arg) = capability_handle_arg_for(ledger, &code.package, spec) {
+                let bad_cap_arg = executor
+                    .start_activation(
+                        &store.store,
+                        code,
+                        ActivationEntry::Symbol("bad_capability_handle".to_owned()),
+                    )
+                    .map_err(|error| error.message())?;
+                cap_arg.rights_mask = 0;
+                let frame = HostcallFrame::new_bound(
+                    bad_cap_arg,
+                    &store.store,
+                    code,
+                    spec.number,
+                    &spec.object,
+                    &spec.operation,
+                    generation,
+                )
+                .with_cap_args(vec![cap_arg]);
+                let _ = executor.invoke_hostcall(code, frame, ledger);
+            }
         }
 
         let dmw = executor
@@ -532,12 +582,86 @@ fn target_artifact_image(
         "park",
         true,
     ));
+    image.hostcalls.push(HostcallSpec::new(
+        9006,
+        "hostcall.packet-device.denied",
+        HostcallCategory::PacketDevice,
+        "packet-device.denied",
+        "rx",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9007,
+        "hostcall.device.denied",
+        HostcallCategory::Device,
+        "device.denied",
+        "read",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9008,
+        "hostcall.virtqueue.denied",
+        HostcallCategory::Virtqueue,
+        "virtqueue.denied",
+        "kick",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9009,
+        "hostcall.timer.denied",
+        HostcallCategory::Timer,
+        "timer.denied",
+        "arm",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9010,
+        "hostcall.guest-memory.denied",
+        HostcallCategory::GuestMemory,
+        "guest-memory.denied",
+        "read",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9011,
+        "hostcall.snapshot.denied",
+        HostcallCategory::Snapshot,
+        "snapshot.denied",
+        "enter",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9012,
+        "hostcall.fault-domain.denied",
+        HostcallCategory::FaultDomain,
+        "fault-domain.denied",
+        "restart",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9013,
+        "hostcall.event-log.denied",
+        HostcallCategory::EventLog,
+        "event-log.denied",
+        "append",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9014,
+        "hostcall.store-control.denied",
+        HostcallCategory::StoreControl,
+        "store-control.denied",
+        "kill",
+        false,
+    ));
     image
 }
 
 fn hostcall_category_for_object(object: &str) -> HostcallCategory {
     if object.starts_with("packet-device.") {
         HostcallCategory::PacketDevice
+    } else if object.starts_with("code-publish.") || object.starts_with("code-object.") {
+        HostcallCategory::CodePublish
     } else if object.starts_with("device.") {
         HostcallCategory::Device
     } else if object.starts_with("mmio.") {
@@ -558,6 +682,12 @@ fn hostcall_category_for_object(object: &str) -> HostcallCategory {
         HostcallCategory::GuestMemory
     } else if object.starts_with("timer.") {
         HostcallCategory::Timer
+    } else if object.starts_with("fault-domain.") {
+        HostcallCategory::FaultDomain
+    } else if object.starts_with("event-log.") {
+        HostcallCategory::EventLog
+    } else if object.starts_with("store-control.") {
+        HostcallCategory::StoreControl
     } else if object.starts_with("wait.") {
         HostcallCategory::Wait
     } else {
@@ -603,6 +733,26 @@ fn grant_verified_capabilities(
             "target-executor-v1",
         );
     }
+}
+
+fn capability_handle_arg_for(
+    ledger: &CapabilityLedger,
+    subject: &str,
+    spec: &HostcallSpec,
+) -> Option<CapabilityHandleArg> {
+    let capability = ledger.check(subject, &spec.object, &spec.operation).ok()?;
+    let index = capability
+        .operations
+        .as_slice()
+        .iter()
+        .position(|right| right == &spec.operation)?;
+    Some(CapabilityHandleArg::new(
+        capability.id,
+        &capability.object,
+        capability.generation,
+        1u64 << index,
+        &[spec.operation.as_str()],
+    ))
 }
 
 fn semantic_store_id(semantic: &SemanticGraph, package: &str) -> Result<u64, Box<dyn Error>> {
@@ -910,9 +1060,14 @@ fn semantic_roots(
             .iter()
             .map(|trace| {
                 format!(
-                    "hostcall abi={} activation={} store={} code={} number={} category={} subject={} object={} op={} cap_args={} allowed={} result={} ret={}",
+                    "hostcall abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} code={} number={} category={} subject={} object={} op={} cap_args={} allowed={} result={} ret={}",
                     trace.abi_version,
+                    trace.frame_size,
+                    trace.hostcall_seq,
+                    trace.caller_offset,
+                    trace.record_mode,
                     trace.activation,
+                    trace.activation_generation,
                     trace.store,
                     trace.code_object,
                     trace.hostcall_number,
@@ -1048,14 +1203,18 @@ fn trap_record_manifest(trap: &semantic_core::TargetTrapRecord) -> TrapRecordMan
 fn hostcall_trace_manifest(trace: &HostcallTraceRecord) -> HostcallTraceManifest {
     HostcallTraceManifest {
         abi_version: trace.abi_version.clone(),
+        frame_size: trace.frame_size,
         flags: trace.flags,
         activation: trace.activation,
+        activation_generation: trace.activation_generation,
         store: trace.store,
         store_generation: trace.store_generation,
         code_object: trace.code_object,
         code_generation: trace.code_generation,
         artifact: trace.artifact,
         hostcall_number: trace.hostcall_number,
+        hostcall_seq: trace.hostcall_seq,
+        caller_offset: trace.caller_offset,
         name: trace.name.clone(),
         category: trace.category.as_str().to_owned(),
         subject: trace.subject.clone(),
@@ -1063,6 +1222,7 @@ fn hostcall_trace_manifest(trace: &HostcallTraceRecord) -> HostcallTraceManifest
         operation: trace.operation.clone(),
         args: trace.args,
         cap_args: trace.cap_args.iter().map(cap_arg_manifest).collect(),
+        record_mode: trace.record_mode.as_str().to_owned(),
         allowed: trace.allowed,
         result: trace.result.clone(),
         ret_tag: trace.ret_tag.as_str().to_owned(),
