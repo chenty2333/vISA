@@ -133,6 +133,8 @@ pub struct SemanticSnapshotManifest {
     pub fault_domain_count: usize,
     #[serde(default)]
     pub store_count: usize,
+    #[serde(default)]
+    pub transaction_count: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

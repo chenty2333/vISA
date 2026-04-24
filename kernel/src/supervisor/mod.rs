@@ -1,12 +1,15 @@
 mod demos;
 mod engine;
 mod events;
+mod fault;
 mod linux;
 mod pulse;
+mod recovery;
 mod runtime;
 mod scheduler;
 mod semantic;
 mod services;
+mod store;
 mod types;
 mod wait;
 

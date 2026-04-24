@@ -4,9 +4,7 @@ use alloc::vec::Vec;
 use core::ptr::null_mut;
 
 use crate::interrupts;
-use semantic_core::{
-    FailureEffect, FrontendKind, ResourceHandle, SemanticGraph, StoreState, TaskState,
-};
+use semantic_core::{FailureEffect, FrontendKind, ResourceHandle, SemanticGraph, TaskState};
 use vmos_abi::{
     ERR_EAGAIN, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_EPERM, FD_STDOUT, NodeKind, PackedStep,
     PlanKind, SYS_CLOSE, SYS_GETCWD, SYS_GETDENTS64, SYS_OPENAT, SYS_READ, SYS_READLINKAT,
@@ -454,12 +452,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Trap(reason)) => {
                 crate::kwarn!("futex_wait: {}", reason);
-                if let Some(store) = self.store_id("futex_service") {
-                    self.record_store_trap(store, reason);
-                } else {
-                    self.semantic
-                        .record_driver_trap(self.semantic.fault_domain_id("futex_service"), reason);
-                }
+                self.record_service_trap("futex_service", reason);
                 Err("futex_service trapped during futex wait")
             }
             Err(ServiceCallError::Invalid(err)) => Err(err),
@@ -686,12 +679,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Trap(reason)) => {
                 crate::kwarn!("epoll_wait arm_wait: {}", reason);
-                if let Some(store) = self.store_id("epoll_service") {
-                    self.record_store_trap(store, reason);
-                } else {
-                    self.semantic
-                        .record_driver_trap(self.semantic.fault_domain_id("epoll_service"), reason);
-                }
+                self.record_service_trap("epoll_service", reason);
                 Err("epoll_service trapped during epoll_wait")
             }
             Err(ServiceCallError::Invalid(err)) => Err(err),
@@ -950,34 +938,35 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     fn procfs_read_with_recovery(&mut self, path: &[u8]) -> Result<Vec<u8>, ServiceCallError> {
         let inject_fault = self.take_fault(InjectedFault::ProcfsRead);
+        let store = self
+            .store_id("procfs_service")
+            .ok_or(ServiceCallError::Invalid("procfs store was not registered"))?;
+        let transaction = self.begin_semantic_transaction("procfs.read_file", Some(store));
         match self.procfs_mut().read_file(path, inject_fault) {
-            Ok(bytes) => Ok(bytes),
-            Err(ServiceCallError::Trap(_)) if inject_fault => {
-                crate::kinfo!("procfs_service trapped; recreating service store");
-                self.require_capability("fault_manager", "fault-domain.procfs_service", "restart")
-                    .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
-                let store = self
-                    .store_id("procfs_service")
-                    .ok_or(ServiceCallError::Invalid("procfs store was not registered"))?;
-                let domain = self.semantic.fault_domain_id("procfs_service");
-                self.record_store_trap(store, "injected procfs read fault");
-                self.set_store_state(store, StoreState::Draining);
-                self.set_store_state(store, StoreState::Restarting);
-                if let Some(domain) = domain {
-                    self.semantic
-                        .record_failure_effect(FailureEffect::RebootFaultDomain(domain));
-                }
-                let _ = self.procfs.take();
-                self.drop_store_instance(store);
-                self.procfs = Some(
-                    ProcfsService::new(self.procfs_engine).map_err(ServiceCallError::Invalid)?,
-                );
-                self.rebind_store_instance(store)
-                    .map_err(ServiceCallError::Invalid)?;
-                self.set_store_state(store, StoreState::Running);
-                self.procfs_mut().read_file(path, false)
+            Ok(bytes) => {
+                self.commit_semantic_transaction(transaction);
+                Ok(bytes)
             }
-            Err(err) => Err(err),
+            Err(ServiceCallError::Trap(reason)) if inject_fault => {
+                crate::kinfo!("procfs_service trapped; recreating service store");
+                self.rollback_semantic_transaction(transaction, reason);
+                self.recover_procfs_store_after_trap(reason)?;
+                let retry = self.begin_semantic_transaction("procfs.read_file.retry", Some(store));
+                match self.procfs_mut().read_file(path, false) {
+                    Ok(bytes) => {
+                        self.commit_semantic_transaction(retry);
+                        Ok(bytes)
+                    }
+                    Err(err) => {
+                        self.rollback_semantic_transaction(retry, "procfs retry failed");
+                        Err(err)
+                    }
+                }
+            }
+            Err(err) => {
+                self.rollback_semantic_transaction(transaction, "procfs read failed");
+                Err(err)
+            }
         }
     }
 

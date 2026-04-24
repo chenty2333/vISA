@@ -185,6 +185,7 @@ fn demo_migration_package(manifest: &ArtifactBundleManifest) -> MigrationPackage
             capability_count,
             fault_domain_count: manifest.modules.len(),
             store_count: manifest.modules.len(),
+            transaction_count: 0,
         },
         logical_capabilities,
         substrate_boundary: SubstrateBoundaryManifest {
@@ -355,10 +356,11 @@ fn restore_migration_package(
         package.guest.canonical_isa
     );
     println!(
-        "restore plan: import semantic roots tasks={} resources={} waits={} event_cursor={}",
+        "restore plan: import semantic roots tasks={} resources={} waits={} transactions={} event_cursor={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.wait_token_count,
+        package.semantic.transaction_count,
         package.semantic.event_log_cursor
     );
     println!(

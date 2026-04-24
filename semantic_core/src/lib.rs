@@ -17,6 +17,7 @@ pub type WaitId = u64;
 pub type Generation = u64;
 pub type SnapshotBarrierId = u64;
 pub type StoreId = u64;
+pub type TransactionId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResourceHandle {
@@ -253,6 +254,74 @@ impl StoreState {
             Self::Draining => FaultDomainState::Draining,
             Self::Restarting => FaultDomainState::Restarting,
             Self::Dead => FaultDomainState::Dead,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FaultClass {
+    Guest,
+    Service,
+    Driver,
+    Supervisor,
+    Substrate,
+}
+
+impl FaultClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Guest => "guest",
+            Self::Service => "service",
+            Self::Driver => "driver",
+            Self::Supervisor => "supervisor",
+            Self::Substrate => "substrate",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrapClass {
+    GuestSegfault,
+    GuestIllegalInstruction,
+    WasmBoundsTrap,
+    WasmUnreachableTrap,
+    WindowViolationTrap,
+    MmioPermissionTrap,
+    DmaPermissionTrap,
+    CapabilityDenied,
+    ServiceTrap,
+    DriverTrap,
+    SubstrateFault,
+}
+
+impl TrapClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GuestSegfault => "guest-segfault",
+            Self::GuestIllegalInstruction => "guest-illegal-instruction",
+            Self::WasmBoundsTrap => "wasm-bounds-trap",
+            Self::WasmUnreachableTrap => "wasm-unreachable-trap",
+            Self::WindowViolationTrap => "window-violation-trap",
+            Self::MmioPermissionTrap => "mmio-permission-trap",
+            Self::DmaPermissionTrap => "dma-permission-trap",
+            Self::CapabilityDenied => "capability-denied",
+            Self::ServiceTrap => "service-trap",
+            Self::DriverTrap => "driver-trap",
+            Self::SubstrateFault => "substrate-fault",
+        }
+    }
+
+    pub const fn fault_class(self) -> FaultClass {
+        match self {
+            Self::GuestSegfault | Self::GuestIllegalInstruction => FaultClass::Guest,
+            Self::DriverTrap | Self::MmioPermissionTrap | Self::DmaPermissionTrap => {
+                FaultClass::Driver
+            }
+            Self::SubstrateFault => FaultClass::Substrate,
+            Self::CapabilityDenied | Self::WindowViolationTrap => FaultClass::Supervisor,
+            Self::WasmBoundsTrap | Self::WasmUnreachableTrap | Self::ServiceTrap => {
+                FaultClass::Service
+            }
         }
     }
 }
@@ -528,6 +597,7 @@ pub struct ResourceRecord {
     pub label: String,
     pub kind: ResourceKind,
     pub owner_task: Option<TaskId>,
+    pub owner_store: Option<StoreId>,
     pub generation: Generation,
     pub live: bool,
 }
@@ -562,6 +632,33 @@ pub struct StoreRecord {
     pub state: StoreState,
     pub generation: Generation,
     pub restart_count: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransactionState {
+    Begun,
+    Committed,
+    RolledBack,
+}
+
+impl TransactionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Begun => "begun",
+            Self::Committed => "committed",
+            Self::RolledBack => "rolled-back",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SemanticTransactionRecord {
+    pub id: TransactionId,
+    pub label: String,
+    pub store: Option<StoreId>,
+    pub task: Option<TaskId>,
+    pub state: TransactionState,
+    pub generation: Generation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -692,9 +789,17 @@ pub enum EventKind {
         to: FaultDomainState,
         generation: Generation,
     },
+    FaultClassified {
+        trap: TrapClass,
+        class: FaultClass,
+        store: Option<StoreId>,
+        task: Option<TaskId>,
+        detail: String,
+    },
     DriverTrap {
         domain: Option<FaultDomainId>,
-        trap: String,
+        trap: TrapClass,
+        detail: String,
     },
     FaultDomainRestarted {
         domain: FaultDomainId,
@@ -713,7 +818,8 @@ pub enum EventKind {
     },
     StoreTrap {
         store: StoreId,
-        trap: String,
+        trap: TrapClass,
+        detail: String,
     },
     StoreDropped {
         store: StoreId,
@@ -744,6 +850,21 @@ pub enum EventKind {
     },
     FastPathPlanInvalidated {
         plan: u64,
+    },
+    TransactionBegan {
+        transaction: TransactionId,
+        store: Option<StoreId>,
+        task: Option<TaskId>,
+        label: String,
+    },
+    TransactionCommitted {
+        transaction: TransactionId,
+        generation: Generation,
+    },
+    TransactionRolledBack {
+        transaction: TransactionId,
+        reason: String,
+        generation: Generation,
     },
     FailureEffect {
         effect: FailureEffect,
@@ -887,9 +1008,35 @@ impl EventKind {
                 from.as_str(),
                 to.as_str()
             ),
-            Self::DriverTrap { domain, trap } => match domain {
-                Some(domain) => format!("DriverTrap domain={domain} trap={trap}"),
-                None => format!("DriverTrap trap={trap}"),
+            Self::FaultClassified {
+                trap,
+                class,
+                store,
+                task,
+                detail,
+            } => {
+                let store = store
+                    .map(|store| store.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                let task = task
+                    .map(|task| task.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                format!(
+                    "FaultClassified trap={} class={} store={store} task={task} detail={detail}",
+                    trap.as_str(),
+                    class.as_str()
+                )
+            }
+            Self::DriverTrap {
+                domain,
+                trap,
+                detail,
+            } => match domain {
+                Some(domain) => format!(
+                    "DriverTrap domain={domain} trap={} detail={detail}",
+                    trap.as_str()
+                ),
+                None => format!("DriverTrap trap={} detail={detail}", trap.as_str()),
             },
             Self::FaultDomainRestarted { domain } => {
                 format!("FaultDomainRestarted domain={domain}")
@@ -912,8 +1059,15 @@ impl EventKind {
                 from.as_str(),
                 to.as_str()
             ),
-            Self::StoreTrap { store, trap } => {
-                format!("StoreTrap store={store} trap={trap}")
+            Self::StoreTrap {
+                store,
+                trap,
+                detail,
+            } => {
+                format!(
+                    "StoreTrap store={store} trap={} detail={detail}",
+                    trap.as_str()
+                )
             }
             Self::StoreDropped {
                 store,
@@ -947,6 +1101,37 @@ impl EventKind {
             }
             Self::FastPathPlanInvalidated { plan } => {
                 format!("FastPathPlanInvalidated plan={plan}")
+            }
+            Self::TransactionBegan {
+                transaction,
+                store,
+                task,
+                label,
+            } => {
+                let store = store
+                    .map(|store| store.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                let task = task
+                    .map(|task| task.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                format!(
+                    "TransactionBegan transaction={transaction} store={store} task={task} label={label}"
+                )
+            }
+            Self::TransactionCommitted {
+                transaction,
+                generation,
+            } => {
+                format!("TransactionCommitted transaction={transaction} generation={generation}")
+            }
+            Self::TransactionRolledBack {
+                transaction,
+                reason,
+                generation,
+            } => {
+                format!(
+                    "TransactionRolledBack transaction={transaction} reason={reason} generation={generation}"
+                )
             }
             Self::FailureEffect { effect } => {
                 format!("FailureEffect {}", effect.summary())
@@ -1037,11 +1222,13 @@ pub struct SemanticGraph {
     waits: Vec<WaitRecord>,
     fault_domains: Vec<FaultDomainRecord>,
     stores: Vec<StoreRecord>,
+    transactions: Vec<SemanticTransactionRecord>,
     capabilities: CapabilityLedger,
     event_log: EventLog,
     next_resource_id: ResourceId,
     next_fault_domain_id: FaultDomainId,
     next_store_id: StoreId,
+    next_transaction_id: TransactionId,
 }
 
 impl SemanticGraph {
@@ -1052,11 +1239,13 @@ impl SemanticGraph {
             waits: Vec::new(),
             fault_domains: Vec::new(),
             stores: Vec::new(),
+            transactions: Vec::new(),
             capabilities: CapabilityLedger::new(),
             event_log: EventLog::new(),
             next_resource_id: 1,
             next_fault_domain_id: 1,
             next_store_id: 1,
+            next_transaction_id: 1,
         }
     }
 
@@ -1110,6 +1299,16 @@ impl SemanticGraph {
         owner_task: Option<TaskId>,
         label: &str,
     ) -> ResourceId {
+        self.register_resource_for_store(kind, owner_task, None, label)
+    }
+
+    pub fn register_resource_for_store(
+        &mut self,
+        kind: ResourceKind,
+        owner_task: Option<TaskId>,
+        owner_store: Option<StoreId>,
+        label: &str,
+    ) -> ResourceId {
         let id = self.next_resource_id;
         self.next_resource_id += 1;
         self.resources.push(ResourceRecord {
@@ -1117,6 +1316,7 @@ impl SemanticGraph {
             label: label.to_string(),
             kind,
             owner_task,
+            owner_store,
             generation: 1,
             live: true,
         });
@@ -1152,6 +1352,25 @@ impl SemanticGraph {
                 generation: resource.generation,
             },
         );
+    }
+
+    pub fn mark_resource_dead(&mut self, id: ResourceId) {
+        self.close_resource(id);
+        self.record_failure_effect(FailureEffect::MarkResourceDead(id));
+    }
+
+    pub fn close_resources_owned_by_store(&mut self, store: StoreId) -> usize {
+        let resources = self
+            .resources
+            .iter()
+            .filter(|resource| resource.owner_store == Some(store) && resource.live)
+            .map(|resource| resource.id)
+            .collect::<Vec<_>>();
+        let count = resources.len();
+        for resource in resources {
+            self.mark_resource_dead(resource);
+        }
+        count
     }
 
     pub fn resource_handle(&self, id: ResourceId) -> Option<ResourceHandle> {
@@ -1289,14 +1508,15 @@ impl SemanticGraph {
             return store.id;
         }
 
-        let fault_domain = self.register_fault_domain(package, role);
-        let resource = self.register_resource(
-            ResourceKind::ServiceStore,
-            None,
-            &format!("store:{package}:{artifact}"),
-        );
         let id = self.next_store_id;
         self.next_store_id += 1;
+        let fault_domain = self.register_fault_domain(package, role);
+        let resource = self.register_resource_for_store(
+            ResourceKind::ServiceStore,
+            None,
+            Some(id),
+            &format!("store:{package}:{artifact}"),
+        );
         self.stores.push(StoreRecord {
             id,
             package: package.to_string(),
@@ -1399,19 +1619,34 @@ impl SemanticGraph {
     }
 
     pub fn record_store_trap(&mut self, id: StoreId, trap: &str) {
+        self.record_store_trap_class(id, TrapClass::ServiceTrap, trap);
+    }
+
+    pub fn record_store_trap_class(&mut self, id: StoreId, trap: TrapClass, detail: &str) {
         let domain = self
             .stores
             .iter()
             .find(|store| store.id == id)
             .map(|store| store.fault_domain);
         self.event_log.push(
+            "fault",
+            EventKind::FaultClassified {
+                trap,
+                class: trap.fault_class(),
+                store: Some(id),
+                task: None,
+                detail: detail.to_string(),
+            },
+        );
+        self.event_log.push(
             "store",
             EventKind::StoreTrap {
                 store: id,
-                trap: trap.to_string(),
+                trap,
+                detail: detail.to_string(),
             },
         );
-        self.record_driver_trap(domain, trap);
+        self.record_driver_trap_class(domain, trap, detail);
         self.set_store_state(id, StoreState::Degraded);
     }
 
@@ -1420,9 +1655,7 @@ impl SemanticGraph {
             return;
         };
         let resource = self.stores[index].resource.take();
-        if let Some(resource) = resource {
-            self.close_resource(resource);
-        }
+        self.close_resources_owned_by_store(id);
         self.set_store_state(id, StoreState::Dead);
         let generation = self.stores[index].generation;
         self.event_log.push(
@@ -1439,9 +1672,10 @@ impl SemanticGraph {
         let index = self.stores.iter().position(|store| store.id == id)?;
         let package = self.stores[index].package.clone();
         let artifact = self.stores[index].artifact.clone();
-        let resource = self.register_resource(
+        let resource = self.register_resource_for_store(
             ResourceKind::ServiceStore,
             None,
+            Some(id),
             &format!("store:{package}:{artifact}"),
         );
         self.stores[index].resource = Some(resource);
@@ -1464,11 +1698,21 @@ impl SemanticGraph {
     }
 
     pub fn record_driver_trap(&mut self, domain: Option<FaultDomainId>, trap: &str) {
+        self.record_driver_trap_class(domain, TrapClass::DriverTrap, trap);
+    }
+
+    pub fn record_driver_trap_class(
+        &mut self,
+        domain: Option<FaultDomainId>,
+        trap: TrapClass,
+        detail: &str,
+    ) {
         self.event_log.push(
             "trap",
             EventKind::DriverTrap {
                 domain,
-                trap: trap.to_string(),
+                trap,
+                detail: detail.to_string(),
             },
         );
     }
@@ -1737,6 +1981,79 @@ impl SemanticGraph {
         }
     }
 
+    pub fn begin_transaction(
+        &mut self,
+        label: &str,
+        store: Option<StoreId>,
+        task: Option<TaskId>,
+    ) -> TransactionId {
+        let id = self.next_transaction_id;
+        self.next_transaction_id += 1;
+        self.transactions.push(SemanticTransactionRecord {
+            id,
+            label: label.to_string(),
+            store,
+            task,
+            state: TransactionState::Begun,
+            generation: 1,
+        });
+        self.event_log.push(
+            "transaction",
+            EventKind::TransactionBegan {
+                transaction: id,
+                store,
+                task,
+                label: label.to_string(),
+            },
+        );
+        id
+    }
+
+    pub fn commit_transaction(&mut self, id: TransactionId) {
+        let Some(transaction) = self
+            .transactions
+            .iter_mut()
+            .find(|transaction| transaction.id == id)
+        else {
+            return;
+        };
+        if transaction.state != TransactionState::Begun {
+            return;
+        }
+        transaction.state = TransactionState::Committed;
+        transaction.generation += 1;
+        self.event_log.push(
+            "transaction",
+            EventKind::TransactionCommitted {
+                transaction: id,
+                generation: transaction.generation,
+            },
+        );
+    }
+
+    pub fn rollback_transaction(&mut self, id: TransactionId, reason: &str) {
+        let Some(transaction) = self
+            .transactions
+            .iter_mut()
+            .find(|transaction| transaction.id == id)
+        else {
+            return;
+        };
+        if transaction.state != TransactionState::Begun {
+            return;
+        }
+        transaction.state = TransactionState::RolledBack;
+        transaction.generation += 1;
+        self.event_log.push(
+            "transaction",
+            EventKind::TransactionRolledBack {
+                transaction: id,
+                reason: reason.to_string(),
+                generation: transaction.generation,
+            },
+        );
+    }
+
     pub fn record_failure_effect(&mut self, effect: FailureEffect) {
         self.event_log
             .push("failure", EventKind::FailureEffect { effect });
@@ -1785,6 +2102,7 @@ impl SemanticGraph {
                 waits: self.waits.clone(),
                 fault_domains: self.fault_domains.clone(),
                 stores: self.stores.clone(),
+                transactions: self.transactions.clone(),
                 capabilities: self.capabilities.records().to_vec(),
             },
         }
@@ -1808,6 +2126,10 @@ impl SemanticGraph {
 
     pub fn store_count(&self) -> usize {
         self.stores.len()
+    }
+
+    pub fn transaction_count(&self) -> usize {
+        self.transactions.len()
     }
 
     pub fn capability_count(&self) -> usize {
@@ -1842,6 +2164,10 @@ impl SemanticGraph {
 
     pub fn stores(&self) -> &[StoreRecord] {
         &self.stores
+    }
+
+    pub fn transactions(&self) -> &[SemanticTransactionRecord] {
+        &self.transactions
     }
 
     pub fn event_log_tail(&self, count: usize) -> &[EventRecord] {
@@ -1932,6 +2258,7 @@ pub struct SemanticSnapshot {
     pub waits: Vec<WaitRecord>,
     pub fault_domains: Vec<FaultDomainRecord>,
     pub stores: Vec<StoreRecord>,
+    pub transactions: Vec<SemanticTransactionRecord>,
     pub capabilities: Vec<CapabilityRecord>,
 }
 
@@ -1983,13 +2310,14 @@ impl MigrationPackage {
             self.semantic.barrier.active_dmw_lease_count
         ));
         lines.push(format!(
-            "semantic roots: tasks={} resources={} waits={} capabilities={} fault_domains={} stores={}",
+            "semantic roots: tasks={} resources={} waits={} capabilities={} fault_domains={} stores={} transactions={}",
             self.semantic.tasks.len(),
             self.semantic.resources.len(),
             self.semantic.waits.len(),
             self.semantic.capabilities.len(),
             self.semantic.fault_domains.len(),
-            self.semantic.stores.len()
+            self.semantic.stores.len(),
+            self.semantic.transactions.len()
         ));
         lines.push(format!(
             "required artifacts: {}",
@@ -2158,6 +2486,41 @@ mod tests {
             graph.event_log_tail(1)[0].kind.summary(),
             "FaultDomainRestarted domain=1"
         );
+    }
+
+    #[test]
+    fn transaction_rollback_and_store_owned_resource_cleanup_are_recorded() {
+        let mut graph = SemanticGraph::new();
+        let store = graph.register_store("devfs_service", "devfs", "service", "restartable");
+        graph.set_store_state(store, StoreState::Running);
+        let scratch = graph.register_resource_for_store(
+            ResourceKind::Device,
+            None,
+            Some(store),
+            "device:pulse-shadow",
+        );
+        let transaction = graph.begin_transaction("devfs.read_device", Some(store), Some(9));
+
+        graph.rollback_transaction(transaction, "devfs_service trapped");
+        graph.record_store_trap_class(store, TrapClass::ServiceTrap, "devfs_service trapped");
+        assert_eq!(graph.close_resources_owned_by_store(store), 2);
+
+        assert_eq!(
+            graph.validate_resource_handle(ResourceHandle::new(scratch, 1)),
+            Err(GenerationCheckError::GenerationMismatch {
+                expected: 1,
+                actual: Some(2),
+            })
+        );
+        assert_eq!(graph.transactions()[0].state, TransactionState::RolledBack);
+        assert!(graph.event_log_tail(32).iter().any(|event| matches!(
+            event.kind,
+            EventKind::FaultClassified {
+                trap: TrapClass::ServiceTrap,
+                class: FaultClass::Service,
+                ..
+            }
+        )));
     }
 
     #[test]
