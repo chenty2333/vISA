@@ -245,5 +245,15 @@ pub struct MigrationCapabilityManifest {
     pub object: String,
     pub rights: Vec<String>,
     pub lifetime: String,
+    #[serde(default)]
+    pub class: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub owner_store: Option<u64>,
+    #[serde(default)]
+    pub owner_task: Option<u64>,
     pub generation: u64,
+    #[serde(default)]
+    pub revoked: bool,
 }

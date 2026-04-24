@@ -29,6 +29,19 @@ pub enum RuntimeMode {
 }
 
 impl RuntimeMode {
+    pub const fn all() -> [Self; 3] {
+        [Self::Research, Self::Production, Self::Replay]
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "research" => Some(Self::Research),
+            "production" => Some(Self::Production),
+            "replay" => Some(Self::Replay),
+            _ => None,
+        }
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Research => "research",
@@ -59,6 +72,30 @@ impl RuntimeMode {
 
     pub const fn deterministic_boundary(self) -> bool {
         matches!(self, Self::Replay)
+    }
+
+    pub const fn capability_audit_policy(self) -> &'static str {
+        match self {
+            Self::Research => "full",
+            Self::Production => "sampled",
+            Self::Replay => "deterministic",
+        }
+    }
+
+    pub const fn debug_metadata_policy(self) -> &'static str {
+        match self {
+            Self::Research => "full",
+            Self::Production => "reduced",
+            Self::Replay => "log-derived",
+        }
+    }
+
+    pub const fn nondeterminism_policy(self) -> &'static str {
+        match self {
+            Self::Research => "record-at-boundary",
+            Self::Production => "record-sampled-boundary",
+            Self::Replay => "read-from-event-log",
+        }
     }
 }
 
@@ -513,6 +550,77 @@ impl OperationSet {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapabilityClass {
+    ServiceImport,
+    Device,
+    PacketDevice,
+    MmioRegion,
+    DmaBuffer,
+    IrqLine,
+    VirtioQueue,
+    DmwWindow,
+    Timer,
+    Snapshot,
+    FaultDomain,
+    NetInterface,
+    NetSocket,
+    GuestMemoryAccess,
+}
+
+impl CapabilityClass {
+    pub fn from_object(object: &str) -> Self {
+        if object.starts_with("packet-device.") {
+            Self::PacketDevice
+        } else if object.starts_with("device.") {
+            Self::Device
+        } else if object.starts_with("mmio.") {
+            Self::MmioRegion
+        } else if object.starts_with("dma.") {
+            Self::DmaBuffer
+        } else if object.starts_with("irq.") {
+            Self::IrqLine
+        } else if object.starts_with("virtqueue.") {
+            Self::VirtioQueue
+        } else if object.starts_with("dmw.") {
+            Self::DmwWindow
+        } else if object.starts_with("timer.") {
+            Self::Timer
+        } else if object.starts_with("snapshot.") {
+            Self::Snapshot
+        } else if object.starts_with("fault-domain.") {
+            Self::FaultDomain
+        } else if object.starts_with("net.interface") {
+            Self::NetInterface
+        } else if object.starts_with("net.socket") {
+            Self::NetSocket
+        } else if object.starts_with("guest-memory.") {
+            Self::GuestMemoryAccess
+        } else {
+            Self::ServiceImport
+        }
+    }
+
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::ServiceImport => "service-import",
+            Self::Device => "device",
+            Self::PacketDevice => "packet-device",
+            Self::MmioRegion => "mmio-region",
+            Self::DmaBuffer => "dma-buffer",
+            Self::IrqLine => "irq-line",
+            Self::VirtioQueue => "virtio-queue",
+            Self::DmwWindow => "dmw-window",
+            Self::Timer => "timer",
+            Self::Snapshot => "snapshot",
+            Self::FaultDomain => "fault-domain",
+            Self::NetInterface => "net-interface",
+            Self::NetSocket => "net-socket",
+            Self::GuestMemoryAccess => "guest-memory-access",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CapabilityRecord {
     pub id: CapabilityId,
@@ -520,6 +628,10 @@ pub struct CapabilityRecord {
     pub object: String,
     pub operations: OperationSet,
     pub lifetime: String,
+    pub class: CapabilityClass,
+    pub owner_store: Option<StoreId>,
+    pub owner_task: Option<TaskId>,
+    pub source: String,
     pub generation: Generation,
     pub revoked: bool,
 }
@@ -565,6 +677,29 @@ impl CapabilityLedger {
         operations: &[&str],
         lifetime: &str,
     ) -> CapabilityId {
+        self.grant_with_metadata(
+            subject,
+            object,
+            operations,
+            lifetime,
+            CapabilityClass::from_object(object),
+            None,
+            None,
+            "runtime-grant",
+        )
+    }
+
+    pub fn grant_with_metadata(
+        &mut self,
+        subject: &str,
+        object: &str,
+        operations: &[&str],
+        lifetime: &str,
+        class: CapabilityClass,
+        owner_store: Option<StoreId>,
+        owner_task: Option<TaskId>,
+        source: &str,
+    ) -> CapabilityId {
         if let Some(record) = self
             .records
             .iter_mut()
@@ -572,6 +707,10 @@ impl CapabilityLedger {
         {
             record.operations = OperationSet::from_static(operations);
             record.lifetime = lifetime.to_string();
+            record.class = class;
+            record.owner_store = owner_store;
+            record.owner_task = owner_task;
+            record.source = source.to_string();
             record.generation += 1;
             record.revoked = false;
             return record.id;
@@ -585,6 +724,10 @@ impl CapabilityLedger {
             object: object.to_string(),
             operations: OperationSet::from_static(operations),
             lifetime: lifetime.to_string(),
+            class,
+            owner_store,
+            owner_task,
+            source: source.to_string(),
             generation: 1,
             revoked: false,
         });
@@ -604,7 +747,16 @@ impl CapabilityLedger {
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        Some(self.grant(subject, &parent.object, &operations, lifetime))
+        Some(self.grant_with_metadata(
+            subject,
+            &parent.object,
+            &operations,
+            lifetime,
+            parent.class,
+            parent.owner_store,
+            parent.owner_task,
+            "delegated",
+        ))
     }
 
     pub fn attenuate(
@@ -618,7 +770,16 @@ impl CapabilityLedger {
         if !parent.operations.contains_all(operations) {
             return None;
         }
-        Some(self.grant(subject, &parent.object, operations, lifetime))
+        Some(self.grant_with_metadata(
+            subject,
+            &parent.object,
+            operations,
+            lifetime,
+            parent.class,
+            parent.owner_store,
+            parent.owner_task,
+            "attenuated",
+        ))
     }
 
     pub fn revoke(&mut self, id: CapabilityId) -> bool {
@@ -1862,7 +2023,14 @@ impl SemanticGraph {
             generation: 1,
             state: AuthorityState::Bound,
         });
-        self.grant_capability(subject, object, operations, lifetime);
+        self.grant_capability_with_source(
+            subject,
+            object,
+            operations,
+            lifetime,
+            CapabilityClass::from_object(object),
+            "authority-binding",
+        );
         self.event_log.push(
             "authority",
             EventKind::AuthorityBound {
@@ -2359,9 +2527,53 @@ impl SemanticGraph {
         operations: &[&str],
         lifetime: &str,
     ) -> CapabilityId {
-        let cap = self
-            .capabilities
-            .grant(subject, object, operations, lifetime);
+        self.grant_capability_with_source(
+            subject,
+            object,
+            operations,
+            lifetime,
+            CapabilityClass::from_object(object),
+            "runtime-grant",
+        )
+    }
+
+    pub fn grant_manifest_capability(
+        &mut self,
+        subject: &str,
+        object: &str,
+        operations: &[&str],
+        lifetime: &str,
+    ) -> CapabilityId {
+        self.grant_capability_with_source(
+            subject,
+            object,
+            operations,
+            lifetime,
+            CapabilityClass::from_object(object),
+            "artifact-manifest",
+        )
+    }
+
+    pub fn grant_capability_with_source(
+        &mut self,
+        subject: &str,
+        object: &str,
+        operations: &[&str],
+        lifetime: &str,
+        class: CapabilityClass,
+        source: &str,
+    ) -> CapabilityId {
+        let owner_store = self.store_id(subject);
+        let cap = self.capabilities.grant_with_metadata(
+            subject,
+            object,
+            operations,
+            lifetime,
+            class,
+            owner_store,
+            None,
+            source,
+        );
         self.event_log
             .push("capability", EventKind::CapabilityGranted { cap });
         cap
@@ -3249,6 +3461,10 @@ mod tests {
                 .attenuate(parent, "helper", &["read"], "activation")
                 .is_some()
         );
+        let helper = ledger
+            .check("helper", "mmio-bar0", "read")
+            .expect("attenuated capability");
+        assert_eq!(helper.source, "attenuated");
         assert!(
             ledger
                 .attenuate(parent, "helper", &["write"], "activation")
@@ -3269,8 +3485,16 @@ mod tests {
     #[test]
     fn capability_ledger_reports_owner_recovery_state() {
         let mut graph = SemanticGraph::new();
-        graph.grant_capability("driver", "mmio-bar0", &["read", "write"], "store");
+        let store = graph.register_store("driver", "driver", "driver", "restartable");
+        graph.grant_manifest_capability("driver", "mmio.bar0", &["read", "write"], "store");
         graph.grant_capability("driver", "irq11", &["ack"], "store");
+        let mmio = graph
+            .capabilities()
+            .check("driver", "mmio.bar0", "read")
+            .expect("manifest capability");
+        assert_eq!(mmio.class, CapabilityClass::MmioRegion);
+        assert_eq!(mmio.source, "artifact-manifest");
+        assert_eq!(mmio.owner_store, Some(store));
 
         let report = graph.revoke_capabilities_for_subject("driver");
         let summary = graph.capability_owner_summary("driver");
@@ -3279,7 +3503,7 @@ mod tests {
         assert_eq!(summary.active, 0);
         assert_eq!(summary.revoked, 2);
         assert_eq!(
-            graph.check_capability("driver", "mmio-bar0", "read"),
+            graph.check_capability("driver", "mmio.bar0", "read"),
             Err(CapabilityDenyReason::Revoked)
         );
     }

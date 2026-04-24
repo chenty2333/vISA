@@ -760,6 +760,7 @@ version = "0.1.0"
 dependencies = [
  "artifact_manifest",
  "contract_core",
+ "semantic_core",
  "serde_json",
  "service_core",
  "supervisor_catalog",

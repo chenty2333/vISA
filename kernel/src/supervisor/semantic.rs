@@ -35,7 +35,7 @@ pub(super) fn bootstrap_graph(
             blueprint.fault_policy,
         );
         for capability in blueprint.capabilities {
-            graph.grant_capability(
+            graph.grant_manifest_capability(
                 blueprint.package,
                 capability.name,
                 capability.rights,

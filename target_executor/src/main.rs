@@ -116,7 +116,7 @@ fn register_store_semantics(semantic: &mut SemanticGraph, entry: &ValidatedArtif
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        semantic.grant_capability(
+        semantic.grant_manifest_capability(
             &entry.package,
             &capability.name,
             &rights,
@@ -145,20 +145,21 @@ fn demo_migration_package(
     manifest: &ArtifactBundleManifest,
     semantic: &SemanticGraph,
 ) -> MigrationPackageManifest {
-    let logical_capabilities = manifest
-        .modules
+    let logical_capabilities = semantic
+        .capabilities()
+        .records()
         .iter()
-        .flat_map(|module| {
-            module
-                .capabilities
-                .iter()
-                .map(|capability| MigrationCapabilityManifest {
-                    subject: module.package.clone(),
-                    object: capability.name.clone(),
-                    rights: capability.rights.clone(),
-                    lifetime: capability.lifetime.clone(),
-                    generation: 1,
-                })
+        .map(|capability| MigrationCapabilityManifest {
+            subject: capability.subject.clone(),
+            object: capability.object.clone(),
+            rights: capability.operations.as_slice().to_vec(),
+            lifetime: capability.lifetime.clone(),
+            class: capability.class.as_str().to_owned(),
+            source: capability.source.clone(),
+            owner_store: capability.owner_store,
+            owner_task: capability.owner_task.map(u64::from),
+            generation: capability.generation,
+            revoked: capability.revoked,
         })
         .collect::<Vec<_>>();
     let capability_count = logical_capabilities.len();
@@ -280,11 +281,13 @@ fn semantic_roots(
             .iter()
             .map(|capability| {
                 format!(
-                    "cap:{}:{}:{}:gen{}",
+                    "cap:{}:{}:{}:{}:gen{}:{}",
                     capability.subject,
+                    capability.class,
                     capability.object,
                     capability.rights.join("+"),
-                    capability.generation
+                    capability.generation,
+                    capability.source
                 )
             })
             .collect(),

@@ -8,6 +8,7 @@ use contract_core::{
     ValidatedArtifactPlan, build_validated_artifact_plan, validate_migration_against_manifest,
     validate_migration_package, validate_replay_quiescent,
 };
+use semantic_core::{CapabilityClass, RuntimeMode};
 
 fn main() {
     if let Err(err) = run() {
@@ -50,6 +51,46 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             let path = path.ok_or("plan requires a manifest JSON path")?;
             print_plan(Path::new(&path), json)
+        }
+        "modes" => print_modes(),
+        "caps" => {
+            let mut subject = None;
+            let mut path = None;
+            while let Some(arg) = args.next() {
+                if arg == "--subject" {
+                    subject = Some(args.next().ok_or("caps --subject requires a value")?);
+                } else if path.is_none() {
+                    path = Some(arg);
+                } else {
+                    return Err("caps received too many positional paths".into());
+                }
+            }
+            let path = path.ok_or("caps requires a manifest/package JSON path")?;
+            print_caps(Path::new(&path), subject.as_deref())
+        }
+        "state" => {
+            let Some(path) = args.next() else {
+                return Err("state requires a manifest/package JSON path".into());
+            };
+            print_state(Path::new(&path))
+        }
+        "graph" => {
+            let Some(path) = args.next() else {
+                return Err("graph requires a migration package JSON path".into());
+            };
+            print_graph(Path::new(&path))
+        }
+        "event-log" => {
+            let Some(subcommand) = args.next() else {
+                return Err("event-log requires a subcommand".into());
+            };
+            if subcommand != "tail" {
+                return Err("event-log syntax is: osctl event-log tail <migration.json>".into());
+            }
+            let Some(path) = args.next() else {
+                return Err("event-log tail requires a migration package JSON path".into());
+            };
+            print_event_log_tail(Path::new(&path))
         }
         "replay" => {
             let Some(until_flag) = args.next() else {
@@ -102,6 +143,11 @@ fn print_usage() {
     eprintln!("  osctl summary <manifest-or-migration.json>");
     eprintln!("  osctl check <manifest-or-migration.json>");
     eprintln!("  osctl plan [--json] <manifest.json>");
+    eprintln!("  osctl modes");
+    eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
+    eprintln!("  osctl state <manifest-or-migration.json>");
+    eprintln!("  osctl graph <migration.json>");
+    eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
         "  osctl replay --until <event-cursor> [--manifest <manifest.json>] [--json] <migration.json>"
     );
@@ -145,9 +191,19 @@ fn print_plan(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&fs::read(path)?)?;
     let plan = build_validated_artifact_plan(&manifest)?;
     if json {
+        let mode = RuntimeMode::parse(&plan.runtime_mode).unwrap_or(RuntimeMode::Research);
         let value = serde_json::json!({
             "artifact_profile": &plan.artifact_profile,
             "runtime_mode": &plan.runtime_mode,
+            "mode_policy": {
+                "event_log": mode.event_log_policy(),
+                "dmw": mode.dmw_policy(),
+                "fastpath_enabled": mode.fast_path_enabled(),
+                "deterministic_boundary": mode.deterministic_boundary(),
+                "capability_audit": mode.capability_audit_policy(),
+                "debug_metadata": mode.debug_metadata_policy(),
+                "nondeterminism": mode.nondeterminism_policy()
+            },
             "contract_version": &plan.contract_version,
             "target_arch": &plan.target_arch,
             "compiler": {
@@ -181,6 +237,190 @@ fn print_plan(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     print_plan_text(&plan);
+    Ok(())
+}
+
+fn print_modes() -> Result<(), Box<dyn Error>> {
+    for mode in RuntimeMode::all() {
+        println!(
+            "mode {} event_log={} dmw={} fastpath={} deterministic={} capability_audit={} debug_metadata={} nondeterminism={}",
+            mode.as_str(),
+            mode.event_log_policy(),
+            mode.dmw_policy(),
+            if mode.fast_path_enabled() {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            mode.deterministic_boundary(),
+            mode.capability_audit_policy(),
+            mode.debug_metadata_policy(),
+            mode.nondeterminism_policy()
+        );
+    }
+    Ok(())
+}
+
+fn print_caps(path: &Path, subject: Option<&str>) -> Result<(), Box<dyn Error>> {
+    let bytes = fs::read(path)?;
+    if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
+        println!(
+            "capability ledger package={} caps={} cursor={}",
+            package.package_id,
+            package.logical_capabilities.len(),
+            package.semantic.event_log_cursor
+        );
+        for capability in package
+            .logical_capabilities
+            .iter()
+            .filter(|capability| subject.is_none_or(|subject| capability.subject == subject))
+        {
+            println!(
+                "cap subject={} object={} class={} rights={} lifetime={} generation={} source={} owner_store={} owner_task={} revoked={}",
+                capability.subject,
+                capability.object,
+                display_capability_class(&capability.class, &capability.object),
+                capability.rights.join("+"),
+                capability.lifetime,
+                capability.generation,
+                display_default(&capability.source, "unknown"),
+                display_option_u64(capability.owner_store),
+                display_option_u64(capability.owner_task),
+                capability.revoked
+            );
+        }
+        return Ok(());
+    }
+
+    let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&bytes)?;
+    let plan = build_validated_artifact_plan(&manifest)?;
+    println!(
+        "capability manifest profile={} mode={} caps={} modules={}",
+        plan.artifact_profile,
+        plan.runtime_mode,
+        plan.capability_count(),
+        plan.module_count()
+    );
+    for module in &plan.modules {
+        if subject.is_some_and(|subject| module.package != subject) {
+            continue;
+        }
+        for capability in &module.capabilities {
+            println!(
+                "cap subject={} object={} class={} rights={} lifetime={} source=artifact-manifest owner_store=planned-store",
+                module.package,
+                capability.name,
+                CapabilityClass::from_object(&capability.name).as_str(),
+                capability.rights.join("+"),
+                capability.lifetime
+            );
+        }
+    }
+    Ok(())
+}
+
+fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
+    let bytes = fs::read(path)?;
+    if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
+        println!(
+            "semantic state package={} cursor={} tasks={} resources={} stores={} caps={} waits={} authorities={}/{}",
+            package.package_id,
+            package.semantic.event_log_cursor,
+            package.semantic.task_count,
+            package.semantic.resource_count,
+            package.semantic.store_count,
+            package.semantic.capability_count,
+            package.semantic.wait_token_count,
+            package.semantic.active_authority_count,
+            package.semantic.authority_count
+        );
+        println!(
+            "substrate/executor boundary native_policy={} not_migrated={}",
+            package.substrate_boundary.native_state_policy,
+            package.not_migrated.join(", ")
+        );
+        println!(
+            "replay boundary scheduler_cursor={} random_epoch={} irq={} dma={} net_inputs={} dmw_leases={} cow_epoch={} background_pages={}",
+            package.substrate_boundary.scheduler_decision_cursor,
+            package.substrate_boundary.random_epoch,
+            package.substrate_boundary.pending_irq_causes,
+            package.substrate_boundary.pending_dma_completions,
+            package.substrate_boundary.pending_network_inputs,
+            package.substrate_boundary.active_dmw_lease_count,
+            package.substrate_boundary.cow_epoch,
+            package.substrate_boundary.background_copy_pages
+        );
+        return Ok(());
+    }
+
+    let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&bytes)?;
+    let plan = build_validated_artifact_plan(&manifest)?;
+    let mode = RuntimeMode::parse(&plan.runtime_mode).unwrap_or(RuntimeMode::Research);
+    println!(
+        "planned semantic/executor boundary profile={} mode={} modules={} caps={} exports={}",
+        plan.artifact_profile,
+        plan.runtime_mode,
+        plan.module_count(),
+        plan.capability_count(),
+        plan.expected_export_count()
+    );
+    println!(
+        "mode policy event_log={} dmw={} fastpath={} deterministic={} capability_audit={} metadata={} nondeterminism={}",
+        mode.event_log_policy(),
+        mode.dmw_policy(),
+        if mode.fast_path_enabled() {
+            "enabled"
+        } else {
+            "disabled"
+        },
+        mode.deterministic_boundary(),
+        mode.capability_audit_policy(),
+        mode.debug_metadata_policy(),
+        mode.nondeterminism_policy()
+    );
+    println!(
+        "executor boundary engine={} execution_mode={} artifact_format={} runtime_executor={}",
+        plan.compiler_engine,
+        plan.compiler_execution_mode,
+        plan.artifact_format,
+        plan.runtime_executor_abi
+    );
+    Ok(())
+}
+
+fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
+    let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
+    println!(
+        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} fastpath_roots={}",
+        package.package_id,
+        package.semantic.event_log_cursor,
+        package.semantic.roots.task_roots.len(),
+        package.semantic.roots.resource_roots.len(),
+        package.semantic.roots.authority_roots.len(),
+        package.semantic.roots.store_roots.len(),
+        package.semantic.roots.capability_roots.len(),
+        package.semantic.roots.fast_path_roots.len()
+    );
+    print_roots("task", &package.semantic.roots.task_roots);
+    print_roots("resource", &package.semantic.roots.resource_roots);
+    print_roots("authority", &package.semantic.roots.authority_roots);
+    print_roots("store", &package.semantic.roots.store_roots);
+    print_roots("capability", &package.semantic.roots.capability_roots);
+    print_roots("fastpath", &package.semantic.roots.fast_path_roots);
+    Ok(())
+}
+
+fn print_event_log_tail(path: &Path) -> Result<(), Box<dyn Error>> {
+    let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
+    println!(
+        "event-log tail package={} cursor={} events={}",
+        package.package_id,
+        package.semantic.event_log_cursor,
+        package.semantic.roots.event_log_tail.len()
+    );
+    for event in &package.semantic.roots.event_log_tail {
+        println!("{event}");
+    }
     Ok(())
 }
 
@@ -354,6 +594,7 @@ fn print_artifact_summary(manifest: &ArtifactBundleManifest) -> Result<(), Box<d
 }
 
 fn print_plan_text(plan: &ValidatedArtifactPlan) {
+    let mode = RuntimeMode::parse(&plan.runtime_mode).unwrap_or(RuntimeMode::Research);
     println!(
         "load plan profile={} mode={} contract={} world={} target={} engine={} exec_mode={} format={} runtime={}",
         plan.artifact_profile,
@@ -365,6 +606,20 @@ fn print_plan_text(plan: &ValidatedArtifactPlan) {
         plan.compiler_execution_mode,
         plan.artifact_format,
         plan.runtime_executor_abi
+    );
+    println!(
+        "mode policy event_log={} dmw={} fastpath={} deterministic={} capability_audit={} metadata={} nondeterminism={}",
+        mode.event_log_policy(),
+        mode.dmw_policy(),
+        if mode.fast_path_enabled() {
+            "enabled"
+        } else {
+            "disabled"
+        },
+        mode.deterministic_boundary(),
+        mode.capability_audit_policy(),
+        mode.debug_metadata_policy(),
+        mode.nondeterminism_policy()
     );
     println!(
         "load plan modules={} caps={} exports={}",
@@ -388,6 +643,30 @@ fn print_plan_text(plan: &ValidatedArtifactPlan) {
             module.resource_limits.max_hostcalls_per_activation
         );
     }
+}
+
+fn print_roots(label: &str, roots: &[String]) {
+    for root in roots {
+        println!("{label} {root}");
+    }
+}
+
+fn display_capability_class<'a>(class: &'a str, object: &str) -> &'a str {
+    if class.is_empty() {
+        CapabilityClass::from_object(object).as_str()
+    } else {
+        class
+    }
+}
+
+fn display_default<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.is_empty() { fallback } else { value }
+}
+
+fn display_option_u64(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_owned())
 }
 
 fn short_hash(hash: &str) -> &str {
