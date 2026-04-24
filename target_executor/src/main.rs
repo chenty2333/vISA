@@ -15,7 +15,9 @@ use contract_core::{
     validate_migration_against_manifest, validate_replay_quiescent,
 };
 use runtime::RuntimeOnlyExecutor;
-use semantic_core::{FrontendKind, RuntimeMode, SemanticGraph, StoreState, TaskState};
+use semantic_core::{
+    BoundaryKind, BoundaryStatus, FrontendKind, RuntimeMode, SemanticGraph, StoreState, TaskState,
+};
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
 
@@ -41,6 +43,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     semantic.ensure_task(1, FrontendKind::Supervisor, "target-executor-bootstrap");
     semantic.set_task_state(1, TaskState::Running);
+    publish_host_boundary_status(&mut semantic, &manifest);
 
     for entry in &plan.modules {
         let store = executor.load_store(entry)?;
@@ -110,6 +113,14 @@ fn register_store_semantics(semantic: &mut SemanticGraph, entry: &ValidatedArtif
     );
     semantic.set_store_state(store, StoreState::Instantiating);
     semantic.set_store_state(store, StoreState::Running);
+    semantic.record_store_executor_transition(
+        store,
+        "planned",
+        "artifact-verified",
+        Some("host-side-runtime-validation"),
+        "host-side-wasmtime-validation",
+        "host-side-trap-validation",
+    );
     for capability in &entry.capabilities {
         let rights = capability
             .rights
@@ -123,6 +134,51 @@ fn register_store_semantics(semantic: &mut SemanticGraph, entry: &ValidatedArtif
             &capability.lifetime,
         );
     }
+}
+
+fn publish_host_boundary_status(semantic: &mut SemanticGraph, manifest: &ArtifactBundleManifest) {
+    semantic.publish_boundary(
+        "artifact-loader",
+        BoundaryKind::ArtifactLoader,
+        BoundaryStatus::ManifestBacked,
+        &manifest.artifact_profile,
+        None,
+    );
+    semantic.publish_boundary(
+        "target-cwasm",
+        BoundaryKind::RuntimeExecutor,
+        BoundaryStatus::HostSide,
+        &manifest.compiler.runtime_executor_abi,
+        Some("bare-metal-cwasm-loader"),
+    );
+    semantic.publish_boundary(
+        "hostcall-table",
+        BoundaryKind::HostcallTable,
+        BoundaryStatus::HostSide,
+        &manifest.compiler.runtime_executor_abi,
+        Some("target-hostcall-trampoline"),
+    );
+    semantic.publish_boundary(
+        "target-executor",
+        BoundaryKind::TargetExecutor,
+        BoundaryStatus::HostSide,
+        "wasmtime-host-validator",
+        Some("target-runtime-only-executor"),
+    );
+    semantic.publish_boundary(
+        "store-lifecycle",
+        BoundaryKind::StoreLifecycle,
+        BoundaryStatus::LifecycleObject,
+        "target_executor-host-validation",
+        Some("target-store-memory-stack-code-object"),
+    );
+    semantic.publish_boundary(
+        "snapshot-replay",
+        BoundaryKind::SnapshotReplay,
+        BoundaryStatus::PackageOnly,
+        "semantic-package-v1",
+        Some("target-replay-runner"),
+    );
 }
 
 fn prepare_migration_package(
@@ -214,6 +270,8 @@ fn demo_migration_package(
             active_transaction_count: 0,
             fast_path_plan_count: semantic.fast_path_plan_count(),
             active_fast_path_plan_count: semantic.active_fast_path_plan_count(),
+            boundary_count: semantic.boundary_count(),
+            executor_transition_count: semantic.store_executor_transition_count(),
             network_socket_count: 1,
             network_rx_queue_bytes: 0,
         },
@@ -301,6 +359,13 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        boundary_roots: semantic
+            .boundaries()
+            .iter()
+            .map(|boundary| boundary.summary())
+            .collect(),
+        executor_transition_roots: semantic
+            .store_executor_transition_tail(semantic.store_executor_transition_count()),
         event_log_tail: semantic
             .event_log_tail(16)
             .iter()
@@ -400,7 +465,7 @@ fn restore_migration_package(
         package.guest.canonical_isa
     );
     println!(
-        "restore plan: import semantic roots tasks={} resources={} authorities={}/{} waits={} pending_waits={} transactions={} active_transactions={} fastpath={}/{} sockets={} rx_bytes={} event_cursor={}",
+        "restore plan: import semantic roots tasks={} resources={} authorities={}/{} waits={} pending_waits={} transactions={} active_transactions={} fastpath={}/{} boundaries={} executor_transitions={} sockets={} rx_bytes={} event_cursor={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.active_authority_count,
@@ -411,6 +476,8 @@ fn restore_migration_package(
         package.semantic.active_transaction_count,
         package.semantic.active_fast_path_plan_count,
         package.semantic.fast_path_plan_count,
+        package.semantic.boundary_count,
+        package.semantic.executor_transition_count,
         package.semantic.network_socket_count,
         package.semantic.network_rx_queue_bytes,
         package.semantic.event_log_cursor

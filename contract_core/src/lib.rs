@@ -513,6 +513,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     if roots.fast_path_roots.len() != package.semantic.fast_path_plan_count {
         return Err(ContractError::new("fastpath root/count mismatch"));
     }
+    if roots.boundary_roots.len() != package.semantic.boundary_count {
+        return Err(ContractError::new("boundary root/count mismatch"));
+    }
+    if roots.executor_transition_roots.len() != package.semantic.executor_transition_count {
+        return Err(ContractError::new(
+            "executor transition root/count mismatch",
+        ));
+    }
     if roots.event_log_tail.is_empty() && package.semantic.event_log_cursor != 0 {
         return Err(ContractError::new(
             "event log cursor is nonzero but package has no event tail",

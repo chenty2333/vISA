@@ -195,6 +195,10 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub active_fast_path_plan_count: usize,
     #[serde(default)]
+    pub boundary_count: usize,
+    #[serde(default)]
+    pub executor_transition_count: usize,
+    #[serde(default)]
     pub network_socket_count: u32,
     #[serde(default)]
     pub network_rx_queue_bytes: u32,
@@ -216,6 +220,10 @@ pub struct SemanticRootSetManifest {
     pub capability_roots: Vec<String>,
     #[serde(default)]
     pub fast_path_roots: Vec<String>,
+    #[serde(default)]
+    pub boundary_roots: Vec<String>,
+    #[serde(default)]
+    pub executor_transition_roots: Vec<String>,
     #[serde(default)]
     pub event_log_tail: Vec<String>,
 }

@@ -323,7 +323,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} tasks={} resources={} stores={} caps={} waits={} authorities={}/{}",
+            "semantic state package={} cursor={} tasks={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} executor_transitions={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.task_count,
@@ -332,7 +332,9 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.capability_count,
             package.semantic.wait_token_count,
             package.semantic.active_authority_count,
-            package.semantic.authority_count
+            package.semantic.authority_count,
+            package.semantic.boundary_count,
+            package.semantic.executor_transition_count
         );
         println!(
             "substrate/executor boundary native_policy={} not_migrated={}",
@@ -391,7 +393,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
 fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
     println!(
-        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} fastpath_roots={}",
+        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} fastpath_roots={} boundary_roots={} executor_transition_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.task_roots.len(),
@@ -399,7 +401,9 @@ fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
         package.semantic.roots.authority_roots.len(),
         package.semantic.roots.store_roots.len(),
         package.semantic.roots.capability_roots.len(),
-        package.semantic.roots.fast_path_roots.len()
+        package.semantic.roots.fast_path_roots.len(),
+        package.semantic.roots.boundary_roots.len(),
+        package.semantic.roots.executor_transition_roots.len()
     );
     print_roots("task", &package.semantic.roots.task_roots);
     print_roots("resource", &package.semantic.roots.resource_roots);
@@ -407,6 +411,11 @@ fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
     print_roots("store", &package.semantic.roots.store_roots);
     print_roots("capability", &package.semantic.roots.capability_roots);
     print_roots("fastpath", &package.semantic.roots.fast_path_roots);
+    print_roots("boundary", &package.semantic.roots.boundary_roots);
+    print_roots(
+        "executor-transition",
+        &package.semantic.roots.executor_transition_roots,
+    );
     Ok(())
 }
 
@@ -467,14 +476,22 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: tasks={} resources={} authorities={} stores={} caps={} event_tail={}",
+        "replay roots: tasks={} resources={} authorities={} stores={} caps={} boundaries={} executor_transitions={} event_tail={}",
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
         package.semantic.roots.authority_roots.len(),
         package.semantic.roots.store_roots.len(),
         package.semantic.roots.capability_roots.len(),
+        package.semantic.roots.boundary_roots.len(),
+        package.semantic.roots.executor_transition_roots.len(),
         package.semantic.roots.event_log_tail.len()
     );
+    for boundary in &package.semantic.roots.boundary_roots {
+        println!("replay boundary {boundary}");
+    }
+    for transition in &package.semantic.roots.executor_transition_roots {
+        println!("replay executor {transition}");
+    }
     Ok(())
 }
 
@@ -504,7 +521,11 @@ fn print_replay_json(
             "authorities": package.semantic.roots.authority_roots.len(),
             "stores": package.semantic.roots.store_roots.len(),
             "capabilities": package.semantic.roots.capability_roots.len(),
-            "event_tail": package.semantic.roots.event_log_tail.len()
+            "boundaries": package.semantic.roots.boundary_roots.len(),
+            "executor_transitions": package.semantic.roots.executor_transition_roots.len(),
+            "event_tail": package.semantic.roots.event_log_tail.len(),
+            "boundary_roots": &package.semantic.roots.boundary_roots,
+            "executor_transition_roots": &package.semantic.roots.executor_transition_roots
         }
     });
     println!("{}", serde_json::to_string_pretty(&value)?);
@@ -522,7 +543,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{}",
+        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} executor_transitions={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.active_authority_count,
@@ -531,7 +552,9 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.capability_count,
         package.semantic.store_count,
         package.semantic.active_fast_path_plan_count,
-        package.semantic.fast_path_plan_count
+        package.semantic.fast_path_plan_count,
+        package.semantic.boundary_count,
+        package.semantic.executor_transition_count
     );
     println!(
         "substrate boundary: irq={} dma={} net_inputs={} dmw={} cow_epoch={} background_pages={}",
@@ -541,6 +564,11 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.substrate_boundary.active_dmw_lease_count,
         package.substrate_boundary.cow_epoch,
         package.substrate_boundary.background_copy_pages
+    );
+    print_roots("boundary", &package.semantic.roots.boundary_roots);
+    print_roots(
+        "executor-transition",
+        &package.semantic.roots.executor_transition_roots,
     );
 }
 
