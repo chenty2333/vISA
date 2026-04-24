@@ -1,7 +1,10 @@
 use vmos_abi::{AF_INET, SOCK_STREAM};
 
-pub const NETWORK_CONTRACT_VERSION: &str = "vmos-network-contract-v1";
-pub const NETWORK_CONTRACT_ABI_VERSION: u32 = 1;
+pub const NETWORK_CONTRACT_VERSION: &str = "vmos-network-contract-v2";
+pub const NETWORK_CONTRACT_ABI_VERSION: u32 = 2;
+pub const PACKET_FRAME_FORMAT_VERSION: u32 = 2;
+pub const PACKET_EVENT_POLICY_DEVICE_NEEDS_POLL: u32 = 1;
+pub const PACKET_MAX_PAYLOAD_LEN: u32 = 512;
 pub const VIRTIO_NET0_MTU: u32 = 1500;
 pub const VIRTIO_NET0_RX_QUEUE_DEPTH: u32 = 4;
 pub const VIRTIO_NET0_TX_QUEUE_DEPTH: u32 = 4;
@@ -20,6 +23,9 @@ pub struct PacketDeviceContract {
     pub tx_queue_depth: u32,
     pub mac: [u8; 6],
     pub checksum_offload: bool,
+    pub frame_format_version: u32,
+    pub event_policy: u32,
+    pub max_payload_len: u32,
 }
 
 pub const VIRTIO_NET0_CONTRACT: PacketDeviceContract = PacketDeviceContract {
@@ -28,6 +34,9 @@ pub const VIRTIO_NET0_CONTRACT: PacketDeviceContract = PacketDeviceContract {
     tx_queue_depth: VIRTIO_NET0_TX_QUEUE_DEPTH,
     mac: VIRTIO_NET0_MAC,
     checksum_offload: false,
+    frame_format_version: PACKET_FRAME_FORMAT_VERSION,
+    event_policy: PACKET_EVENT_POLICY_DEVICE_NEEDS_POLL,
+    max_payload_len: PACKET_MAX_PAYLOAD_LEN,
 };
 
 pub const fn validate_linux_socket_contract(domain: u32, ty: u32, protocol: u32) -> bool {
@@ -54,6 +63,10 @@ pub const fn validate_packet_device_contract(contract: PacketDeviceContract) -> 
         && contract.mac[3] == VIRTIO_NET0_MAC[3]
         && contract.mac[4] == VIRTIO_NET0_MAC[4]
         && contract.mac[5] == VIRTIO_NET0_MAC[5]
+        && contract.frame_format_version == PACKET_FRAME_FORMAT_VERSION
+        && contract.event_policy == PACKET_EVENT_POLICY_DEVICE_NEEDS_POLL
+        && contract.max_payload_len == PACKET_MAX_PAYLOAD_LEN
+        && !contract.checksum_offload
 }
 
 #[cfg(test)]
@@ -62,9 +75,9 @@ mod tests {
     use vmos_abi::SOCK_DGRAM;
 
     #[test]
-    fn packet_device_contract_matches_v1_constants() {
-        assert_eq!(NETWORK_CONTRACT_VERSION, "vmos-network-contract-v1");
-        assert_eq!(NETWORK_CONTRACT_ABI_VERSION, 1);
+    fn packet_device_contract_matches_v2_constants() {
+        assert_eq!(NETWORK_CONTRACT_VERSION, "vmos-network-contract-v2");
+        assert_eq!(NETWORK_CONTRACT_ABI_VERSION, 2);
         assert!(validate_packet_device_contract(VIRTIO_NET0_CONTRACT));
     }
 

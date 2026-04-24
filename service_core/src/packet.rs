@@ -1,9 +1,10 @@
 use vmos_abi::{ERR_EAGAIN, ERR_EINVAL, ERR_EIO};
 
+use crate::net_contract::PACKET_MAX_PAYLOAD_LEN;
 pub use crate::net_contract::{DEMO_CLIENT_PORT, DEMO_SERVER_PORT, PROTO_DEMO_TCP};
 
 pub const FRAME_HEADER_LEN: usize = 20;
-pub const PACKET_PAYLOAD_CAPACITY: usize = 512;
+pub const PACKET_PAYLOAD_CAPACITY: usize = PACKET_MAX_PAYLOAD_LEN as usize;
 pub const PACKET_FRAME_CAPACITY: usize = FRAME_HEADER_LEN + PACKET_PAYLOAD_CAPACITY;
 pub const PACKET_RX_QUEUE_DEPTH: usize = 4;
 

@@ -3,38 +3,36 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use semantic_core::{
-    ArtifactProfile, CapabilityDenyReason, FailureEffect, FrontendKind, GenerationCheckError,
-    GuestStateSnapshot, HostcallClass, MigrationPackage, ResourceHandle, ResourceKind,
-    SemanticGraph, SemanticWaitKind, StoreState, SubstrateBoundarySnapshot, TaskState, WaitHandle,
+    ArtifactProfile, FailureEffect, FrontendKind, GenerationCheckError, GuestStateSnapshot,
+    MigrationPackage, ResourceHandle, ResourceKind, SemanticGraph, SemanticWaitKind,
+    SubstrateBoundarySnapshot, TaskState, WaitHandle,
 };
 use supervisor_catalog::{
     DMW_LAYOUT, MACHINE_ABI_VERSION, RUNTIME_ONLY_EXECUTOR_ABI, SUPERVISOR_ABI_VERSION,
     SUPERVISOR_ARTIFACT_FORMAT, SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_EXECUTION_MODE,
-    SUPERVISOR_WASM_MODULES, WASM_FEATURE_PROFILE,
+    WASM_FEATURE_PROFILE,
 };
-use vmos_abi::PlanKind;
 
+use super::artifacts::ArtifactLoadPlan;
 use super::events::Event;
 use super::runtime::PrototypeRuntime;
 use super::types::{FdResource, WaitKind, WaitRestartClass, WaitToken};
 
-pub(super) fn bootstrap_graph() -> SemanticGraph {
+pub(super) fn bootstrap_graph(load_plan: &ArtifactLoadPlan) -> SemanticGraph {
     let mut graph = SemanticGraph::new();
     graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
     graph.set_task_state(1, TaskState::Running);
 
-    for spec in SUPERVISOR_WASM_MODULES {
-        let store = graph.register_store(
-            spec.package,
-            spec.artifact_name,
-            spec.role.as_str(),
-            spec.fault_policy.as_str(),
+    for blueprint in load_plan.stores() {
+        graph.register_store(
+            blueprint.package,
+            blueprint.artifact_name,
+            blueprint.role,
+            blueprint.fault_policy,
         );
-        graph.set_store_state(store, StoreState::Instantiating);
-        graph.set_store_state(store, StoreState::Running);
-        for capability in spec.capabilities {
+        for capability in blueprint.capabilities {
             graph.grant_capability(
-                spec.package,
+                blueprint.package,
                 capability.name,
                 capability.rights,
                 capability.lifetime,
@@ -113,6 +111,32 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.semantic.active_fast_path_plan_count(),
             self.semantic.fast_path_plan_count()
         ));
+        let profile = self.artifacts.profile();
+        lines.push(format!(
+            "artifact registry: artifacts={} contract={} world={} engine={} mode={} format={} runtime_executor={} network={}",
+            self.artifacts.artifacts().len(),
+            profile.contract_version,
+            profile.supervisor_world,
+            profile.compiler_engine,
+            profile.execution_mode,
+            profile.artifact_format,
+            profile.runtime_executor_abi,
+            profile.network_contract
+        ));
+        lines.push(format!(
+            "runtime stores: records={} first_role={} first_policy={}",
+            self.store_manager.records().len(),
+            self.store_manager
+                .records()
+                .first()
+                .map(|record| record.role)
+                .unwrap_or("none"),
+            self.store_manager
+                .records()
+                .first()
+                .map(|record| record.fault_policy)
+                .unwrap_or("none")
+        ));
         lines.push("event log tail:".to_string());
         for event in self.semantic.event_log_tail(16) {
             lines.push(event.summary());
@@ -139,39 +163,6 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    pub(super) fn record_hostcall_plan(&mut self, label: &str, kind: PlanKind) {
-        let (class, subject, object, operation) = hostcall_metadata(kind);
-        self.semantic
-            .record_hostcall(label, class, subject, object, operation);
-    }
-
-    pub(crate) fn require_capability(
-        &mut self,
-        subject: &str,
-        object: &str,
-        operation: &str,
-    ) -> Result<(), CapabilityDenyReason> {
-        self.semantic
-            .check_capability(subject, object, operation)
-            .map(|_| ())
-    }
-
-    pub(crate) fn require_capability_generation(
-        &mut self,
-        subject: &str,
-        object: &str,
-        operation: &str,
-        expected_generation: u64,
-    ) -> Result<(), CapabilityDenyReason> {
-        self.semantic
-            .check_capability_generation(subject, object, operation, expected_generation)
-            .map(|_| ())
-    }
-
-    pub(crate) fn capability_generation(&self, subject: &str, object: &str) -> Option<u64> {
-        self.semantic.capability_generation(subject, object)
-    }
-
     pub(crate) fn validate_resource_handle(
         &mut self,
         handle: ResourceHandle,
@@ -185,28 +176,6 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<(), GenerationCheckError> {
         self.semantic
             .validate_wait_handle(WaitHandle::new(token.id, token.generation))
-    }
-
-    pub(crate) fn revoke_capability_for_demo(
-        &mut self,
-        subject: &str,
-        object: &str,
-    ) -> Result<(), &'static str> {
-        self.semantic
-            .revoke_capability_by_subject_object(subject, object)
-            .map(|_| ())
-            .ok_or("capability to revoke was not present")
-    }
-
-    pub(crate) fn grant_capability_for_demo(
-        &mut self,
-        subject: &str,
-        object: &str,
-        operations: &[&str],
-        lifetime: &str,
-    ) {
-        self.semantic
-            .grant_capability(subject, object, operations, lifetime);
     }
 
     pub(crate) fn record_window_lease_created(
@@ -325,161 +294,6 @@ fn semantic_wait_kind(kind: WaitKind) -> SemanticWaitKind {
 fn wait_restart_class_name(class: WaitRestartClass) -> &'static str {
     match class {
         WaitRestartClass::DriverRestart => "driver-restart",
-    }
-}
-
-fn hostcall_metadata(kind: PlanKind) -> (HostcallClass, &'static str, &'static str, &'static str) {
-    match kind {
-        PlanKind::GetCwd | PlanKind::Uname => (
-            HostcallClass::PureQuery,
-            "linux_syscall",
-            "process.metadata",
-            "query",
-        ),
-        PlanKind::Write => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "linux_syscall",
-            "console.write",
-            "write",
-        ),
-        PlanKind::OpenAt => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "vfs_service",
-            "vfs.namespace",
-            "lookup",
-        ),
-        PlanKind::Read => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "vfs_service",
-            "vfs.namespace",
-            "read",
-        ),
-        PlanKind::Close => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "linux_syscall",
-            "fd.table",
-            "close",
-        ),
-        PlanKind::GetDents64 => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "vfs_service",
-            "vfs.namespace",
-            "list",
-        ),
-        PlanKind::ReadLinkAt => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "vfs_service",
-            "vfs.namespace",
-            "readlink",
-        ),
-        PlanKind::Sleep => (
-            HostcallClass::AsyncOp,
-            "linux_syscall",
-            "timer.sleep",
-            "arm",
-        ),
-        PlanKind::FutexWait => (
-            HostcallClass::AsyncOp,
-            "futex_service",
-            "futex.waitset",
-            "wait",
-        ),
-        PlanKind::FutexWake => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "futex_service",
-            "futex.waitset",
-            "wake",
-        ),
-        PlanKind::EpollCreate1 => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "epoll_service",
-            "epoll.instance",
-            "create",
-        ),
-        PlanKind::EpollCtl => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "epoll_service",
-            "epoll.instance",
-            "ctl",
-        ),
-        PlanKind::EpollWait | PlanKind::EpollReady => (
-            HostcallClass::AsyncOp,
-            "epoll_service",
-            "epoll.instance",
-            "wait",
-        ),
-        PlanKind::Socket => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "linux_syscall",
-            "linux.socket",
-            "socket",
-        ),
-        PlanKind::Bind => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "linux_syscall",
-            "linux.socket",
-            "bind",
-        ),
-        PlanKind::Listen => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "linux_syscall",
-            "linux.socket",
-            "listen",
-        ),
-        PlanKind::Accept => (
-            HostcallClass::AsyncOp,
-            "linux_syscall",
-            "linux.socket",
-            "accept",
-        ),
-        PlanKind::Connect => (
-            HostcallClass::AsyncOp,
-            "linux_syscall",
-            "linux.socket",
-            "connect",
-        ),
-        PlanKind::SendTo => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "linux_syscall",
-            "linux.socket",
-            "send",
-        ),
-        PlanKind::RecvFrom => (
-            HostcallClass::AsyncOp,
-            "linux_syscall",
-            "linux.socket",
-            "recv",
-        ),
-        PlanKind::SetSockOpt => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "linux_syscall",
-            "linux.socket",
-            "setsockopt",
-        ),
-        PlanKind::GetSockOpt => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "linux_syscall",
-            "linux.socket",
-            "getsockopt",
-        ),
-        PlanKind::Fcntl => (
-            HostcallClass::PureQuery,
-            "linux_syscall",
-            "linux.socket",
-            "fcntl",
-        ),
-        PlanKind::Mmap | PlanKind::Munmap => (
-            HostcallClass::ImmediatePrivilegedOp,
-            "linux_syscall",
-            "process.memory",
-            "map",
-        ),
-        PlanKind::Poll => (
-            HostcallClass::AsyncOp,
-            "linux_syscall",
-            "linux.socket",
-            "poll",
-        ),
     }
 }
 

@@ -1,3 +1,5 @@
+mod artifacts;
+mod authority;
 mod demos;
 mod engine;
 mod events;
@@ -11,6 +13,7 @@ mod scheduler;
 mod semantic;
 mod services;
 mod store;
+mod store_manager;
 mod types;
 mod wait;
 

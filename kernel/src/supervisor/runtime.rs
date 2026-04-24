@@ -12,6 +12,8 @@ use vmos_abi::{
     StepTag, SyscallContext,
 };
 
+use super::artifacts::ArtifactRegistry;
+use super::authority::AuthorityPlane;
 use super::engine::RuntimeOnlyExecutor;
 use super::events::Event;
 use super::linux::{LinuxCallResult, LinuxFrontend, LinuxPlan};
@@ -24,6 +26,7 @@ use super::services::{
     FutexService, LinuxSocketService, NetCoreService, ProcfsService, ReplaySnapshotService,
     VfsService, WasmApp,
 };
+use super::store_manager::StoreManager;
 use super::types::{
     FdEntry, FdResource, InjectedFault, LookupInfo, ServiceCallError, TaskId, WaitRestartClass,
     WaitToken,
@@ -50,6 +53,8 @@ pub(crate) fn runtime() -> Result<&'static mut PrototypeRuntime<'static>, &'stat
 }
 
 pub(crate) struct PrototypeRuntime<'engine> {
+    pub(super) artifacts: ArtifactRegistry,
+    pub(super) authority: AuthorityPlane,
     pub(super) console: ConsoleService,
     pub(super) vfs: VfsService,
     pub(super) engine: &'engine RuntimeOnlyExecutor,
@@ -70,6 +75,7 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) waits: WaitRegistry,
     pub(super) pulse: PulseDevice,
     pub(super) net: NetworkPlane,
+    pub(super) store_manager: StoreManager,
     pub(super) restart_count: u64,
     pub(super) semantic: SemanticGraph,
     pub(super) next_snapshot_barrier: u64,
@@ -77,10 +83,22 @@ pub(crate) struct PrototypeRuntime<'engine> {
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn new(engine: &'engine RuntimeOnlyExecutor) -> Result<Self, &'static str> {
+        crate::kdebug!("validating supervisor artifact registry");
+        let artifacts = ArtifactRegistry::from_catalog().map_err(|err| err.message())?;
+        let load_plan = artifacts.load_plan();
+        let plan_profile = load_plan.profile;
+        crate::kdebug!(
+            "artifact load plan engine={} mode={} runtime={}",
+            plan_profile.compiler_engine,
+            plan_profile.execution_mode,
+            plan_profile.runtime_executor_abi
+        );
         crate::kdebug!("bootstrapping semantic graph");
-        let mut semantic = bootstrap_graph();
+        let mut semantic = bootstrap_graph(&load_plan);
+        let store_manager = StoreManager::from_load_plan(&load_plan, &mut semantic)?;
         crate::kdebug!("bootstrapping network plane");
         let net = NetworkPlane::new(&mut semantic);
+        let authority = AuthorityPlane::new();
         crate::kdebug!("instantiating console_service");
         let console = ConsoleService::new(engine)?;
         crate::kdebug!("instantiating vfs_service");
@@ -106,6 +124,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         crate::kdebug!("instantiating wasm_app");
         let app = WasmApp::new(engine)?;
         Ok(Self {
+            artifacts,
+            authority,
             console,
             vfs,
             engine,
@@ -126,6 +146,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             waits: WaitRegistry::new(),
             pulse: PulseDevice::new(interrupts::tick_count()),
             net,
+            store_manager,
             restart_count: 0,
             semantic,
             next_snapshot_barrier: 1,

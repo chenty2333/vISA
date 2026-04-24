@@ -518,6 +518,10 @@ pub fn catalog_contract_fingerprint() -> u64 {
     hash.write_str(DMW_LAYOUT);
     hash.write_str(LINUX_ABI_PROFILE);
     hash.write_str(ARTIFACT_SIGNATURE_PROFILE);
+    hash.write_str(SUPERVISOR_COMPILER_ENGINE);
+    hash.write_str(SUPERVISOR_EXECUTION_MODE);
+    hash.write_str(SUPERVISOR_ARTIFACT_FORMAT);
+    hash.write_str(RUNTIME_ONLY_EXECUTOR_ABI);
     for module in SUPERVISOR_WASM_MODULES {
         hash_module_contract(&mut hash, module);
     }
