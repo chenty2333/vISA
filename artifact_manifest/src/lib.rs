@@ -203,6 +203,30 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub executor_transition_count: usize,
     #[serde(default)]
+    pub target_artifact_count: usize,
+    #[serde(default)]
+    pub code_object_count: usize,
+    #[serde(default)]
+    pub activation_record_count: usize,
+    #[serde(default)]
+    pub trap_record_count: usize,
+    #[serde(default)]
+    pub hostcall_trace_count: usize,
+    #[serde(default)]
+    pub migration_object_count: usize,
+    #[serde(default)]
+    pub target_artifacts: Vec<TargetArtifactImageManifest>,
+    #[serde(default)]
+    pub code_objects: Vec<CodeObjectManifest>,
+    #[serde(default)]
+    pub activation_records: Vec<ActivationRecordManifest>,
+    #[serde(default)]
+    pub trap_records: Vec<TrapRecordManifest>,
+    #[serde(default)]
+    pub hostcall_trace: Vec<HostcallTraceManifest>,
+    #[serde(default)]
+    pub migration_objects: Vec<MigrationObjectManifest>,
+    #[serde(default)]
     pub network_socket_count: u32,
     #[serde(default)]
     pub network_rx_queue_bytes: u32,
@@ -233,7 +257,152 @@ pub struct SemanticRootSetManifest {
     #[serde(default)]
     pub executor_transition_roots: Vec<String>,
     #[serde(default)]
+    pub target_artifact_roots: Vec<String>,
+    #[serde(default)]
+    pub code_object_roots: Vec<String>,
+    #[serde(default)]
+    pub activation_record_roots: Vec<String>,
+    #[serde(default)]
+    pub trap_roots: Vec<String>,
+    #[serde(default)]
+    pub hostcall_trace_roots: Vec<String>,
+    #[serde(default)]
+    pub migration_object_roots: Vec<String>,
+    #[serde(default)]
     pub event_log_tail: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct TargetArtifactImageManifest {
+    pub id: u64,
+    pub package: String,
+    pub artifact_name: String,
+    pub role: String,
+    pub kind: String,
+    pub target_profile: String,
+    pub abi_fingerprint: String,
+    pub manifest_binding_hash: String,
+    pub code_hash: String,
+    pub exports: Vec<String>,
+    pub imports: Vec<String>,
+    pub hostcalls: Vec<HostcallSpecManifest>,
+    pub capabilities: Vec<TargetCapabilitySpecManifest>,
+    pub memory_plan: TargetMemoryPlanManifest,
+    pub trap_metadata: Vec<TargetTrapMetadataManifest>,
+    pub address_map: Vec<TargetAddressMapEntryManifest>,
+    pub payload_len: usize,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct TargetMemoryPlanManifest {
+    pub max_memory_pages: u32,
+    pub max_table_elements: u32,
+    pub max_hostcalls_per_activation: u32,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct HostcallSpecManifest {
+    pub number: u32,
+    pub name: String,
+    pub category: String,
+    pub object: String,
+    pub operation: String,
+    pub may_pending: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct TargetCapabilitySpecManifest {
+    pub object: String,
+    pub operations: Vec<String>,
+    pub lifetime: String,
+    pub class: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct TargetTrapMetadataManifest {
+    pub class: String,
+    pub symbol: String,
+    pub offset: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct TargetAddressMapEntryManifest {
+    pub symbol: String,
+    pub offset: u64,
+    pub len: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CodeObjectManifest {
+    pub id: u64,
+    pub artifact_id: u64,
+    pub package: String,
+    pub owner_profile: String,
+    pub generation: u64,
+    pub state: String,
+    pub bound_store: Option<u64>,
+    pub hostcall_table: Option<u64>,
+    pub text_start: u64,
+    pub text_len: u64,
+    pub text_permission: String,
+    pub rodata_start: u64,
+    pub rodata_len: u64,
+    pub rodata_permission: String,
+    pub code_hash: String,
+    pub hostcalls: Vec<HostcallSpecManifest>,
+    pub trap_metadata: Vec<TargetTrapMetadataManifest>,
+    pub address_map: Vec<TargetAddressMapEntryManifest>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ActivationRecordManifest {
+    pub id: u64,
+    pub store: u64,
+    pub code_object: u64,
+    pub artifact: u64,
+    pub entry: String,
+    pub generation: u64,
+    pub state: String,
+    pub start_event: u64,
+    pub exit_event: Option<u64>,
+    pub active_dmw_leases: u32,
+    pub blocked_wait: Option<u64>,
+    pub trap: Option<u64>,
+    pub return_tag: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct TrapRecordManifest {
+    pub id: u64,
+    pub class: String,
+    pub store: Option<u64>,
+    pub activation: Option<u64>,
+    pub code_object: Option<u64>,
+    pub artifact: Option<u64>,
+    pub offset: Option<u64>,
+    pub hostcall: Option<String>,
+    pub fault_policy: String,
+    pub effect: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct HostcallTraceManifest {
+    pub activation: u64,
+    pub hostcall_number: u32,
+    pub name: String,
+    pub category: String,
+    pub object: String,
+    pub operation: String,
+    pub allowed: bool,
+    pub result: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct MigrationObjectManifest {
+    pub object: String,
+    pub class: String,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

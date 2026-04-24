@@ -554,6 +554,36 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "executor transition root/count mismatch",
         ));
     }
+    if roots.target_artifact_roots.len() != package.semantic.target_artifact_count
+        || package.semantic.target_artifacts.len() != package.semantic.target_artifact_count
+    {
+        return Err(ContractError::new("target artifact root/count mismatch"));
+    }
+    if roots.code_object_roots.len() != package.semantic.code_object_count
+        || package.semantic.code_objects.len() != package.semantic.code_object_count
+    {
+        return Err(ContractError::new("code object root/count mismatch"));
+    }
+    if roots.activation_record_roots.len() != package.semantic.activation_record_count
+        || package.semantic.activation_records.len() != package.semantic.activation_record_count
+    {
+        return Err(ContractError::new("activation record root/count mismatch"));
+    }
+    if roots.trap_roots.len() != package.semantic.trap_record_count
+        || package.semantic.trap_records.len() != package.semantic.trap_record_count
+    {
+        return Err(ContractError::new("trap record root/count mismatch"));
+    }
+    if roots.hostcall_trace_roots.len() != package.semantic.hostcall_trace_count
+        || package.semantic.hostcall_trace.len() != package.semantic.hostcall_trace_count
+    {
+        return Err(ContractError::new("hostcall trace root/count mismatch"));
+    }
+    if roots.migration_object_roots.len() != package.semantic.migration_object_count
+        || package.semantic.migration_objects.len() != package.semantic.migration_object_count
+    {
+        return Err(ContractError::new("migration object root/count mismatch"));
+    }
     if roots.event_log_tail.is_empty() && package.semantic.event_log_cursor != 0 {
         return Err(ContractError::new(
             "event log cursor is nonzero but package has no event tail",

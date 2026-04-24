@@ -6,9 +6,13 @@ use std::path::{Path, PathBuf};
 mod runtime;
 
 use artifact_manifest::{
-    ArtifactBundleManifest, GuestStateManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationPackageManifest, MigrationTargetManifest, RequiredArtifactProfileManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SubstrateBoundaryManifest,
+    ActivationRecordManifest, ArtifactBundleManifest, CodeObjectManifest, GuestStateManifest,
+    HostcallSpecManifest, HostcallTraceManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, RequiredArtifactProfileManifest, SemanticRootSetManifest,
+    SemanticSnapshotManifest, SubstrateBoundaryManifest, TargetAddressMapEntryManifest,
+    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
+    TargetTrapMetadataManifest, TrapRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -16,12 +20,28 @@ use contract_core::{
 };
 use runtime::RuntimeOnlyExecutor;
 use semantic_core::{
-    ArtifactVerificationState, BoundaryKind, BoundaryStatus, CodePublishState, EntrypointState,
-    FrontendKind, HostcallLinkState, MemoryLayoutState, RuntimeMode, SemanticGraph, StoreState,
-    TaskState, TrapSurfaceState,
+    ActivationEntry, ArtifactRegistry, ArtifactVerificationState, BoundaryKind, BoundaryStatus,
+    CapabilityClass, CapabilityLedger, CodeObject, CodePublishState, CodePublisher,
+    EntrypointState, FrontendKind, HostcallCategory, HostcallFrame, HostcallLinkState,
+    HostcallSpec, HostcallTraceRecord, ManagedStoreRecord, MemoryLayoutState,
+    MigrationObjectRecord, RuntimeMode, SemanticGraph, StoreState, TargetAddressMapEntry,
+    TargetArtifactImage, TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan,
+    TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState, TrapSurfaceState,
+    VerifiedArtifact,
 };
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
+
+#[derive(Clone, Debug, Default)]
+struct TargetExecutorV1Report {
+    target_artifacts: Vec<TargetArtifactImageManifest>,
+    code_objects: Vec<CodeObjectManifest>,
+    activation_records: Vec<ActivationRecordManifest>,
+    trap_records: Vec<TrapRecordManifest>,
+    hostcall_trace: Vec<HostcallTraceManifest>,
+    migration_objects: Vec<MigrationObjectManifest>,
+    target_event_tail: Vec<String>,
+}
 
 fn main() {
     if let Err(err) = run() {
@@ -52,6 +72,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         register_store_semantics(&mut semantic, entry);
         stores.push(store);
     }
+    let target_v1 = build_target_executor_v1(&plan, &semantic)?;
 
     println!(
         "target executor loaded {} runtime-only stores with {} capability grants across {} fault domains in {} mode",
@@ -89,8 +110,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         })
         .count();
     println!("network runtime stores loaded: {network_store_count}");
-    let migration_path =
-        prepare_migration_package(&artifact_root, migration_path, &manifest, &semantic)?;
+    let migration_path = prepare_migration_package(
+        &artifact_root,
+        migration_path,
+        &manifest,
+        &semantic,
+        &target_v1,
+    )?;
     let migration = read_migration_package(&migration_path)?;
     validate_migration_package(&migration, &manifest)?;
     restore_migration_package(&migration, &semantic, &plan)?;
@@ -206,18 +232,368 @@ fn publish_host_boundary_status(semantic: &mut SemanticGraph, manifest: &Artifac
     );
 }
 
+fn build_target_executor_v1(
+    plan: &ValidatedArtifactPlan,
+    semantic: &SemanticGraph,
+) -> Result<TargetExecutorV1Report, Box<dyn Error>> {
+    let mut registry = ArtifactRegistry::new();
+    let mut publisher = CodePublisher::new();
+    let mut store_manager = TargetStoreManager::new();
+    let mut executor = TargetExecutor::new();
+    let mut ledger = CapabilityLedger::new();
+    let mut report = TargetExecutorV1Report::default();
+
+    for (index, entry) in plan.modules.iter().enumerate() {
+        let image = target_artifact_image((index + 1) as u64, entry, plan);
+        report
+            .target_artifacts
+            .push(target_artifact_manifest(&image));
+        let verified = registry.verify(image).map_err(|error| error.message())?;
+        let store_id = semantic_store_id(semantic, &entry.package)?;
+        let store_id = store_manager.register_verified_artifact_with_id(
+            store_id,
+            &verified,
+            &entry.fault_policy,
+            "rebuild-from-verified-artifact",
+        );
+        store_manager
+            .set_running(store_id)
+            .map_err(|error| error.message())?;
+        grant_verified_capabilities(&mut ledger, &verified, store_id);
+
+        let code_id = publisher
+            .allocate(&verified)
+            .map_err(|error| error.message())?;
+        publisher.fill(code_id).map_err(|error| error.message())?;
+        publisher.seal(code_id).map_err(|error| error.message())?;
+        publisher
+            .publish_rx(code_id)
+            .map_err(|error| error.message())?;
+        publisher
+            .bind_to_store(code_id, store_id)
+            .map_err(|error| error.message())?;
+        let code = publisher
+            .object(code_id)
+            .ok_or("publisher lost code object after bind")?
+            .clone();
+        let store = store_manager
+            .record(store_id)
+            .ok_or("store manager lost store after register")?;
+
+        run_activation_harness(index, &mut executor, store, &code, &ledger)?;
+    }
+
+    executor
+        .snapshot_barrier()
+        .map_err(|error| error.message())?;
+    for code in publisher.objects() {
+        report.code_objects.push(code_object_manifest(code));
+    }
+    for activation in executor.activations() {
+        report
+            .activation_records
+            .push(activation_record_manifest(activation));
+    }
+    for trap in executor.traps() {
+        report.trap_records.push(trap_record_manifest(trap));
+    }
+    for trace in executor.hostcall_trace() {
+        report.hostcall_trace.push(hostcall_trace_manifest(trace));
+    }
+    for object in executor.classify_migration_objects(publisher.objects()) {
+        report
+            .migration_objects
+            .push(migration_object_manifest(&object));
+    }
+    report.target_event_tail = executor.event_log().to_vec();
+    Ok(report)
+}
+
+fn run_activation_harness(
+    index: usize,
+    executor: &mut TargetExecutor,
+    store: &ManagedStoreRecord,
+    code: &CodeObject,
+    ledger: &CapabilityLedger,
+) -> Result<(), Box<dyn Error>> {
+    let activation = executor
+        .start_activation(
+            &store.store,
+            code,
+            ActivationEntry::Symbol("vmos_service_entry".to_owned()),
+        )
+        .map_err(|error| error.message())?;
+    if let Some(spec) = code.hostcalls.iter().find(|spec| spec.number < 9000) {
+        let generation = ledger
+            .generation_of(&code.package, &spec.object)
+            .unwrap_or(1);
+        executor
+            .invoke_hostcall(
+                code,
+                HostcallFrame::new(
+                    activation,
+                    store.store.id,
+                    spec.number,
+                    &code.package,
+                    &spec.object,
+                    &spec.operation,
+                    generation,
+                ),
+                ledger,
+            )
+            .map_err(|error| error.message())?;
+    }
+    executor
+        .return_exit(activation)
+        .map_err(|error| error.message())?;
+
+    if index == 0 {
+        for (number, object, operation) in [
+            (9000, "mmio.denied", "map"),
+            (9001, "dma.denied", "map"),
+            (9002, "irq.denied", "bind"),
+            (9003, "dmw.denied", "open"),
+            (9004, "code-publish.denied", "publish"),
+        ] {
+            let denied = executor
+                .start_activation(
+                    &store.store,
+                    code,
+                    ActivationEntry::Symbol("capability_gate".to_owned()),
+                )
+                .map_err(|error| error.message())?;
+            let _ = executor.invoke_hostcall(
+                code,
+                HostcallFrame::new(
+                    denied,
+                    store.store.id,
+                    number,
+                    &code.package,
+                    object,
+                    operation,
+                    1,
+                ),
+                ledger,
+            );
+        }
+
+        let dmw = executor
+            .start_activation(
+                &store.store,
+                code,
+                ActivationEntry::Symbol("dmw_pending".to_owned()),
+            )
+            .map_err(|error| error.message())?;
+        let lease = executor
+            .acquire_dmw_lease(dmw, "dmw.handle-mode.harness")
+            .map_err(|error| error.message())?;
+        let _ = executor.invoke_hostcall(
+            code,
+            HostcallFrame::new(
+                dmw,
+                store.store.id,
+                9005,
+                &code.package,
+                "wait.timer",
+                "park",
+                1,
+            ),
+            ledger,
+        );
+        executor
+            .release_dmw_lease(lease)
+            .map_err(|error| error.message())?;
+
+        for class in [
+            TargetTrapClass::GuestTrap,
+            TargetTrapClass::SupervisorStoreTrap,
+            TargetTrapClass::CapabilityTrap,
+            TargetTrapClass::WindowTrap,
+            TargetTrapClass::HostcallTrap,
+            TargetTrapClass::CodeObjectTrap,
+            TargetTrapClass::SubstrateFault,
+        ] {
+            executor.synthetic_trap(
+                class,
+                store.store.id,
+                Some(activation),
+                Some(code),
+                None,
+                "target executor v1 typed trap harness",
+            );
+        }
+    }
+    Ok(())
+}
+
+fn target_artifact_image(
+    id: u64,
+    entry: &ValidatedArtifactEntry,
+    plan: &ValidatedArtifactPlan,
+) -> TargetArtifactImage {
+    let mut image = TargetArtifactImage::new(
+        id,
+        &entry.package,
+        &entry.artifact_name,
+        &entry.role,
+        &plan.artifact_profile,
+        &entry.abi_fingerprint,
+        &entry.manifest_binding_hash,
+        &entry.cwasm_sha256,
+        TargetMemoryPlan::new(
+            entry.resource_limits.max_memory_pages,
+            entry.resource_limits.max_table_elements,
+            entry.resource_limits.max_hostcalls_per_activation,
+        ),
+    );
+    image.exports = entry.expected_exports.clone();
+    image.payload_len = entry.cwasm_sha256.len();
+    image
+        .address_map
+        .push(TargetAddressMapEntry::new("vmos_service_entry", 0, 64));
+    image.trap_metadata.push(TargetTrapMetadata::new(
+        TargetTrapClass::CodeObjectTrap,
+        "vmos_service_entry",
+        0,
+    ));
+    let mut next_hostcall = 1;
+    for capability in &entry.capabilities {
+        image.capabilities.push(TargetCapabilitySpec {
+            object: capability.name.clone(),
+            operations: capability.rights.clone(),
+            lifetime: capability.lifetime.clone(),
+            class: CapabilityClass::from_object(&capability.name),
+        });
+        for right in &capability.rights {
+            let category = hostcall_category_for_object(&capability.name);
+            image.hostcalls.push(HostcallSpec::new(
+                next_hostcall,
+                &format!("hostcall.{}.{}", capability.name, right),
+                category,
+                &capability.name,
+                right,
+                category == HostcallCategory::Wait,
+            ));
+            next_hostcall += 1;
+        }
+    }
+    image.hostcalls.push(HostcallSpec::new(
+        9000,
+        "hostcall.mmio.denied",
+        HostcallCategory::Mmio,
+        "mmio.denied",
+        "map",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9001,
+        "hostcall.dma.denied",
+        HostcallCategory::Dma,
+        "dma.denied",
+        "map",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9002,
+        "hostcall.irq.denied",
+        HostcallCategory::Irq,
+        "irq.denied",
+        "bind",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9003,
+        "hostcall.dmw.denied",
+        HostcallCategory::Dmw,
+        "dmw.denied",
+        "open",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9004,
+        "hostcall.code-publish.denied",
+        HostcallCategory::CodePublish,
+        "code-publish.denied",
+        "publish",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9005,
+        "hostcall.wait.pending",
+        HostcallCategory::Wait,
+        "wait.timer",
+        "park",
+        true,
+    ));
+    image
+}
+
+fn hostcall_category_for_object(object: &str) -> HostcallCategory {
+    if object.starts_with("mmio.") {
+        HostcallCategory::Mmio
+    } else if object.starts_with("dma.") {
+        HostcallCategory::Dma
+    } else if object.starts_with("irq.") {
+        HostcallCategory::Irq
+    } else if object.starts_with("dmw.") {
+        HostcallCategory::Dmw
+    } else if object.starts_with("code-publish.") {
+        HostcallCategory::CodePublish
+    } else if object.starts_with("snapshot.") {
+        HostcallCategory::Snapshot
+    } else if object.starts_with("wait.") || object.starts_with("timer.") {
+        HostcallCategory::Wait
+    } else {
+        HostcallCategory::Service
+    }
+}
+
+fn grant_verified_capabilities(
+    ledger: &mut CapabilityLedger,
+    verified: &VerifiedArtifact,
+    store_id: u64,
+) {
+    for capability in &verified.capabilities {
+        let operations = capability
+            .operations
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        ledger.grant_with_metadata(
+            &verified.package,
+            &capability.object,
+            &operations,
+            &capability.lifetime,
+            capability.class,
+            Some(store_id),
+            None,
+            "target-executor-v1",
+        );
+    }
+}
+
+fn semantic_store_id(semantic: &SemanticGraph, package: &str) -> Result<u64, Box<dyn Error>> {
+    semantic
+        .stores()
+        .iter()
+        .find(|store| store.package == package)
+        .map(|store| store.id)
+        .ok_or_else(|| format!("semantic graph missing store {package}").into())
+}
+
 fn prepare_migration_package(
     artifact_root: &Path,
     migration_path: Option<PathBuf>,
     manifest: &ArtifactBundleManifest,
     semantic: &SemanticGraph,
+    target_v1: &TargetExecutorV1Report,
 ) -> Result<PathBuf, Box<dyn Error>> {
     if let Some(path) = migration_path {
         return Ok(path);
     }
 
     let path = artifact_root.join("semantic-package-v1.json");
-    let package = demo_migration_package(manifest, semantic);
+    let package = demo_migration_package(manifest, semantic, target_v1);
     fs::write(&path, serde_json::to_vec_pretty(&package)?)?;
     Ok(path)
 }
@@ -225,6 +601,7 @@ fn prepare_migration_package(
 fn demo_migration_package(
     manifest: &ArtifactBundleManifest,
     semantic: &SemanticGraph,
+    target_v1: &TargetExecutorV1Report,
 ) -> MigrationPackageManifest {
     let logical_capabilities = semantic
         .capabilities()
@@ -244,7 +621,7 @@ fn demo_migration_package(
         })
         .collect::<Vec<_>>();
     let capability_count = logical_capabilities.len();
-    let roots = semantic_roots(manifest, &logical_capabilities, semantic);
+    let roots = semantic_roots(manifest, &logical_capabilities, semantic, target_v1);
     MigrationPackageManifest {
         schema_version: 1,
         package_format: "vmos-semantic-package-v1".to_owned(),
@@ -299,6 +676,18 @@ fn demo_migration_package(
             artifact_verification_count: semantic.artifact_verification_count(),
             store_activation_count: semantic.store_activation_count(),
             executor_transition_count: semantic.store_executor_transition_count(),
+            target_artifact_count: target_v1.target_artifacts.len(),
+            code_object_count: target_v1.code_objects.len(),
+            activation_record_count: target_v1.activation_records.len(),
+            trap_record_count: target_v1.trap_records.len(),
+            hostcall_trace_count: target_v1.hostcall_trace.len(),
+            migration_object_count: target_v1.migration_objects.len(),
+            target_artifacts: target_v1.target_artifacts.clone(),
+            code_objects: target_v1.code_objects.clone(),
+            activation_records: target_v1.activation_records.clone(),
+            trap_records: target_v1.trap_records.clone(),
+            hostcall_trace: target_v1.hostcall_trace.clone(),
+            migration_objects: target_v1.migration_objects.clone(),
             network_socket_count: 1,
             network_rx_queue_bytes: 0,
         },
@@ -339,6 +728,7 @@ fn semantic_roots(
     manifest: &ArtifactBundleManifest,
     capabilities: &[MigrationCapabilityManifest],
     semantic: &SemanticGraph,
+    target_v1: &TargetExecutorV1Report,
 ) -> SemanticRootSetManifest {
     SemanticRootSetManifest {
         task_roots: vec!["task:1:target-executor-bootstrap".to_owned()],
@@ -408,11 +798,264 @@ fn semantic_roots(
             .collect(),
         executor_transition_roots: semantic
             .store_executor_transition_tail(semantic.store_executor_transition_count()),
+        target_artifact_roots: target_v1
+            .target_artifacts
+            .iter()
+            .map(|artifact| {
+                format!(
+                    "target-artifact id={} package={} artifact={} profile={} abi={} hash={}",
+                    artifact.id,
+                    artifact.package,
+                    artifact.artifact_name,
+                    artifact.target_profile,
+                    artifact.abi_fingerprint,
+                    artifact.code_hash
+                )
+            })
+            .collect(),
+        code_object_roots: target_v1
+            .code_objects
+            .iter()
+            .map(|code| {
+                let store = code
+                    .bound_store
+                    .map(|store| store.to_string())
+                    .unwrap_or_else(|| "none".to_owned());
+                format!(
+                    "code-object id={} artifact={} package={} state={} store={} generation={}",
+                    code.id, code.artifact_id, code.package, code.state, store, code.generation
+                )
+            })
+            .collect(),
+        activation_record_roots: target_v1
+            .activation_records
+            .iter()
+            .map(|activation| {
+                let wait = activation
+                    .blocked_wait
+                    .map(|wait| wait.to_string())
+                    .unwrap_or_else(|| "none".to_owned());
+                let trap = activation
+                    .trap
+                    .map(|trap| trap.to_string())
+                    .unwrap_or_else(|| "none".to_owned());
+                format!(
+                    "activation id={} store={} code={} state={} entry={} wait={} trap={} dmw={}",
+                    activation.id,
+                    activation.store,
+                    activation.code_object,
+                    activation.state,
+                    activation.entry,
+                    wait,
+                    trap,
+                    activation.active_dmw_leases
+                )
+            })
+            .collect(),
+        trap_roots: target_v1
+            .trap_records
+            .iter()
+            .map(|trap| {
+                let store = trap
+                    .store
+                    .map(|store| store.to_string())
+                    .unwrap_or_else(|| "none".to_owned());
+                let activation = trap
+                    .activation
+                    .map(|activation| activation.to_string())
+                    .unwrap_or_else(|| "none".to_owned());
+                format!(
+                    "trap id={} class={} store={} activation={} effect={} detail={}",
+                    trap.id, trap.class, store, activation, trap.effect, trap.detail
+                )
+            })
+            .collect(),
+        hostcall_trace_roots: target_v1
+            .hostcall_trace
+            .iter()
+            .map(|trace| {
+                format!(
+                    "hostcall activation={} number={} category={} object={} op={} allowed={} result={}",
+                    trace.activation,
+                    trace.hostcall_number,
+                    trace.category,
+                    trace.object,
+                    trace.operation,
+                    trace.allowed,
+                    trace.result
+                )
+            })
+            .collect(),
+        migration_object_roots: target_v1
+            .migration_objects
+            .iter()
+            .map(|object| {
+                format!(
+                    "migration-object object={} class={} reason={}",
+                    object.object, object.class, object.reason
+                )
+            })
+            .collect(),
         event_log_tail: semantic
             .event_log_tail(16)
             .iter()
             .map(|event| event.summary())
+            .chain(target_v1.target_event_tail.iter().cloned())
             .collect(),
+    }
+}
+
+fn target_artifact_manifest(image: &TargetArtifactImage) -> TargetArtifactImageManifest {
+    TargetArtifactImageManifest {
+        id: image.id,
+        package: image.package.clone(),
+        artifact_name: image.artifact_name.clone(),
+        role: image.role.clone(),
+        kind: image.kind.as_str().to_owned(),
+        target_profile: image.target_profile.clone(),
+        abi_fingerprint: image.abi_fingerprint.clone(),
+        manifest_binding_hash: image.manifest_binding_hash.clone(),
+        code_hash: image.code_hash.clone(),
+        exports: image.exports.clone(),
+        imports: image.imports.clone(),
+        hostcalls: image.hostcalls.iter().map(hostcall_manifest).collect(),
+        capabilities: image
+            .capabilities
+            .iter()
+            .map(target_capability_manifest)
+            .collect(),
+        memory_plan: TargetMemoryPlanManifest {
+            max_memory_pages: image.memory_plan.max_memory_pages,
+            max_table_elements: image.memory_plan.max_table_elements,
+            max_hostcalls_per_activation: image.memory_plan.max_hostcalls_per_activation,
+        },
+        trap_metadata: image
+            .trap_metadata
+            .iter()
+            .map(trap_metadata_manifest)
+            .collect(),
+        address_map: image.address_map.iter().map(address_map_manifest).collect(),
+        payload_len: image.payload_len,
+    }
+}
+
+fn code_object_manifest(code: &CodeObject) -> CodeObjectManifest {
+    CodeObjectManifest {
+        id: code.id,
+        artifact_id: code.artifact_id,
+        package: code.package.clone(),
+        owner_profile: code.owner_profile.clone(),
+        generation: code.generation,
+        state: code.state.as_str().to_owned(),
+        bound_store: code.bound_store,
+        hostcall_table: code.hostcall_table,
+        text_start: code.text.start,
+        text_len: code.text.len,
+        text_permission: code.text.permission.as_str().to_owned(),
+        rodata_start: code.rodata.start,
+        rodata_len: code.rodata.len,
+        rodata_permission: code.rodata.permission.as_str().to_owned(),
+        code_hash: code.code_hash.clone(),
+        hostcalls: code.hostcalls.iter().map(hostcall_manifest).collect(),
+        trap_metadata: code
+            .trap_metadata
+            .iter()
+            .map(trap_metadata_manifest)
+            .collect(),
+        address_map: code.address_map.iter().map(address_map_manifest).collect(),
+    }
+}
+
+fn activation_record_manifest(
+    activation: &semantic_core::ActivationRecord,
+) -> ActivationRecordManifest {
+    ActivationRecordManifest {
+        id: activation.id,
+        store: activation.store,
+        code_object: activation.code_object,
+        artifact: activation.artifact,
+        entry: activation.entry.summary(),
+        generation: activation.generation,
+        state: activation.state.as_str().to_owned(),
+        start_event: activation.start_event,
+        exit_event: activation.exit_event,
+        active_dmw_leases: activation.active_dmw_leases,
+        blocked_wait: activation.blocked_wait,
+        trap: activation.trap,
+        return_tag: activation.return_tag.map(|tag| tag.as_str().to_owned()),
+    }
+}
+
+fn trap_record_manifest(trap: &semantic_core::TargetTrapRecord) -> TrapRecordManifest {
+    TrapRecordManifest {
+        id: trap.id,
+        class: trap.class.as_str().to_owned(),
+        store: trap.store,
+        activation: trap.activation,
+        code_object: trap.code_object,
+        artifact: trap.artifact,
+        offset: trap.offset,
+        hostcall: trap.hostcall.clone(),
+        fault_policy: trap.fault_policy.clone(),
+        effect: trap.effect.summary(),
+        detail: trap.detail.clone(),
+    }
+}
+
+fn hostcall_trace_manifest(trace: &HostcallTraceRecord) -> HostcallTraceManifest {
+    HostcallTraceManifest {
+        activation: trace.activation,
+        hostcall_number: trace.hostcall_number,
+        name: trace.name.clone(),
+        category: trace.category.as_str().to_owned(),
+        object: trace.object.clone(),
+        operation: trace.operation.clone(),
+        allowed: trace.allowed,
+        result: trace.result.clone(),
+    }
+}
+
+fn migration_object_manifest(record: &MigrationObjectRecord) -> MigrationObjectManifest {
+    MigrationObjectManifest {
+        object: record.object.clone(),
+        class: record.class.as_str().to_owned(),
+        reason: record.reason.clone(),
+    }
+}
+
+fn hostcall_manifest(hostcall: &HostcallSpec) -> HostcallSpecManifest {
+    HostcallSpecManifest {
+        number: hostcall.number,
+        name: hostcall.name.clone(),
+        category: hostcall.category.as_str().to_owned(),
+        object: hostcall.object.clone(),
+        operation: hostcall.operation.clone(),
+        may_pending: hostcall.may_pending,
+    }
+}
+
+fn target_capability_manifest(capability: &TargetCapabilitySpec) -> TargetCapabilitySpecManifest {
+    TargetCapabilitySpecManifest {
+        object: capability.object.clone(),
+        operations: capability.operations.clone(),
+        lifetime: capability.lifetime.clone(),
+        class: capability.class.as_str().to_owned(),
+    }
+}
+
+fn trap_metadata_manifest(metadata: &TargetTrapMetadata) -> TargetTrapMetadataManifest {
+    TargetTrapMetadataManifest {
+        class: metadata.class.as_str().to_owned(),
+        symbol: metadata.symbol.clone(),
+        offset: metadata.offset,
+    }
+}
+
+fn address_map_manifest(entry: &TargetAddressMapEntry) -> TargetAddressMapEntryManifest {
+    TargetAddressMapEntryManifest {
+        symbol: entry.symbol.clone(),
+        offset: entry.offset,
+        len: entry.len,
     }
 }
 

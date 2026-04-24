@@ -15,6 +15,7 @@ mod ids;
 mod migration;
 mod records;
 mod runtime_mode;
+mod target_executor;
 mod taxonomy;
 
 pub use activation::*;
@@ -28,6 +29,7 @@ pub use ids::*;
 pub use migration::*;
 pub use records::*;
 pub use runtime_mode::*;
+pub use target_executor::*;
 pub use taxonomy::*;
 
 #[cfg(test)]

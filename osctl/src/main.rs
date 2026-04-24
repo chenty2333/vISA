@@ -107,6 +107,19 @@ fn run() -> Result<(), Box<dyn Error>> {
             };
             print_event_log_tail(Path::new(&path))
         }
+        "inspect" => {
+            let Some(kind) = args.next() else {
+                return Err("inspect requires an object kind".into());
+            };
+            let Some(path) = args.next() else {
+                return Err("inspect requires a manifest/package JSON path".into());
+            };
+            let filter = args.next();
+            if args.next().is_some() {
+                return Err("inspect received too many arguments".into());
+            }
+            inspect_object(&kind, Path::new(&path), filter.as_deref())
+        }
         "replay" => {
             let Some(until_flag) = args.next() else {
                 return Err(
@@ -164,6 +177,9 @@ fn print_usage() {
     eprintln!("  osctl graph <migration.json>");
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
+    eprintln!(
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|event <manifest-or-migration.json> [filter]"
+    );
     eprintln!(
         "  osctl replay --until <event-cursor> [--manifest <manifest.json>] [--json] <migration.json>"
     );
@@ -339,7 +355,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} tasks={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={}",
+            "semantic state package={} cursor={} tasks={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.task_count,
@@ -352,7 +368,13 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.boundary_count,
             package.semantic.artifact_verification_count,
             package.semantic.store_activation_count,
-            package.semantic.executor_transition_count
+            package.semantic.executor_transition_count,
+            package.semantic.target_artifact_count,
+            package.semantic.code_object_count,
+            package.semantic.activation_record_count,
+            package.semantic.trap_record_count,
+            package.semantic.hostcall_trace_count,
+            package.semantic.migration_object_count
         );
         println!(
             "substrate/executor boundary native_policy={} not_migrated={}",
@@ -420,7 +442,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
 fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
     println!(
-        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={}",
+        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.task_roots.len(),
@@ -432,7 +454,13 @@ fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
         package.semantic.roots.boundary_roots.len(),
         package.semantic.roots.artifact_verification_roots.len(),
         package.semantic.roots.store_activation_roots.len(),
-        package.semantic.roots.executor_transition_roots.len()
+        package.semantic.roots.executor_transition_roots.len(),
+        package.semantic.roots.target_artifact_roots.len(),
+        package.semantic.roots.code_object_roots.len(),
+        package.semantic.roots.activation_record_roots.len(),
+        package.semantic.roots.trap_roots.len(),
+        package.semantic.roots.hostcall_trace_roots.len(),
+        package.semantic.roots.migration_object_roots.len()
     );
     print_roots("task", &package.semantic.roots.task_roots);
     print_roots("resource", &package.semantic.roots.resource_roots);
@@ -452,6 +480,21 @@ fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
     print_roots(
         "executor-transition",
         &package.semantic.roots.executor_transition_roots,
+    );
+    print_roots(
+        "target-artifact",
+        &package.semantic.roots.target_artifact_roots,
+    );
+    print_roots("code-object", &package.semantic.roots.code_object_roots);
+    print_roots(
+        "activation-record",
+        &package.semantic.roots.activation_record_roots,
+    );
+    print_roots("trap", &package.semantic.roots.trap_roots);
+    print_roots("hostcall", &package.semantic.roots.hostcall_trace_roots);
+    print_roots(
+        "migration-object",
+        &package.semantic.roots.migration_object_roots,
     );
     Ok(())
 }
@@ -486,6 +529,309 @@ fn print_activation(path: &Path, blocked_only: bool) -> Result<(), Box<dyn Error
         println!("{activation}");
     }
     Ok(())
+}
+
+fn inspect_object(kind: &str, path: &Path, filter: Option<&str>) -> Result<(), Box<dyn Error>> {
+    let bytes = fs::read(path)?;
+    if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
+        return inspect_package_object(kind, &package, filter);
+    }
+    let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&bytes)?;
+    inspect_manifest_object(kind, &manifest, filter)
+}
+
+fn inspect_package_object(
+    kind: &str,
+    package: &MigrationPackageManifest,
+    filter: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    match kind {
+        "artifact" => {
+            println!(
+                "inspect artifact package={} count={}",
+                package.package_id, package.semantic.target_artifact_count
+            );
+            for artifact in &package.semantic.target_artifacts {
+                let line = format!(
+                    "artifact id={} package={} name={} role={} kind={} profile={} abi={} binding={} hash={} exports={} hostcalls={} caps={}",
+                    artifact.id,
+                    artifact.package,
+                    artifact.artifact_name,
+                    artifact.role,
+                    artifact.kind,
+                    artifact.target_profile,
+                    artifact.abi_fingerprint,
+                    artifact.manifest_binding_hash,
+                    artifact.code_hash,
+                    artifact.exports.len(),
+                    artifact.hostcalls.len(),
+                    artifact.capabilities.len()
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.target_artifacts.is_empty() {
+                print_roots_filtered(
+                    "artifact-verification",
+                    &package.semantic.roots.artifact_verification_roots,
+                    filter,
+                );
+            }
+        }
+        "code" => {
+            println!(
+                "inspect code package={} count={}",
+                package.package_id, package.semantic.code_object_count
+            );
+            for code in &package.semantic.code_objects {
+                let store = display_option_u64(code.bound_store);
+                let table = display_option_u64(code.hostcall_table);
+                let line = format!(
+                    "code id={} artifact={} package={} state={} generation={} store={} hostcall_table={} text={:#x}+{}:{} rodata={:#x}+{}:{} hostcalls={}",
+                    code.id,
+                    code.artifact_id,
+                    code.package,
+                    code.state,
+                    code.generation,
+                    store,
+                    table,
+                    code.text_start,
+                    code.text_len,
+                    code.text_permission,
+                    code.rodata_start,
+                    code.rodata_len,
+                    code.rodata_permission,
+                    code.hostcalls.len()
+                );
+                print_if_matches(&line, filter);
+            }
+        }
+        "store" => {
+            println!(
+                "inspect store package={} count={}",
+                package.package_id, package.semantic.store_count
+            );
+            print_roots_filtered("store", &package.semantic.roots.store_roots, filter);
+            print_roots_filtered(
+                "store-activation",
+                &package.semantic.roots.store_activation_roots,
+                filter,
+            );
+        }
+        "activation" => {
+            println!(
+                "inspect activation package={} count={}",
+                package.package_id, package.semantic.activation_record_count
+            );
+            for activation in &package.semantic.activation_records {
+                let exit = display_option_u64(activation.exit_event);
+                let wait = display_option_u64(activation.blocked_wait);
+                let trap = display_option_u64(activation.trap);
+                let ret = activation.return_tag.as_deref().unwrap_or("none");
+                let line = format!(
+                    "activation id={} store={} code={} artifact={} entry={} state={} generation={} start={} exit={} dmw={} wait={} trap={} return={}",
+                    activation.id,
+                    activation.store,
+                    activation.code_object,
+                    activation.artifact,
+                    activation.entry,
+                    activation.state,
+                    activation.generation,
+                    activation.start_event,
+                    exit,
+                    activation.active_dmw_leases,
+                    wait,
+                    trap,
+                    ret
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.activation_records.is_empty() {
+                print_roots_filtered(
+                    "store-activation",
+                    &package.semantic.roots.store_activation_roots,
+                    filter,
+                );
+            }
+        }
+        "capability" | "cap" => {
+            println!(
+                "inspect capability package={} count={}",
+                package.package_id, package.semantic.capability_count
+            );
+            for capability in &package.logical_capabilities {
+                let line = format!(
+                    "cap subject={} object={} class={} rights={} lifetime={} generation={} source={} owner_store={} owner_task={} revoked={}",
+                    capability.subject,
+                    capability.object,
+                    display_capability_class(&capability.class, &capability.object),
+                    capability.rights.join("+"),
+                    capability.lifetime,
+                    capability.generation,
+                    display_default(&capability.source, "unknown"),
+                    display_option_u64(capability.owner_store),
+                    display_option_u64(capability.owner_task),
+                    capability.revoked
+                );
+                print_if_matches(&line, filter);
+            }
+        }
+        "wait" => {
+            println!(
+                "inspect wait package={} count={}",
+                package.package_id, package.semantic.wait_token_count
+            );
+            print_roots_filtered("wait", &package.semantic.roots.wait_roots, filter);
+        }
+        "trap" => {
+            println!(
+                "inspect trap package={} count={}",
+                package.package_id, package.semantic.trap_record_count
+            );
+            for trap in &package.semantic.trap_records {
+                let line = format!(
+                    "trap id={} class={} store={} activation={} code={} artifact={} offset={} hostcall={} policy={} effect={} detail={}",
+                    trap.id,
+                    trap.class,
+                    display_option_u64(trap.store),
+                    display_option_u64(trap.activation),
+                    display_option_u64(trap.code_object),
+                    display_option_u64(trap.artifact),
+                    display_option_u64(trap.offset),
+                    trap.hostcall.as_deref().unwrap_or("none"),
+                    trap.fault_policy,
+                    trap.effect,
+                    trap.detail
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.trap_records.is_empty() {
+                print_roots_filtered("trap", &package.semantic.roots.trap_roots, filter);
+            }
+        }
+        "event" => {
+            println!(
+                "inspect event package={} cursor={} tail={}",
+                package.package_id,
+                package.semantic.event_log_cursor,
+                package.semantic.roots.event_log_tail.len()
+            );
+            print_roots_filtered("event", &package.semantic.roots.event_log_tail, filter);
+            print_roots_filtered(
+                "hostcall",
+                &package.semantic.roots.hostcall_trace_roots,
+                filter,
+            );
+        }
+        "hostcall" => {
+            println!(
+                "inspect hostcall package={} count={}",
+                package.package_id, package.semantic.hostcall_trace_count
+            );
+            for trace in &package.semantic.hostcall_trace {
+                let line = format!(
+                    "hostcall activation={} number={} name={} category={} object={} op={} allowed={} result={}",
+                    trace.activation,
+                    trace.hostcall_number,
+                    trace.name,
+                    trace.category,
+                    trace.object,
+                    trace.operation,
+                    trace.allowed,
+                    trace.result
+                );
+                print_if_matches(&line, filter);
+            }
+        }
+        "migration" => {
+            println!(
+                "inspect migration package={} count={}",
+                package.package_id, package.semantic.migration_object_count
+            );
+            for object in &package.semantic.migration_objects {
+                let line = format!(
+                    "migration object={} class={} reason={}",
+                    object.object, object.class, object.reason
+                );
+                print_if_matches(&line, filter);
+            }
+        }
+        _ => return Err(format!("unknown inspect kind `{kind}`").into()),
+    }
+    Ok(())
+}
+
+fn inspect_manifest_object(
+    kind: &str,
+    manifest: &ArtifactBundleManifest,
+    filter: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    match kind {
+        "artifact" => {
+            let plan = build_validated_artifact_plan(manifest)?;
+            println!(
+                "inspect artifact manifest profile={} modules={}",
+                plan.artifact_profile,
+                plan.module_count()
+            );
+            for module in &plan.modules {
+                let line = format!(
+                    "artifact package={} name={} role={} cwasm={} hash={} abi={} binding={} caps={} exports={}",
+                    module.package,
+                    module.artifact_name,
+                    module.role,
+                    module.cwasm_path,
+                    module.cwasm_sha256,
+                    module.abi_fingerprint,
+                    module.manifest_binding_hash,
+                    module.capabilities.len(),
+                    module.expected_exports.len()
+                );
+                print_if_matches(&line, filter);
+            }
+            Ok(())
+        }
+        "capability" | "cap" => print_caps_from_manifest(manifest, filter),
+        _ => Err(format!("manifest inspect supports artifact/capability, not `{kind}`").into()),
+    }
+}
+
+fn print_caps_from_manifest(
+    manifest: &ArtifactBundleManifest,
+    filter: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    let plan = build_validated_artifact_plan(manifest)?;
+    println!(
+        "inspect capability manifest profile={} caps={}",
+        plan.artifact_profile,
+        plan.capability_count()
+    );
+    for module in &plan.modules {
+        for capability in &module.capabilities {
+            let line = format!(
+                "cap subject={} object={} class={} rights={} lifetime={} source=artifact-manifest",
+                module.package,
+                capability.name,
+                CapabilityClass::from_object(&capability.name).as_str(),
+                capability.rights.join("+"),
+                capability.lifetime
+            );
+            print_if_matches(&line, filter);
+        }
+    }
+    Ok(())
+}
+
+fn print_roots_filtered(label: &str, roots: &[String], filter: Option<&str>) {
+    for root in roots {
+        let line = format!("{label} {root}");
+        print_if_matches(&line, filter);
+    }
+}
+
+fn print_if_matches(line: &str, filter: Option<&str>) {
+    if filter.is_none_or(|filter| line.contains(filter)) {
+        println!("{line}");
+    }
 }
 
 fn replay_until(
@@ -531,7 +877,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: tasks={} resources={} authorities={} stores={} caps={} boundaries={} artifacts={} activations={} executor_transitions={} event_tail={}",
+        "replay roots: tasks={} resources={} authorities={} stores={} caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} event_tail={}",
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
         package.semantic.roots.authority_roots.len(),
@@ -541,6 +887,12 @@ fn replay_until(
         package.semantic.roots.artifact_verification_roots.len(),
         package.semantic.roots.store_activation_roots.len(),
         package.semantic.roots.executor_transition_roots.len(),
+        package.semantic.roots.target_artifact_roots.len(),
+        package.semantic.roots.code_object_roots.len(),
+        package.semantic.roots.activation_record_roots.len(),
+        package.semantic.roots.trap_roots.len(),
+        package.semantic.roots.hostcall_trace_roots.len(),
+        package.semantic.roots.migration_object_roots.len(),
         package.semantic.roots.event_log_tail.len()
     );
     for boundary in &package.semantic.roots.boundary_roots {
@@ -554,6 +906,24 @@ fn replay_until(
     }
     for transition in &package.semantic.roots.executor_transition_roots {
         println!("replay executor {transition}");
+    }
+    for artifact in &package.semantic.roots.target_artifact_roots {
+        println!("replay target-artifact {artifact}");
+    }
+    for code in &package.semantic.roots.code_object_roots {
+        println!("replay code-object {code}");
+    }
+    for activation in &package.semantic.roots.activation_record_roots {
+        println!("replay activation-record {activation}");
+    }
+    for trap in &package.semantic.roots.trap_roots {
+        println!("replay trap {trap}");
+    }
+    for hostcall in &package.semantic.roots.hostcall_trace_roots {
+        println!("replay hostcall {hostcall}");
+    }
+    for object in &package.semantic.roots.migration_object_roots {
+        println!("replay migration-object {object}");
     }
     Ok(())
 }
@@ -598,11 +968,23 @@ fn print_replay_json(
             "artifacts": package.semantic.roots.artifact_verification_roots.len(),
             "activations": package.semantic.roots.store_activation_roots.len(),
             "executor_transitions": package.semantic.roots.executor_transition_roots.len(),
+            "target_artifacts": package.semantic.roots.target_artifact_roots.len(),
+            "code_objects": package.semantic.roots.code_object_roots.len(),
+            "activation_records": package.semantic.roots.activation_record_roots.len(),
+            "traps": package.semantic.roots.trap_roots.len(),
+            "hostcalls": package.semantic.roots.hostcall_trace_roots.len(),
+            "migration_objects": package.semantic.roots.migration_object_roots.len(),
             "event_tail": package.semantic.roots.event_log_tail.len(),
             "boundary_roots": &package.semantic.roots.boundary_roots,
             "artifact_verification_roots": &package.semantic.roots.artifact_verification_roots,
             "store_activation_roots": &package.semantic.roots.store_activation_roots,
-            "executor_transition_roots": &package.semantic.roots.executor_transition_roots
+            "executor_transition_roots": &package.semantic.roots.executor_transition_roots,
+            "target_artifact_roots": &package.semantic.roots.target_artifact_roots,
+            "code_object_roots": &package.semantic.roots.code_object_roots,
+            "activation_record_roots": &package.semantic.roots.activation_record_roots,
+            "trap_roots": &package.semantic.roots.trap_roots,
+            "hostcall_trace_roots": &package.semantic.roots.hostcall_trace_roots,
+            "migration_object_roots": &package.semantic.roots.migration_object_roots
         }
     });
     println!("{}", serde_json::to_string_pretty(&value)?);
@@ -620,7 +1002,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={}",
+        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.active_authority_count,
@@ -633,7 +1015,13 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.boundary_count,
         package.semantic.artifact_verification_count,
         package.semantic.store_activation_count,
-        package.semantic.executor_transition_count
+        package.semantic.executor_transition_count,
+        package.semantic.target_artifact_count,
+        package.semantic.code_object_count,
+        package.semantic.activation_record_count,
+        package.semantic.trap_record_count,
+        package.semantic.hostcall_trace_count,
+        package.semantic.migration_object_count
     );
     println!(
         "substrate boundary: irq={} dma={} net_inputs={} dmw={} active_mmio={} active_dma={} active_irq={} active_packet_device={} active_virtqueue={} cow_epoch={} background_pages={}",
@@ -665,6 +1053,21 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
     print_roots(
         "executor-transition",
         &package.semantic.roots.executor_transition_roots,
+    );
+    print_roots(
+        "target-artifact",
+        &package.semantic.roots.target_artifact_roots,
+    );
+    print_roots("code-object", &package.semantic.roots.code_object_roots);
+    print_roots(
+        "activation-record",
+        &package.semantic.roots.activation_record_roots,
+    );
+    print_roots("trap", &package.semantic.roots.trap_roots);
+    print_roots("hostcall", &package.semantic.roots.hostcall_trace_roots);
+    print_roots(
+        "migration-object",
+        &package.semantic.roots.migration_object_roots,
     );
 }
 
