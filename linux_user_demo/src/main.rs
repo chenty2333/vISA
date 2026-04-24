@@ -1,14 +1,16 @@
-#![no_std]
-#![no_main]
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_main)]
 
 use core::arch::asm;
+#[cfg(not(test))]
 use core::panic::PanicInfo;
 use core::slice;
 
 use vmos_abi::{
-    EPOLL_CTL_ADD, EPOLLIN, FUTEX_WAIT, SYS_CLOSE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_WAIT, SYS_EXIT, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_NANOSLEEP, SYS_OPENAT,
-    SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE,
+    AF_INET, EPOLL_CTL_ADD, EPOLLIN, FUTEX_WAIT, SOCK_STREAM, SYS_CLOSE, SYS_EPOLL_CREATE1,
+    SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
+    SYS_NANOSLEEP, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT,
+    SYS_SOCKET, SYS_UNAME, SYS_WRITE,
 };
 
 const AT_FDCWD: i32 = -100;
@@ -24,6 +26,7 @@ static LINK_LABEL: &[u8] = b"readlinkat('/sandbox/readme.link') -> ";
 static UNAME_LABEL: &[u8] = b"uname() -> ";
 static FUTEX_LABEL: &[u8] = b"futex wait timed out as expected\n";
 static EPOLL_LABEL: &[u8] = b"/dev/pulse became readable via epoll\n";
+static SOCKET_LABEL: &[u8] = b"socket recvfrom() -> ";
 static SLEEP_LABEL: &[u8] = b"ring3 ELF resumed after nanosleep\n";
 static ERROR_LABEL: &[u8] = b"ring3 ELF demo failed\n";
 
@@ -33,6 +36,7 @@ static PROC_PATH: &[u8] = b"/proc/self/status\0";
 static LINK_PATH: &[u8] = b"/sandbox/readme.link\0";
 static DEV_PATH: &[u8] = b"/dev/zero\0";
 static PULSE_PATH: &[u8] = b"/dev/pulse\0";
+static HTTP_GET: &[u8] = b"GET / HTTP/1.0\r\n\r\n";
 static FUTEX_WORD: u32 = 1;
 
 #[repr(C)]
@@ -87,6 +91,7 @@ fn run() -> Result<(), i32> {
     show_uname()?;
     check_futex_timeout()?;
     check_epoll_pulse()?;
+    check_socket_path()?;
     do_sleep()?;
     Ok(())
 }
@@ -238,6 +243,43 @@ fn check_epoll_pulse() -> Result<(), i32> {
     write_all(EPOLL_LABEL)
 }
 
+fn check_socket_path() -> Result<(), i32> {
+    let fd = sys_socket(AF_INET as i32, SOCK_STREAM as i32, 0)?;
+    sys_setsockopt(fd, 1, 2, 0, 0)?;
+    let _ = sys_fcntl(fd, 3, 0)?;
+    let sent = sys_sendto(fd, HTTP_GET)?;
+    if sent != HTTP_GET.len() {
+        return Err(-1);
+    }
+
+    let epfd = sys_epoll_create1(0)?;
+    let ctl_event = EpollEvent {
+        events: EPOLLIN,
+        data: fd as u64,
+    };
+    sys_epoll_ctl(epfd, EPOLL_CTL_ADD as i32, fd, &ctl_event)?;
+
+    let mut events = [EpollEvent { events: 0, data: 0 }; 1];
+    let ready = sys_epoll_wait(epfd, &mut events, 80)?;
+    if ready != 1 {
+        return Err(-1);
+    }
+
+    let mut buffer = [0u8; 128];
+    let len = sys_recvfrom(fd, &mut buffer)?;
+    close_fd(epfd)?;
+    close_fd(fd)?;
+    if len == 0 {
+        return Err(-1);
+    }
+    write_all(SOCKET_LABEL)?;
+    write_all(&buffer[..len])?;
+    if buffer[len - 1] != b'\n' {
+        write_all(b"\n")?;
+    }
+    Ok(())
+}
+
 fn open_readonly(path: &[u8]) -> Result<i32, i32> {
     let rc = syscall4(
         SYS_OPENAT,
@@ -355,6 +397,67 @@ fn sys_nanosleep(req: &Timespec) -> Result<(), i32> {
     if rc < 0 { Err(rc as i32) } else { Ok(()) }
 }
 
+fn sys_socket(domain: i32, ty: i32, protocol: i32) -> Result<i32, i32> {
+    let rc = syscall3(SYS_SOCKET, domain as u64, ty as u64, protocol as u64);
+    if rc < 0 {
+        Err(rc as i32)
+    } else {
+        Ok(rc as i32)
+    }
+}
+
+fn sys_sendto(fd: i32, bytes: &[u8]) -> Result<usize, i32> {
+    let rc = syscall6(
+        SYS_SENDTO,
+        fd as u64,
+        bytes.as_ptr() as u64,
+        bytes.len() as u64,
+        0,
+        0,
+        0,
+    );
+    if rc < 0 {
+        Err(rc as i32)
+    } else {
+        Ok(rc as usize)
+    }
+}
+
+fn sys_recvfrom(fd: i32, buffer: &mut [u8]) -> Result<usize, i32> {
+    let rc = syscall6(
+        SYS_RECVFROM,
+        fd as u64,
+        buffer.as_mut_ptr() as u64,
+        buffer.len() as u64,
+        0,
+        0,
+        0,
+    );
+    if rc < 0 {
+        Err(rc as i32)
+    } else {
+        Ok(rc as usize)
+    }
+}
+
+fn sys_setsockopt(fd: i32, level: i32, optname: i32, optval: u64, optlen: u64) -> Result<(), i32> {
+    let rc = syscall6(
+        SYS_SETSOCKOPT,
+        fd as u64,
+        level as u64,
+        optname as u64,
+        optval,
+        optlen,
+        0,
+    );
+    if rc < 0 { Err(rc as i32) } else { Ok(()) }
+}
+
+fn sys_fcntl(fd: i32, cmd: i32, arg: u64) -> Result<i64, i32> {
+    let rc = syscall3(SYS_FCNTL, fd as u64, cmd as u64, arg);
+    if rc < 0 { Err(rc as i32) } else { Ok(rc) }
+}
+
 fn write_all(bytes: &[u8]) -> Result<(), i32> {
     let rc = syscall3(SYS_WRITE, 1, bytes.as_ptr() as u64, bytes.len() as u64);
     if rc < 0 { Err(rc as i32) } else { Ok(()) }
@@ -460,6 +563,7 @@ fn syscall6(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i6
     ret
 }
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
     exit(1)

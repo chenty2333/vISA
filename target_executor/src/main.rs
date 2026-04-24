@@ -10,9 +10,7 @@ use artifact_manifest::{
 };
 use semantic_core::{SemanticGraph, StoreState};
 use sha2::{Digest, Sha256};
-use supervisor_catalog::{
-    CapabilitySpec, NETWORK_STORE_BLUEPRINTS, SUPERVISOR_WASM_MODULES, WasmModuleSpec,
-};
+use supervisor_catalog::{CapabilitySpec, SUPERVISOR_WASM_MODULES, WasmModuleSpec};
 use wasmtime::{Config, Engine, Instance, Module, Precompiled, Store};
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
@@ -88,19 +86,16 @@ fn run() -> Result<(), Box<dyn Error>> {
             store.package, store.role, store.fault_policy
         );
     }
-    println!(
-        "network semantic blueprints staged for future artifacts: {}",
-        NETWORK_STORE_BLUEPRINTS.len()
-    );
-    for blueprint in NETWORK_STORE_BLUEPRINTS {
-        println!(
-            "blueprint {} role={} fault_policy={} capabilities={}",
-            blueprint.package,
-            blueprint.role.as_str(),
-            blueprint.fault_policy.as_str(),
-            blueprint.capabilities.len()
-        );
-    }
+    let network_store_count = SUPERVISOR_WASM_MODULES
+        .iter()
+        .filter(|module| {
+            matches!(
+                module.package,
+                "driver_virtio_net" | "net_core" | "linux_socket_service"
+            )
+        })
+        .count();
+    println!("network runtime stores loaded: {network_store_count}");
     let migration_path = prepare_migration_package(&artifact_root, migration_path, &manifest)?;
     let migration = read_migration_package(&migration_path)?;
     validate_migration_package(&migration, &manifest)?;
@@ -203,6 +198,10 @@ fn demo_migration_package(manifest: &ArtifactBundleManifest) -> MigrationPackage
             store_count: manifest.modules.len(),
             transaction_count: 0,
             active_transaction_count: 0,
+            fast_path_plan_count: 1,
+            active_fast_path_plan_count: 1,
+            network_socket_count: 1,
+            network_rx_queue_bytes: 0,
         },
         logical_capabilities,
         substrate_boundary: SubstrateBoundaryManifest {
@@ -210,6 +209,11 @@ fn demo_migration_package(manifest: &ArtifactBundleManifest) -> MigrationPackage
             pending_irq_causes: 0,
             pending_dma_completions: 0,
             active_dmw_lease_count: 0,
+            pending_network_inputs: 0,
+            random_epoch: 0,
+            scheduler_decision_cursor: 0,
+            cow_epoch: 1,
+            background_copy_pages: 0,
             native_state_policy:
                 "target rebuilds page tables, DMW slots, IRQ registrations, stores, and code cache"
                     .to_owned(),
@@ -237,6 +241,12 @@ fn validate_bundle_manifest(manifest: &ArtifactBundleManifest) -> Result<(), Box
     if manifest.compiler.execution_mode != "precompiled-core-module" {
         return Err("target executor only accepts precompiled core modules".into());
     }
+    if manifest.target.linux_abi_profile != "linux-x86_64-demo-socket-v0" {
+        return Err("Linux ABI profile mismatch".into());
+    }
+    if manifest.target.artifact_signature_profile != "prototype-self-signed-sha256" {
+        return Err("artifact signature profile mismatch".into());
+    }
     if manifest.target.machine_abi_version != "vmos-machine-abi-v0" {
         return Err("machine ABI version mismatch".into());
     }
@@ -261,6 +271,12 @@ fn validate_migration_package(
     }
     if package.substrate_boundary.pending_dma_completions != 0 {
         return Err("migration package contains in-flight DMA completions".into());
+    }
+    if package.substrate_boundary.pending_network_inputs != 0 {
+        return Err("migration package contains pending network inputs".into());
+    }
+    if package.substrate_boundary.background_copy_pages != 0 {
+        return Err("migration package contains unfinished background COW copies".into());
     }
     if package.semantic.active_transaction_count != 0 {
         return Err("migration package contains active semantic transactions".into());
@@ -377,13 +393,17 @@ fn restore_migration_package(
         package.guest.canonical_isa
     );
     println!(
-        "restore plan: import semantic roots tasks={} resources={} waits={} pending_waits={} transactions={} active_transactions={} event_cursor={}",
+        "restore plan: import semantic roots tasks={} resources={} waits={} pending_waits={} transactions={} active_transactions={} fastpath={}/{} sockets={} rx_bytes={} event_cursor={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.wait_token_count,
         package.semantic.pending_wait_count,
         package.semantic.transaction_count,
         package.semantic.active_transaction_count,
+        package.semantic.active_fast_path_plan_count,
+        package.semantic.fast_path_plan_count,
+        package.semantic.network_socket_count,
+        package.semantic.network_rx_queue_bytes,
         package.semantic.event_log_cursor
     );
     println!(
@@ -423,13 +443,35 @@ fn validate_entry(
     if entry.fault_policy != spec.fault_policy.as_str() {
         return Err(format!("{} fault policy mismatch", spec.package).into());
     }
+    let expected_dependencies = module_dependencies(spec);
+    if entry.service_dependencies.len() != expected_dependencies.len()
+        || expected_dependencies.iter().any(|dependency| {
+            !entry
+                .service_dependencies
+                .iter()
+                .any(|entry| entry == dependency)
+        })
+    {
+        return Err(format!("{} service dependency mismatch", spec.package).into());
+    }
     if entry.signature.scheme != "prototype-self-signed-sha256" {
         return Err(format!("{} signature scheme mismatch", spec.package).into());
+    }
+    if entry.abi_fingerprint != module_abi_fingerprint(spec) {
+        return Err(format!("{} ABI fingerprint mismatch", spec.package).into());
     }
     if entry.signature.artifact_hash != entry.cwasm_sha256 {
         return Err(format!("{} signature artifact hash mismatch", spec.package).into());
     }
-    let expected_binding = manifest_binding_hash(spec, &entry.wasm_sha256, &entry.cwasm_sha256);
+    if entry.signature.public_key_hint.is_empty() || entry.signature.signature.is_empty() {
+        return Err(format!("{} signature payload is incomplete", spec.package).into());
+    }
+    let expected_binding = manifest_binding_hash(
+        spec,
+        &entry.wasm_sha256,
+        &entry.cwasm_sha256,
+        &entry.abi_fingerprint,
+    );
     if entry.signature.manifest_binding_hash != expected_binding {
         return Err(format!("{} manifest binding hash mismatch", spec.package).into());
     }
@@ -550,7 +592,12 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
-fn manifest_binding_hash(spec: &WasmModuleSpec, wasm_sha256: &str, cwasm_sha256: &str) -> String {
+fn manifest_binding_hash(
+    spec: &WasmModuleSpec,
+    wasm_sha256: &str,
+    cwasm_sha256: &str,
+    abi_fingerprint: &str,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(spec.package.as_bytes());
     hasher.update(b"\0");
@@ -563,11 +610,54 @@ fn manifest_binding_hash(spec: &WasmModuleSpec, wasm_sha256: &str, cwasm_sha256:
     hasher.update(wasm_sha256.as_bytes());
     hasher.update(b"\0");
     hasher.update(cwasm_sha256.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(abi_fingerprint.as_bytes());
     for export in spec.expected_exports {
         hasher.update(b"\0");
         hasher.update(export.as_bytes());
     }
     hex::encode(hasher.finalize())
+}
+
+fn module_abi_fingerprint(spec: &WasmModuleSpec) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(spec.package.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(spec.artifact_name.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(spec.role.as_str().as_bytes());
+    for export in spec.expected_exports {
+        hasher.update(b"\0export:");
+        hasher.update(export.as_bytes());
+    }
+    for capability in spec.capabilities {
+        hasher.update(b"\0cap:");
+        hasher.update(capability.name.as_bytes());
+        hasher.update(b":");
+        hasher.update(capability.lifetime.as_bytes());
+        for right in capability.rights {
+            hasher.update(b":");
+            hasher.update(right.as_bytes());
+        }
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn module_dependencies(spec: &WasmModuleSpec) -> &'static [&'static str] {
+    match spec.package {
+        "net_core" => &["driver_virtio_net"],
+        "linux_socket_service" => &["net_core"],
+        "linux_syscall" => &[
+            "vfs_service",
+            "procfs_service",
+            "devfs_service",
+            "epoll_service",
+            "futex_service",
+            "linux_socket_service",
+        ],
+        "wasm_app" => &["console_service"],
+        _ => &[],
+    }
 }
 
 fn rights_vec(capability: &CapabilitySpec) -> Vec<String> {

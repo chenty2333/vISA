@@ -372,6 +372,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "driver_virtio_net"
+version = "0.1.0"
+dependencies = [
+ "vmos_abi",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -639,6 +646,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
+name = "linux_socket_service"
+version = "0.1.0"
+dependencies = [
+ "vmos_abi",
+]
+
+[[package]]
 name = "linux_syscall"
 version = "0.1.0"
 dependencies = [
@@ -698,6 +712,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "net_core"
+version = "0.1.0"
+dependencies = [
+ "vmos_abi",
+]
+
+[[package]]
 name = "object"
 version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -714,6 +735,14 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "osctl"
+version = "0.1.0"
+dependencies = [
+ "artifact_manifest",
+ "serde_json",
+]
 
 [[package]]
 name = "pic8259"
@@ -821,6 +850,13 @@ dependencies = [
  "log",
  "rustc-hash",
  "smallvec",
+]
+
+[[package]]
+name = "replay_snapshot"
+version = "0.1.0"
+dependencies = [
+ "vmos_abi",
 ]
 
 [[package]]

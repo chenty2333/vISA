@@ -1,9 +1,22 @@
 use alloc::vec::Vec;
 
+#[cfg(not(target_os = "none"))]
 use super::engine::{ModuleInstance, SupervisorEngine, WasmFn};
-use super::types::{WaitRestartClass, WaitToken};
-use vmos_abi::{PackedStep, PlanKind, SyscallContext};
+#[cfg(not(target_os = "none"))]
+use super::types::WaitRestartClass;
+use super::types::WaitToken;
+use vmos_abi::PlanKind;
+#[cfg(not(target_os = "none"))]
+use vmos_abi::{PackedStep, SyscallContext};
 
+#[cfg(target_os = "none")]
+#[path = "linux_native.rs"]
+mod native;
+
+#[cfg(target_os = "none")]
+pub(super) use native::LinuxFrontend;
+
+#[cfg(not(target_os = "none"))]
 const LINUX_SYSCALL_WASM: &[u8] = include_bytes!(env!("VMOS_LINUX_SYSCALL_WASM"));
 
 #[derive(Debug)]
@@ -20,6 +33,7 @@ pub(super) struct LinuxPlan {
     pub(super) args: [u64; 6],
 }
 
+#[cfg(not(target_os = "none"))]
 pub(super) struct LinuxFrontend {
     module: ModuleInstance,
     arg_buffer_ptr: u32,
@@ -38,6 +52,7 @@ pub(super) struct LinuxFrontend {
     encode_epoll_events: WasmFn<(u32, u32, u32), i32>,
 }
 
+#[cfg(not(target_os = "none"))]
 impl LinuxFrontend {
     pub(super) fn new(engine: &SupervisorEngine) -> Result<Self, &'static str> {
         let mut module = ModuleInstance::instantiate(

@@ -18,6 +18,7 @@ pub type Generation = u64;
 pub type SnapshotBarrierId = u64;
 pub type StoreId = u64;
 pub type TransactionId = u64;
+pub type PlanId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResourceHandle {
@@ -132,8 +133,13 @@ pub enum ResourceKind {
     NetInterface,
     NetSocket,
     SocketQueue,
+    DmaPool,
     DmaBuffer,
     IrqLine,
+    MmioRegion,
+    PciDevice,
+    AcpiTable,
+    VirtioQueue,
     GuestMemory,
     WindowLease,
     ServiceStore,
@@ -151,8 +157,13 @@ impl ResourceKind {
             Self::NetInterface => "net-interface",
             Self::NetSocket => "net-socket",
             Self::SocketQueue => "socket-queue",
+            Self::DmaPool => "dma-pool",
             Self::DmaBuffer => "dma-buffer",
             Self::IrqLine => "irq-line",
+            Self::MmioRegion => "mmio-region",
+            Self::PciDevice => "pci-device",
+            Self::AcpiTable => "acpi-table",
+            Self::VirtioQueue => "virtio-queue",
             Self::GuestMemory => "guest-memory",
             Self::WindowLease => "window-lease",
             Self::ServiceStore => "service-store",
@@ -683,6 +694,16 @@ pub struct SemanticTransactionRecord {
     pub task: Option<TaskId>,
     pub state: TransactionState,
     pub generation: Generation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FastPathPlanRecord {
+    pub id: PlanId,
+    pub subject: String,
+    pub object: String,
+    pub operation: String,
+    pub generation: Generation,
+    pub valid: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1335,12 +1356,14 @@ pub struct SemanticGraph {
     fault_domains: Vec<FaultDomainRecord>,
     stores: Vec<StoreRecord>,
     transactions: Vec<SemanticTransactionRecord>,
+    fast_path_plans: Vec<FastPathPlanRecord>,
     capabilities: CapabilityLedger,
     event_log: EventLog,
     next_resource_id: ResourceId,
     next_fault_domain_id: FaultDomainId,
     next_store_id: StoreId,
     next_transaction_id: TransactionId,
+    next_plan_id: PlanId,
 }
 
 impl SemanticGraph {
@@ -1352,12 +1375,14 @@ impl SemanticGraph {
             fault_domains: Vec::new(),
             stores: Vec::new(),
             transactions: Vec::new(),
+            fast_path_plans: Vec::new(),
             capabilities: CapabilityLedger::new(),
             event_log: EventLog::new(),
             next_resource_id: 1,
             next_fault_domain_id: 1,
             next_store_id: 1,
             next_transaction_id: 1,
+            next_plan_id: 1,
         }
     }
 
@@ -2265,6 +2290,40 @@ impl SemanticGraph {
         );
     }
 
+    pub fn install_fast_path_plan(
+        &mut self,
+        subject: &str,
+        object: &str,
+        operation: &str,
+    ) -> PlanId {
+        let id = self.next_plan_id;
+        self.next_plan_id += 1;
+        self.fast_path_plans.push(FastPathPlanRecord {
+            id,
+            subject: subject.to_string(),
+            object: object.to_string(),
+            operation: operation.to_string(),
+            generation: 1,
+            valid: true,
+        });
+        self.event_log
+            .push("fastpath", EventKind::FastPathPlanInstalled { plan: id });
+        id
+    }
+
+    pub fn invalidate_fast_path_plan(&mut self, id: PlanId) {
+        let Some(plan) = self.fast_path_plans.iter_mut().find(|plan| plan.id == id) else {
+            return;
+        };
+        if !plan.valid {
+            return;
+        }
+        plan.valid = false;
+        plan.generation += 1;
+        self.event_log
+            .push("fastpath", EventKind::FastPathPlanInvalidated { plan: id });
+    }
+
     pub fn record_failure_effect(&mut self, effect: FailureEffect) {
         self.event_log
             .push("failure", EventKind::FailureEffect { effect });
@@ -2315,6 +2374,7 @@ impl SemanticGraph {
                 fault_domains: self.fault_domains.clone(),
                 stores: self.stores.clone(),
                 transactions: self.transactions.clone(),
+                fast_path_plans: self.fast_path_plans.clone(),
                 capabilities: self.capabilities.records().to_vec(),
             },
         }
@@ -2342,6 +2402,17 @@ impl SemanticGraph {
 
     pub fn transaction_count(&self) -> usize {
         self.transactions.len()
+    }
+
+    pub fn fast_path_plan_count(&self) -> usize {
+        self.fast_path_plans.len()
+    }
+
+    pub fn active_fast_path_plan_count(&self) -> usize {
+        self.fast_path_plans
+            .iter()
+            .filter(|plan| plan.valid)
+            .count()
     }
 
     pub fn active_transaction_count(&self) -> usize {
@@ -2387,6 +2458,10 @@ impl SemanticGraph {
 
     pub fn transactions(&self) -> &[SemanticTransactionRecord] {
         &self.transactions
+    }
+
+    pub fn fast_path_plans(&self) -> &[FastPathPlanRecord] {
+        &self.fast_path_plans
     }
 
     pub fn event_log_tail(&self, count: usize) -> &[EventRecord] {
@@ -2456,6 +2531,11 @@ pub struct SubstrateBoundarySnapshot {
     pub pending_irq_causes: u32,
     pub pending_dma_completions: u32,
     pub active_dmw_lease_count: u32,
+    pub pending_network_inputs: u32,
+    pub random_epoch: u64,
+    pub scheduler_decision_cursor: u64,
+    pub cow_epoch: u64,
+    pub background_copy_pages: u64,
     pub native_state_policy: String,
 }
 
@@ -2479,6 +2559,7 @@ pub struct SemanticSnapshot {
     pub fault_domains: Vec<FaultDomainRecord>,
     pub stores: Vec<StoreRecord>,
     pub transactions: Vec<SemanticTransactionRecord>,
+    pub fast_path_plans: Vec<FastPathPlanRecord>,
     pub capabilities: Vec<CapabilityRecord>,
 }
 
@@ -2525,23 +2606,27 @@ impl MigrationPackage {
             self.guest.canonical_isa.as_str()
         ));
         lines.push(format!(
-            "snapshot barrier: id={} cursor={} pending_waits={} live_resources={} active_transactions={} active_dmw_leases={}",
+            "snapshot barrier: id={} cursor={} pending_waits={} live_resources={} active_transactions={} active_dmw_leases={} pending_net={} cow_epoch={} background_pages={}",
             self.semantic.barrier.id,
             self.semantic.barrier.event_log_cursor,
             self.semantic.barrier.pending_wait_count,
             self.semantic.barrier.live_resource_count,
             self.semantic.barrier.active_transaction_count,
-            self.semantic.barrier.active_dmw_lease_count
+            self.semantic.barrier.active_dmw_lease_count,
+            self.substrate_boundary.pending_network_inputs,
+            self.substrate_boundary.cow_epoch,
+            self.substrate_boundary.background_copy_pages
         ));
         lines.push(format!(
-            "semantic roots: tasks={} resources={} waits={} capabilities={} fault_domains={} stores={} transactions={}",
+            "semantic roots: tasks={} resources={} waits={} capabilities={} fault_domains={} stores={} transactions={} fastpath_plans={}",
             self.semantic.tasks.len(),
             self.semantic.resources.len(),
             self.semantic.waits.len(),
             self.semantic.capabilities.len(),
             self.semantic.fault_domains.len(),
             self.semantic.stores.len(),
-            self.semantic.transactions.len()
+            self.semantic.transactions.len(),
+            self.semantic.fast_path_plans.len()
         ));
         lines.push(format!(
             "required artifacts: {}",
@@ -2794,6 +2879,11 @@ mod tests {
                 pending_irq_causes: 0,
                 pending_dma_completions: 0,
                 active_dmw_lease_count: 1,
+                pending_network_inputs: 0,
+                random_epoch: 0,
+                scheduler_decision_cursor: 0,
+                cow_epoch: 0,
+                background_copy_pages: 0,
                 native_state_policy: "rebuild".to_string(),
             },
             1,
@@ -2823,6 +2913,11 @@ mod tests {
                 pending_irq_causes: 0,
                 pending_dma_completions: 0,
                 active_dmw_lease_count: 0,
+                pending_network_inputs: 0,
+                random_epoch: 0,
+                scheduler_decision_cursor: 0,
+                cow_epoch: 0,
+                background_copy_pages: 0,
                 native_state_policy: "rebuild".to_string(),
             },
             1,

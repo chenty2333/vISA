@@ -18,6 +18,10 @@ pub struct TargetManifest {
     pub memory64: bool,
     pub multi_memory: bool,
     pub dmw_layout: String,
+    #[serde(default)]
+    pub linux_abi_profile: String,
+    #[serde(default)]
+    pub artifact_signature_profile: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -42,7 +46,20 @@ pub struct ModuleArtifactManifest {
     pub exports: Vec<ExternManifest>,
     pub imports: Vec<ImportManifest>,
     pub capabilities: Vec<CapabilityManifest>,
+    #[serde(default)]
+    pub abi_fingerprint: String,
+    #[serde(default)]
+    pub service_dependencies: Vec<String>,
+    #[serde(default)]
+    pub resource_limits: ResourceLimitsManifest,
     pub signature: SignatureManifest,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ResourceLimitsManifest {
+    pub max_memory_pages: u32,
+    pub max_table_elements: u32,
+    pub max_hostcalls_per_activation: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -71,6 +88,10 @@ pub struct SignatureManifest {
     pub artifact_hash: String,
     pub manifest_binding_hash: String,
     pub signer: String,
+    #[serde(default)]
+    pub public_key_hint: String,
+    #[serde(default)]
+    pub signature: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -139,6 +160,14 @@ pub struct SemanticSnapshotManifest {
     pub transaction_count: usize,
     #[serde(default)]
     pub active_transaction_count: usize,
+    #[serde(default)]
+    pub fast_path_plan_count: usize,
+    #[serde(default)]
+    pub active_fast_path_plan_count: usize,
+    #[serde(default)]
+    pub network_socket_count: u32,
+    #[serde(default)]
+    pub network_rx_queue_bytes: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -147,6 +176,16 @@ pub struct SubstrateBoundaryManifest {
     pub pending_irq_causes: u32,
     pub pending_dma_completions: u32,
     pub active_dmw_lease_count: u32,
+    #[serde(default)]
+    pub pending_network_inputs: u32,
+    #[serde(default)]
+    pub random_epoch: u64,
+    #[serde(default)]
+    pub scheduler_decision_cursor: u64,
+    #[serde(default)]
+    pub cow_epoch: u64,
+    #[serde(default)]
+    pub background_copy_pages: u64,
     pub native_state_policy: String,
 }
 

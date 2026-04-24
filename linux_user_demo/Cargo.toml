@@ -7,6 +7,8 @@ build = "build.rs"
 [[bin]]
 name = "linux_user_demo"
 path = "src/main.rs"
+test = false
+bench = false
 
 [dependencies]
 vmos_abi.workspace = true

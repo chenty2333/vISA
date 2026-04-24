@@ -6,20 +6,23 @@ use core::ptr::null_mut;
 use crate::interrupts;
 use semantic_core::{FailureEffect, FrontendKind, ResourceHandle, SemanticGraph, TaskState};
 use vmos_abi::{
-    ERR_EAGAIN, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_EPERM, FD_STDOUT, NodeKind, PackedStep,
-    PlanKind, SYS_CLOSE, SYS_GETCWD, SYS_GETDENTS64, SYS_OPENAT, SYS_READ, SYS_READLINKAT,
-    SYS_UNAME, SYS_WRITE, ServiceRoute, StepTag, SyscallContext,
+    EPOLLIN, ERR_EAGAIN, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_ENOTSOCK,
+    ERR_EOPNOTSUPP, ERR_EPERM, FD_STDOUT, NodeKind, PackedStep, PlanKind, SYS_CLOSE, SYS_GETCWD,
+    SYS_GETDENTS64, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE, ServiceRoute,
+    StepTag, SyscallContext,
 };
 
 use super::engine::SupervisorEngine;
 use super::events::Event;
 use super::linux::{LinuxCallResult, LinuxFrontend, LinuxPlan};
-use super::net::{FakePacketDevice, NetEvent};
+use super::net::NetworkPlane;
 use super::pulse::{PulseDevice, PulseEvent};
 use super::scheduler::Scheduler;
 use super::semantic::{bootstrap_graph, fd_resource_kind, fd_resource_label};
 use super::services::{
-    ConsoleService, DevfsService, EpollService, FutexService, ProcfsService, VfsService, WasmApp,
+    ConsoleService, DevfsService, DriverNetEventKind, DriverVirtioNetService, EpollService,
+    FutexService, LinuxSocketService, NetCoreService, ProcfsService, ReplaySnapshotService,
+    VfsService, WasmApp,
 };
 use super::types::{
     FdEntry, FdResource, InjectedFault, LookupInfo, ServiceCallError, TaskId, WaitRestartClass,
@@ -54,6 +57,10 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) devfs: DevfsService,
     pub(super) epoll: EpollService,
     pub(super) futex: FutexService,
+    pub(super) net_core: NetCoreService,
+    pub(super) linux_socket: LinuxSocketService,
+    pub(super) net_driver: DriverVirtioNetService,
+    pub(super) replay_snapshot: ReplaySnapshotService,
     pub(super) linux: LinuxFrontend,
     pub(super) app: WasmApp,
     pub(super) fd_table: Vec<Option<FdEntry>>,
@@ -62,7 +69,7 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) scheduler: Scheduler,
     pub(super) waits: WaitRegistry,
     pub(super) pulse: PulseDevice,
-    pub(super) net: FakePacketDevice,
+    pub(super) net: NetworkPlane,
     pub(super) restart_count: u64,
     pub(super) semantic: SemanticGraph,
     pub(super) next_snapshot_barrier: u64,
@@ -71,17 +78,45 @@ pub(crate) struct PrototypeRuntime<'engine> {
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn new(engine: &'engine SupervisorEngine) -> Result<Self, &'static str> {
         let mut semantic = bootstrap_graph();
-        let net = FakePacketDevice::new(interrupts::tick_count(), &mut semantic);
+        let net = NetworkPlane::new(&mut semantic);
+        crate::kdebug!("instantiating console_service");
+        let console = ConsoleService::new(engine)?;
+        crate::kdebug!("instantiating vfs_service");
+        let vfs = VfsService::new(engine)?;
+        crate::kdebug!("instantiating procfs_service");
+        let procfs = ProcfsService::new(engine)?;
+        crate::kdebug!("instantiating devfs_service");
+        let devfs = DevfsService::new(engine)?;
+        crate::kdebug!("instantiating epoll_service");
+        let epoll = EpollService::new(engine)?;
+        crate::kdebug!("instantiating futex_service");
+        let futex = FutexService::new(engine)?;
+        crate::kdebug!("instantiating net_core");
+        let net_core = NetCoreService::new(engine)?;
+        crate::kdebug!("instantiating linux_socket_service");
+        let linux_socket = LinuxSocketService::new(engine)?;
+        crate::kdebug!("instantiating driver_virtio_net");
+        let net_driver = DriverVirtioNetService::new(engine)?;
+        crate::kdebug!("instantiating replay_snapshot");
+        let replay_snapshot = ReplaySnapshotService::new(engine)?;
+        crate::kdebug!("instantiating linux_syscall");
+        let linux = LinuxFrontend::new(engine)?;
+        crate::kdebug!("instantiating wasm_app");
+        let app = WasmApp::new(engine)?;
         Ok(Self {
-            console: ConsoleService::new(engine)?,
-            vfs: VfsService::new(engine)?,
+            console,
+            vfs,
             procfs_engine: engine,
-            procfs: Some(ProcfsService::new(engine)?),
-            devfs: DevfsService::new(engine)?,
-            epoll: EpollService::new(engine)?,
-            futex: FutexService::new(engine)?,
-            linux: LinuxFrontend::new(engine)?,
-            app: WasmApp::new(engine)?,
+            procfs: Some(procfs),
+            devfs,
+            epoll,
+            futex,
+            net_core,
+            linux_socket,
+            net_driver,
+            replay_snapshot,
+            linux,
+            app,
             fd_table: vec![None, None, None],
             fd_handles: vec![None, None, None],
             fault: None,
@@ -222,11 +257,26 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn open_fake_socket_for_demo(&mut self) -> Result<u32, &'static str> {
-        let socket_id = self.net.allocate_socket_id();
-        let ready_key = self.net.ready_key();
+        let socket_id = self
+            .net_core
+            .create_socket(vmos_abi::AF_INET, vmos_abi::SOCK_STREAM, 0)
+            .map_err(|_| "net_core failed to create demo socket")?;
+        let ready_key = self
+            .net_core
+            .ready_key(socket_id)
+            .map_err(|_| "net_core did not return a socket ready key")?;
+        self.linux_socket
+            .register_socket(
+                socket_id,
+                vmos_abi::AF_INET,
+                vmos_abi::SOCK_STREAM,
+                0,
+                ready_key,
+            )
+            .map_err(|_| "linux_socket_service failed to register demo socket")?;
         let fd = self.alloc_fd(FdEntry {
             resource: FdResource::Socket {
-                socket_id,
+                socket_id: socket_id as u64,
                 ready_key,
             },
             cursor: 0,
@@ -408,6 +458,19 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::EpollCtl => self.plan_epoll_ctl(plan),
             PlanKind::EpollWait => self.plan_epoll_wait(plan),
             PlanKind::EpollReady => self.plan_epoll_ready(plan),
+            PlanKind::Socket => self.plan_socket(plan),
+            PlanKind::Bind => self.plan_socket_state(plan, "bind"),
+            PlanKind::Listen => self.plan_socket_state(plan, "listen"),
+            PlanKind::Accept => self.plan_accept(plan),
+            PlanKind::Connect => self.plan_socket_state(plan, "connect"),
+            PlanKind::SendTo => self.plan_sendto(plan),
+            PlanKind::RecvFrom => self.plan_recvfrom(plan),
+            PlanKind::SetSockOpt => self.plan_setsockopt(plan),
+            PlanKind::GetSockOpt => self.plan_getsockopt(plan),
+            PlanKind::Fcntl => self.plan_fcntl(plan),
+            PlanKind::Mmap => self.plan_mmap(plan),
+            PlanKind::Munmap => self.plan_munmap(plan),
+            PlanKind::Poll => self.plan_poll(plan),
         }
     }
 
@@ -525,6 +588,16 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(LinuxCallResult::Ret(bytes.len() as i64));
         }
 
+        if self
+            .fd_entry(fd)
+            .is_some_and(|entry| matches!(entry.resource, FdResource::Socket { .. }))
+        {
+            return self.plan_sendto(LinuxPlan {
+                kind: PlanKind::SendTo,
+                args: [fd as u64, ptr as u64, len as u64, 0, 0, 0],
+            });
+        }
+
         let entry = self
             .fd_entry(fd)
             .ok_or("write targeted an unknown file descriptor")?;
@@ -621,7 +694,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             .map_err(|_| "epoll_ctl targeted a non-pollable fd")?;
         match self.epoll.ctl(epoll_id, op, ready_key, events, data) {
             Ok(()) => {
-                if self.pulse.is_ready_key(ready_key) || self.net.is_ready_key(ready_key) {
+                if self.pulse.is_ready_key(ready_key)
+                    || self.socket_ready_key_is_readable(ready_key)
+                {
                     let _ = self.epoll.notify_ready(ready_key);
                 }
                 Ok(LinuxCallResult::Ret(0))
@@ -630,6 +705,162 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Trap(reason)) => {
                 crate::kwarn!("epoll_ctl: {}", reason);
                 Err("epoll_service trapped during epoll_ctl")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
+    fn plan_socket(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("linux_syscall", "linux.socket", "socket")
+            .is_err()
+            || self
+                .require_capability("net_core", "net.socket", "create")
+                .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+
+        let domain = u32::try_from(plan.args[0]).map_err(|_| "socket domain overflowed")?;
+        let ty = u32::try_from(plan.args[1]).map_err(|_| "socket type overflowed")?;
+        let protocol = u32::try_from(plan.args[2]).map_err(|_| "socket protocol overflowed")?;
+        let socket_id = match self.net_core.create_socket(domain, ty, protocol) {
+            Ok(socket_id) => socket_id,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("net_core create_socket: {}", reason);
+                return Err("net_core trapped during socket");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        let ready_key = match self.net_core.ready_key(socket_id) {
+            Ok(key) => key,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("net_core ready_key: {}", reason);
+                return Err("net_core trapped while creating socket");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        match self
+            .linux_socket
+            .register_socket(socket_id, domain, ty, protocol, ready_key)
+        {
+            Ok(()) => {}
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("linux_socket register_socket: {}", reason);
+                return Err("linux_socket_service trapped during socket");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        }
+
+        let fd = self.alloc_fd(FdEntry {
+            resource: FdResource::Socket {
+                socket_id: socket_id as u64,
+                ready_key,
+            },
+            cursor: 0,
+        });
+        if let Some(handle) = self.fd_handle(fd) {
+            self.semantic.record_socket_state_changed(handle.id, "open");
+        }
+        Ok(LinuxCallResult::Ret(fd as i64))
+    }
+
+    fn plan_socket_state(
+        &mut self,
+        plan: LinuxPlan,
+        state: &'static str,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let operation = match plan.kind {
+            PlanKind::Bind => "bind",
+            PlanKind::Listen => "listen",
+            PlanKind::Connect => "connect",
+            _ => "socket-state",
+        };
+        if self
+            .require_capability("linux_syscall", "linux.socket", operation)
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "socket fd overflowed")?;
+        let (socket_id, _, handle) = match self.socket_fd_snapshot(fd) {
+            Ok(snapshot) => snapshot,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("socket snapshot: {}", reason);
+                return Err("socket snapshot trapped");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        let result = match plan.kind {
+            PlanKind::Bind => {
+                let addr_len =
+                    u32::try_from(plan.args[2]).map_err(|_| "bind addr_len overflowed")?;
+                self.linux_socket.bind_socket(socket_id, addr_len)
+            }
+            PlanKind::Listen => {
+                let backlog =
+                    u32::try_from(plan.args[1]).map_err(|_| "listen backlog overflowed")?;
+                self.linux_socket.listen_socket(socket_id, backlog)
+            }
+            PlanKind::Connect => {
+                let addr_len =
+                    u32::try_from(plan.args[2]).map_err(|_| "connect addr_len overflowed")?;
+                self.linux_socket.connect_socket(socket_id, addr_len)
+            }
+            _ => Ok(()),
+        };
+        match result {
+            Ok(()) => {
+                self.semantic.record_socket_state_changed(handle.id, state);
+                Ok(LinuxCallResult::Ret(0))
+            }
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("linux_socket {}: {}", operation, reason);
+                Err("linux_socket_service trapped during socket state change")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
+    fn plan_accept(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("linux_syscall", "linux.socket", "accept")
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "accept fd overflowed")?;
+        let (socket_id, _, _) = match self.socket_fd_snapshot(fd) {
+            Ok(snapshot) => snapshot,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("accept socket snapshot: {}", reason);
+                return Err("socket snapshot trapped during accept");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        match self.linux_socket.accept_socket(socket_id) {
+            Ok(_) => Ok(LinuxCallResult::Ret(-(ERR_EOPNOTSUPP as i64))),
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("linux_socket accept: {}", reason);
+                Err("linux_socket_service trapped during accept")
             }
             Err(ServiceCallError::Invalid(err)) => Err(err),
         }
@@ -737,9 +968,227 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.encode_epoll_ready(&ready, max_events)
     }
 
+    fn plan_sendto(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("linux_syscall", "linux.socket", "send")
+            .is_err()
+            || self
+                .require_capability("net_core", "net.socket", "send")
+                .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "sendto fd overflowed")?;
+        let ptr = u32::try_from(plan.args[1]).map_err(|_| "sendto ptr overflowed")?;
+        let len = u32::try_from(plan.args[2]).map_err(|_| "sendto len overflowed")?;
+        let bytes = self.linux.read_bytes(ptr, len)?;
+        let (socket_id, ready_key, handle) = match self.socket_fd_snapshot(fd) {
+            Ok(snapshot) => snapshot,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("sendto socket snapshot: {}", reason);
+                return Err("socket snapshot trapped during sendto");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        match self.linux_socket.send_socket(socket_id, len) {
+            Ok(_) => {}
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("linux_socket send: {}", reason);
+                return Err("linux_socket_service trapped during sendto");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        }
+        match self.net_core.send_socket(socket_id, &bytes) {
+            Ok(count) => {
+                self.semantic.record_packet_transmitted(
+                    self.net.interface.id,
+                    Some(handle.id),
+                    ready_key,
+                    count as usize,
+                );
+                Ok(LinuxCallResult::Ret(count as i64))
+            }
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("net_core send_socket: {}", reason);
+                Err("net_core trapped during sendto")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
+    fn plan_recvfrom(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("linux_syscall", "linux.socket", "recv")
+            .is_err()
+            || self
+                .require_capability("net_core", "net.socket", "recv")
+                .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "recvfrom fd overflowed")?;
+        let count = u32::try_from(plan.args[2]).map_err(|_| "recvfrom count overflowed")?;
+        let (socket_id, _, _) = match self.socket_fd_snapshot(fd) {
+            Ok(snapshot) => snapshot,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("recvfrom socket snapshot: {}", reason);
+                return Err("socket snapshot trapped during recvfrom");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        match self.net_core.recv_socket(socket_id, count) {
+            Ok(bytes) => {
+                let _ = self.linux_socket.recv_socket(socket_id, bytes.len() as u32);
+                Ok(LinuxCallResult::Bytes(bytes))
+            }
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("net_core recv_socket: {}", reason);
+                Err("net_core trapped during recvfrom")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
+    fn plan_setsockopt(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("linux_syscall", "linux.socket", "setsockopt")
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "setsockopt fd overflowed")?;
+        let level = u32::try_from(plan.args[1]).map_err(|_| "setsockopt level overflowed")?;
+        let optname = u32::try_from(plan.args[2]).map_err(|_| "setsockopt optname overflowed")?;
+        let optlen = u32::try_from(plan.args[4]).map_err(|_| "setsockopt optlen overflowed")?;
+        let (socket_id, _, _) = match self.socket_fd_snapshot(fd) {
+            Ok(snapshot) => snapshot,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("setsockopt socket snapshot: {}", reason);
+                return Err("socket snapshot trapped during setsockopt");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        match self
+            .linux_socket
+            .setsockopt(socket_id, level, optname, optlen)
+        {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("linux_socket setsockopt: {}", reason);
+                Err("linux_socket_service trapped during setsockopt")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
+    fn plan_getsockopt(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("linux_syscall", "linux.socket", "getsockopt")
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "getsockopt fd overflowed")?;
+        let level = u32::try_from(plan.args[1]).map_err(|_| "getsockopt level overflowed")?;
+        let optname = u32::try_from(plan.args[2]).map_err(|_| "getsockopt optname overflowed")?;
+        let (socket_id, _, _) = match self.socket_fd_snapshot(fd) {
+            Ok(snapshot) => snapshot,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("getsockopt socket snapshot: {}", reason);
+                return Err("socket snapshot trapped during getsockopt");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        match self.linux_socket.getsockopt(socket_id, level, optname) {
+            Ok(value) => Ok(LinuxCallResult::Ret(value as i64)),
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("linux_socket getsockopt: {}", reason);
+                Err("linux_socket_service trapped during getsockopt")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
+    fn plan_fcntl(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self
+            .require_capability("linux_syscall", "linux.socket", "fcntl")
+            .is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "fcntl fd overflowed")?;
+        match self.validate_fd_handle(fd) {
+            Ok(()) => {}
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("fcntl fd validation: {}", reason);
+                return Err("fcntl fd validation trapped");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        }
+        let cmd = u32::try_from(plan.args[1]).map_err(|_| "fcntl cmd overflowed")?;
+        let arg = plan.args[2];
+        if let Ok((socket_id, _, _)) = self.socket_fd_snapshot(fd) {
+            return match self.linux_socket.fcntl(socket_id, cmd, arg) {
+                Ok(value) => Ok(LinuxCallResult::Ret(value as i64)),
+                Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("linux_socket fcntl: {}", reason);
+                    Err("linux_socket_service trapped during fcntl")
+                }
+                Err(ServiceCallError::Invalid(err)) => Err(err),
+            };
+        }
+        Ok(LinuxCallResult::Ret(0))
+    }
+
+    fn plan_mmap(&mut self, _plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        Ok(LinuxCallResult::Ret(-(ERR_EOPNOTSUPP as i64)))
+    }
+
+    fn plan_munmap(&mut self, _plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        Ok(LinuxCallResult::Ret(0))
+    }
+
+    fn plan_poll(&mut self, _plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        Ok(LinuxCallResult::Ret(-(ERR_ENOSYS as i64)))
+    }
+
     fn plan_read(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
         let fd = u32::try_from(plan.args[0]).map_err(|_| "read plan fd overflowed")?;
         let count = u32::try_from(plan.args[1]).map_err(|_| "read plan count overflowed")?;
+        if self
+            .fd_entry(fd)
+            .is_some_and(|entry| matches!(entry.resource, FdResource::Socket { .. }))
+        {
+            return self.plan_recvfrom(LinuxPlan {
+                kind: PlanKind::RecvFrom,
+                args: [fd as u64, 0, count as u64, 0, 0, 0],
+            });
+        }
         match self.read_from_fd(fd, count) {
             Ok(bytes) => Ok(LinuxCallResult::Bytes(bytes)),
             Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
@@ -770,20 +1219,55 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
         }
 
+        let closing_socket = self.fd_entry(fd).and_then(|entry| match &entry.resource {
+            FdResource::Socket { socket_id, .. } => Some(*socket_id as u32),
+            _ => None,
+        });
+        if let Some(socket_id) = closing_socket {
+            if self
+                .require_capability("linux_syscall", "linux.socket", "close")
+                .is_err()
+                || self
+                    .require_capability("net_core", "net.socket", "close")
+                    .is_err()
+            {
+                return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+            }
+            match self.linux_socket.close_socket(socket_id) {
+                Ok(()) | Err(ServiceCallError::Errno(ERR_EBADF)) => {}
+                Err(ServiceCallError::Errno(errno)) => {
+                    return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                }
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("linux_socket close: {}", reason);
+                    return Err("linux_socket_service trapped during close");
+                }
+                Err(ServiceCallError::Invalid(err)) => return Err(err),
+            }
+            match self.net_core.close_socket(socket_id) {
+                Ok(()) | Err(ServiceCallError::Errno(ERR_EBADF)) => {}
+                Err(ServiceCallError::Errno(errno)) => {
+                    return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                }
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("net_core close: {}", reason);
+                    return Err("net_core trapped during close");
+                }
+                Err(ServiceCallError::Invalid(err)) => return Err(err),
+            }
+        }
+
         let slot = self
             .fd_table
             .get_mut(fd as usize)
             .ok_or("close targeted an out-of-range file descriptor")?;
-        let closing_socket = slot
-            .as_ref()
-            .is_some_and(|entry| matches!(&entry.resource, FdResource::Socket { .. }));
         if slot.take().is_none() {
             return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
         }
         if let Some(slot) = self.fd_handles.get_mut(fd as usize)
             && let Some(handle) = slot.take()
         {
-            if closing_socket {
+            if closing_socket.is_some() {
                 self.semantic
                     .record_socket_state_changed(handle.id, "closed");
             }
@@ -1045,23 +1529,79 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.fd_handles.get(fd as usize).copied().flatten()
     }
 
-    fn socket_resource_for_ready_key(&self, ready_key: u64) -> Option<ResourceHandle> {
+    fn socket_for_ready_key(&self, ready_key: u64) -> Option<(u32, ResourceHandle)> {
         for (fd, entry) in self.fd_table.iter().enumerate() {
             let Some(entry) = entry else {
                 continue;
             };
             let FdResource::Socket {
+                socket_id,
                 ready_key: socket_key,
-                ..
             } = &entry.resource
             else {
                 continue;
             };
             if *socket_key == ready_key {
-                return self.fd_handle(fd as u32);
+                let handle = self.fd_handle(fd as u32)?;
+                return Some((*socket_id as u32, handle));
             }
         }
         None
+    }
+
+    fn socket_resource_for_ready_key(&self, ready_key: u64) -> Option<ResourceHandle> {
+        self.socket_for_ready_key(ready_key)
+            .map(|(_, handle)| handle)
+    }
+
+    fn socket_fd_snapshot(
+        &mut self,
+        fd: u32,
+    ) -> Result<(u32, u64, ResourceHandle), ServiceCallError> {
+        self.validate_fd_handle(fd)?;
+        let entry = self
+            .fd_entry(fd)
+            .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+        let FdResource::Socket {
+            socket_id,
+            ready_key,
+        } = &entry.resource
+        else {
+            return Err(ServiceCallError::Errno(ERR_ENOTSOCK));
+        };
+        let handle = self
+            .fd_handle(fd)
+            .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+        Ok((*socket_id as u32, *ready_key, handle))
+    }
+
+    fn socket_ready_key_is_readable(&mut self, ready_key: u64) -> bool {
+        let Some((socket_id, _)) = self.socket_for_ready_key(ready_key) else {
+            return false;
+        };
+        self.net_core
+            .poll_socket(socket_id)
+            .map(|events| events & EPOLLIN != 0)
+            .unwrap_or(false)
+    }
+
+    fn notify_ready_key(&mut self, ready_key: u64, context: &str) {
+        match self.epoll.notify_ready(ready_key) {
+            Ok(wait_ids) => {
+                for wait_id in wait_ids {
+                    self.scheduler.push_event(Event::WaitReady(wait_id));
+                }
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("{}: {}", context, reason);
+            }
+            Err(ServiceCallError::Invalid(err)) => {
+                crate::kwarn!("{}: {}", context, err);
+            }
+            Err(ServiceCallError::Errno(errno)) => {
+                crate::kwarn!("{} errno={}", context, errno);
+            }
+        }
     }
 
     fn validate_fd_handle(&mut self, fd: u32) -> Result<(), ServiceCallError> {
@@ -1309,59 +1849,74 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         }
 
-        let mut net_events = Vec::new();
-        self.net
-            .collect_events(interrupts::tick_count(), &mut net_events);
-        for event in net_events {
-            match event {
-                NetEvent::DeviceIrq { irq, device } => {
-                    self.semantic
-                        .record_device_irq_delivered(irq.id, device.id, "rx");
+        let now_ticks = interrupts::tick_count();
+        for _ in 0..8 {
+            let event = match self.net_driver.poll_device(now_ticks) {
+                Ok(event) => event,
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("driver_virtio_net poll: {}", reason);
+                    break;
                 }
-                NetEvent::DmaSubmitted {
-                    buffer,
-                    device,
-                    len,
-                } => self
-                    .semantic
-                    .record_dma_submitted(buffer.id, device.id, len),
-                NetEvent::DmaCompleted {
-                    buffer,
-                    device,
-                    len,
-                } => self
-                    .semantic
-                    .record_dma_completed(buffer.id, device.id, len),
-                NetEvent::DriverCompletion { device } => {
-                    self.semantic.record_driver_completion(device.id, "net-rx")
+                Err(ServiceCallError::Invalid(err)) => {
+                    crate::kwarn!("driver_virtio_net poll: {}", err);
+                    break;
                 }
-                NetEvent::PacketReceived {
-                    interface,
-                    ready_key,
-                    len,
-                } => {
-                    let socket = self
-                        .socket_resource_for_ready_key(ready_key)
-                        .map(|handle| handle.id);
-                    self.semantic
-                        .record_packet_received(interface.id, socket, ready_key, len);
-                    match self.epoll.notify_ready(ready_key) {
-                        Ok(wait_ids) => {
-                            for wait_id in wait_ids {
-                                self.scheduler.push_event(Event::WaitReady(wait_id));
-                            }
-                        }
-                        Err(ServiceCallError::Trap(reason)) => {
-                            crate::kwarn!("epoll net ready notification: {}", reason);
-                        }
-                        Err(ServiceCallError::Invalid(err)) => {
-                            crate::kwarn!("epoll net ready notification: {}", err);
-                        }
-                        Err(ServiceCallError::Errno(errno)) => {
-                            crate::kwarn!("epoll net ready notification errno={}", errno);
-                        }
+                Err(ServiceCallError::Errno(errno)) => {
+                    crate::kwarn!("driver_virtio_net poll errno={}", errno);
+                    break;
+                }
+            };
+            match event.kind {
+                DriverNetEventKind::None => break,
+                DriverNetEventKind::Irq => self.semantic.record_device_irq_delivered(
+                    self.net.irq.id,
+                    self.net.device.id,
+                    "virtio-net-rx",
+                ),
+                DriverNetEventKind::DmaSubmitted => self.semantic.record_dma_submitted(
+                    self.net.dma_buffer.id,
+                    self.net.device.id,
+                    event.len as usize,
+                ),
+                DriverNetEventKind::DmaCompleted => self.semantic.record_dma_completed(
+                    self.net.dma_buffer.id,
+                    self.net.device.id,
+                    event.len as usize,
+                ),
+                DriverNetEventKind::DriverCompletion => self
+                    .semantic
+                    .record_driver_completion(self.net.device.id, "virtio-net-rx"),
+                DriverNetEventKind::PacketRx => match self.net_core.inject_packet(&event.packet) {
+                    Ok(Some(ready_key)) => {
+                        let socket = self
+                            .socket_resource_for_ready_key(ready_key)
+                            .map(|handle| handle.id);
+                        self.semantic.record_packet_received(
+                            self.net.interface.id,
+                            socket,
+                            ready_key,
+                            event.len as usize,
+                        );
+                        self.notify_ready_key(ready_key, "epoll net ready notification");
                     }
-                }
+                    Ok(None) => {
+                        self.semantic.record_packet_received(
+                            self.net.interface.id,
+                            None,
+                            0,
+                            event.len as usize,
+                        );
+                    }
+                    Err(ServiceCallError::Trap(reason)) => {
+                        crate::kwarn!("net_core inject_packet: {}", reason);
+                    }
+                    Err(ServiceCallError::Invalid(err)) => {
+                        crate::kwarn!("net_core inject_packet: {}", err);
+                    }
+                    Err(ServiceCallError::Errno(errno)) => {
+                        crate::kwarn!("net_core inject_packet errno={}", errno);
+                    }
+                },
             }
         }
         self.drain_event_queue();

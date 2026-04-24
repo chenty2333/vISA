@@ -10,9 +10,11 @@ use core::slice;
 
 use vmos_abi::{
     EPOLLIN, ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_WAIT, FUTEX_WAKE, PackedStep, PlanKind,
-    RestartClass, SYS_CLOSE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT,
-    SYS_EXIT_GROUP, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_NANOSLEEP, SYS_OPENAT, SYS_READ,
-    SYS_READLINKAT, SYS_UNAME, SYS_WRITE, is_stdio_fd,
+    RestartClass, SYS_ACCEPT, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
+    SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL,
+    SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME,
+    SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -72,6 +74,19 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_EPOLL_CREATE1 => plan_epoll_create1(a0),
         SYS_EPOLL_CTL => plan_epoll_ctl(a0, a1, a2, a3, a4),
         SYS_EPOLL_WAIT => plan_epoll_wait(a0, a1, a2),
+        SYS_SOCKET => plan_socket(a0, a1, a2),
+        SYS_BIND => plan_bind(a0, a1, a2),
+        SYS_CONNECT => plan_connect(a0, a1, a2),
+        SYS_LISTEN => plan_listen(a0, a1),
+        SYS_ACCEPT => plan_accept(a0, a1, a2),
+        SYS_SENDTO => plan_sendto(a0, a1, a2, a3, a4, a5),
+        SYS_RECVFROM => plan_recvfrom(a0, a1, a2, a3, a4, a5),
+        SYS_SETSOCKOPT => plan_setsockopt(a0, a1, a2, a3, a4),
+        SYS_GETSOCKOPT => plan_getsockopt(a0, a1, a2, a3, a4),
+        SYS_FCNTL => plan_fcntl(a0, a1, a2),
+        SYS_MMAP => plan_mmap(a0, a1, a2, a3, a4, a5),
+        SYS_MUNMAP => plan_munmap(a0, a1),
+        SYS_POLL => plan_poll(a0, a1, a2),
         SYS_UNAME => plan_simple(PlanKind::Uname),
         SYS_GETCWD => plan_getcwd(a1),
         SYS_GETDENTS64 => plan_getdents(a0, a2),
@@ -338,6 +353,77 @@ fn plan_epoll_wait(epfd: u64, max_events: u64, timeout_ms: u64) -> PackedStep {
         [epfd, max_events, timeout_ms, resume_cookie as u64, 0, 0],
     );
     PackedStep::plan(PlanKind::EpollWait)
+}
+
+fn plan_socket(domain: u64, ty: u64, protocol: u64) -> PackedStep {
+    reset_plan(PlanKind::Socket, [domain, ty, protocol, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Socket)
+}
+
+fn plan_bind(fd: u64, addr: u64, addr_len: u64) -> PackedStep {
+    reset_plan(PlanKind::Bind, [fd, addr, addr_len, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Bind)
+}
+
+fn plan_connect(fd: u64, addr: u64, addr_len: u64) -> PackedStep {
+    reset_plan(PlanKind::Connect, [fd, addr, addr_len, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Connect)
+}
+
+fn plan_listen(fd: u64, backlog: u64) -> PackedStep {
+    reset_plan(PlanKind::Listen, [fd, backlog, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Listen)
+}
+
+fn plan_accept(fd: u64, addr: u64, addr_len: u64) -> PackedStep {
+    reset_plan(PlanKind::Accept, [fd, addr, addr_len, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Accept)
+}
+
+fn plan_sendto(fd: u64, ptr: u64, len: u64, flags: u64, addr: u64, addr_len: u64) -> PackedStep {
+    reset_plan(PlanKind::SendTo, [fd, ptr, len, flags, addr, addr_len]);
+    PackedStep::plan(PlanKind::SendTo)
+}
+
+fn plan_recvfrom(fd: u64, ptr: u64, len: u64, flags: u64, addr: u64, addr_len: u64) -> PackedStep {
+    reset_plan(PlanKind::RecvFrom, [fd, ptr, len, flags, addr, addr_len]);
+    PackedStep::plan(PlanKind::RecvFrom)
+}
+
+fn plan_setsockopt(fd: u64, level: u64, optname: u64, optval: u64, optlen: u64) -> PackedStep {
+    reset_plan(
+        PlanKind::SetSockOpt,
+        [fd, level, optname, optval, optlen, 0],
+    );
+    PackedStep::plan(PlanKind::SetSockOpt)
+}
+
+fn plan_getsockopt(fd: u64, level: u64, optname: u64, optval: u64, optlen: u64) -> PackedStep {
+    reset_plan(
+        PlanKind::GetSockOpt,
+        [fd, level, optname, optval, optlen, 0],
+    );
+    PackedStep::plan(PlanKind::GetSockOpt)
+}
+
+fn plan_fcntl(fd: u64, cmd: u64, arg: u64) -> PackedStep {
+    reset_plan(PlanKind::Fcntl, [fd, cmd, arg, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Fcntl)
+}
+
+fn plan_mmap(addr: u64, len: u64, prot: u64, flags: u64, fd: u64, offset: u64) -> PackedStep {
+    reset_plan(PlanKind::Mmap, [addr, len, prot, flags, fd, offset]);
+    PackedStep::plan(PlanKind::Mmap)
+}
+
+fn plan_munmap(addr: u64, len: u64) -> PackedStep {
+    reset_plan(PlanKind::Munmap, [addr, len, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Munmap)
+}
+
+fn plan_poll(ptr: u64, nfds: u64, timeout_ms: u64) -> PackedStep {
+    reset_plan(PlanKind::Poll, [ptr, nfds, timeout_ms, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Poll)
 }
 
 fn plan_write(fd: u64, ptr: u64, len: u64) -> PackedStep {

@@ -8,9 +8,11 @@ use crate::serial_println;
 use crate::substrate::ring3::{self, SyscallFrame};
 use crate::supervisor::{LinuxCallResult, runtime};
 use vmos_abi::{
-    ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, SYS_CLOSE, SYS_EPOLL_CREATE1,
-    SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
-    SYS_NANOSLEEP, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE, SyscallContext,
+    ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, SYS_ACCEPT, SYS_BIND, SYS_CLOSE,
+    SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP,
+    SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETSOCKOPT, SYS_MMAP, SYS_MUNMAP,
+    SYS_NANOSLEEP, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT,
+    SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext,
 };
 
 use super::context::{ActiveUserContext, active_context, install_active_context};
@@ -56,6 +58,17 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_EPOLL_CREATE1 => sys_epoll_create1(frame),
         SYS_EPOLL_CTL => sys_epoll_ctl(frame),
         SYS_EPOLL_WAIT => sys_epoll_wait(frame),
+        SYS_SOCKET => sys_socket(frame),
+        SYS_BIND => sys_bind(frame),
+        SYS_CONNECT => sys_connect(frame),
+        SYS_ACCEPT => sys_accept(frame),
+        SYS_SENDTO => sys_sendto(frame),
+        SYS_RECVFROM => sys_recvfrom(frame),
+        SYS_SETSOCKOPT => sys_setsockopt(frame),
+        SYS_GETSOCKOPT => sys_getsockopt(frame),
+        SYS_FCNTL => sys_fcntl(frame),
+        SYS_MMAP => sys_mmap(frame),
+        SYS_MUNMAP => sys_munmap(frame),
         SYS_FUTEX => sys_futex(frame),
         SYS_GETDENTS64 => sys_getdents64(frame),
         SYS_GETCWD => sys_getcwd(frame),
@@ -224,6 +237,143 @@ fn sys_epoll_wait(frame: &SyscallFrame) -> Result<i64, i32> {
                 .copy_from_slice(&bytes);
             Ok((bytes.len() as u64 / EPOLL_EVENT_SIZE) as i64)
         }
+        LinuxCallResult::Ret(ret) if ret >= 0 => Ok(ret),
+        LinuxCallResult::Ret(ret) => Err((-ret) as i32),
+        _ => Err(ERR_EINVAL),
+    }
+}
+
+fn sys_socket(frame: &SyscallFrame) -> Result<i64, i32> {
+    dispatch_ret(
+        "ring3_socket",
+        SyscallContext::new(SYS_SOCKET, [frame.rdi, frame.rsi, frame.rdx, 0, 0, 0]),
+    )
+}
+
+fn sys_bind(frame: &SyscallFrame) -> Result<i64, i32> {
+    dispatch_ret(
+        "ring3_bind",
+        SyscallContext::new(SYS_BIND, [frame.rdi, frame.rsi, frame.rdx, 0, 0, 0]),
+    )
+}
+
+fn sys_connect(frame: &SyscallFrame) -> Result<i64, i32> {
+    dispatch_ret(
+        "ring3_connect",
+        SyscallContext::new(SYS_CONNECT, [frame.rdi, frame.rsi, frame.rdx, 0, 0, 0]),
+    )
+}
+
+fn sys_accept(frame: &SyscallFrame) -> Result<i64, i32> {
+    dispatch_ret(
+        "ring3_accept",
+        SyscallContext::new(SYS_ACCEPT, [frame.rdi, frame.rsi, frame.rdx, 0, 0, 0]),
+    )
+}
+
+fn sys_sendto(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let len = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+    let bytes = user_lease(frame.rsi, len as u64, false)?;
+    let supervisor = &mut active_context().supervisor;
+    let (ptr, copied_len) = supervisor
+        .write_linux_arg_bytes(bytes.bytes().map_err(map_dmw_fault)?)
+        .map_err(|_| ERR_EFAULT)?;
+    dispatch_ret(
+        "ring3_sendto",
+        SyscallContext::new(
+            SYS_SENDTO,
+            [
+                fd as u64,
+                ptr as u64,
+                copied_len as u64,
+                frame.r10,
+                frame.r8,
+                frame.r9,
+            ],
+        ),
+    )
+}
+
+fn sys_recvfrom(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let count = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+    let supervisor = &mut active_context().supervisor;
+    match supervisor
+        .dispatch_linux_syscall(
+            "ring3_recvfrom",
+            SyscallContext::new(
+                SYS_RECVFROM,
+                [fd as u64, 0, count as u64, frame.r10, frame.r8, frame.r9],
+            ),
+        )
+        .map_err(|_| ERR_EINVAL)?
+    {
+        LinuxCallResult::Bytes(bytes) => {
+            let mut dest = user_lease(frame.rsi, bytes.len() as u64, true)?;
+            dest.bytes_mut()
+                .map_err(map_dmw_fault)?
+                .copy_from_slice(&bytes);
+            Ok(bytes.len() as i64)
+        }
+        LinuxCallResult::Ret(ret) if ret >= 0 => Ok(ret),
+        LinuxCallResult::Ret(ret) => Err((-ret) as i32),
+        _ => Err(ERR_EINVAL),
+    }
+}
+
+fn sys_setsockopt(frame: &SyscallFrame) -> Result<i64, i32> {
+    dispatch_ret(
+        "ring3_setsockopt",
+        SyscallContext::new(
+            SYS_SETSOCKOPT,
+            [frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, 0],
+        ),
+    )
+}
+
+fn sys_getsockopt(frame: &SyscallFrame) -> Result<i64, i32> {
+    dispatch_ret(
+        "ring3_getsockopt",
+        SyscallContext::new(
+            SYS_GETSOCKOPT,
+            [frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, 0],
+        ),
+    )
+}
+
+fn sys_fcntl(frame: &SyscallFrame) -> Result<i64, i32> {
+    dispatch_ret(
+        "ring3_fcntl",
+        SyscallContext::new(SYS_FCNTL, [frame.rdi, frame.rsi, frame.rdx, 0, 0, 0]),
+    )
+}
+
+fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
+    dispatch_ret(
+        "ring3_mmap",
+        SyscallContext::new(
+            SYS_MMAP,
+            [
+                frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, frame.r9,
+            ],
+        ),
+    )
+}
+
+fn sys_munmap(frame: &SyscallFrame) -> Result<i64, i32> {
+    dispatch_ret(
+        "ring3_munmap",
+        SyscallContext::new(SYS_MUNMAP, [frame.rdi, frame.rsi, 0, 0, 0, 0]),
+    )
+}
+
+fn dispatch_ret(label: &str, ctx: SyscallContext) -> Result<i64, i32> {
+    let supervisor = &mut active_context().supervisor;
+    match supervisor
+        .dispatch_linux_syscall(label, ctx)
+        .map_err(|_| ERR_EINVAL)?
+    {
         LinuxCallResult::Ret(ret) if ret >= 0 => Ok(ret),
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),

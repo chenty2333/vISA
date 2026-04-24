@@ -1,32 +1,52 @@
+#[cfg(not(target_os = "none"))]
 use alloc::vec::Vec;
 
+#[cfg(not(target_os = "none"))]
 use super::wasmi_backend::{self, FunctionParams, FunctionResults};
+#[cfg(not(target_os = "none"))]
 use crate::supervisor::types::ServiceCallError;
 
+#[cfg(target_os = "none")]
+pub(crate) struct SupervisorEngine;
+
+#[cfg(target_os = "none")]
+impl Default for SupervisorEngine {
+    fn default() -> Self {
+        Self
+    }
+}
+
+#[cfg(not(target_os = "none"))]
 pub(crate) struct SupervisorEngine {
     inner: EngineBackend,
 }
 
+#[cfg(not(target_os = "none"))]
 enum EngineBackend {
     Wasmi(wasmi_backend::WasmiEngine),
 }
 
+#[cfg(not(target_os = "none"))]
 pub(crate) struct WasmFn<Params, Results> {
     inner: FunctionBackend<Params, Results>,
 }
 
+#[cfg(not(target_os = "none"))]
 enum FunctionBackend<Params, Results> {
     Wasmi(wasmi_backend::WasmiFunction<Params, Results>),
 }
 
+#[cfg(not(target_os = "none"))]
 pub(crate) struct ModuleInstance {
     inner: ModuleBackend,
 }
 
+#[cfg(not(target_os = "none"))]
 enum ModuleBackend {
     Wasmi(wasmi_backend::WasmiModuleInstance),
 }
 
+#[cfg(not(target_os = "none"))]
 impl Default for SupervisorEngine {
     fn default() -> Self {
         Self {
@@ -35,6 +55,7 @@ impl Default for SupervisorEngine {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl ModuleInstance {
     pub(crate) fn instantiate(
         engine: &SupervisorEngine,
@@ -120,6 +141,7 @@ impl ModuleInstance {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 pub(crate) struct BufferedModule {
     module: ModuleInstance,
     request_ptr: u32,
@@ -128,6 +150,7 @@ pub(crate) struct BufferedModule {
     response_capacity: u32,
 }
 
+#[cfg(not(target_os = "none"))]
 impl BufferedModule {
     pub(crate) fn instantiate(
         engine: &SupervisorEngine,
@@ -213,6 +236,7 @@ impl BufferedModule {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 pub(crate) fn expect_ok(rc: i32) -> Result<(), ServiceCallError> {
     if rc == 0 {
         Ok(())
@@ -225,6 +249,7 @@ pub(crate) fn expect_ok(rc: i32) -> Result<(), ServiceCallError> {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 pub(crate) fn expect_len(rc: i32) -> Result<u32, ServiceCallError> {
     if rc < 0 {
         Err(ServiceCallError::Errno(-rc))

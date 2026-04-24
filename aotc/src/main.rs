@@ -6,7 +6,7 @@ use std::process::Command;
 
 use artifact_manifest::{
     ArtifactBundleManifest, CapabilityManifest, CompilerManifest, ExternManifest, ImportManifest,
-    ModuleArtifactManifest, SignatureManifest, TargetManifest,
+    ModuleArtifactManifest, ResourceLimitsManifest, SignatureManifest, TargetManifest,
 };
 use sha2::{Digest, Sha256};
 use supervisor_catalog::{SUPERVISOR_WASM_MODULES, WasmModuleSpec};
@@ -71,6 +71,8 @@ fn build_wasm_modules(
         let mut cmd = Command::new(cargo);
         cmd.current_dir(workspace_root)
             .env("CARGO_TARGET_DIR", target_dir)
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
+            .env("RUSTFLAGS", wasm_rustflags())
             .args(["build", "-p", module.package, "--target", WASM_TARGET]);
         if profile.is_release() {
             cmd.arg("--release");
@@ -79,8 +81,73 @@ fn build_wasm_modules(
         if !status.success() {
             return Err(format!("building {} for {WASM_TARGET} failed", module.package).into());
         }
+        strip_custom_sections(&wasm_artifact_path(target_dir, profile, module.package))?;
     }
     Ok(())
+}
+
+fn wasm_rustflags() -> &'static str {
+    "-C target-feature=-bulk-memory,-multivalue,-reference-types,-sign-ext,-nontrapping-fptoint"
+}
+
+fn strip_custom_sections(path: &Path) -> Result<(), Box<dyn Error>> {
+    let bytes = fs::read(path)?;
+    fs::write(path, strip_wasm_custom_sections(&bytes)?)?;
+    Ok(())
+}
+
+fn strip_wasm_custom_sections(bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+    if bytes.len() < 8 || &bytes[..4] != b"\0asm" {
+        return Err("invalid wasm header".into());
+    }
+    let mut out = bytes[..8].to_vec();
+    let mut offset = 8usize;
+    while offset < bytes.len() {
+        let section_id = bytes[offset];
+        offset += 1;
+        let (section_len, leb_len) = read_leb_u32(&bytes[offset..])?;
+        offset += leb_len;
+        let end = offset
+            .checked_add(section_len as usize)
+            .ok_or("wasm section length overflowed")?;
+        if end > bytes.len() {
+            return Err("wasm section exceeded file length".into());
+        }
+        if section_id != 0 {
+            out.push(section_id);
+            write_leb_u32(section_len, &mut out);
+            out.extend_from_slice(&bytes[offset..end]);
+        }
+        offset = end;
+    }
+    Ok(out)
+}
+
+fn read_leb_u32(bytes: &[u8]) -> Result<(u32, usize), Box<dyn Error>> {
+    let mut value = 0u32;
+    let mut shift = 0u32;
+    for (index, byte) in bytes.iter().copied().enumerate().take(5) {
+        value |= ((byte & 0x7f) as u32) << shift;
+        if byte & 0x80 == 0 {
+            return Ok((value, index + 1));
+        }
+        shift += 7;
+    }
+    Err("invalid wasm leb128".into())
+}
+
+fn write_leb_u32(mut value: u32, out: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
 }
 
 fn compile_artifacts(
@@ -122,7 +189,9 @@ fn compile_artifacts(
                 kind: extern_kind(import.ty()).to_owned(),
             })
             .collect();
-        let manifest_binding_hash = manifest_binding_hash(module, &wasm_sha256, &cwasm_sha256);
+        let abi_fingerprint = module_abi_fingerprint(module);
+        let manifest_binding_hash =
+            manifest_binding_hash(module, &wasm_sha256, &cwasm_sha256, &abi_fingerprint);
 
         modules.push(ModuleArtifactManifest {
             package: module.package.to_owned(),
@@ -153,11 +222,23 @@ fn compile_artifacts(
                     lifetime: capability.lifetime.to_owned(),
                 })
                 .collect(),
+            abi_fingerprint,
+            service_dependencies: module_dependencies(module)
+                .iter()
+                .map(|dependency| (*dependency).to_owned())
+                .collect(),
+            resource_limits: ResourceLimitsManifest {
+                max_memory_pages: 16,
+                max_table_elements: 0,
+                max_hostcalls_per_activation: 64,
+            },
             signature: SignatureManifest {
                 scheme: "prototype-self-signed-sha256".to_owned(),
                 artifact_hash: cwasm_sha256,
                 manifest_binding_hash,
                 signer: "vmos-aotc-dev".to_owned(),
+                public_key_hint: "prototype-dev-key".to_owned(),
+                signature: "unsigned-prototype-signature".to_owned(),
             },
         });
     }
@@ -173,6 +254,8 @@ fn compile_artifacts(
             memory64: false,
             multi_memory: false,
             dmw_layout: "logical-activation-leases-v0".to_owned(),
+            linux_abi_profile: "linux-x86_64-demo-socket-v0".to_owned(),
+            artifact_signature_profile: "prototype-self-signed-sha256".to_owned(),
         },
         compiler: CompilerManifest {
             engine: "wasmtime".to_owned(),
@@ -272,12 +355,37 @@ fn verify_manifest_entry(
     if entry.fault_policy != spec.fault_policy.as_str() {
         return Err(format!("{} fault policy mismatch", spec.package).into());
     }
-    let expected_binding = manifest_binding_hash(spec, &entry.wasm_sha256, &entry.cwasm_sha256);
+    let expected_dependencies = module_dependencies(spec);
+    if entry.service_dependencies.len() != expected_dependencies.len()
+        || expected_dependencies.iter().any(|dependency| {
+            !entry
+                .service_dependencies
+                .iter()
+                .any(|entry| entry == dependency)
+        })
+    {
+        return Err(format!("{} service dependency mismatch", spec.package).into());
+    }
+    if entry.abi_fingerprint != module_abi_fingerprint(spec) {
+        return Err(format!("{} ABI fingerprint mismatch", spec.package).into());
+    }
+    let expected_binding = manifest_binding_hash(
+        spec,
+        &entry.wasm_sha256,
+        &entry.cwasm_sha256,
+        &entry.abi_fingerprint,
+    );
     if entry.signature.artifact_hash != entry.cwasm_sha256 {
         return Err(format!("{} signature artifact hash mismatch", spec.package).into());
     }
     if entry.signature.manifest_binding_hash != expected_binding {
         return Err(format!("{} manifest binding hash mismatch", spec.package).into());
+    }
+    if entry.signature.scheme != "prototype-self-signed-sha256"
+        || entry.signature.public_key_hint.is_empty()
+        || entry.signature.signature.is_empty()
+    {
+        return Err(format!("{} artifact signature metadata is incomplete", spec.package).into());
     }
     Ok(())
 }
@@ -364,7 +472,12 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
-fn manifest_binding_hash(spec: &WasmModuleSpec, wasm_sha256: &str, cwasm_sha256: &str) -> String {
+fn manifest_binding_hash(
+    spec: &WasmModuleSpec,
+    wasm_sha256: &str,
+    cwasm_sha256: &str,
+    abi_fingerprint: &str,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(spec.package.as_bytes());
     hasher.update(b"\0");
@@ -377,11 +490,54 @@ fn manifest_binding_hash(spec: &WasmModuleSpec, wasm_sha256: &str, cwasm_sha256:
     hasher.update(wasm_sha256.as_bytes());
     hasher.update(b"\0");
     hasher.update(cwasm_sha256.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(abi_fingerprint.as_bytes());
     for export in spec.expected_exports {
         hasher.update(b"\0");
         hasher.update(export.as_bytes());
     }
     hex::encode(hasher.finalize())
+}
+
+fn module_abi_fingerprint(spec: &WasmModuleSpec) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(spec.package.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(spec.artifact_name.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(spec.role.as_str().as_bytes());
+    for export in spec.expected_exports {
+        hasher.update(b"\0export:");
+        hasher.update(export.as_bytes());
+    }
+    for capability in spec.capabilities {
+        hasher.update(b"\0cap:");
+        hasher.update(capability.name.as_bytes());
+        hasher.update(b":");
+        hasher.update(capability.lifetime.as_bytes());
+        for right in capability.rights {
+            hasher.update(b":");
+            hasher.update(right.as_bytes());
+        }
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn module_dependencies(spec: &WasmModuleSpec) -> &'static [&'static str] {
+    match spec.package {
+        "net_core" => &["driver_virtio_net"],
+        "linux_socket_service" => &["net_core"],
+        "linux_syscall" => &[
+            "vfs_service",
+            "procfs_service",
+            "devfs_service",
+            "epoll_service",
+            "futex_service",
+            "linux_socket_service",
+        ],
+        "wasm_app" => &["console_service"],
+        _ => &[],
+    }
 }
 
 fn extern_kind(ty: ExternType) -> &'static str {

@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -13,6 +14,10 @@ fn main() {
     let target_dir =
         PathBuf::from(env::var_os("OUT_DIR").expect("missing OUT_DIR")).join("wasm-target");
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    println!(
+        "cargo:rerun-if-changed={}",
+        workspace_root.join(".cargo/config.toml").display()
+    );
 
     for module in SUPERVISOR_WASM_MODULES {
         build_module(&cargo, workspace_root, &target_dir, module.package);
@@ -31,13 +36,26 @@ fn build_module(cargo: &str, workspace_root: &Path, target_dir: &Path, module: &
     let status = Command::new(cargo)
         .current_dir(workspace_root)
         .env("CARGO_TARGET_DIR", target_dir)
-        .args(["build", "-p", module, "--target", "wasm32-unknown-unknown"])
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env("RUSTFLAGS", wasm_rustflags())
+        .args([
+            "build",
+            "-p",
+            module,
+            "--target",
+            "wasm32-unknown-unknown",
+            "--release",
+        ])
         .status()
         .unwrap_or_else(|err| panic!("failed to spawn cargo for {module}: {err}"));
 
     if !status.success() {
         panic!("building {module} for wasm32-unknown-unknown failed");
     }
+}
+
+fn wasm_rustflags() -> &'static str {
+    "-C target-feature=-bulk-memory,-multivalue,-reference-types,-sign-ext,-nontrapping-fptoint"
 }
 
 fn expose_artifact_path(workspace_root: &Path, target_dir: &Path, module: &str) {
@@ -52,10 +70,74 @@ fn expose_artifact_path(workspace_root: &Path, target_dir: &Path, module: &str) 
 
     let artifact = target_dir
         .join("wasm32-unknown-unknown")
-        .join("debug")
+        .join("release")
         .join(format!("{module}.wasm"));
+    strip_custom_sections(&artifact);
     let env_key = format!("VMOS_{}_WASM", module.to_ascii_uppercase());
     println!("cargo:rustc-env={}={}", env_key, artifact.display());
+}
+
+fn strip_custom_sections(path: &Path) {
+    let bytes = fs::read(path)
+        .unwrap_or_else(|err| panic!("failed to read wasm artifact {}: {err}", path.display()));
+    let stripped = strip_wasm_custom_sections(&bytes)
+        .unwrap_or_else(|err| panic!("failed to strip wasm artifact {}: {err}", path.display()));
+    fs::write(path, stripped)
+        .unwrap_or_else(|err| panic!("failed to write wasm artifact {}: {err}", path.display()));
+}
+
+fn strip_wasm_custom_sections(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
+    if bytes.len() < 8 || &bytes[..4] != b"\0asm" {
+        return Err("invalid wasm header");
+    }
+    let mut out = bytes[..8].to_vec();
+    let mut offset = 8usize;
+    while offset < bytes.len() {
+        let section_id = bytes[offset];
+        offset += 1;
+        let (section_len, leb_len) = read_leb_u32(&bytes[offset..])?;
+        offset += leb_len;
+        let end = offset
+            .checked_add(section_len as usize)
+            .ok_or("wasm section length overflowed")?;
+        if end > bytes.len() {
+            return Err("wasm section exceeded file length");
+        }
+        if section_id != 0 {
+            out.push(section_id);
+            write_leb_u32(section_len, &mut out);
+            out.extend_from_slice(&bytes[offset..end]);
+        }
+        offset = end;
+    }
+    Ok(out)
+}
+
+fn read_leb_u32(bytes: &[u8]) -> Result<(u32, usize), &'static str> {
+    let mut value = 0u32;
+    let mut shift = 0u32;
+    for (index, byte) in bytes.iter().copied().enumerate().take(5) {
+        value |= ((byte & 0x7f) as u32) << shift;
+        if byte & 0x80 == 0 {
+            return Ok((value, index + 1));
+        }
+        shift += 7;
+    }
+    Err("invalid wasm leb128")
+}
+
+fn write_leb_u32(mut value: u32, out: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
 }
 
 fn build_user_binary(cargo: &str, workspace_root: &Path, target_dir: &Path, binary: &str) {

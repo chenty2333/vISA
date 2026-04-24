@@ -91,11 +91,13 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.semantic.event_count()
         ));
         lines.push(format!(
-            "store graph: stores={} live_resources={} transactions={} active_transactions={}",
+            "store graph: stores={} live_resources={} transactions={} active_transactions={} fastpath={}/{}",
             self.semantic.store_count(),
             self.semantic.live_resource_count(),
             self.semantic.transaction_count(),
-            self.semantic.active_transaction_count()
+            self.semantic.active_transaction_count(),
+            self.semantic.active_fast_path_plan_count(),
+            self.semantic.fast_path_plan_count()
         ));
         lines.push("event log tail:".to_string());
         for event in self.semantic.event_log_tail(16) {
@@ -241,6 +243,32 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err("snapshot barrier observed active semantic transactions");
         }
 
+        let pending_waits = u32::try_from(self.semantic.pending_wait_count())
+            .map_err(|_| "pending wait count overflowed snapshot ABI")?;
+        let active_transactions = u32::try_from(self.semantic.active_transaction_count())
+            .map_err(|_| "active transaction count overflowed snapshot ABI")?;
+        let _network_socket_count = self
+            .net_core
+            .socket_count()
+            .map_err(|_| "net_core socket_count failed at snapshot barrier")?;
+        let _linux_socket_count = self
+            .linux_socket
+            .socket_count()
+            .map_err(|_| "linux_socket_service socket_count failed at snapshot barrier")?;
+        let network_rx_queue_bytes = self
+            .net_core
+            .queued_rx_bytes()
+            .map_err(|_| "net_core queued_rx_bytes failed at snapshot barrier")?;
+        let pending_dma = 0;
+        self.replay_snapshot
+            .validate_barrier(
+                pending_waits,
+                active_transactions,
+                active_dmw_leases,
+                pending_dma,
+            )
+            .map_err(|_| "replay_snapshot rejected snapshot barrier")?;
+
         self.semantic.record_snapshot_barrier_exit(barrier);
         let package = self.semantic.migration_package(
             "vmos-demo-migration-v0",
@@ -253,6 +281,11 @@ impl<'engine> PrototypeRuntime<'engine> {
                 pending_irq_causes: 0,
                 pending_dma_completions: 0,
                 active_dmw_lease_count: active_dmw_leases,
+                pending_network_inputs: u32::from(network_rx_queue_bytes > 0),
+                random_epoch: 0,
+                scheduler_decision_cursor: self.semantic.event_count() as u64,
+                cow_epoch: 1,
+                background_copy_pages: 0,
                 native_state_policy:
                     "rebuild page tables, DMW slots, IRQ registrations, stores, and code cache on target"
                         .to_string(),
@@ -360,6 +393,78 @@ fn hostcall_metadata(kind: PlanKind) -> (HostcallClass, &'static str, &'static s
             "epoll_service",
             "epoll.instance",
             "wait",
+        ),
+        PlanKind::Socket => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "linux_syscall",
+            "linux.socket",
+            "socket",
+        ),
+        PlanKind::Bind => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "linux_syscall",
+            "linux.socket",
+            "bind",
+        ),
+        PlanKind::Listen => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "linux_syscall",
+            "linux.socket",
+            "listen",
+        ),
+        PlanKind::Accept => (
+            HostcallClass::AsyncOp,
+            "linux_syscall",
+            "linux.socket",
+            "accept",
+        ),
+        PlanKind::Connect => (
+            HostcallClass::AsyncOp,
+            "linux_syscall",
+            "linux.socket",
+            "connect",
+        ),
+        PlanKind::SendTo => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "linux_syscall",
+            "linux.socket",
+            "send",
+        ),
+        PlanKind::RecvFrom => (
+            HostcallClass::AsyncOp,
+            "linux_syscall",
+            "linux.socket",
+            "recv",
+        ),
+        PlanKind::SetSockOpt => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "linux_syscall",
+            "linux.socket",
+            "setsockopt",
+        ),
+        PlanKind::GetSockOpt => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "linux_syscall",
+            "linux.socket",
+            "getsockopt",
+        ),
+        PlanKind::Fcntl => (
+            HostcallClass::PureQuery,
+            "linux_syscall",
+            "linux.socket",
+            "fcntl",
+        ),
+        PlanKind::Mmap | PlanKind::Munmap => (
+            HostcallClass::ImmediatePrivilegedOp,
+            "linux_syscall",
+            "process.memory",
+            "map",
+        ),
+        PlanKind::Poll => (
+            HostcallClass::AsyncOp,
+            "linux_syscall",
+            "linux.socket",
+            "poll",
         ),
     }
 }

@@ -27,6 +27,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.run_procfs_recovery_demo()?;
         self.run_capability_enforcement_demo()?;
         self.run_generation_plane_demo()?;
+        self.run_fastpath_plan_demo()?;
         self.run_snapshot_migration_demo()?;
         self.run_semantic_debug_demo()?;
         Ok(())
@@ -167,6 +168,37 @@ impl<'engine> PrototypeRuntime<'engine> {
         for line in package.summary_lines() {
             serial_println!("{}", line);
         }
+        let cursor = package.semantic.barrier.event_log_cursor;
+        let replayed = self
+            .replay_snapshot
+            .replay_until(cursor)
+            .map_err(|_| "replay_snapshot replay_until failed")?;
+        let last = self
+            .replay_snapshot
+            .last_replay_cursor()
+            .map_err(|_| "replay_snapshot last cursor failed")?;
+        serial_println!("replay cursor advanced {} -> {}", replayed, last);
+        Ok(())
+    }
+
+    fn run_fastpath_plan_demo(&mut self) -> Result<(), &'static str> {
+        serial_println!("== fastpath plan demo ==");
+        let plan = self
+            .semantic
+            .install_fast_path_plan("linux_syscall", "linux.socket", "recv");
+        if self.semantic.active_fast_path_plan_count() == 0 {
+            return Err("fastpath plan was not installed as active");
+        }
+        self.semantic.invalidate_fast_path_plan(plan);
+        if self
+            .semantic
+            .fast_path_plans()
+            .iter()
+            .any(|entry| entry.id == plan && entry.valid)
+        {
+            return Err("fastpath plan invalidation did not take effect");
+        }
+        serial_println!("fastpath plan install/invalidate recorded");
         Ok(())
     }
 
@@ -340,8 +372,10 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn run_network_semantic_demo(&mut self) -> Result<(), &'static str> {
-        serial_println!("== network semantic skeleton demo ==");
-        self.net.reset_sequence(crate::interrupts::tick_count());
+        serial_println!("== network service/store demo ==");
+        self.net_driver
+            .reset_sequence(crate::interrupts::tick_count())
+            .map_err(|_| "driver_virtio_net reset failed")?;
         let socket_fd = self.open_fake_socket_for_demo()?;
         let created = self.dispatch_linux_syscall(
             "net_epoll_create1",
@@ -377,6 +411,16 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err("fake packet did not become epoll-readable");
         }
         serial_println!("packet-rx WaitToken -> epoll ready events={}", event_count);
+        serial_println!(
+            "virtio-net caps mmio={} virtqueue={}",
+            self.net.mmio_region.id,
+            self.net.virtio_queue.id
+        );
+        let bytes = self.read_fd(socket_fd, 128)?;
+        serial_println!(
+            "socket recv -> {}",
+            core::str::from_utf8(&bytes).unwrap_or("<invalid utf8>")
+        );
 
         self.close_fd(socket_fd)?;
         self.close_fd(epfd)?;

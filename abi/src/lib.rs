@@ -3,7 +3,20 @@
 pub const SYS_READ: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
 pub const SYS_CLOSE: u64 = 3;
+pub const SYS_POLL: u64 = 7;
+pub const SYS_MMAP: u64 = 9;
+pub const SYS_MUNMAP: u64 = 11;
 pub const SYS_NANOSLEEP: u64 = 35;
+pub const SYS_SOCKET: u64 = 41;
+pub const SYS_CONNECT: u64 = 42;
+pub const SYS_ACCEPT: u64 = 43;
+pub const SYS_SENDTO: u64 = 44;
+pub const SYS_RECVFROM: u64 = 45;
+pub const SYS_BIND: u64 = 49;
+pub const SYS_LISTEN: u64 = 50;
+pub const SYS_SETSOCKOPT: u64 = 54;
+pub const SYS_GETSOCKOPT: u64 = 55;
+pub const SYS_FCNTL: u64 = 72;
 pub const SYS_FUTEX: u64 = 202;
 pub const SYS_EPOLL_WAIT: u64 = 232;
 pub const SYS_EPOLL_CTL: u64 = 233;
@@ -25,6 +38,11 @@ pub const FUTEX_WAKE: u32 = 1;
 pub const EPOLL_CTL_ADD: u32 = 1;
 pub const EPOLL_CTL_DEL: u32 = 2;
 pub const EPOLLIN: u32 = 0x001;
+pub const EPOLLOUT: u32 = 0x004;
+
+pub const AF_INET: u32 = 2;
+pub const SOCK_STREAM: u32 = 1;
+pub const SOCK_DGRAM: u32 = 2;
 
 pub const ERR_EPERM: i32 = 1;
 pub const ERR_ENOENT: i32 = 2;
@@ -37,6 +55,8 @@ pub const ERR_ENOTDIR: i32 = 20;
 pub const ERR_EISDIR: i32 = 21;
 pub const ERR_EINVAL: i32 = 22;
 pub const ERR_ENOSYS: i32 = 38;
+pub const ERR_ENOTSOCK: i32 = 88;
+pub const ERR_EOPNOTSUPP: i32 = 95;
 pub const ERR_ETIMEDOUT: i32 = 110;
 
 const TAG_SHIFT: u64 = 60;
@@ -98,6 +118,19 @@ pub enum PlanKind {
     EpollCtl = 13,
     EpollWait = 14,
     EpollReady = 15,
+    Socket = 16,
+    Bind = 17,
+    Listen = 18,
+    Accept = 19,
+    Connect = 20,
+    SendTo = 21,
+    RecvFrom = 22,
+    SetSockOpt = 23,
+    GetSockOpt = 24,
+    Fcntl = 25,
+    Mmap = 26,
+    Munmap = 27,
+    Poll = 28,
 }
 
 impl PlanKind {
@@ -118,6 +151,19 @@ impl PlanKind {
             13 => Some(Self::EpollCtl),
             14 => Some(Self::EpollWait),
             15 => Some(Self::EpollReady),
+            16 => Some(Self::Socket),
+            17 => Some(Self::Bind),
+            18 => Some(Self::Listen),
+            19 => Some(Self::Accept),
+            20 => Some(Self::Connect),
+            21 => Some(Self::SendTo),
+            22 => Some(Self::RecvFrom),
+            23 => Some(Self::SetSockOpt),
+            24 => Some(Self::GetSockOpt),
+            25 => Some(Self::Fcntl),
+            26 => Some(Self::Mmap),
+            27 => Some(Self::Munmap),
+            28 => Some(Self::Poll),
             _ => None,
         }
     }
