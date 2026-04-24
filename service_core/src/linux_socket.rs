@@ -143,3 +143,28 @@ impl Default for LinuxSocketState {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vmos_abi::{AF_INET, SOCK_DGRAM, SOCK_STREAM};
+
+    #[test]
+    fn register_socket_enforces_network_contract() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(
+            state
+                .register_socket(1, AF_INET, SOCK_STREAM, 0, 42)
+                .is_ok()
+        );
+        assert_eq!(
+            state.register_socket(2, AF_INET, SOCK_DGRAM, 0, 43),
+            Err(ERR_EOPNOTSUPP)
+        );
+        assert_eq!(
+            state.register_socket(3, AF_INET + 1, SOCK_STREAM, 0, 44),
+            Err(ERR_EOPNOTSUPP)
+        );
+    }
+}

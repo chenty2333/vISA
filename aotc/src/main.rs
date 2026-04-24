@@ -6,8 +6,11 @@ use std::process::Command;
 
 use artifact_manifest::{
     ArtifactBundleManifest, CapabilityManifest, CompilerManifest, ExternManifest, ImportManifest,
-    ModuleArtifactManifest, ResourceLimitsManifest, SignatureManifest, SupervisorContractManifest,
-    TargetManifest,
+    ModuleArtifactManifest, ResourceLimitsManifest, SignatureManifest, TargetManifest,
+};
+use contract_core::{
+    expected_supervisor_contract, manifest_binding_hash, module_abi_fingerprint,
+    validate_artifact_manifest, validate_manifest_entry,
 };
 use service_core::net_contract::{
     NETWORK_CONTRACT_ABI_VERSION, NETWORK_CONTRACT_VERSION, VIRTIO_NET0_MTU,
@@ -16,9 +19,8 @@ use service_core::net_contract::{
 use sha2::{Digest, Sha256};
 use supervisor_catalog::{
     ARTIFACT_SIGNATURE_PROFILE, DMW_LAYOUT, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
-    SUPERVISOR_ABI_VERSION, SUPERVISOR_CONTRACT_VERSION, SUPERVISOR_WASM_MODULES, SUPERVISOR_WORLD,
-    WASM_FEATURE_PROFILE, WasmModuleSpec, catalog_contract_fingerprint, module_dependencies,
-    package_set_fingerprint,
+    SUPERVISOR_ABI_VERSION, SUPERVISOR_WASM_MODULES, WASM_FEATURE_PROFILE, WasmModuleSpec,
+    module_dependencies,
 };
 use wasmtime::{Config, Engine, ExternType, Instance, Module, Precompiled, Store, Strategy};
 
@@ -256,17 +258,7 @@ fn compile_artifacts(
     let manifest = ArtifactBundleManifest {
         schema_version: 1,
         artifact_profile: HOST_ARTIFACT_PROFILE.to_owned(),
-        contract: SupervisorContractManifest {
-            contract_version: SUPERVISOR_CONTRACT_VERSION.to_owned(),
-            supervisor_world: SUPERVISOR_WORLD.to_owned(),
-            catalog_fingerprint: contract_hex(catalog_contract_fingerprint()),
-            package_set_fingerprint: contract_hex(package_set_fingerprint()),
-            module_count: SUPERVISOR_WASM_MODULES.len(),
-            required_packages: SUPERVISOR_WASM_MODULES
-                .iter()
-                .map(|module| module.package.to_owned())
-                .collect(),
-        },
+        contract: expected_supervisor_contract(),
         target: TargetManifest {
             arch: env::consts::ARCH.to_owned(),
             machine_abi_version: MACHINE_ABI_VERSION.to_owned(),
@@ -300,7 +292,7 @@ fn compile_artifacts(
 fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {
     let engine = runtime_engine()?;
     let manifest = read_manifest(artifact_root)?;
-    verify_supervisor_contract(&manifest)?;
+    validate_artifact_manifest(&manifest)?;
 
     for module in SUPERVISOR_WASM_MODULES {
         let Some(entry) = manifest
@@ -310,7 +302,7 @@ fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {
         else {
             return Err(format!("manifest is missing {}", module.package).into());
         };
-        verify_manifest_entry(module, entry)?;
+        validate_manifest_entry(module, entry)?;
         let artifact_path = artifact_root.join(format!("{}.cwasm", module.package));
         let artifact = fs::read(&artifact_path)?;
         if sha256_hex(&artifact) != entry.cwasm_sha256 {
@@ -347,37 +339,6 @@ fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn verify_supervisor_contract(manifest: &ArtifactBundleManifest) -> Result<(), Box<dyn Error>> {
-    let contract = &manifest.contract;
-    if contract.contract_version != SUPERVISOR_CONTRACT_VERSION {
-        return Err("supervisor contract version mismatch".into());
-    }
-    if contract.supervisor_world != SUPERVISOR_WORLD {
-        return Err("supervisor world mismatch".into());
-    }
-    if contract.catalog_fingerprint != contract_hex(catalog_contract_fingerprint()) {
-        return Err("supervisor catalog fingerprint mismatch".into());
-    }
-    if contract.package_set_fingerprint != contract_hex(package_set_fingerprint()) {
-        return Err("supervisor package set fingerprint mismatch".into());
-    }
-    if contract.module_count != SUPERVISOR_WASM_MODULES.len()
-        || manifest.modules.len() != SUPERVISOR_WASM_MODULES.len()
-        || contract.required_packages.len() != SUPERVISOR_WASM_MODULES.len()
-    {
-        return Err("supervisor module count mismatch".into());
-    }
-    for (index, module) in SUPERVISOR_WASM_MODULES.iter().enumerate() {
-        let Some(package) = contract.required_packages.get(index) else {
-            return Err("supervisor package order mismatch".into());
-        };
-        if package != module.package {
-            return Err("supervisor package order mismatch".into());
-        }
-    }
-    Ok(())
-}
-
 fn verify_exports(spec: &WasmModuleSpec, module: &Module) -> Result<(), Box<dyn Error>> {
     let export_names = module
         .exports()
@@ -394,54 +355,6 @@ fn verify_exports(spec: &WasmModuleSpec, module: &Module) -> Result<(), Box<dyn 
 fn read_manifest(artifact_root: &Path) -> Result<ArtifactBundleManifest, Box<dyn Error>> {
     let bytes = fs::read(artifact_root.join("manifest.json"))?;
     Ok(serde_json::from_slice(&bytes)?)
-}
-
-fn verify_manifest_entry(
-    spec: &WasmModuleSpec,
-    entry: &ModuleArtifactManifest,
-) -> Result<(), Box<dyn Error>> {
-    if entry.artifact_name != spec.artifact_name {
-        return Err(format!("{} artifact name mismatch", spec.package).into());
-    }
-    if entry.role != spec.role.as_str() {
-        return Err(format!("{} role mismatch", spec.package).into());
-    }
-    if entry.fault_policy != spec.fault_policy.as_str() {
-        return Err(format!("{} fault policy mismatch", spec.package).into());
-    }
-    let expected_dependencies = module_dependencies(spec);
-    if entry.service_dependencies.len() != expected_dependencies.len()
-        || expected_dependencies.iter().any(|dependency| {
-            !entry
-                .service_dependencies
-                .iter()
-                .any(|entry| entry == dependency)
-        })
-    {
-        return Err(format!("{} service dependency mismatch", spec.package).into());
-    }
-    if entry.abi_fingerprint != module_abi_fingerprint(spec) {
-        return Err(format!("{} ABI fingerprint mismatch", spec.package).into());
-    }
-    let expected_binding = manifest_binding_hash(
-        spec,
-        &entry.wasm_sha256,
-        &entry.cwasm_sha256,
-        &entry.abi_fingerprint,
-    );
-    if entry.signature.artifact_hash != entry.cwasm_sha256 {
-        return Err(format!("{} signature artifact hash mismatch", spec.package).into());
-    }
-    if entry.signature.manifest_binding_hash != expected_binding {
-        return Err(format!("{} manifest binding hash mismatch", spec.package).into());
-    }
-    if entry.signature.scheme != ARTIFACT_SIGNATURE_PROFILE
-        || entry.signature.public_key_hint.is_empty()
-        || entry.signature.signature.is_empty()
-    {
-        return Err(format!("{} artifact signature metadata is incomplete", spec.package).into());
-    }
-    Ok(())
 }
 
 fn run_smoke_checks(
@@ -563,61 +476,6 @@ fn relative_to_workspace(workspace_root: &Path, path: &Path) -> String {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    hex::encode(hasher.finalize())
-}
-
-fn contract_hex(value: u64) -> String {
-    format!("{value:016x}")
-}
-
-fn manifest_binding_hash(
-    spec: &WasmModuleSpec,
-    wasm_sha256: &str,
-    cwasm_sha256: &str,
-    abi_fingerprint: &str,
-) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(spec.package.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(spec.artifact_name.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(spec.role.as_str().as_bytes());
-    hasher.update(b"\0");
-    hasher.update(spec.fault_policy.as_str().as_bytes());
-    hasher.update(b"\0");
-    hasher.update(wasm_sha256.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(cwasm_sha256.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(abi_fingerprint.as_bytes());
-    for export in spec.expected_exports {
-        hasher.update(b"\0");
-        hasher.update(export.as_bytes());
-    }
-    hex::encode(hasher.finalize())
-}
-
-fn module_abi_fingerprint(spec: &WasmModuleSpec) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(spec.package.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(spec.artifact_name.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(spec.role.as_str().as_bytes());
-    for export in spec.expected_exports {
-        hasher.update(b"\0export:");
-        hasher.update(export.as_bytes());
-    }
-    for capability in spec.capabilities {
-        hasher.update(b"\0cap:");
-        hasher.update(capability.name.as_bytes());
-        hasher.update(b":");
-        hasher.update(capability.lifetime.as_bytes());
-        for right in capability.rights {
-            hasher.update(b":");
-            hasher.update(right.as_bytes());
-        }
-    }
     hex::encode(hasher.finalize())
 }
 

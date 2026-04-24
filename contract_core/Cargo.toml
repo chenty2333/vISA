@@ -1,15 +1,14 @@
 [package]
-name = "osctl"
+name = "contract_core"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "osctl"
-path = "src/main.rs"
+[lib]
+path = "src/lib.rs"
 
 [dependencies]
 artifact_manifest.workspace = true
-contract_core.workspace = true
-serde_json.workspace = true
+hex.workspace = true
 service_core.workspace = true
+sha2.workspace = true
 supervisor_catalog.workspace = true

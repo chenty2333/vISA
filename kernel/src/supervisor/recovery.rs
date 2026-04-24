@@ -1,6 +1,7 @@
-use semantic_core::{FailureEffect, StoreId, StoreState, TransactionId};
+use semantic_core::{FailureEffect, StoreId, StoreState, TransactionId, TrapClass};
 use vmos_abi::ERR_EIO;
 
+use super::fault::classify_service_trap;
 use super::runtime::PrototypeRuntime;
 use super::services::{DriverVirtioNetService, ProcfsService};
 use super::types::ServiceCallError;
@@ -49,28 +50,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         detail: &str,
     ) -> Result<(), ServiceCallError> {
-        self.require_capability("fault_manager", "fault-domain.procfs_service", "restart")
-            .map_err(|_| ServiceCallError::Errno(vmos_abi::ERR_EPERM))?;
-        let store = self
-            .store_id("procfs_service")
-            .ok_or(ServiceCallError::Invalid("procfs store was not registered"))?;
-        let fault = self
-            .record_service_trap("procfs_service", detail)
-            .ok_or(ServiceCallError::Invalid("procfs store was not registered"))?;
-        let domain = self.semantic.fault_domain_id("procfs_service");
-
-        self.set_store_state(store, StoreState::Draining);
-        self.set_store_state(store, StoreState::Restarting);
-
-        if let Some(domain) = domain {
-            self.execute_failure_plan(&[
-                FailureEffect::RebootFaultDomain(domain),
-                FailureEffect::RetryTransparent,
-            ]);
-        } else {
-            self.execute_failure_effect(FailureEffect::RetryTransparent);
-        }
-
+        let fault = classify_service_trap("procfs_service", detail);
+        let store = self.begin_store_micro_reboot(
+            "procfs_service",
+            "fault-domain.procfs_service",
+            fault.trap,
+            detail,
+        )?;
         if !fault.recoverable {
             self.execute_failure_effect(FailureEffect::CompleteWithErrno(fault.errno));
             return Err(ServiceCallError::Errno(fault.errno));
@@ -84,32 +70,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         })?);
         self.rebind_store_instance(store)
             .map_err(ServiceCallError::Invalid)?;
-        self.set_store_state(store, StoreState::Running);
+        self.finish_store_micro_reboot(store);
         Ok(())
     }
 
     pub(crate) fn micro_reboot_net_driver(&mut self, detail: &str) -> Result<(), ServiceCallError> {
-        self.require_capability("fault_manager", "fault-domain.driver_virtio_net", "restart")
-            .map_err(|_| ServiceCallError::Errno(vmos_abi::ERR_EPERM))?;
-        let store = self
-            .store_id("driver_virtio_net")
-            .ok_or(ServiceCallError::Invalid(
-                "driver_virtio_net store was not registered",
-            ))?;
-        let domain = self.semantic.fault_domain_id("driver_virtio_net");
-        self.record_store_trap(store, semantic_core::TrapClass::DriverTrap, detail);
-        self.set_store_state(store, StoreState::Draining);
-        self.set_store_state(store, StoreState::Restarting);
-
-        if let Some(domain) = domain {
-            self.execute_failure_plan(&[
-                FailureEffect::RebootFaultDomain(domain),
-                FailureEffect::RetryTransparent,
-            ]);
-        } else {
-            self.execute_failure_effect(FailureEffect::RetryTransparent);
-        }
-
+        let store = self.begin_store_micro_reboot(
+            "driver_virtio_net",
+            "fault-domain.driver_virtio_net",
+            TrapClass::DriverTrap,
+            detail,
+        )?;
         self.drop_store_instance(store);
         self.net_driver = DriverVirtioNetService::new(self.engine).map_err(|_| {
             self.execute_failure_effect(FailureEffect::CompleteWithErrno(ERR_EIO));
@@ -122,7 +93,40 @@ impl<'engine> PrototypeRuntime<'engine> {
             .map_err(ServiceCallError::Invalid)?;
         self.net_driver
             .reset_sequence(crate::interrupts::tick_count())?;
-        self.set_store_state(store, StoreState::Running);
+        self.finish_store_micro_reboot(store);
         Ok(())
+    }
+
+    fn begin_store_micro_reboot(
+        &mut self,
+        package: &str,
+        capability_object: &str,
+        trap: TrapClass,
+        detail: &str,
+    ) -> Result<StoreId, ServiceCallError> {
+        self.require_capability("fault_manager", capability_object, "restart")
+            .map_err(|_| ServiceCallError::Errno(vmos_abi::ERR_EPERM))?;
+        let store = self
+            .store_id(package)
+            .ok_or(ServiceCallError::Invalid("store was not registered"))?;
+        let domain = self.semantic.fault_domain_id(package);
+        self.record_store_trap(store, trap, detail);
+        self.set_store_state(store, StoreState::Draining);
+        self.set_store_state(store, StoreState::Restarting);
+
+        if let Some(domain) = domain {
+            self.execute_failure_plan(&[
+                FailureEffect::RebootFaultDomain(domain),
+                FailureEffect::RetryTransparent,
+            ]);
+        } else {
+            self.execute_failure_effect(FailureEffect::RetryTransparent);
+        }
+
+        Ok(store)
+    }
+
+    fn finish_store_micro_reboot(&mut self, store: StoreId) {
+        self.set_store_state(store, StoreState::Running);
     }
 }

@@ -9,19 +9,17 @@ use artifact_manifest::{
     RequiredArtifactProfileManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
     SubstrateBoundaryManifest,
 };
+use contract_core::{
+    validate_artifact_manifest, validate_manifest_entry, validate_migration_against_manifest,
+    validate_replay_quiescent,
+};
 use semantic_core::{FrontendKind, SemanticGraph, StoreState, TaskState};
-use service_core::net_contract::NETWORK_CONTRACT_VERSION;
 use service_core::net_contract::{
     NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
     VIRTIO_NET0_TX_QUEUE_DEPTH,
 };
 use sha2::{Digest, Sha256};
-use supervisor_catalog::{
-    ARTIFACT_SIGNATURE_PROFILE, CapabilitySpec, DMW_LAYOUT, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
-    SUPERVISOR_ABI_VERSION, SUPERVISOR_CONTRACT_VERSION, SUPERVISOR_WASM_MODULES, SUPERVISOR_WORLD,
-    WASM_FEATURE_PROFILE, WasmModuleSpec, catalog_contract_fingerprint, module_dependencies,
-    package_set_fingerprint,
-};
+use supervisor_catalog::{SUPERVISOR_WASM_MODULES, WasmModuleSpec};
 use wasmtime::{Config, Engine, Instance, Module, Precompiled, Store};
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
@@ -51,7 +49,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     for spec in SUPERVISOR_WASM_MODULES {
         let entry = find_entry(&manifest, spec)?;
-        validate_entry(spec, entry)?;
+        validate_manifest_entry(spec, entry)?;
         let module_path = workspace_root.join(&entry.cwasm_path);
         let module_bytes = fs::read(&module_path)?;
         if sha256_hex(&module_bytes) != entry.cwasm_sha256 {
@@ -318,182 +316,15 @@ fn semantic_roots(
 }
 
 fn validate_bundle_manifest(manifest: &ArtifactBundleManifest) -> Result<(), Box<dyn Error>> {
-    if manifest.schema_version != 1 {
-        return Err("unsupported manifest schema version".into());
-    }
-    validate_supervisor_contract(manifest)?;
-    if manifest.compiler.artifact_format != "cwasm" {
-        return Err("target executor only accepts cwasm artifacts".into());
-    }
-    if manifest.compiler.execution_mode != "precompiled-core-module" {
-        return Err("target executor only accepts precompiled core modules".into());
-    }
-    if manifest.target.linux_abi_profile != LINUX_ABI_PROFILE {
-        return Err("Linux ABI profile mismatch".into());
-    }
-    if manifest.target.artifact_signature_profile != ARTIFACT_SIGNATURE_PROFILE {
-        return Err("artifact signature profile mismatch".into());
-    }
-    if manifest.target.machine_abi_version != MACHINE_ABI_VERSION {
-        return Err("machine ABI version mismatch".into());
-    }
-    if manifest.target.supervisor_abi_version != SUPERVISOR_ABI_VERSION {
-        return Err("supervisor ABI version mismatch".into());
-    }
-    if manifest.target.wasm_feature_profile != WASM_FEATURE_PROFILE {
-        return Err("Wasm feature profile mismatch".into());
-    }
-    if manifest.target.dmw_layout != DMW_LAYOUT {
-        return Err("DMW layout mismatch".into());
-    }
-    if manifest.target.network_contract_version != NETWORK_CONTRACT_VERSION {
-        return Err("network contract version mismatch".into());
-    }
-    Ok(())
-}
-
-fn validate_supervisor_contract(manifest: &ArtifactBundleManifest) -> Result<(), Box<dyn Error>> {
-    let contract = &manifest.contract;
-    if contract.contract_version != SUPERVISOR_CONTRACT_VERSION {
-        return Err("supervisor contract version mismatch".into());
-    }
-    if contract.supervisor_world != SUPERVISOR_WORLD {
-        return Err("supervisor world mismatch".into());
-    }
-    if contract.catalog_fingerprint != contract_hex(catalog_contract_fingerprint()) {
-        return Err("supervisor catalog fingerprint mismatch".into());
-    }
-    if contract.package_set_fingerprint != contract_hex(package_set_fingerprint()) {
-        return Err("supervisor package set fingerprint mismatch".into());
-    }
-    if contract.module_count != SUPERVISOR_WASM_MODULES.len()
-        || manifest.modules.len() != SUPERVISOR_WASM_MODULES.len()
-        || contract.required_packages.len() != SUPERVISOR_WASM_MODULES.len()
-    {
-        return Err("supervisor module count mismatch".into());
-    }
-    for (index, spec) in SUPERVISOR_WASM_MODULES.iter().enumerate() {
-        let Some(package) = contract.required_packages.get(index) else {
-            return Err("supervisor package order mismatch".into());
-        };
-        if package != spec.package {
-            return Err("supervisor package order mismatch".into());
-        }
-        let count = manifest
-            .modules
-            .iter()
-            .filter(|entry| entry.package == spec.package)
-            .count();
-        if count != 1 {
-            return Err(format!("manifest has invalid module count for {}", spec.package).into());
-        }
-    }
-    for entry in &manifest.modules {
-        if !SUPERVISOR_WASM_MODULES
-            .iter()
-            .any(|spec| spec.package == entry.package)
-        {
-            return Err(format!("manifest contains unknown module {}", entry.package).into());
-        }
-    }
-    Ok(())
+    validate_artifact_manifest(manifest).map_err(Into::into)
 }
 
 fn validate_migration_package(
     package: &MigrationPackageManifest,
     manifest: &ArtifactBundleManifest,
 ) -> Result<(), Box<dyn Error>> {
-    if package.schema_version != 1 {
-        return Err("unsupported migration package schema version".into());
-    }
-    if package.package_format != "vmos-semantic-package-v1" {
-        return Err("unsupported migration package format".into());
-    }
-    if package.guest.canonical_isa != "riscv64" {
-        return Err("migration package uses an unsupported canonical guest ISA".into());
-    }
-    if package.substrate_boundary.active_dmw_lease_count != 0 {
-        return Err("migration package contains active DMW leases".into());
-    }
-    if package.substrate_boundary.pending_dma_completions != 0 {
-        return Err("migration package contains in-flight DMA completions".into());
-    }
-    if package.substrate_boundary.pending_network_inputs != 0 {
-        return Err("migration package contains pending network inputs".into());
-    }
-    if package.substrate_boundary.background_copy_pages != 0 {
-        return Err("migration package contains unfinished background COW copies".into());
-    }
-    if package.semantic.active_transaction_count != 0 {
-        return Err("migration package contains active semantic transactions".into());
-    }
-    if package.logical_capabilities.len() != package.semantic.capability_count {
-        return Err("migration package capability list/count mismatch".into());
-    }
-    validate_semantic_roots(package)?;
-
-    let required = &package.required_artifact_profile;
-    if required.target_arch != "target-native" && required.target_arch != manifest.target.arch {
-        return Err("migration package target arch is incompatible with this manifest".into());
-    }
-    if required.machine_abi_version != manifest.target.machine_abi_version {
-        return Err("migration package machine ABI mismatch".into());
-    }
-    if required.supervisor_abi_version != manifest.target.supervisor_abi_version {
-        return Err("migration package supervisor ABI mismatch".into());
-    }
-    if required.wasm_feature_profile != manifest.target.wasm_feature_profile {
-        return Err("migration package Wasm feature profile mismatch".into());
-    }
-    if required.memory64 != manifest.target.memory64
-        || required.multi_memory != manifest.target.multi_memory
-    {
-        return Err("migration package Wasm memory model mismatch".into());
-    }
-    if required.dmw_layout != manifest.target.dmw_layout {
-        return Err("migration package DMW layout mismatch".into());
-    }
-    if required.network_contract_version != manifest.target.network_contract_version {
-        return Err("migration package network contract mismatch".into());
-    }
-    if required.compiler_engine != manifest.compiler.engine
-        || required.compiler_execution_mode != manifest.compiler.execution_mode
-        || required.artifact_format != manifest.compiler.artifact_format
-    {
-        return Err("migration package compiler/artifact mode mismatch".into());
-    }
-    Ok(())
-}
-
-fn validate_semantic_roots(package: &MigrationPackageManifest) -> Result<(), Box<dyn Error>> {
-    let roots = &package.semantic.roots;
-    if roots.task_roots.len() != package.semantic.task_count {
-        return Err("migration package task root/count mismatch".into());
-    }
-    if roots.resource_roots.len() != package.semantic.resource_count {
-        return Err("migration package resource root/count mismatch".into());
-    }
-    if roots.authority_roots.len() != package.semantic.authority_count {
-        return Err("migration package authority root/count mismatch".into());
-    }
-    if package.semantic.active_authority_count > package.semantic.authority_count {
-        return Err("migration package active authority count exceeds authority count".into());
-    }
-    if roots.wait_roots.len() != package.semantic.wait_token_count {
-        return Err("migration package wait root/count mismatch".into());
-    }
-    if roots.store_roots.len() != package.semantic.store_count {
-        return Err("migration package store root/count mismatch".into());
-    }
-    if roots.capability_roots.len() != package.semantic.capability_count {
-        return Err("migration package capability root/count mismatch".into());
-    }
-    if roots.fast_path_roots.len() != package.semantic.fast_path_plan_count {
-        return Err("migration package fastpath root/count mismatch".into());
-    }
-    if roots.event_log_tail.is_empty() && package.semantic.event_log_cursor != 0 {
-        return Err("migration package has no event log root tail".into());
-    }
+    validate_migration_against_manifest(package, manifest)?;
+    validate_replay_quiescent(package)?;
     Ok(())
 }
 
@@ -612,80 +443,6 @@ fn find_entry<'a>(
         .iter()
         .find(|entry| entry.package == spec.package)
         .ok_or_else(|| format!("manifest is missing {}", spec.package).into())
-}
-
-fn validate_entry(
-    spec: &WasmModuleSpec,
-    entry: &ModuleArtifactManifest,
-) -> Result<(), Box<dyn Error>> {
-    if entry.artifact_name != spec.artifact_name {
-        return Err(format!("{} artifact name mismatch", spec.package).into());
-    }
-    if entry.role != spec.role.as_str() {
-        return Err(format!("{} role mismatch", spec.package).into());
-    }
-    if entry.fault_policy != spec.fault_policy.as_str() {
-        return Err(format!("{} fault policy mismatch", spec.package).into());
-    }
-    let expected_dependencies = module_dependencies(spec);
-    if entry.service_dependencies.len() != expected_dependencies.len()
-        || expected_dependencies.iter().any(|dependency| {
-            !entry
-                .service_dependencies
-                .iter()
-                .any(|entry| entry == dependency)
-        })
-    {
-        return Err(format!("{} service dependency mismatch", spec.package).into());
-    }
-    if entry.signature.scheme != ARTIFACT_SIGNATURE_PROFILE {
-        return Err(format!("{} signature scheme mismatch", spec.package).into());
-    }
-    if entry.abi_fingerprint != module_abi_fingerprint(spec) {
-        return Err(format!("{} ABI fingerprint mismatch", spec.package).into());
-    }
-    if entry.signature.artifact_hash != entry.cwasm_sha256 {
-        return Err(format!("{} signature artifact hash mismatch", spec.package).into());
-    }
-    if entry.signature.public_key_hint.is_empty() || entry.signature.signature.is_empty() {
-        return Err(format!("{} signature payload is incomplete", spec.package).into());
-    }
-    let expected_binding = manifest_binding_hash(
-        spec,
-        &entry.wasm_sha256,
-        &entry.cwasm_sha256,
-        &entry.abi_fingerprint,
-    );
-    if entry.signature.manifest_binding_hash != expected_binding {
-        return Err(format!("{} manifest binding hash mismatch", spec.package).into());
-    }
-    validate_capabilities(spec, entry)?;
-    Ok(())
-}
-
-fn validate_capabilities(
-    spec: &WasmModuleSpec,
-    entry: &ModuleArtifactManifest,
-) -> Result<(), Box<dyn Error>> {
-    if entry.capabilities.len() != spec.capabilities.len() {
-        return Err(format!("{} capability count mismatch", spec.package).into());
-    }
-    for capability in spec.capabilities {
-        let Some(entry_capability) = entry
-            .capabilities
-            .iter()
-            .find(|candidate| candidate.name == capability.name)
-        else {
-            return Err(format!("{} missing capability {}", spec.package, capability.name).into());
-        };
-        if entry_capability.lifetime != capability.lifetime {
-            return Err(format!("{} capability lifetime mismatch", spec.package).into());
-        }
-        if entry_capability.rights != rights_vec(capability) {
-            return Err(format!("{} capability rights mismatch", spec.package).into());
-        }
-    }
-    Ok(())
 }
 
 fn validate_exports(spec: &WasmModuleSpec, module: &Module) -> Result<(), Box<dyn Error>> {
@@ -814,69 +571,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hex::encode(hasher.finalize())
-}
-
-fn contract_hex(value: u64) -> String {
-    format!("{value:016x}")
-}
-
-fn manifest_binding_hash(
-    spec: &WasmModuleSpec,
-    wasm_sha256: &str,
-    cwasm_sha256: &str,
-    abi_fingerprint: &str,
-) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(spec.package.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(spec.artifact_name.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(spec.role.as_str().as_bytes());
-    hasher.update(b"\0");
-    hasher.update(spec.fault_policy.as_str().as_bytes());
-    hasher.update(b"\0");
-    hasher.update(wasm_sha256.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(cwasm_sha256.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(abi_fingerprint.as_bytes());
-    for export in spec.expected_exports {
-        hasher.update(b"\0");
-        hasher.update(export.as_bytes());
-    }
-    hex::encode(hasher.finalize())
-}
-
-fn module_abi_fingerprint(spec: &WasmModuleSpec) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(spec.package.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(spec.artifact_name.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(spec.role.as_str().as_bytes());
-    for export in spec.expected_exports {
-        hasher.update(b"\0export:");
-        hasher.update(export.as_bytes());
-    }
-    for capability in spec.capabilities {
-        hasher.update(b"\0cap:");
-        hasher.update(capability.name.as_bytes());
-        hasher.update(b":");
-        hasher.update(capability.lifetime.as_bytes());
-        for right in capability.rights {
-            hasher.update(b":");
-            hasher.update(right.as_bytes());
-        }
-    }
-    hex::encode(hasher.finalize())
-}
-
-fn rights_vec(capability: &CapabilitySpec) -> Vec<String> {
-    capability
-        .rights
-        .iter()
-        .map(|right| (*right).to_owned())
-        .collect()
 }
 
 struct LoadedStore {

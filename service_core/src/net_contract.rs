@@ -43,3 +43,41 @@ pub const fn canonical_socket_protocol(protocol: u32) -> u16 {
         protocol as u16
     }
 }
+
+pub const fn validate_packet_device_contract(contract: PacketDeviceContract) -> bool {
+    contract.mtu == VIRTIO_NET0_MTU
+        && contract.rx_queue_depth == VIRTIO_NET0_RX_QUEUE_DEPTH
+        && contract.tx_queue_depth == VIRTIO_NET0_TX_QUEUE_DEPTH
+        && contract.mac[0] == VIRTIO_NET0_MAC[0]
+        && contract.mac[1] == VIRTIO_NET0_MAC[1]
+        && contract.mac[2] == VIRTIO_NET0_MAC[2]
+        && contract.mac[3] == VIRTIO_NET0_MAC[3]
+        && contract.mac[4] == VIRTIO_NET0_MAC[4]
+        && contract.mac[5] == VIRTIO_NET0_MAC[5]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vmos_abi::SOCK_DGRAM;
+
+    #[test]
+    fn packet_device_contract_matches_v1_constants() {
+        assert_eq!(NETWORK_CONTRACT_VERSION, "vmos-network-contract-v1");
+        assert_eq!(NETWORK_CONTRACT_ABI_VERSION, 1);
+        assert!(validate_packet_device_contract(VIRTIO_NET0_CONTRACT));
+    }
+
+    #[test]
+    fn linux_socket_contract_is_narrow_by_default() {
+        assert!(validate_linux_socket_contract(AF_INET, SOCK_STREAM, 0));
+        assert!(validate_linux_socket_contract(
+            AF_INET,
+            SOCK_STREAM,
+            PROTO_TCP as u32
+        ));
+        assert!(!validate_linux_socket_contract(AF_INET, SOCK_DGRAM, 0));
+        assert!(!validate_linux_socket_contract(AF_INET + 1, SOCK_STREAM, 0));
+        assert_eq!(canonical_socket_protocol(0), PROTO_DEMO_TCP);
+    }
+}

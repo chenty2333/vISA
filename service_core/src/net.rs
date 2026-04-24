@@ -239,4 +239,13 @@ mod tests {
             .unwrap();
         assert_eq!(&out[..len as usize], payload);
     }
+
+    #[test]
+    fn socket_creation_enforces_network_contract() {
+        let mut state = NetCoreState::new();
+
+        assert!(state.create_socket(2, 1, 0).is_ok());
+        assert_eq!(state.create_socket(2, 2, 0), Err(ERR_EOPNOTSUPP));
+        assert_eq!(state.create_socket(99, 1, 0), Err(ERR_EOPNOTSUPP));
+    }
 }

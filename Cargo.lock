@@ -28,6 +28,7 @@ name = "aotc"
 version = "0.1.0"
 dependencies = [
  "artifact_manifest",
+ "contract_core",
  "hex",
  "serde_json",
  "service_core",
@@ -169,6 +170,17 @@ name = "const_fn"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413d67b29ef1021b4d60f4aa1e925ca031751e213832b4b1d588fae623c05c60"
+
+[[package]]
+name = "contract_core"
+version = "0.1.0"
+dependencies = [
+ "artifact_manifest",
+ "hex",
+ "service_core",
+ "sha2",
+ "supervisor_catalog",
+]
 
 [[package]]
 name = "cpufeatures"
@@ -745,6 +757,7 @@ name = "osctl"
 version = "0.1.0"
 dependencies = [
  "artifact_manifest",
+ "contract_core",
  "serde_json",
  "service_core",
  "supervisor_catalog",
@@ -1041,6 +1054,7 @@ name = "target_executor"
 version = "0.1.0"
 dependencies = [
  "artifact_manifest",
+ "contract_core",
  "hex",
  "semantic_core",
  "serde_json",

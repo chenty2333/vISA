@@ -5,6 +5,7 @@ members = [
     "abi",
     "artifact_manifest",
     "console_service",
+    "contract_core",
     "devfs_service",
     "epoll_service",
     "futex_service",
@@ -29,6 +30,7 @@ members = [
 [workspace.dependencies]
 artifact_manifest = { path = "artifact_manifest" }
 bootloader_api = "0.11.15"
+contract_core = { path = "contract_core" }
 hex = "0.4.3"
 linked_list_allocator = "0.10.6"
 pic8259 = "0.10.4"

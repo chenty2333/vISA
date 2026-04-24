@@ -4,11 +4,9 @@ use std::fs;
 use std::path::Path;
 
 use artifact_manifest::{ArtifactBundleManifest, MigrationPackageManifest};
-use service_core::net_contract::NETWORK_CONTRACT_VERSION;
-use supervisor_catalog::{
-    DMW_LAYOUT, MACHINE_ABI_VERSION, SUPERVISOR_ABI_VERSION, SUPERVISOR_CONTRACT_VERSION,
-    SUPERVISOR_WASM_MODULES, SUPERVISOR_WORLD, WASM_FEATURE_PROFILE, catalog_contract_fingerprint,
-    package_set_fingerprint,
+use contract_core::{
+    validate_artifact_manifest, validate_migration_against_manifest, validate_migration_package,
+    validate_replay_quiescent,
 };
 
 fn main() {
@@ -32,16 +30,22 @@ fn run() -> Result<(), Box<dyn Error>> {
             };
             print_summary(Path::new(&path))
         }
+        "check" => {
+            let Some(path) = args.next() else {
+                return Err("check requires a manifest/package JSON path".into());
+            };
+            check_path(Path::new(&path))
+        }
         "replay" => {
             let Some(until_flag) = args.next() else {
                 return Err(
-                    "replay requires --until <cursor> [--manifest <manifest.json>] <package.json>"
+                    "replay requires --until <cursor> [--manifest <manifest.json>] [--json] <package.json>"
                         .into(),
                 );
             };
             if until_flag != "--until" {
                 return Err(
-                    "replay syntax is: osctl replay --until <cursor> [--manifest <manifest.json>] <package.json>".into(),
+                    "replay syntax is: osctl replay --until <cursor> [--manifest <manifest.json>] [--json] <package.json>".into(),
                 );
             }
             let cursor = args
@@ -50,10 +54,13 @@ fn run() -> Result<(), Box<dyn Error>> {
                 .parse::<u64>()?;
             let mut manifest_path = None;
             let mut package_path = None;
+            let mut json = false;
             while let Some(arg) = args.next() {
                 if arg == "--manifest" {
                     let path = args.next().ok_or("replay --manifest requires a path")?;
                     manifest_path = Some(path);
+                } else if arg == "--json" {
+                    json = true;
                 } else if package_path.is_none() {
                     package_path = Some(arg);
                 } else {
@@ -65,6 +72,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 cursor,
                 manifest_path.as_deref().map(Path::new),
                 Path::new(&path),
+                json,
             )
         }
         _ => {
@@ -77,8 +85,9 @@ fn run() -> Result<(), Box<dyn Error>> {
 fn print_usage() {
     eprintln!("usage:");
     eprintln!("  osctl summary <manifest-or-migration.json>");
+    eprintln!("  osctl check <manifest-or-migration.json>");
     eprintln!(
-        "  osctl replay --until <event-cursor> [--manifest <manifest.json>] <migration.json>"
+        "  osctl replay --until <event-cursor> [--manifest <manifest.json>] [--json] <migration.json>"
     );
 }
 
@@ -93,17 +102,38 @@ fn print_summary(path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn check_path(path: &Path) -> Result<(), Box<dyn Error>> {
+    let bytes = fs::read(path)?;
+    if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
+        validate_migration_package(&package)?;
+        println!(
+            "package check ok package={} cursor={}",
+            package.package_id, package.semantic.event_log_cursor
+        );
+        return Ok(());
+    }
+    let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&bytes)?;
+    validate_artifact_manifest(&manifest)?;
+    println!(
+        "manifest check ok profile={} modules={}",
+        manifest.artifact_profile,
+        manifest.modules.len()
+    );
+    Ok(())
+}
+
 fn replay_until(
     cursor: u64,
     manifest_path: Option<&Path>,
     path: &Path,
+    json: bool,
 ) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     let package = serde_json::from_slice::<MigrationPackageManifest>(&bytes)?;
-    validate_package(&package)?;
+    validate_replay_quiescent(&package)?;
     if let Some(manifest_path) = manifest_path {
         let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&fs::read(manifest_path)?)?;
-        validate_package_against_manifest(&package, &manifest)?;
+        validate_migration_against_manifest(&package, &manifest)?;
     }
     if cursor > package.semantic.event_log_cursor {
         return Err(format!(
@@ -112,11 +142,9 @@ fn replay_until(
         )
         .into());
     }
-    if package.substrate_boundary.pending_dma_completions != 0
-        || package.substrate_boundary.pending_network_inputs != 0
-        || package.substrate_boundary.active_dmw_lease_count != 0
-    {
-        return Err("package is not replay-quiescent".into());
+    if json {
+        print_replay_json(cursor, &package)?;
+        return Ok(());
     }
     println!(
         "replay plan accepted package={} format={} cursor={} guest_isa={} scheduler_cursor={} random_epoch={}",
@@ -148,163 +176,36 @@ fn replay_until(
     Ok(())
 }
 
-fn validate_package(package: &MigrationPackageManifest) -> Result<(), Box<dyn Error>> {
-    if package.schema_version != 1 {
-        return Err("unsupported semantic package schema version".into());
-    }
-    if package.package_format != "vmos-semantic-package-v1" {
-        return Err("unsupported semantic package format".into());
-    }
-    if package.guest.canonical_isa != "riscv64" {
-        return Err("unsupported canonical guest ISA".into());
-    }
-    if package.semantic.active_transaction_count != 0 {
-        return Err("package contains active semantic transactions".into());
-    }
-    if package.logical_capabilities.len() != package.semantic.capability_count {
-        return Err("package capability list/count mismatch".into());
-    }
-    for capability in &package.logical_capabilities {
-        if capability.subject.is_empty()
-            || capability.object.is_empty()
-            || capability.rights.is_empty()
-            || capability.generation == 0
-        {
-            return Err("package contains an invalid logical capability".into());
-        }
-    }
-    validate_roots(package)?;
-    Ok(())
-}
-
-fn validate_roots(package: &MigrationPackageManifest) -> Result<(), Box<dyn Error>> {
-    let roots = &package.semantic.roots;
-    if roots.task_roots.len() != package.semantic.task_count {
-        return Err("task root/count mismatch".into());
-    }
-    if roots.resource_roots.len() != package.semantic.resource_count {
-        return Err("resource root/count mismatch".into());
-    }
-    if roots.authority_roots.len() != package.semantic.authority_count {
-        return Err("authority root/count mismatch".into());
-    }
-    if package.semantic.active_authority_count > package.semantic.authority_count {
-        return Err("active authority count exceeds authority count".into());
-    }
-    if roots.wait_roots.len() != package.semantic.wait_token_count {
-        return Err("wait root/count mismatch".into());
-    }
-    if roots.store_roots.len() != package.semantic.store_count {
-        return Err("store root/count mismatch".into());
-    }
-    if roots.capability_roots.len() != package.semantic.capability_count {
-        return Err("capability root/count mismatch".into());
-    }
-    if roots.fast_path_roots.len() != package.semantic.fast_path_plan_count {
-        return Err("fastpath root/count mismatch".into());
-    }
-    if roots.event_log_tail.is_empty() && package.semantic.event_log_cursor != 0 {
-        return Err("event log cursor is nonzero but package has no event tail".into());
-    }
-    Ok(())
-}
-
-fn validate_package_against_manifest(
+fn print_replay_json(
+    cursor: u64,
     package: &MigrationPackageManifest,
-    manifest: &ArtifactBundleManifest,
 ) -> Result<(), Box<dyn Error>> {
-    validate_supervisor_contract(manifest)?;
-    let required = &package.required_artifact_profile;
-    if required.target_arch != "target-native" && required.target_arch != manifest.target.arch {
-        return Err("package target arch is incompatible with manifest".into());
-    }
-    if required.machine_abi_version != manifest.target.machine_abi_version {
-        return Err("package machine ABI mismatch".into());
-    }
-    if required.supervisor_abi_version != manifest.target.supervisor_abi_version {
-        return Err("package supervisor ABI mismatch".into());
-    }
-    if required.wasm_feature_profile != manifest.target.wasm_feature_profile {
-        return Err("package Wasm feature profile mismatch".into());
-    }
-    if required.memory64 != manifest.target.memory64
-        || required.multi_memory != manifest.target.multi_memory
-    {
-        return Err("package Wasm memory model mismatch".into());
-    }
-    if required.dmw_layout != manifest.target.dmw_layout {
-        return Err("package DMW layout mismatch".into());
-    }
-    if required.network_contract_version != manifest.target.network_contract_version {
-        return Err("package network contract mismatch".into());
-    }
-    if required.compiler_engine != manifest.compiler.engine
-        || required.compiler_execution_mode != manifest.compiler.execution_mode
-        || required.artifact_format != manifest.compiler.artifact_format
-    {
-        return Err("package compiler/artifact mode mismatch".into());
-    }
-    Ok(())
-}
-
-fn validate_supervisor_contract(manifest: &ArtifactBundleManifest) -> Result<(), Box<dyn Error>> {
-    if manifest.contract.contract_version != SUPERVISOR_CONTRACT_VERSION {
-        return Err("manifest supervisor contract version mismatch".into());
-    }
-    if manifest.contract.supervisor_world != SUPERVISOR_WORLD {
-        return Err("manifest supervisor world mismatch".into());
-    }
-    if manifest.contract.catalog_fingerprint != contract_hex(catalog_contract_fingerprint()) {
-        return Err("manifest supervisor catalog fingerprint mismatch".into());
-    }
-    if manifest.contract.package_set_fingerprint != contract_hex(package_set_fingerprint()) {
-        return Err("manifest supervisor package set fingerprint mismatch".into());
-    }
-    if manifest.contract.module_count != SUPERVISOR_WASM_MODULES.len()
-        || manifest.modules.len() != SUPERVISOR_WASM_MODULES.len()
-        || manifest.contract.required_packages.len() != SUPERVISOR_WASM_MODULES.len()
-    {
-        return Err("manifest supervisor module count mismatch".into());
-    }
-    if manifest.target.machine_abi_version != MACHINE_ABI_VERSION {
-        return Err("manifest machine ABI mismatch".into());
-    }
-    if manifest.target.supervisor_abi_version != SUPERVISOR_ABI_VERSION {
-        return Err("manifest supervisor ABI mismatch".into());
-    }
-    if manifest.target.wasm_feature_profile != WASM_FEATURE_PROFILE {
-        return Err("manifest Wasm feature profile mismatch".into());
-    }
-    if manifest.target.dmw_layout != DMW_LAYOUT {
-        return Err("manifest DMW layout mismatch".into());
-    }
-    if manifest.target.network_contract_version != NETWORK_CONTRACT_VERSION {
-        return Err("manifest network contract mismatch".into());
-    }
-    for (index, spec) in SUPERVISOR_WASM_MODULES.iter().enumerate() {
-        let Some(package) = manifest.contract.required_packages.get(index) else {
-            return Err("manifest supervisor package order mismatch".into());
-        };
-        if package != spec.package {
-            return Err("manifest supervisor package order mismatch".into());
+    let value = serde_json::json!({
+        "status": "accepted",
+        "package": package.package_id,
+        "format": package.package_format,
+        "cursor": cursor,
+        "guest_isa": package.guest.canonical_isa,
+        "scheduler_cursor": package.substrate_boundary.scheduler_decision_cursor,
+        "random_epoch": package.substrate_boundary.random_epoch,
+        "imports": {
+            "pending_waits": package.semantic.pending_wait_count,
+            "resources": package.semantic.resource_count,
+            "active_fastpath": package.semantic.active_fast_path_plan_count,
+            "fastpath": package.semantic.fast_path_plan_count,
+            "sockets": package.semantic.network_socket_count,
+            "rx_bytes": package.semantic.network_rx_queue_bytes
+        },
+        "roots": {
+            "tasks": package.semantic.roots.task_roots.len(),
+            "resources": package.semantic.roots.resource_roots.len(),
+            "authorities": package.semantic.roots.authority_roots.len(),
+            "stores": package.semantic.roots.store_roots.len(),
+            "capabilities": package.semantic.roots.capability_roots.len(),
+            "event_tail": package.semantic.roots.event_log_tail.len()
         }
-        let count = manifest
-            .modules
-            .iter()
-            .filter(|entry| entry.package == spec.package)
-            .count();
-        if count != 1 {
-            return Err(format!("manifest has invalid module count for {}", spec.package).into());
-        }
-    }
-    for entry in &manifest.modules {
-        if !SUPERVISOR_WASM_MODULES
-            .iter()
-            .any(|spec| spec.package == entry.package)
-        {
-            return Err(format!("manifest contains unknown module {}", entry.package).into());
-        }
-    }
+    });
+    println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }
 
@@ -381,8 +282,4 @@ fn print_artifact_summary(manifest: &ArtifactBundleManifest) {
 
 fn short_hash(hash: &str) -> &str {
     hash.get(..12).unwrap_or(hash)
-}
-
-fn contract_hex(value: u64) -> String {
-    format!("{value:016x}")
 }
