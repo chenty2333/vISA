@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -11,6 +13,8 @@ use contract_core::{
     validate_migration_package, validate_replay_quiescent,
 };
 use semantic_core::{CapabilityClass, RuntimeMode};
+
+const OSCTL_JSON_SCHEMA_VERSION: &str = "vmos-osctl-json-v1";
 
 fn main() {
     if let Err(err) = run() {
@@ -113,14 +117,45 @@ fn run() -> Result<(), Box<dyn Error>> {
             let Some(kind) = args.next() else {
                 return Err("inspect requires an object kind".into());
             };
-            let Some(path) = args.next() else {
-                return Err("inspect requires a manifest/package JSON path".into());
-            };
-            let filter = args.next();
-            if args.next().is_some() {
-                return Err("inspect received too many arguments".into());
+            let mut json = false;
+            let mut path = None;
+            let mut filter = None;
+            for arg in args {
+                if arg == "--json" {
+                    json = true;
+                } else if path.is_none() {
+                    path = Some(arg);
+                } else if filter.is_none() {
+                    filter = Some(arg);
+                } else {
+                    return Err("inspect received too many arguments".into());
+                }
             }
-            inspect_object(&kind, Path::new(&path), filter.as_deref())
+            let path = path.ok_or("inspect requires a manifest/package JSON path")?;
+            inspect_object(&kind, Path::new(&path), filter.as_deref(), json)
+        }
+        "contract" => {
+            let Some(subcommand) = args.next() else {
+                return Err("contract requires a subcommand".into());
+            };
+            if subcommand != "validate" {
+                return Err(
+                    "contract syntax is: osctl contract validate [--json] <migration.json>".into(),
+                );
+            }
+            let mut json = false;
+            let mut path = None;
+            for arg in args {
+                if arg == "--json" {
+                    json = true;
+                } else if path.is_none() {
+                    path = Some(arg);
+                } else {
+                    return Err("contract validate received too many arguments".into());
+                }
+            }
+            let path = path.ok_or("contract validate requires a migration package JSON path")?;
+            validate_contract(Path::new(&path), json)
         }
         "replay" => {
             let Some(until_flag) = args.next() else {
@@ -180,8 +215,9 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|memory-policy|snapshot-validation|replay-validation|event <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
+    eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
         "  osctl replay --until <event-cursor> [--manifest <manifest.json>] [--json] <migration.json>"
     );
@@ -219,6 +255,43 @@ fn check_path(path: &Path) -> Result<(), Box<dyn Error>> {
         plan.expected_export_count()
     );
     Ok(())
+}
+
+fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
+    let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
+    let ok = package.semantic.contract_violation_count == 0
+        && package.semantic.snapshot_validation.ok
+        && package.semantic.replay_validation.ok;
+    if json {
+        let value = serde_json::json!({
+            "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+            "command": "contract.validate",
+            "package": package.package_id,
+            "ok": ok,
+            "contract": {
+                "ok": package.semantic.contract_violation_count == 0,
+                "violation_count": package.semantic.contract_violation_count,
+                "violations": &package.semantic.contract_violations
+            },
+            "snapshot_validation": &package.semantic.snapshot_validation,
+            "replay_validation": &package.semantic.replay_validation
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        println!(
+            "contract validate package={} ok={} violations={} snapshot_ok={} replay_ok={}",
+            package.package_id,
+            ok,
+            package.semantic.contract_violation_count,
+            package.semantic.snapshot_validation.ok,
+            package.semantic.replay_validation.ok
+        );
+    }
+    if ok {
+        Ok(())
+    } else {
+        Err("contract validation failed".into())
+    }
 }
 
 fn print_plan(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
@@ -537,12 +610,23 @@ fn print_activation(path: &Path, blocked_only: bool) -> Result<(), Box<dyn Error
     Ok(())
 }
 
-fn inspect_object(kind: &str, path: &Path, filter: Option<&str>) -> Result<(), Box<dyn Error>> {
+fn inspect_object(
+    kind: &str,
+    path: &Path,
+    filter: Option<&str>,
+    json: bool,
+) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
+        if json {
+            return inspect_package_object_json(kind, &package, filter);
+        }
         return inspect_package_object(kind, &package, filter);
     }
     let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&bytes)?;
+    if json {
+        return inspect_manifest_object_json(kind, &manifest, filter);
+    }
     inspect_manifest_object(kind, &manifest, filter)
 }
 
@@ -932,6 +1016,219 @@ fn inspect_package_object(
     Ok(())
 }
 
+fn inspect_package_object_json(
+    kind: &str,
+    package: &MigrationPackageManifest,
+    filter: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    let (canonical_kind, total_count, items, summary) = match kind {
+        "artifact" => (
+            "artifact",
+            package.semantic.target_artifact_count,
+            package
+                .semantic
+                .target_artifacts
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({ "root_count": package.semantic.roots.target_artifact_roots.len() }),
+        ),
+        "code" => (
+            "code",
+            package.semantic.code_object_count,
+            package
+                .semantic
+                .code_objects
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({ "root_count": package.semantic.roots.code_object_roots.len() }),
+        ),
+        "store" => (
+            "store",
+            package.semantic.store_count,
+            package
+                .semantic
+                .roots
+                .store_roots
+                .iter()
+                .map(|root| serde_json::json!({ "kind": "store", "root": root }))
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "root_count": package.semantic.roots.store_roots.len() }),
+        ),
+        "activation" => (
+            "activation",
+            package.semantic.activation_record_count,
+            package
+                .semantic
+                .activation_records
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({ "root_count": package.semantic.roots.activation_record_roots.len() }),
+        ),
+        "cap" | "capability" => (
+            "capability",
+            package.semantic.capability_count,
+            package
+                .logical_capabilities
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({ "root_count": package.semantic.roots.capability_roots.len() }),
+        ),
+        "wait" => (
+            "wait",
+            package.semantic.wait_token_count,
+            package
+                .semantic
+                .roots
+                .wait_roots
+                .iter()
+                .map(|root| serde_json::json!({ "kind": "wait", "root": root }))
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "root_count": package.semantic.roots.wait_roots.len() }),
+        ),
+        "trap" => (
+            "trap",
+            package.semantic.trap_record_count,
+            package
+                .semantic
+                .trap_records
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({ "root_count": package.semantic.roots.trap_roots.len() }),
+        ),
+        "hostcall" => (
+            "hostcall",
+            package.semantic.hostcall_trace_count,
+            package
+                .semantic
+                .hostcall_trace
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({ "root_count": package.semantic.roots.hostcall_trace_roots.len() }),
+        ),
+        "cleanup" => (
+            "cleanup",
+            package.semantic.cleanup_transaction_count,
+            package
+                .semantic
+                .cleanup_transactions
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({ "root_count": package.semantic.roots.cleanup_roots.len() }),
+        ),
+        "contract" => (
+            "contract",
+            package.semantic.contract_violation_count,
+            package
+                .semantic
+                .contract_violations
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({ "ok": package.semantic.contract_violation_count == 0 }),
+        ),
+        "memory-policy" => (
+            "memory-policy",
+            package.semantic.memory_policy_count,
+            package
+                .semantic
+                .memory_policies
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({ "root_count": package.semantic.roots.memory_policy_roots.len() }),
+        ),
+        "snapshot-validation" => (
+            "snapshot-validation",
+            package.semantic.snapshot_validation.violation_count,
+            package
+                .semantic
+                .snapshot_validation
+                .violations
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({
+                "validator": &package.semantic.snapshot_validation.validator,
+                "ok": package.semantic.snapshot_validation.ok,
+                "root_count": package.semantic.roots.snapshot_validation_roots.len()
+            }),
+        ),
+        "replay-validation" => (
+            "replay-validation",
+            package.semantic.replay_validation.violation_count,
+            package
+                .semantic
+                .replay_validation
+                .violations
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({
+                "validator": &package.semantic.replay_validation.validator,
+                "ok": package.semantic.replay_validation.ok,
+                "root_count": package.semantic.roots.replay_validation_roots.len()
+            }),
+        ),
+        "event" => (
+            "event",
+            package.semantic.roots.event_log_tail.len(),
+            package
+                .semantic
+                .roots
+                .event_log_tail
+                .iter()
+                .map(|event| serde_json::json!({ "kind": "event", "summary": event }))
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "cursor": package.semantic.event_log_cursor }),
+        ),
+        "migration" => (
+            "migration",
+            package.semantic.migration_object_count,
+            package
+                .semantic
+                .migration_objects
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({ "root_count": package.semantic.roots.migration_object_roots.len() }),
+        ),
+        "tombstone" => (
+            "tombstone",
+            package.semantic.tombstone_count,
+            package
+                .semantic
+                .tombstones
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            serde_json::json!({ "root_count": package.semantic.roots.tombstone_roots.len() }),
+        ),
+        _ => return Err(format!("unknown inspect kind `{kind}`").into()),
+    };
+    let items = filter_json_items(items, filter)?;
+    let value = serde_json::json!({
+        "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+        "command": "inspect",
+        "kind": canonical_kind,
+        "source": "semantic-package",
+        "package": package.package_id,
+        "total_count": total_count,
+        "count": items.len(),
+        "filter": filter,
+        "summary": summary,
+        "items": items
+    });
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
 fn inspect_manifest_object(
     kind: &str,
     manifest: &ArtifactBundleManifest,
@@ -965,6 +1262,88 @@ fn inspect_manifest_object(
         "capability" | "cap" => print_caps_from_manifest(manifest, filter),
         _ => Err(format!("manifest inspect supports artifact/capability, not `{kind}`").into()),
     }
+}
+
+fn inspect_manifest_object_json(
+    kind: &str,
+    manifest: &ArtifactBundleManifest,
+    filter: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    let plan = build_validated_artifact_plan(manifest)?;
+    let (canonical_kind, total_count, items, summary) = match kind {
+        "artifact" => (
+            "artifact",
+            plan.module_count(),
+            plan.modules
+                .iter()
+                .map(|module| {
+                    serde_json::json!({
+                        "package": &module.package,
+                        "artifact_name": &module.artifact_name,
+                        "role": &module.role,
+                        "fault_policy": &module.fault_policy,
+                        "cwasm_path": &module.cwasm_path,
+                        "cwasm_sha256": &module.cwasm_sha256,
+                        "abi_fingerprint": &module.abi_fingerprint,
+                        "manifest_binding_hash": &module.manifest_binding_hash,
+                        "capability_count": module.capabilities.len(),
+                        "dependency_count": module.service_dependencies.len(),
+                        "resource_limits": {
+                            "max_memory_pages": module.resource_limits.max_memory_pages,
+                            "max_table_elements": module.resource_limits.max_table_elements,
+                            "max_hostcalls_per_activation": module.resource_limits.max_hostcalls_per_activation
+                        }
+                    })
+                })
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "artifact_profile": &plan.artifact_profile,
+                "runtime_mode": &plan.runtime_mode,
+                "contract_version": &plan.contract_version,
+                "target_arch": &plan.target_arch
+            }),
+        ),
+        "cap" | "capability" => (
+            "capability",
+            plan.capability_count(),
+            plan.modules
+                .iter()
+                .flat_map(|module| {
+                    module.capabilities.iter().map(move |capability| {
+                        serde_json::json!({
+                            "subject": &module.package,
+                            "object": &capability.name,
+                            "class": CapabilityClass::from_object(&capability.name).as_str(),
+                            "rights": &capability.rights,
+                            "lifetime": &capability.lifetime,
+                            "source": "artifact-manifest",
+                            "owner_store": "planned-store"
+                        })
+                    })
+                })
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "artifact_profile": &plan.artifact_profile,
+                "runtime_mode": &plan.runtime_mode
+            }),
+        ),
+        _ => return Err(format!("manifest inspect supports artifact/capability, not `{kind}`").into()),
+    };
+    let items = filter_json_items(items, filter)?;
+    let value = serde_json::json!({
+        "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+        "command": "inspect",
+        "kind": canonical_kind,
+        "source": "artifact-manifest",
+        "package": manifest.artifact_profile,
+        "total_count": total_count,
+        "count": items.len(),
+        "filter": filter,
+        "summary": summary,
+        "items": items
+    });
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
 }
 
 fn print_caps_from_manifest(
@@ -1021,6 +1400,22 @@ fn print_boundary_validation(
     if report.violations.is_empty() {
         print_roots_filtered(label, roots, filter);
     }
+}
+
+fn filter_json_items(
+    items: Vec<serde_json::Value>,
+    filter: Option<&str>,
+) -> Result<Vec<serde_json::Value>, Box<dyn Error>> {
+    let Some(filter) = filter else {
+        return Ok(items);
+    };
+    let mut filtered = Vec::new();
+    for item in items {
+        if serde_json::to_string(&item)?.contains(filter) {
+            filtered.push(item);
+        }
+    }
+    Ok(filtered)
 }
 
 fn print_if_matches(line: &str, filter: Option<&str>) {
@@ -1171,6 +1566,10 @@ fn print_replay_json(
             "migration_objects": package.semantic.roots.migration_object_roots.len(),
             "tombstones": package.semantic.roots.tombstone_roots.len(),
             "contract_violations": package.semantic.roots.contract_violation_roots.len(),
+            "cleanup": package.semantic.roots.cleanup_roots.len(),
+            "memory_policies": package.semantic.roots.memory_policy_roots.len(),
+            "snapshot_validation": package.semantic.roots.snapshot_validation_roots.len(),
+            "replay_validation": package.semantic.roots.replay_validation_roots.len(),
             "event_tail": package.semantic.roots.event_log_tail.len(),
             "boundary_roots": &package.semantic.roots.boundary_roots,
             "artifact_verification_roots": &package.semantic.roots.artifact_verification_roots,
@@ -1183,7 +1582,11 @@ fn print_replay_json(
             "hostcall_trace_roots": &package.semantic.roots.hostcall_trace_roots,
             "migration_object_roots": &package.semantic.roots.migration_object_roots,
             "tombstone_roots": &package.semantic.roots.tombstone_roots,
-            "contract_violation_roots": &package.semantic.roots.contract_violation_roots
+            "contract_violation_roots": &package.semantic.roots.contract_violation_roots,
+            "cleanup_roots": &package.semantic.roots.cleanup_roots,
+            "memory_policy_roots": &package.semantic.roots.memory_policy_roots,
+            "snapshot_validation_roots": &package.semantic.roots.snapshot_validation_roots,
+            "replay_validation_roots": &package.semantic.roots.replay_validation_roots
         }
     });
     println!("{}", serde_json::to_string_pretty(&value)?);
