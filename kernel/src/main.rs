@@ -1,7 +1,8 @@
-#![feature(alloc_error_handler)]
+#![cfg_attr(target_os = "none", feature(alloc_error_handler))]
 #![feature(abi_x86_interrupt)]
-#![no_std]
-#![no_main]
+#![cfg_attr(target_os = "none", no_std)]
+#![cfg_attr(target_os = "none", no_main)]
+#![cfg_attr(not(target_os = "none"), allow(dead_code, unused_imports))]
 
 extern crate alloc;
 
@@ -15,28 +16,39 @@ mod substrate;
 mod supervisor;
 mod user_mode;
 
-use core::alloc::Layout;
-use core::panic::PanicInfo;
-
+#[cfg(target_os = "none")]
 use bootloader_api::config::{BootloaderConfig, Mapping};
+#[cfg(target_os = "none")]
 use bootloader_api::{BootInfo, entry_point};
+#[cfg(target_os = "none")]
+use core::alloc::Layout;
+#[cfg(target_os = "none")]
+use core::panic::PanicInfo;
+#[cfg(target_os = "none")]
 use linked_list_allocator::LockedHeap;
+#[cfg(target_os = "none")]
 use x86_64::instructions::hlt;
 
+#[cfg(target_os = "none")]
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
+#[cfg(target_os = "none")]
 const HEAP_SIZE: usize = 32 * 1024 * 1024;
+#[cfg(target_os = "none")]
 static mut HEAP_SPACE: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
 
+#[cfg(target_os = "none")]
 const BOOTLOADER_CONFIG: BootloaderConfig = {
     let mut config = BootloaderConfig::new_default();
     config.mappings.physical_memory = Some(Mapping::Dynamic);
     config
 };
 
+#[cfg(target_os = "none")]
 entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
 
+#[cfg(target_os = "none")]
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     crate::ktrace!("kernel_main entered");
     serial::init();
@@ -67,6 +79,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     hlt_loop();
 }
 
+#[cfg(not(target_os = "none"))]
+fn main() {}
+
+#[cfg(target_os = "none")]
 fn init_heap() {
     unsafe {
         ALLOCATOR
@@ -75,12 +91,14 @@ fn init_heap() {
     }
 }
 
+#[cfg(target_os = "none")]
 fn hlt_loop() -> ! {
     loop {
         hlt();
     }
 }
 
+#[cfg(target_os = "none")]
 #[panic_handler]
 fn panic(info: &PanicInfo<'_>) -> ! {
     crate::kerror!("panic: {}", info);
@@ -89,6 +107,7 @@ fn panic(info: &PanicInfo<'_>) -> ! {
     hlt_loop()
 }
 
+#[cfg(target_os = "none")]
 #[alloc_error_handler]
 fn alloc_error(layout: Layout) -> ! {
     crate::kerror!(

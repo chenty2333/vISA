@@ -1,5 +1,9 @@
 #![no_std]
 
+#[cfg(not(target_arch = "wasm32"))]
+extern crate std;
+
+#[cfg(target_arch = "wasm32")]
 use core::panic::PanicInfo;
 
 use vmos_abi::ERR_EINVAL;
