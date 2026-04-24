@@ -1,13 +1,12 @@
 use vmos_abi::{ERR_EAGAIN, ERR_EINVAL, ERR_EIO};
 
+pub use crate::net_contract::{DEMO_CLIENT_PORT, DEMO_SERVER_PORT, PROTO_DEMO_TCP};
+
 pub const FRAME_HEADER_LEN: usize = 20;
 pub const PACKET_PAYLOAD_CAPACITY: usize = 512;
 pub const PACKET_FRAME_CAPACITY: usize = FRAME_HEADER_LEN + PACKET_PAYLOAD_CAPACITY;
 pub const PACKET_RX_QUEUE_DEPTH: usize = 4;
 
-pub const PROTO_DEMO_TCP: u16 = 1;
-pub const DEMO_CLIENT_PORT: u16 = 40_000;
-pub const DEMO_SERVER_PORT: u16 = 80;
 pub const PACKET_FLAG_ACK: u16 = 0x01;
 pub const PACKET_FLAG_PAYLOAD: u16 = 0x02;
 

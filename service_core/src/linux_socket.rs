@@ -1,3 +1,4 @@
+use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
 use vmos_abi::{ERR_EBADF, ERR_EIO, ERR_EOPNOTSUPP};
 
 pub const MAX_SOCKETS: usize = 16;
@@ -45,6 +46,10 @@ impl LinuxSocketState {
         protocol: u32,
         ready_key: u64,
     ) -> Result<(), i32> {
+        if !validate_linux_socket_contract(domain, ty, protocol) {
+            return Err(ERR_EOPNOTSUPP);
+        }
+        let protocol = canonical_socket_protocol(protocol) as u32;
         for socket in &mut self.sockets {
             if !socket.active {
                 *socket = LinuxSocket {

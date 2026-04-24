@@ -8,6 +8,7 @@ use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
 
 use service_core::linux_socket::LinuxSocketState;
+use service_core::net_contract::NETWORK_CONTRACT_ABI_VERSION;
 
 const REQUEST_CAPACITY: usize = 512;
 const RESPONSE_CAPACITY: usize = 512;
@@ -34,6 +35,11 @@ pub extern "C" fn response_ptr() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn response_capacity() -> u32 {
     RESPONSE_CAPACITY as u32
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn network_contract_version() -> u32 {
+    NETWORK_CONTRACT_ABI_VERSION
 }
 
 #[unsafe(no_mangle)]

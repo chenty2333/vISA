@@ -19,6 +19,7 @@ pub type SnapshotBarrierId = u64;
 pub type StoreId = u64;
 pub type TransactionId = u64;
 pub type PlanId = u64;
+pub type AuthorityId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResourceHandle {
@@ -140,6 +141,7 @@ pub enum ResourceKind {
     PciDevice,
     AcpiTable,
     VirtioQueue,
+    DmwWindow,
     GuestMemory,
     WindowLease,
     ServiceStore,
@@ -164,9 +166,62 @@ impl ResourceKind {
             Self::PciDevice => "pci-device",
             Self::AcpiTable => "acpi-table",
             Self::VirtioQueue => "virtio-queue",
+            Self::DmwWindow => "dmw-window",
             Self::GuestMemory => "guest-memory",
             Self::WindowLease => "window-lease",
             Self::ServiceStore => "service-store",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthorityKind {
+    DmwWindow,
+    MmioRegion,
+    DmaPool,
+    DmaBuffer,
+    IrqLine,
+    VirtioQueue,
+}
+
+impl AuthorityKind {
+    pub const fn from_resource_kind(kind: ResourceKind) -> Option<Self> {
+        match kind {
+            ResourceKind::DmwWindow => Some(Self::DmwWindow),
+            ResourceKind::MmioRegion => Some(Self::MmioRegion),
+            ResourceKind::DmaPool => Some(Self::DmaPool),
+            ResourceKind::DmaBuffer => Some(Self::DmaBuffer),
+            ResourceKind::IrqLine => Some(Self::IrqLine),
+            ResourceKind::VirtioQueue => Some(Self::VirtioQueue),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DmwWindow => "dmw-window",
+            Self::MmioRegion => "mmio-region",
+            Self::DmaPool => "dma-pool",
+            Self::DmaBuffer => "dma-buffer",
+            Self::IrqLine => "irq-line",
+            Self::VirtioQueue => "virtio-queue",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthorityState {
+    Bound,
+    Released,
+    Revoked,
+}
+
+impl AuthorityState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bound => "bound",
+            Self::Released => "released",
+            Self::Revoked => "revoked",
         }
     }
 }
@@ -638,6 +693,19 @@ pub struct ResourceRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorityBindingRecord {
+    pub id: AuthorityId,
+    pub resource: ResourceId,
+    pub kind: AuthorityKind,
+    pub subject: String,
+    pub object: String,
+    pub operations: OperationSet,
+    pub lifetime: String,
+    pub generation: Generation,
+    pub state: AuthorityState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WaitRecord {
     pub id: WaitId,
     pub owner_task: TaskId,
@@ -763,6 +831,26 @@ pub enum EventKind {
         expected: Generation,
         actual: Option<Generation>,
         reason: GenerationCheckError,
+    },
+    AuthorityBound {
+        authority: AuthorityId,
+        resource: ResourceId,
+        kind: AuthorityKind,
+        subject: String,
+        object: String,
+        generation: Generation,
+    },
+    AuthorityReleased {
+        authority: AuthorityId,
+        resource: ResourceId,
+        generation: Generation,
+        reason: String,
+    },
+    AuthorityRevoked {
+        authority: AuthorityId,
+        resource: ResourceId,
+        generation: Generation,
+        reason: String,
     },
     WaitCreated {
         wait: WaitId,
@@ -999,6 +1087,33 @@ impl EventKind {
                     reason.as_str()
                 ),
             },
+            Self::AuthorityBound {
+                authority,
+                resource,
+                kind,
+                subject,
+                object,
+                generation,
+            } => format!(
+                "AuthorityBound authority={authority} resource={resource} kind={} subject={subject} object={object} generation={generation}",
+                kind.as_str()
+            ),
+            Self::AuthorityReleased {
+                authority,
+                resource,
+                generation,
+                reason,
+            } => format!(
+                "AuthorityReleased authority={authority} resource={resource} generation={generation} reason={reason}"
+            ),
+            Self::AuthorityRevoked {
+                authority,
+                resource,
+                generation,
+                reason,
+            } => format!(
+                "AuthorityRevoked authority={authority} resource={resource} generation={generation} reason={reason}"
+            ),
             Self::WaitCreated {
                 wait,
                 task,
@@ -1352,6 +1467,7 @@ impl Default for EventLog {
 pub struct SemanticGraph {
     tasks: Vec<TaskRecord>,
     resources: Vec<ResourceRecord>,
+    authority_bindings: Vec<AuthorityBindingRecord>,
     waits: Vec<WaitRecord>,
     fault_domains: Vec<FaultDomainRecord>,
     stores: Vec<StoreRecord>,
@@ -1360,6 +1476,7 @@ pub struct SemanticGraph {
     capabilities: CapabilityLedger,
     event_log: EventLog,
     next_resource_id: ResourceId,
+    next_authority_id: AuthorityId,
     next_fault_domain_id: FaultDomainId,
     next_store_id: StoreId,
     next_transaction_id: TransactionId,
@@ -1371,6 +1488,7 @@ impl SemanticGraph {
         Self {
             tasks: Vec::new(),
             resources: Vec::new(),
+            authority_bindings: Vec::new(),
             waits: Vec::new(),
             fault_domains: Vec::new(),
             stores: Vec::new(),
@@ -1379,6 +1497,7 @@ impl SemanticGraph {
             capabilities: CapabilityLedger::new(),
             event_log: EventLog::new(),
             next_resource_id: 1,
+            next_authority_id: 1,
             next_fault_domain_id: 1,
             next_store_id: 1,
             next_transaction_id: 1,
@@ -1505,7 +1624,14 @@ impl SemanticGraph {
             .collect::<Vec<_>>();
         let count = resources.len();
         for resource in resources {
-            self.mark_resource_dead(resource);
+            self.revoke_authority_for_resource(resource, "owner store dropped");
+            if self
+                .resources
+                .iter()
+                .any(|entry| entry.id == resource && entry.live)
+            {
+                self.mark_resource_dead(resource);
+            }
         }
         count
     }
@@ -1564,6 +1690,129 @@ impl SemanticGraph {
                 Err(reason)
             }
         }
+    }
+
+    pub fn bind_authority_resource(
+        &mut self,
+        resource: ResourceId,
+        subject: &str,
+        object: &str,
+        operations: &[&str],
+        lifetime: &str,
+    ) -> Option<AuthorityId> {
+        let kind = {
+            let resource = self
+                .resources
+                .iter()
+                .find(|candidate| candidate.id == resource && candidate.live)?;
+            AuthorityKind::from_resource_kind(resource.kind)?
+        };
+        let id = self.next_authority_id;
+        self.next_authority_id += 1;
+        self.authority_bindings.push(AuthorityBindingRecord {
+            id,
+            resource,
+            kind,
+            subject: subject.to_string(),
+            object: object.to_string(),
+            operations: OperationSet::from_static(operations),
+            lifetime: lifetime.to_string(),
+            generation: 1,
+            state: AuthorityState::Bound,
+        });
+        self.grant_capability(subject, object, operations, lifetime);
+        self.event_log.push(
+            "authority",
+            EventKind::AuthorityBound {
+                authority: id,
+                resource,
+                kind,
+                subject: subject.to_string(),
+                object: object.to_string(),
+                generation: 1,
+            },
+        );
+        Some(id)
+    }
+
+    pub fn release_authority_binding(&mut self, id: AuthorityId, reason: &str) -> bool {
+        let Some(index) = self
+            .authority_bindings
+            .iter()
+            .position(|authority| authority.id == id)
+        else {
+            return false;
+        };
+        if self.authority_bindings[index].state != AuthorityState::Bound {
+            return false;
+        }
+        self.authority_bindings[index].state = AuthorityState::Released;
+        self.authority_bindings[index].generation += 1;
+        let resource = self.authority_bindings[index].resource;
+        let generation = self.authority_bindings[index].generation;
+        let subject = self.authority_bindings[index].subject.clone();
+        let object = self.authority_bindings[index].object.clone();
+        self.capabilities
+            .revoke_by_subject_object(&subject, &object);
+        self.event_log.push(
+            "authority",
+            EventKind::AuthorityReleased {
+                authority: id,
+                resource,
+                generation,
+                reason: reason.to_string(),
+            },
+        );
+        self.close_resource(resource);
+        true
+    }
+
+    pub fn revoke_authority_for_resource(&mut self, resource: ResourceId, reason: &str) -> usize {
+        let authorities = self
+            .authority_bindings
+            .iter()
+            .filter(|authority| {
+                authority.resource == resource && authority.state == AuthorityState::Bound
+            })
+            .map(|authority| authority.id)
+            .collect::<Vec<_>>();
+        let count = authorities.len();
+        for authority in authorities {
+            self.revoke_authority_binding(authority, reason);
+        }
+        count
+    }
+
+    pub fn revoke_authority_binding(&mut self, id: AuthorityId, reason: &str) -> bool {
+        let Some(index) = self
+            .authority_bindings
+            .iter()
+            .position(|authority| authority.id == id)
+        else {
+            return false;
+        };
+        if self.authority_bindings[index].state != AuthorityState::Bound {
+            return false;
+        }
+        self.authority_bindings[index].state = AuthorityState::Revoked;
+        self.authority_bindings[index].generation += 1;
+        let resource = self.authority_bindings[index].resource;
+        let generation = self.authority_bindings[index].generation;
+        let subject = self.authority_bindings[index].subject.clone();
+        let object = self.authority_bindings[index].object.clone();
+        self.capabilities
+            .revoke_by_subject_object(&subject, &object);
+        self.event_log.push(
+            "authority",
+            EventKind::AuthorityRevoked {
+                authority: id,
+                resource,
+                generation,
+                reason: reason.to_string(),
+            },
+        );
+        self.mark_resource_dead(resource);
+        true
     }
 
     pub fn record_window_lease_created(
@@ -2370,6 +2619,7 @@ impl SemanticGraph {
                 },
                 tasks: self.tasks.clone(),
                 resources: self.resources.clone(),
+                authority_bindings: self.authority_bindings.clone(),
                 waits: self.waits.clone(),
                 fault_domains: self.fault_domains.clone(),
                 stores: self.stores.clone(),
@@ -2444,8 +2694,23 @@ impl SemanticGraph {
             .count()
     }
 
+    pub fn authority_count(&self) -> usize {
+        self.authority_bindings.len()
+    }
+
+    pub fn active_authority_count(&self) -> usize {
+        self.authority_bindings
+            .iter()
+            .filter(|authority| authority.state == AuthorityState::Bound)
+            .count()
+    }
+
     pub fn capabilities(&self) -> &CapabilityLedger {
         &self.capabilities
+    }
+
+    pub fn authority_bindings(&self) -> &[AuthorityBindingRecord] {
+        &self.authority_bindings
     }
 
     pub fn event_log(&self) -> &EventLog {
@@ -2479,6 +2744,7 @@ pub struct ArtifactProfile {
     pub memory64: bool,
     pub multi_memory: bool,
     pub dmw_layout: String,
+    pub network_contract_version: String,
     pub compiler_engine: String,
     pub compiler_execution_mode: String,
     pub artifact_format: String,
@@ -2487,13 +2753,14 @@ pub struct ArtifactProfile {
 impl ArtifactProfile {
     pub fn summary(&self) -> String {
         format!(
-            "artifact_profile={} target_arch={} machine_abi={} supervisor_abi={} wasm_profile={} dmw_layout={} engine={} mode={} format={}",
+            "artifact_profile={} target_arch={} machine_abi={} supervisor_abi={} wasm_profile={} dmw_layout={} network={} engine={} mode={} format={}",
             self.artifact_profile,
             self.target_arch,
             self.machine_abi_version,
             self.supervisor_abi_version,
             self.wasm_feature_profile,
             self.dmw_layout,
+            self.network_contract_version,
             self.compiler_engine,
             self.compiler_execution_mode,
             self.artifact_format
@@ -2555,6 +2822,7 @@ pub struct SemanticSnapshot {
     pub barrier: SnapshotBarrierSnapshot,
     pub tasks: Vec<TaskRecord>,
     pub resources: Vec<ResourceRecord>,
+    pub authority_bindings: Vec<AuthorityBindingRecord>,
     pub waits: Vec<WaitRecord>,
     pub fault_domains: Vec<FaultDomainRecord>,
     pub stores: Vec<StoreRecord>,
@@ -2618,9 +2886,10 @@ impl MigrationPackage {
             self.substrate_boundary.background_copy_pages
         ));
         lines.push(format!(
-            "semantic roots: tasks={} resources={} waits={} capabilities={} fault_domains={} stores={} transactions={} fastpath_plans={}",
+            "semantic roots: tasks={} resources={} authorities={} waits={} capabilities={} fault_domains={} stores={} transactions={} fastpath_plans={}",
             self.semantic.tasks.len(),
             self.semantic.resources.len(),
+            self.semantic.authority_bindings.len(),
             self.semantic.waits.len(),
             self.semantic.capabilities.len(),
             self.semantic.fault_domains.len(),
@@ -2862,6 +3131,51 @@ mod tests {
     }
 
     #[test]
+    fn authority_bindings_drive_resource_and_capability_lifecycle() {
+        let mut graph = SemanticGraph::new();
+        let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");
+        let authority = graph
+            .bind_authority_resource(
+                mmio,
+                "driver_virtio_net",
+                "mmio.virtio-net0",
+                &["read", "write"],
+                "store",
+            )
+            .expect("authority binding");
+
+        assert_eq!(graph.authority_count(), 1);
+        assert_eq!(graph.active_authority_count(), 1);
+        assert!(
+            graph
+                .check_capability("driver_virtio_net", "mmio.virtio-net0", "write")
+                .is_ok()
+        );
+
+        assert!(graph.release_authority_binding(authority, "driver micro-reboot"));
+        assert_eq!(graph.active_authority_count(), 0);
+        assert_eq!(
+            graph.check_capability("driver_virtio_net", "mmio.virtio-net0", "write"),
+            Err(CapabilityDenyReason::Revoked)
+        );
+        assert_eq!(
+            graph.validate_resource_handle(ResourceHandle::new(mmio, 1)),
+            Err(GenerationCheckError::GenerationMismatch {
+                expected: 1,
+                actual: Some(2),
+            })
+        );
+        assert!(graph.event_log_tail(8).iter().any(|event| matches!(
+            event.kind,
+            EventKind::AuthorityReleased {
+                authority: recorded,
+                resource: recorded_resource,
+                ..
+            } if recorded == authority && recorded_resource == mmio
+        )));
+    }
+
+    #[test]
     fn migration_package_rejects_active_dmw_leases() {
         let mut graph = SemanticGraph::new();
         graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
@@ -2940,6 +3254,7 @@ mod tests {
             memory64: false,
             multi_memory: false,
             dmw_layout: "dmw".to_string(),
+            network_contract_version: "network".to_string(),
             compiler_engine: "wasmtime".to_string(),
             compiler_execution_mode: "precompiled-core-module".to_string(),
             artifact_format: "cwasm".to_string(),

@@ -8,6 +8,10 @@ use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
 
 use service_core::net::{NetCoreState, QUEUE_CAPACITY};
+use service_core::net_contract::{
+    NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
+    VIRTIO_NET0_TX_QUEUE_DEPTH,
+};
 use service_core::packet::PACKET_FRAME_CAPACITY;
 use vmos_abi::ERR_EIO;
 
@@ -36,6 +40,26 @@ pub extern "C" fn response_ptr() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn response_capacity() -> u32 {
     RESPONSE_CAPACITY as u32
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn network_contract_version() -> u32 {
+    NETWORK_CONTRACT_ABI_VERSION
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn packet_mtu() -> u32 {
+    VIRTIO_NET0_MTU
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn packet_rx_queue_depth() -> u32 {
+    VIRTIO_NET0_RX_QUEUE_DEPTH
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn packet_tx_queue_depth() -> u32 {
+    VIRTIO_NET0_TX_QUEUE_DEPTH
 }
 
 #[unsafe(no_mangle)]

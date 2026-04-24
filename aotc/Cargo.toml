@@ -11,6 +11,7 @@ path = "src/main.rs"
 artifact_manifest.workspace = true
 hex.workspace = true
 serde_json.workspace = true
+service_core.workspace = true
 sha2.workspace = true
 supervisor_catalog.workspace = true
 wasmtime = { workspace = true, features = ["runtime", "cranelift"] }

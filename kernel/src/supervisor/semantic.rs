@@ -37,7 +37,9 @@ pub(super) fn bootstrap_graph() -> SemanticGraph {
             );
         }
     }
-    graph.grant_capability(
+    let dmw_window = graph.register_resource(ResourceKind::DmwWindow, None, "dmw:window-plane");
+    graph.bind_authority_resource(
+        dmw_window,
         "linux_elf_frontend",
         "dmw.window",
         &["acquire"],
@@ -52,6 +54,12 @@ pub(super) fn bootstrap_graph() -> SemanticGraph {
     graph.grant_capability(
         "fault_manager",
         "fault-domain.procfs_service",
+        &["restart"],
+        "fault-recovery",
+    );
+    graph.grant_capability(
+        "fault_manager",
+        "fault-domain.driver_virtio_net",
         &["restart"],
         "fault-recovery",
     );
@@ -82,9 +90,11 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn semantic_debug_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
         lines.push(format!(
-            "semantic graph: tasks={} resources={} waits={} capabilities={} fault_domains={} events={}",
+            "semantic graph: tasks={} resources={} authority={}/{} waits={} capabilities={} fault_domains={} events={}",
             self.semantic.task_count(),
             self.semantic.resource_count(),
+            self.semantic.active_authority_count(),
+            self.semantic.authority_count(),
             self.semantic.wait_count(),
             self.semantic.capability_count(),
             self.semantic.fault_domain_count(),
@@ -479,6 +489,7 @@ fn artifact_profile() -> ArtifactProfile {
         memory64: false,
         multi_memory: false,
         dmw_layout: "logical-activation-leases-v0".to_string(),
+        network_contract_version: service_core::net_contract::NETWORK_CONTRACT_VERSION.to_string(),
         compiler_engine: "wasmtime".to_string(),
         compiler_execution_mode: "precompiled-core-module".to_string(),
         artifact_format: "cwasm".to_string(),

@@ -10,3 +10,5 @@ path = "src/main.rs"
 [dependencies]
 artifact_manifest.workspace = true
 serde_json.workspace = true
+service_core.workspace = true
+supervisor_catalog.workspace = true

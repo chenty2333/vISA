@@ -4,9 +4,21 @@ use serde::{Deserialize, Serialize};
 pub struct ArtifactBundleManifest {
     pub schema_version: u32,
     pub artifact_profile: String,
+    #[serde(default)]
+    pub contract: SupervisorContractManifest,
     pub target: TargetManifest,
     pub compiler: CompilerManifest,
     pub modules: Vec<ModuleArtifactManifest>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SupervisorContractManifest {
+    pub contract_version: String,
+    pub supervisor_world: String,
+    pub catalog_fingerprint: String,
+    pub package_set_fingerprint: String,
+    pub module_count: usize,
+    pub required_packages: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -22,6 +34,8 @@ pub struct TargetManifest {
     pub linux_abi_profile: String,
     #[serde(default)]
     pub artifact_signature_profile: String,
+    #[serde(default)]
+    pub network_contract_version: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -97,6 +111,8 @@ pub struct SignatureManifest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MigrationPackageManifest {
     pub schema_version: u32,
+    #[serde(default)]
+    pub package_format: String,
     pub package_id: String,
     pub source: MigrationHostManifest,
     pub target: MigrationTargetManifest,
@@ -128,6 +144,8 @@ pub struct RequiredArtifactProfileManifest {
     pub memory64: bool,
     pub multi_memory: bool,
     pub dmw_layout: String,
+    #[serde(default)]
+    pub network_contract_version: String,
     pub compiler_engine: String,
     pub compiler_execution_mode: String,
     pub artifact_format: String,
@@ -148,9 +166,15 @@ pub struct SemanticSnapshotManifest {
     pub barrier_id: u64,
     pub event_log_cursor: u64,
     #[serde(default)]
+    pub roots: SemanticRootSetManifest,
+    #[serde(default)]
     pub pending_wait_count: usize,
     pub task_count: usize,
     pub resource_count: usize,
+    #[serde(default)]
+    pub authority_count: usize,
+    #[serde(default)]
+    pub active_authority_count: usize,
     pub wait_token_count: usize,
     pub capability_count: usize,
     pub fault_domain_count: usize,
@@ -168,6 +192,26 @@ pub struct SemanticSnapshotManifest {
     pub network_socket_count: u32,
     #[serde(default)]
     pub network_rx_queue_bytes: u32,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SemanticRootSetManifest {
+    #[serde(default)]
+    pub task_roots: Vec<String>,
+    #[serde(default)]
+    pub resource_roots: Vec<String>,
+    #[serde(default)]
+    pub authority_roots: Vec<String>,
+    #[serde(default)]
+    pub wait_roots: Vec<String>,
+    #[serde(default)]
+    pub store_roots: Vec<String>,
+    #[serde(default)]
+    pub capability_roots: Vec<String>,
+    #[serde(default)]
+    pub fast_path_roots: Vec<String>,
+    #[serde(default)]
+    pub event_log_tail: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

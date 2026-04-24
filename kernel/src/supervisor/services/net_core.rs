@@ -2,6 +2,10 @@ use alloc::vec::Vec;
 
 use super::super::engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok};
 use super::super::types::ServiceCallError;
+use service_core::net_contract::{
+    NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
+    VIRTIO_NET0_TX_QUEUE_DEPTH,
+};
 
 const NET_CORE_WASM: &[u8] = include_bytes!(env!("VMOS_NET_CORE_WASM"));
 
@@ -37,8 +41,22 @@ impl NetCoreService {
         let socket_count = io.bind("socket_count", "missing net_core socket_count export")?;
         let queued_rx_bytes =
             io.bind("queued_rx_bytes", "missing net_core queued_rx_bytes export")?;
+        let network_contract_version: WasmFn<(), u32> = io.bind(
+            "network_contract_version",
+            "missing net_core network_contract_version export",
+        )?;
+        let packet_mtu: WasmFn<(), u32> =
+            io.bind("packet_mtu", "missing net_core packet_mtu export")?;
+        let packet_rx_queue_depth: WasmFn<(), u32> = io.bind(
+            "packet_rx_queue_depth",
+            "missing net_core packet_rx_queue_depth export",
+        )?;
+        let packet_tx_queue_depth: WasmFn<(), u32> = io.bind(
+            "packet_tx_queue_depth",
+            "missing net_core packet_tx_queue_depth export",
+        )?;
 
-        Ok(Self {
+        let mut service = Self {
             io,
             create_socket,
             close_socket,
@@ -50,7 +68,15 @@ impl NetCoreService {
             deliver_packet_frame,
             socket_count,
             queued_rx_bytes,
-        })
+        };
+        validate_network_contract(
+            &mut service.io,
+            &network_contract_version,
+            &packet_mtu,
+            &packet_rx_queue_depth,
+            &packet_tx_queue_depth,
+        )?;
+        Ok(service)
     }
 
     pub(crate) fn create_socket(
@@ -173,4 +199,25 @@ impl NetCoreService {
             .call(&self.queued_rx_bytes, (), "net_core trapped")
             .map_err(ServiceCallError::Trap)
     }
+}
+
+fn validate_network_contract(
+    io: &mut BufferedModule,
+    version_fn: &WasmFn<(), u32>,
+    mtu_fn: &WasmFn<(), u32>,
+    rx_depth_fn: &WasmFn<(), u32>,
+    tx_depth_fn: &WasmFn<(), u32>,
+) -> Result<(), &'static str> {
+    let version = io.call(version_fn, (), "net_core network contract version trapped")?;
+    let mtu = io.call(mtu_fn, (), "net_core packet_mtu trapped")?;
+    let rx_depth = io.call(rx_depth_fn, (), "net_core rx depth trapped")?;
+    let tx_depth = io.call(tx_depth_fn, (), "net_core tx depth trapped")?;
+    if version != NETWORK_CONTRACT_ABI_VERSION
+        || mtu != VIRTIO_NET0_MTU
+        || rx_depth != VIRTIO_NET0_RX_QUEUE_DEPTH
+        || tx_depth != VIRTIO_NET0_TX_QUEUE_DEPTH
+    {
+        return Err("net_core network contract mismatch");
+    }
+    Ok(())
 }

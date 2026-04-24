@@ -2,7 +2,7 @@ use semantic_core::{FailureEffect, StoreId, StoreState, TransactionId};
 use vmos_abi::ERR_EIO;
 
 use super::runtime::PrototypeRuntime;
-use super::services::ProcfsService;
+use super::services::{DriverVirtioNetService, ProcfsService};
 use super::types::ServiceCallError;
 
 impl<'engine> PrototypeRuntime<'engine> {
@@ -78,12 +78,50 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         let _ = self.procfs.take();
         self.drop_store_instance(store);
-        self.procfs = Some(ProcfsService::new(self.procfs_engine).map_err(|_| {
+        self.procfs = Some(ProcfsService::new(self.engine).map_err(|_| {
             self.execute_failure_effect(FailureEffect::CompleteWithErrno(ERR_EIO));
             ServiceCallError::Errno(ERR_EIO)
         })?);
         self.rebind_store_instance(store)
             .map_err(ServiceCallError::Invalid)?;
+        self.set_store_state(store, StoreState::Running);
+        Ok(())
+    }
+
+    pub(crate) fn micro_reboot_net_driver(&mut self, detail: &str) -> Result<(), ServiceCallError> {
+        self.require_capability("fault_manager", "fault-domain.driver_virtio_net", "restart")
+            .map_err(|_| ServiceCallError::Errno(vmos_abi::ERR_EPERM))?;
+        let store = self
+            .store_id("driver_virtio_net")
+            .ok_or(ServiceCallError::Invalid(
+                "driver_virtio_net store was not registered",
+            ))?;
+        let domain = self.semantic.fault_domain_id("driver_virtio_net");
+        self.record_store_trap(store, semantic_core::TrapClass::DriverTrap, detail);
+        self.set_store_state(store, StoreState::Draining);
+        self.set_store_state(store, StoreState::Restarting);
+
+        if let Some(domain) = domain {
+            self.execute_failure_plan(&[
+                FailureEffect::RebootFaultDomain(domain),
+                FailureEffect::RetryTransparent,
+            ]);
+        } else {
+            self.execute_failure_effect(FailureEffect::RetryTransparent);
+        }
+
+        self.drop_store_instance(store);
+        self.net_driver = DriverVirtioNetService::new(self.engine).map_err(|_| {
+            self.execute_failure_effect(FailureEffect::CompleteWithErrno(ERR_EIO));
+            ServiceCallError::Errno(ERR_EIO)
+        })?;
+        self.rebind_store_instance(store)
+            .map_err(ServiceCallError::Invalid)?;
+        self.net
+            .rebind_driver_authority(&mut self.semantic)
+            .map_err(ServiceCallError::Invalid)?;
+        self.net_driver
+            .reset_sequence(crate::interrupts::tick_count())?;
         self.set_store_state(store, StoreState::Running);
         Ok(())
     }

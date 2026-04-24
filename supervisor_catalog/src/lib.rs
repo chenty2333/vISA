@@ -1,5 +1,14 @@
 #![no_std]
 
+pub const SUPERVISOR_CONTRACT_VERSION: &str = "vmos-supervisor-contract-v1";
+pub const SUPERVISOR_WORLD: &str = "wasm-supervisor-world-v1";
+pub const MACHINE_ABI_VERSION: &str = "vmos-machine-abi-v0";
+pub const SUPERVISOR_ABI_VERSION: &str = "vmos-supervisor-abi-v0";
+pub const WASM_FEATURE_PROFILE: &str = "wasm32-core-mvp-single-memory";
+pub const DMW_LAYOUT: &str = "logical-activation-leases-v0";
+pub const LINUX_ABI_PROFILE: &str = "linux-x86_64-demo-socket-v0";
+pub const ARTIFACT_SIGNATURE_PROFILE: &str = "prototype-self-signed-sha256";
+
 pub struct WasmModuleSpec {
     pub package: &'static str,
     pub artifact_name: &'static str,
@@ -139,6 +148,16 @@ const DRIVER_VIRTIO_NET_CAPABILITIES: &[CapabilitySpec] = &[
     CapabilitySpec {
         name: "irq.net0",
         rights: &["ack", "mask", "unmask"],
+        lifetime: "store",
+    },
+    CapabilitySpec {
+        name: "mmio.virtio-net0",
+        rights: &["read", "write"],
+        lifetime: "store",
+    },
+    CapabilitySpec {
+        name: "virtqueue.net0",
+        rights: &["read", "write", "kick"],
         lifetime: "store",
     },
 ];
@@ -301,6 +320,10 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
             "request_capacity",
             "response_ptr",
             "response_capacity",
+            "network_contract_version",
+            "packet_mtu",
+            "packet_rx_queue_depth",
+            "packet_tx_queue_depth",
             "reset_sequence",
             "submit_tx_frame",
             "poll_device",
@@ -321,6 +344,10 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
             "request_capacity",
             "response_ptr",
             "response_capacity",
+            "network_contract_version",
+            "packet_mtu",
+            "packet_rx_queue_depth",
+            "packet_tx_queue_depth",
             "create_socket",
             "close_socket",
             "ready_key",
@@ -345,6 +372,7 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
             "request_capacity",
             "response_ptr",
             "response_capacity",
+            "network_contract_version",
             "register_socket",
             "close_socket",
             "bind_socket",
@@ -457,4 +485,105 @@ pub fn find_wasm_module(package: &str) -> Option<&'static WasmModuleSpec> {
     SUPERVISOR_WASM_MODULES
         .iter()
         .find(|module| module.package == package)
+}
+
+pub fn module_dependencies(spec: &WasmModuleSpec) -> &'static [&'static str] {
+    match spec.package {
+        "net_core" => &["driver_virtio_net"],
+        "linux_socket_service" => &["net_core"],
+        "linux_syscall" => &[
+            "vfs_service",
+            "procfs_service",
+            "devfs_service",
+            "epoll_service",
+            "futex_service",
+            "linux_socket_service",
+        ],
+        "wasm_app" => &["console_service"],
+        _ => &[],
+    }
+}
+
+pub fn catalog_contract_fingerprint() -> u64 {
+    let mut hash = ContractHasher::new();
+    hash.write_str(SUPERVISOR_CONTRACT_VERSION);
+    hash.write_str(SUPERVISOR_WORLD);
+    hash.write_str(MACHINE_ABI_VERSION);
+    hash.write_str(SUPERVISOR_ABI_VERSION);
+    hash.write_str(WASM_FEATURE_PROFILE);
+    hash.write_str(DMW_LAYOUT);
+    hash.write_str(LINUX_ABI_PROFILE);
+    hash.write_str(ARTIFACT_SIGNATURE_PROFILE);
+    for module in SUPERVISOR_WASM_MODULES {
+        hash_module_contract(&mut hash, module);
+    }
+    hash.finish()
+}
+
+pub fn package_set_fingerprint() -> u64 {
+    let mut hash = ContractHasher::new();
+    hash.write_str(SUPERVISOR_CONTRACT_VERSION);
+    for module in SUPERVISOR_WASM_MODULES {
+        hash.write_str(module.package);
+    }
+    hash.finish()
+}
+
+pub fn module_contract_fingerprint(spec: &WasmModuleSpec) -> u64 {
+    let mut hash = ContractHasher::new();
+    hash_module_contract(&mut hash, spec);
+    hash.finish()
+}
+
+fn hash_module_contract(hash: &mut ContractHasher, module: &WasmModuleSpec) {
+    hash.write_str(module.package);
+    hash.write_str(module.artifact_name);
+    hash.write_str(module.role.as_str());
+    hash.write_str(module.fault_policy.as_str());
+    for export in module.expected_exports {
+        hash.write_str("export");
+        hash.write_str(export);
+    }
+    for dependency in module_dependencies(module) {
+        hash.write_str("dependency");
+        hash.write_str(dependency);
+    }
+    for capability in module.capabilities {
+        hash.write_str("capability");
+        hash.write_str(capability.name);
+        hash.write_str(capability.lifetime);
+        for right in capability.rights {
+            hash.write_str("right");
+            hash.write_str(right);
+        }
+    }
+}
+
+struct ContractHasher {
+    value: u64,
+}
+
+impl ContractHasher {
+    const fn new() -> Self {
+        Self {
+            value: 0xcbf29ce484222325,
+        }
+    }
+
+    fn write_str(&mut self, value: &str) {
+        for byte in value.as_bytes() {
+            self.value ^= *byte as u64;
+            self.value = self.value.wrapping_mul(0x100000001b3);
+        }
+        self.write_separator();
+    }
+
+    fn write_separator(&mut self) {
+        self.value ^= 0xff;
+        self.value = self.value.wrapping_mul(0x100000001b3);
+    }
+
+    const fn finish(self) -> u64 {
+        self.value
+    }
 }

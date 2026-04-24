@@ -6,10 +6,20 @@ use std::process::Command;
 
 use artifact_manifest::{
     ArtifactBundleManifest, CapabilityManifest, CompilerManifest, ExternManifest, ImportManifest,
-    ModuleArtifactManifest, ResourceLimitsManifest, SignatureManifest, TargetManifest,
+    ModuleArtifactManifest, ResourceLimitsManifest, SignatureManifest, SupervisorContractManifest,
+    TargetManifest,
+};
+use service_core::net_contract::{
+    NETWORK_CONTRACT_ABI_VERSION, NETWORK_CONTRACT_VERSION, VIRTIO_NET0_MTU,
+    VIRTIO_NET0_RX_QUEUE_DEPTH, VIRTIO_NET0_TX_QUEUE_DEPTH,
 };
 use sha2::{Digest, Sha256};
-use supervisor_catalog::{SUPERVISOR_WASM_MODULES, WasmModuleSpec};
+use supervisor_catalog::{
+    ARTIFACT_SIGNATURE_PROFILE, DMW_LAYOUT, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
+    SUPERVISOR_ABI_VERSION, SUPERVISOR_CONTRACT_VERSION, SUPERVISOR_WASM_MODULES, SUPERVISOR_WORLD,
+    WASM_FEATURE_PROFILE, WasmModuleSpec, catalog_contract_fingerprint, module_dependencies,
+    package_set_fingerprint,
+};
 use wasmtime::{Config, Engine, ExternType, Instance, Module, Precompiled, Store, Strategy};
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
@@ -246,16 +256,28 @@ fn compile_artifacts(
     let manifest = ArtifactBundleManifest {
         schema_version: 1,
         artifact_profile: HOST_ARTIFACT_PROFILE.to_owned(),
+        contract: SupervisorContractManifest {
+            contract_version: SUPERVISOR_CONTRACT_VERSION.to_owned(),
+            supervisor_world: SUPERVISOR_WORLD.to_owned(),
+            catalog_fingerprint: contract_hex(catalog_contract_fingerprint()),
+            package_set_fingerprint: contract_hex(package_set_fingerprint()),
+            module_count: SUPERVISOR_WASM_MODULES.len(),
+            required_packages: SUPERVISOR_WASM_MODULES
+                .iter()
+                .map(|module| module.package.to_owned())
+                .collect(),
+        },
         target: TargetManifest {
             arch: env::consts::ARCH.to_owned(),
-            machine_abi_version: "vmos-machine-abi-v0".to_owned(),
-            supervisor_abi_version: "vmos-supervisor-abi-v0".to_owned(),
-            wasm_feature_profile: "wasm32-core-mvp-single-memory".to_owned(),
+            machine_abi_version: MACHINE_ABI_VERSION.to_owned(),
+            supervisor_abi_version: SUPERVISOR_ABI_VERSION.to_owned(),
+            wasm_feature_profile: WASM_FEATURE_PROFILE.to_owned(),
             memory64: false,
             multi_memory: false,
-            dmw_layout: "logical-activation-leases-v0".to_owned(),
-            linux_abi_profile: "linux-x86_64-demo-socket-v0".to_owned(),
-            artifact_signature_profile: "prototype-self-signed-sha256".to_owned(),
+            dmw_layout: DMW_LAYOUT.to_owned(),
+            linux_abi_profile: LINUX_ABI_PROFILE.to_owned(),
+            artifact_signature_profile: ARTIFACT_SIGNATURE_PROFILE.to_owned(),
+            network_contract_version: NETWORK_CONTRACT_VERSION.to_owned(),
         },
         compiler: CompilerManifest {
             engine: "wasmtime".to_owned(),
@@ -278,6 +300,7 @@ fn compile_artifacts(
 fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {
     let engine = runtime_engine()?;
     let manifest = read_manifest(artifact_root)?;
+    verify_supervisor_contract(&manifest)?;
 
     for module in SUPERVISOR_WASM_MODULES {
         let Some(entry) = manifest
@@ -321,6 +344,37 @@ fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {
         "verified {} host-side artifacts",
         SUPERVISOR_WASM_MODULES.len()
     );
+    Ok(())
+}
+
+fn verify_supervisor_contract(manifest: &ArtifactBundleManifest) -> Result<(), Box<dyn Error>> {
+    let contract = &manifest.contract;
+    if contract.contract_version != SUPERVISOR_CONTRACT_VERSION {
+        return Err("supervisor contract version mismatch".into());
+    }
+    if contract.supervisor_world != SUPERVISOR_WORLD {
+        return Err("supervisor world mismatch".into());
+    }
+    if contract.catalog_fingerprint != contract_hex(catalog_contract_fingerprint()) {
+        return Err("supervisor catalog fingerprint mismatch".into());
+    }
+    if contract.package_set_fingerprint != contract_hex(package_set_fingerprint()) {
+        return Err("supervisor package set fingerprint mismatch".into());
+    }
+    if contract.module_count != SUPERVISOR_WASM_MODULES.len()
+        || manifest.modules.len() != SUPERVISOR_WASM_MODULES.len()
+        || contract.required_packages.len() != SUPERVISOR_WASM_MODULES.len()
+    {
+        return Err("supervisor module count mismatch".into());
+    }
+    for (index, module) in SUPERVISOR_WASM_MODULES.iter().enumerate() {
+        let Some(package) = contract.required_packages.get(index) else {
+            return Err("supervisor package order mismatch".into());
+        };
+        if package != module.package {
+            return Err("supervisor package order mismatch".into());
+        }
+    }
     Ok(())
 }
 
@@ -381,7 +435,7 @@ fn verify_manifest_entry(
     if entry.signature.manifest_binding_hash != expected_binding {
         return Err(format!("{} manifest binding hash mismatch", spec.package).into());
     }
-    if entry.signature.scheme != "prototype-self-signed-sha256"
+    if entry.signature.scheme != ARTIFACT_SIGNATURE_PROFILE
         || entry.signature.public_key_hint.is_empty()
         || entry.signature.signature.is_empty()
     {
@@ -422,6 +476,32 @@ fn run_smoke_checks(
             let _ = func.call(&mut *store, ())?;
         }
     }
+    if matches!(
+        spec.package,
+        "driver_virtio_net" | "net_core" | "linux_socket_service"
+    ) {
+        check_u32_export_eq(
+            instance,
+            store,
+            "network_contract_version",
+            NETWORK_CONTRACT_ABI_VERSION,
+        )?;
+    }
+    if matches!(spec.package, "driver_virtio_net" | "net_core") {
+        check_u32_export_eq(instance, store, "packet_mtu", VIRTIO_NET0_MTU)?;
+        check_u32_export_eq(
+            instance,
+            store,
+            "packet_rx_queue_depth",
+            VIRTIO_NET0_RX_QUEUE_DEPTH,
+        )?;
+        check_u32_export_eq(
+            instance,
+            store,
+            "packet_tx_queue_depth",
+            VIRTIO_NET0_TX_QUEUE_DEPTH,
+        )?;
+    }
 
     Ok(())
 }
@@ -436,6 +516,20 @@ fn check_u32_export(
         if value == 0 {
             return Err(format!("export `{export}` returned zero during host verification").into());
         }
+    }
+    Ok(())
+}
+
+fn check_u32_export_eq(
+    instance: &Instance,
+    store: &mut Store<()>,
+    export: &str,
+    expected: u32,
+) -> Result<(), Box<dyn Error>> {
+    let func = instance.get_typed_func::<(), u32>(&mut *store, export)?;
+    let value = func.call(&mut *store, ())?;
+    if value != expected {
+        return Err(format!("export `{export}` returned {value}, expected {expected}").into());
     }
     Ok(())
 }
@@ -470,6 +564,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hex::encode(hasher.finalize())
+}
+
+fn contract_hex(value: u64) -> String {
+    format!("{value:016x}")
 }
 
 fn manifest_binding_hash(
@@ -521,23 +619,6 @@ fn module_abi_fingerprint(spec: &WasmModuleSpec) -> String {
         }
     }
     hex::encode(hasher.finalize())
-}
-
-fn module_dependencies(spec: &WasmModuleSpec) -> &'static [&'static str] {
-    match spec.package {
-        "net_core" => &["driver_virtio_net"],
-        "linux_socket_service" => &["net_core"],
-        "linux_syscall" => &[
-            "vfs_service",
-            "procfs_service",
-            "devfs_service",
-            "epoll_service",
-            "futex_service",
-            "linux_socket_service",
-        ],
-        "wasm_app" => &["console_service"],
-        _ => &[],
-    }
 }
 
 fn extern_kind(ty: ExternType) -> &'static str {

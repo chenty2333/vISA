@@ -1,7 +1,8 @@
+use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
 use crate::packet::{
     DEMO_CLIENT_PORT, DEMO_SERVER_PORT, PROTO_DEMO_TCP, PacketFrameMeta, decode_frame, encode_frame,
 };
-use vmos_abi::{EPOLLIN, EPOLLOUT, ERR_EAGAIN, ERR_EBADF, ERR_EIO};
+use vmos_abi::{EPOLLIN, EPOLLOUT, ERR_EAGAIN, ERR_EBADF, ERR_EIO, ERR_EOPNOTSUPP};
 
 pub const MAX_SOCKETS: usize = 16;
 pub const QUEUE_CAPACITY: usize = 512;
@@ -59,8 +60,12 @@ impl NetCoreState {
     }
 
     pub fn create_socket(&mut self, domain: u32, ty: u32, protocol: u32) -> Result<u32, i32> {
+        if !validate_linux_socket_contract(domain, ty, protocol) {
+            return Err(ERR_EOPNOTSUPP);
+        }
         let socket_id = self.next_socket_id;
         self.next_socket_id = self.next_socket_id.saturating_add(1);
+        let protocol = canonical_socket_protocol(protocol) as u32;
         for socket in &mut self.sockets {
             if !socket.active {
                 *socket = Socket {

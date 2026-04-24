@@ -25,6 +25,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.run_futex_demo()?;
         self.run_epoll_demo()?;
         self.run_network_semantic_demo()?;
+        self.run_driver_micro_reboot_demo()?;
         self.run_procfs_recovery_demo()?;
         self.run_capability_enforcement_demo()?;
         self.run_generation_plane_demo()?;
@@ -438,6 +439,37 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         self.close_fd(socket_fd)?;
         self.close_fd(epfd)?;
+        Ok(())
+    }
+
+    fn run_driver_micro_reboot_demo(&mut self) -> Result<(), &'static str> {
+        serial_println!("== driver micro-reboot demo ==");
+        let old_mmio = self.net.mmio_region;
+        let old_generation = self
+            .capability_generation("driver_virtio_net", "mmio.virtio-net0")
+            .ok_or("driver mmio capability generation was missing")?;
+        self.micro_reboot_net_driver("injected virtio-net driver fault")
+            .map_err(|_| "driver micro-reboot failed")?;
+        if self.validate_resource_handle(old_mmio).is_ok() {
+            return Err("stale mmio resource survived driver micro-reboot");
+        }
+        if self
+            .require_capability_generation(
+                "driver_virtio_net",
+                "mmio.virtio-net0",
+                "write",
+                old_generation,
+            )
+            .is_ok()
+        {
+            return Err("stale driver mmio capability generation survived micro-reboot");
+        }
+        self.require_capability("driver_virtio_net", "mmio.virtio-net0", "write")
+            .map_err(|_| "driver mmio capability was not rebound")?;
+        if let Some(line) = self.store_lifecycle_line("driver_virtio_net") {
+            serial_println!("{}", line);
+        }
+        serial_println!("driver authority resources cleaned and rebound");
         Ok(())
     }
 

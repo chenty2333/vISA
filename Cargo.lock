@@ -30,6 +30,7 @@ dependencies = [
  "artifact_manifest",
  "hex",
  "serde_json",
+ "service_core",
  "sha2",
  "supervisor_catalog",
  "wasmtime",
@@ -745,6 +746,8 @@ version = "0.1.0"
 dependencies = [
  "artifact_manifest",
  "serde_json",
+ "service_core",
+ "supervisor_catalog",
 ]
 
 [[package]]
@@ -1041,6 +1044,7 @@ dependencies = [
  "hex",
  "semantic_core",
  "serde_json",
+ "service_core",
  "sha2",
  "supervisor_catalog",
  "wasmtime",

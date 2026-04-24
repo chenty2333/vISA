@@ -6,5 +6,6 @@ extern crate std;
 pub mod driver;
 pub mod linux_socket;
 pub mod net;
+pub mod net_contract;
 pub mod packet;
 pub mod replay;

@@ -2,6 +2,10 @@ use alloc::vec::Vec;
 
 use super::super::engine::{BufferedModule, SupervisorEngine, WasmFn};
 use super::super::types::ServiceCallError;
+use service_core::net_contract::{
+    NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
+    VIRTIO_NET0_TX_QUEUE_DEPTH,
+};
 use service_core::packet::decode_frame;
 
 const DRIVER_VIRTIO_NET_WASM: &[u8] = include_bytes!(env!("VMOS_DRIVER_VIRTIO_NET_WASM"));
@@ -55,15 +59,38 @@ impl DriverVirtioNetService {
             "dequeue_rx_frame",
             "missing driver_virtio_net dequeue_rx_frame export",
         )?;
+        let network_contract_version: WasmFn<(), u32> = io.bind(
+            "network_contract_version",
+            "missing driver_virtio_net network_contract_version export",
+        )?;
+        let packet_mtu: WasmFn<(), u32> =
+            io.bind("packet_mtu", "missing driver_virtio_net packet_mtu export")?;
+        let packet_rx_queue_depth: WasmFn<(), u32> = io.bind(
+            "packet_rx_queue_depth",
+            "missing driver_virtio_net packet_rx_queue_depth export",
+        )?;
+        let packet_tx_queue_depth: WasmFn<(), u32> = io.bind(
+            "packet_tx_queue_depth",
+            "missing driver_virtio_net packet_tx_queue_depth export",
+        )?;
 
-        Ok(Self {
+        let mut service = Self {
             io,
             reset_sequence,
             submit_tx_frame,
             poll_device,
             event_len,
             dequeue_rx_frame,
-        })
+        };
+        validate_network_contract(
+            &mut service.io,
+            &network_contract_version,
+            &packet_mtu,
+            &packet_rx_queue_depth,
+            &packet_tx_queue_depth,
+            "driver_virtio_net",
+        )?;
+        Ok(service)
     }
 
     pub(crate) fn reset_sequence(&mut self, now_ticks: u64) -> Result<(), ServiceCallError> {
@@ -146,4 +173,27 @@ impl DriverVirtioNetService {
             frame,
         })
     }
+}
+
+fn validate_network_contract(
+    io: &mut BufferedModule,
+    version_fn: &WasmFn<(), u32>,
+    mtu_fn: &WasmFn<(), u32>,
+    rx_depth_fn: &WasmFn<(), u32>,
+    tx_depth_fn: &WasmFn<(), u32>,
+    label: &'static str,
+) -> Result<(), &'static str> {
+    let version = io.call(version_fn, (), "network contract version trapped")?;
+    let mtu = io.call(mtu_fn, (), "network packet_mtu trapped")?;
+    let rx_depth = io.call(rx_depth_fn, (), "network rx depth trapped")?;
+    let tx_depth = io.call(tx_depth_fn, (), "network tx depth trapped")?;
+    if version != NETWORK_CONTRACT_ABI_VERSION
+        || mtu != VIRTIO_NET0_MTU
+        || rx_depth != VIRTIO_NET0_RX_QUEUE_DEPTH
+        || tx_depth != VIRTIO_NET0_TX_QUEUE_DEPTH
+    {
+        crate::kwarn!("{} exported an incompatible network contract", label);
+        return Err("network contract mismatch");
+    }
+    Ok(())
 }

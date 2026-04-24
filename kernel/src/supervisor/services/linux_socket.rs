@@ -1,5 +1,6 @@
 use super::super::engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok};
 use super::super::types::ServiceCallError;
+use service_core::net_contract::NETWORK_CONTRACT_ABI_VERSION;
 
 const LINUX_SOCKET_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_LINUX_SOCKET_SERVICE_WASM"));
 
@@ -46,8 +47,12 @@ impl LinuxSocketService {
         let getsockopt = io.bind("getsockopt", "missing linux_socket getsockopt export")?;
         let fcntl = io.bind("fcntl", "missing linux_socket fcntl export")?;
         let socket_count = io.bind("socket_count", "missing linux_socket socket_count export")?;
+        let network_contract_version: WasmFn<(), u32> = io.bind(
+            "network_contract_version",
+            "missing linux_socket network_contract_version export",
+        )?;
 
-        Ok(Self {
+        let mut service = Self {
             io,
             register_socket,
             close_socket,
@@ -61,7 +66,16 @@ impl LinuxSocketService {
             getsockopt,
             fcntl,
             socket_count,
-        })
+        };
+        let version = service.io.call(
+            &network_contract_version,
+            (),
+            "linux_socket network contract version trapped",
+        )?;
+        if version != NETWORK_CONTRACT_ABI_VERSION {
+            return Err("linux_socket network contract mismatch");
+        }
+        Ok(service)
     }
 
     pub(crate) fn register_socket(

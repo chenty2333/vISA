@@ -52,7 +52,7 @@ pub(crate) fn runtime() -> Result<&'static mut PrototypeRuntime<'static>, &'stat
 pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) console: ConsoleService,
     pub(super) vfs: VfsService,
-    pub(super) procfs_engine: &'engine SupervisorEngine,
+    pub(super) engine: &'engine SupervisorEngine,
     pub(super) procfs: Option<ProcfsService>,
     pub(super) devfs: DevfsService,
     pub(super) epoll: EpollService,
@@ -108,7 +108,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(Self {
             console,
             vfs,
-            procfs_engine: engine,
+            engine,
             procfs: Some(procfs),
             devfs,
             epoll,
