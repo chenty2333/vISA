@@ -75,6 +75,7 @@ pub struct ContractGraphSnapshot {
     pub hostcalls: Vec<HostcallTraceRecord>,
     pub capabilities: Vec<CapabilityRecord>,
     pub waits: Vec<WaitRecord>,
+    pub cleanup_transactions: Vec<FaultCleanupTransaction>,
     pub tombstones: Vec<TombstoneRecord>,
 }
 
@@ -93,6 +94,7 @@ impl ContractGraphValidator {
         Self::validate_hostcalls(snapshot, &mut violations);
         Self::validate_capabilities(snapshot, &mut violations);
         Self::validate_waits(snapshot, &mut violations);
+        Self::validate_cleanups(snapshot, &mut violations);
         violations
     }
 
@@ -276,22 +278,87 @@ impl ContractGraphValidator {
                 }
             }
             if let Some(code_id) = trap.code_object {
-                if snapshot.code_objects.iter().all(|code| code.id != code_id)
-                    && !snapshot.tombstones.iter().any(|tombstone| {
-                        tombstone.kind == ContractObjectKind::CodeObject && tombstone.id == code_id
-                    })
+                match snapshot.code_objects.iter().find(|code| code.id == code_id) {
+                    Some(code) => {
+                        if let Some(generation) = trap.code_generation {
+                            if code.generation != generation {
+                                violations.push(ContractViolation::new(
+                                    ContractViolationKind::GenerationMismatch,
+                                    "trap->code",
+                                    from,
+                                    Some(code.object_ref()),
+                                    "trap code generation is stale",
+                                ));
+                            }
+                        }
+                        if let Some(artifact) = trap.artifact {
+                            if code.artifact_id != artifact {
+                                violations.push(ContractViolation::new(
+                                    ContractViolationKind::GenerationMismatch,
+                                    "trap->artifact",
+                                    from,
+                                    Some(ContractObjectRef::new(
+                                        ContractObjectKind::Artifact,
+                                        artifact,
+                                        trap.artifact_generation.unwrap_or(0),
+                                    )),
+                                    "trap artifact does not match code artifact",
+                                ));
+                            }
+                        }
+                    }
+                    None => {
+                        let generation = trap.code_generation.unwrap_or(0);
+                        if !snapshot.tombstones.iter().any(|tombstone| {
+                            tombstone.kind == ContractObjectKind::CodeObject
+                                && tombstone.id == code_id
+                                && (generation == 0 || tombstone.generation == generation)
+                        }) {
+                            violations.push(ContractViolation::new(
+                                ContractViolationKind::DanglingEdge,
+                                "trap->code",
+                                from,
+                                Some(ContractObjectRef::new(
+                                    ContractObjectKind::CodeObject,
+                                    code_id,
+                                    generation,
+                                )),
+                                "trap references missing code object",
+                            ));
+                        }
+                    }
+                }
+            }
+            if let Some(artifact_id) = trap.artifact {
+                match snapshot
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.artifact_id == artifact_id)
                 {
-                    violations.push(ContractViolation::new(
+                    Some(artifact) => {
+                        if let Some(generation) = trap.artifact_generation {
+                            if artifact.generation != generation {
+                                violations.push(ContractViolation::new(
+                                    ContractViolationKind::GenerationMismatch,
+                                    "trap->artifact",
+                                    from,
+                                    Some(artifact.object_ref()),
+                                    "trap artifact generation is stale",
+                                ));
+                            }
+                        }
+                    }
+                    None => violations.push(ContractViolation::new(
                         ContractViolationKind::DanglingEdge,
-                        "trap->code",
+                        "trap->artifact",
                         from,
                         Some(ContractObjectRef::new(
-                            ContractObjectKind::CodeObject,
-                            code_id,
-                            0,
+                            ContractObjectKind::Artifact,
+                            artifact_id,
+                            trap.artifact_generation.unwrap_or(0),
                         )),
-                        "trap references missing code object",
-                    ));
+                        "trap references missing artifact",
+                    )),
                 }
             }
         }
@@ -379,6 +446,139 @@ impl ContractGraphValidator {
                     None,
                     "wait token owner task maps to a dead store id in this harness",
                 ));
+            }
+        }
+    }
+
+    fn validate_cleanups(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for cleanup in &snapshot.cleanup_transactions {
+            let from = cleanup.object_ref();
+            match snapshot
+                .stores
+                .iter()
+                .find(|store| store.id == cleanup.store)
+            {
+                Some(store) => {
+                    if cleanup.state == CleanupTransactionState::Completed
+                        && store.state != StoreState::Dead
+                    {
+                        violations.push(ContractViolation::new(
+                            ContractViolationKind::LiveObjectReferencesDeadObject,
+                            "cleanup->store",
+                            from,
+                            Some(store.object_ref()),
+                            "completed cleanup did not leave store dead",
+                        ));
+                    }
+                }
+                None => violations.push(ContractViolation::new(
+                    ContractViolationKind::DanglingEdge,
+                    "cleanup->store",
+                    from,
+                    Some(ContractObjectRef::new(
+                        ContractObjectKind::Store,
+                        cleanup.store,
+                        0,
+                    )),
+                    "cleanup references missing store",
+                )),
+            }
+            if let Some(activation_id) = cleanup.activation {
+                if snapshot
+                    .activations
+                    .iter()
+                    .all(|activation| activation.id != activation_id)
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::DanglingEdge,
+                        "cleanup->activation",
+                        from,
+                        Some(ContractObjectRef::new(
+                            ContractObjectKind::Activation,
+                            activation_id,
+                            0,
+                        )),
+                        "cleanup references missing activation",
+                    ));
+                }
+            }
+            if let Some(code_id) = cleanup.code_object {
+                match snapshot.code_objects.iter().find(|code| code.id == code_id) {
+                    Some(code) => {
+                        if cleanup.state == CleanupTransactionState::Completed {
+                            if code.bound_store == Some(cleanup.store) {
+                                violations.push(ContractViolation::new(
+                                    ContractViolationKind::LiveObjectReferencesDeadObject,
+                                    "cleanup->code",
+                                    from,
+                                    Some(code.object_ref()),
+                                    "completed cleanup left code object bound to store",
+                                ));
+                            }
+                            if cleanup.unbound_code_object
+                                && !matches!(
+                                    code.state,
+                                    CodeObjectState::Retired
+                                        | CodeObjectState::Unpublished
+                                        | CodeObjectState::Faulted
+                                )
+                            {
+                                violations.push(ContractViolation::new(
+                                    ContractViolationKind::LiveObjectReferencesDeadObject,
+                                    "cleanup->code",
+                                    from,
+                                    Some(code.object_ref()),
+                                    "completed cleanup did not retire or unpublish code object",
+                                ));
+                            }
+                        }
+                    }
+                    None => violations.push(ContractViolation::new(
+                        ContractViolationKind::DanglingEdge,
+                        "cleanup->code",
+                        from,
+                        Some(ContractObjectRef::new(
+                            ContractObjectKind::CodeObject,
+                            code_id,
+                            0,
+                        )),
+                        "cleanup references missing code object",
+                    )),
+                }
+            }
+            for capability_id in &cleanup.revoked_capabilities {
+                match snapshot
+                    .capabilities
+                    .iter()
+                    .find(|capability| capability.id == *capability_id)
+                {
+                    Some(capability) if cleanup.state == CleanupTransactionState::Completed => {
+                        if !capability.revoked {
+                            violations.push(ContractViolation::new(
+                                ContractViolationKind::LiveObjectReferencesDeadObject,
+                                "cleanup->capability",
+                                from,
+                                Some(capability.object_ref()),
+                                "completed cleanup listed an active capability as revoked",
+                            ));
+                        }
+                    }
+                    Some(_) => {}
+                    None => violations.push(ContractViolation::new(
+                        ContractViolationKind::DanglingEdge,
+                        "cleanup->capability",
+                        from,
+                        Some(ContractObjectRef::new(
+                            ContractObjectKind::Capability,
+                            *capability_id,
+                            0,
+                        )),
+                        "cleanup references missing capability",
+                    )),
+                }
             }
         }
     }
@@ -516,5 +716,15 @@ impl CapabilityRecord {
 impl WaitRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
         ContractObjectRef::new(ContractObjectKind::WaitToken, self.id, self.generation)
+    }
+}
+
+impl FaultCleanupTransaction {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::CleanupTransaction,
+            self.id,
+            self.generation,
+        )
     }
 }

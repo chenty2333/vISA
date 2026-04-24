@@ -698,9 +698,28 @@ fn inspect_package_object(
         "store" => {
             println!(
                 "inspect store package={} count={}",
-                package.package_id, package.semantic.store_count
+                package.package_id, package.semantic.store_record_count
             );
-            print_roots_filtered("store", &package.semantic.roots.store_roots, filter);
+            for store in &package.semantic.store_records {
+                let resource = display_option_u64(store.resource);
+                let line = format!(
+                    "store id={} package={} artifact={} role={} state={} generation={} fault_policy={} fault_domain={} resource={} restart_count={}",
+                    store.id,
+                    store.package,
+                    store.artifact,
+                    store.role,
+                    store.state,
+                    store.generation,
+                    store.fault_policy,
+                    store.fault_domain,
+                    resource,
+                    store.restart_count
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.store_records.is_empty() {
+                print_roots_filtered("store", &package.semantic.roots.store_roots, filter);
+            }
             print_roots_filtered(
                 "store-activation",
                 &package.semantic.roots.store_activation_roots,
@@ -748,11 +767,12 @@ fn inspect_package_object(
         "capability" | "cap" => {
             println!(
                 "inspect capability package={} count={}",
-                package.package_id, package.semantic.capability_count
+                package.package_id, package.semantic.capability_record_count
             );
-            for capability in &package.logical_capabilities {
+            for capability in &package.semantic.capability_records {
                 let line = format!(
-                    "cap subject={} object={} class={} rights={} lifetime={} generation={} source={} owner_store={} owner_task={} revoked={}",
+                    "cap id={} subject={} object={} class={} rights={} lifetime={} generation={} source={} owner_store={} owner_task={} revoked={}",
+                    capability.id,
                     capability.subject,
                     capability.object,
                     display_capability_class(&capability.class, &capability.object),
@@ -765,6 +785,24 @@ fn inspect_package_object(
                     capability.revoked
                 );
                 print_if_matches(&line, filter);
+            }
+            if package.semantic.capability_records.is_empty() {
+                for capability in &package.logical_capabilities {
+                    let line = format!(
+                        "cap subject={} object={} class={} rights={} lifetime={} generation={} source={} owner_store={} owner_task={} revoked={}",
+                        capability.subject,
+                        capability.object,
+                        display_capability_class(&capability.class, &capability.object),
+                        capability.rights.join("+"),
+                        capability.lifetime,
+                        capability.generation,
+                        display_default(&capability.source, "unknown"),
+                        display_option_u64(capability.owner_store),
+                        display_option_u64(capability.owner_task),
+                        capability.revoked
+                    );
+                    print_if_matches(&line, filter);
+                }
             }
         }
         "wait" => {
@@ -1046,14 +1084,13 @@ fn inspect_package_object_json(
         ),
         "store" => (
             "store",
-            package.semantic.store_count,
+            package.semantic.store_record_count,
             package
                 .semantic
-                .roots
-                .store_roots
+                .store_records
                 .iter()
-                .map(|root| serde_json::json!({ "kind": "store", "root": root }))
-                .collect::<Vec<_>>(),
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
             serde_json::json!({ "root_count": package.semantic.roots.store_roots.len() }),
         ),
         "activation" => (
@@ -1069,12 +1106,25 @@ fn inspect_package_object_json(
         ),
         "cap" | "capability" => (
             "capability",
-            package.semantic.capability_count,
-            package
-                .logical_capabilities
-                .iter()
-                .map(serde_json::to_value)
-                .collect::<Result<Vec<_>, _>>()?,
+            if package.semantic.capability_records.is_empty() {
+                package.logical_capabilities.len()
+            } else {
+                package.semantic.capability_record_count
+            },
+            if package.semantic.capability_records.is_empty() {
+                package
+                    .logical_capabilities
+                    .iter()
+                    .map(serde_json::to_value)
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                package
+                    .semantic
+                    .capability_records
+                    .iter()
+                    .map(serde_json::to_value)
+                    .collect::<Result<Vec<_>, _>>()?
+            },
             serde_json::json!({ "root_count": package.semantic.roots.capability_roots.len() }),
         ),
         "wait" => (

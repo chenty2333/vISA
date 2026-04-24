@@ -183,9 +183,13 @@ pub struct SemanticSnapshotManifest {
     pub active_authority_count: usize,
     pub wait_token_count: usize,
     pub capability_count: usize,
+    #[serde(default)]
+    pub capability_record_count: usize,
     pub fault_domain_count: usize,
     #[serde(default)]
     pub store_count: usize,
+    #[serde(default)]
+    pub store_record_count: usize,
     #[serde(default)]
     pub transaction_count: usize,
     #[serde(default)]
@@ -230,6 +234,10 @@ pub struct SemanticSnapshotManifest {
     pub target_artifacts: Vec<TargetArtifactImageManifest>,
     #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
+    #[serde(default)]
+    pub store_records: Vec<StoreRecordManifest>,
+    #[serde(default)]
+    pub capability_records: Vec<CapabilityRecordManifest>,
     #[serde(default)]
     pub activation_records: Vec<ActivationRecordManifest>,
     #[serde(default)]
@@ -391,6 +399,35 @@ pub struct CodeObjectManifest {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct StoreRecordManifest {
+    pub id: u64,
+    pub package: String,
+    pub artifact: String,
+    pub role: String,
+    pub fault_policy: String,
+    pub fault_domain: u64,
+    pub resource: Option<u64>,
+    pub state: String,
+    pub generation: u64,
+    pub restart_count: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CapabilityRecordManifest {
+    pub id: u64,
+    pub subject: String,
+    pub object: String,
+    pub rights: Vec<String>,
+    pub lifetime: String,
+    pub class: String,
+    pub owner_store: Option<u64>,
+    pub owner_task: Option<u64>,
+    pub source: String,
+    pub generation: u64,
+    pub revoked: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ActivationRecordManifest {
     pub id: u64,
     pub store: u64,
@@ -420,7 +457,11 @@ pub struct TrapRecordManifest {
     pub store: Option<u64>,
     pub activation: Option<u64>,
     pub code_object: Option<u64>,
+    #[serde(default)]
+    pub code_generation: Option<u64>,
     pub artifact: Option<u64>,
+    #[serde(default)]
+    pub artifact_generation: Option<u64>,
     pub offset: Option<u64>,
     pub hostcall: Option<String>,
     pub fault_policy: String,

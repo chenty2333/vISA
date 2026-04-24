@@ -7,15 +7,15 @@ mod runtime;
 
 use artifact_manifest::{
     ActivationRecordManifest, ArtifactBundleManifest, BoundaryValidationReportManifest,
-    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CleanupStepManifest,
-    CleanupTransactionManifest, CodeObjectManifest, ContractObjectRefManifest,
+    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
+    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, ContractObjectRefManifest,
     ContractViolationManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
     MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
     MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
     RequiredArtifactProfileManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SubstrateBoundaryManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
-    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
-    TombstoneManifest, TrapRecordManifest,
+    StoreRecordManifest, SubstrateBoundaryManifest, TargetAddressMapEntryManifest,
+    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
+    TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -25,15 +25,15 @@ use runtime::RuntimeOnlyExecutor;
 use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, BoundaryKind, BoundaryStatus,
     BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass, CapabilityHandleArg,
-    CapabilityLedger, CodeObject, CodePublishState, CodePublisher, ContractGraphSnapshot,
-    ContractObjectRef, ContractViolation, EntrypointState, ExpectedTargetArtifact, FrontendKind,
-    HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
-    ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
-    PackageReplayValidator, ReplayPackageValidationState, RuntimeMode, SemanticGraph,
-    SnapshotBarrierValidator, StoreState, TargetAddressMapEntry, TargetArtifactImage,
-    TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass,
-    TargetTrapMetadata, TaskState, TombstoneRecord, TrapSurfaceState, VerifiedArtifact,
-    memory_class_policies, validate_contract_graph,
+    CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState, CodePublisher,
+    ContractGraphSnapshot, ContractObjectRef, ContractViolation, EntrypointState,
+    ExpectedTargetArtifact, FrontendKind, HostcallCategory, HostcallFrame, HostcallLinkState,
+    HostcallSpec, HostcallTraceRecord, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
+    MigrationObjectRecord, PackageReplayValidator, ReplayPackageValidationState, RuntimeMode,
+    SemanticGraph, SnapshotBarrierValidator, StoreRecord, StoreState, TargetAddressMapEntry,
+    TargetArtifactImage, TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan,
+    TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState, TombstoneRecord,
+    TrapSurfaceState, VerifiedArtifact, memory_class_policies, validate_contract_graph,
 };
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
@@ -42,6 +42,8 @@ const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug"
 struct TargetExecutorV1Report {
     target_artifacts: Vec<TargetArtifactImageManifest>,
     code_objects: Vec<CodeObjectManifest>,
+    store_records: Vec<StoreRecordManifest>,
+    capability_records: Vec<CapabilityRecordManifest>,
     activation_records: Vec<ActivationRecordManifest>,
     trap_records: Vec<TrapRecordManifest>,
     hostcall_trace: Vec<HostcallTraceManifest>,
@@ -297,30 +299,82 @@ fn build_target_executor_v1(
         run_activation_harness(index, &mut executor, store, &code, &ledger)?;
     }
 
-    if let (Some(store), Some(code)) =
-        (store_manager.records().first(), publisher.objects().first())
-    {
-        let mut cleanup_store = store.store.clone();
-        let mut cleanup_code = code.clone();
-        let mut cleanup_ledger = ledger.clone();
+    if let Some(cleanup_artifact) = verified_artifacts.first() {
+        let cleanup_store_id = store_manager.register_verified_artifact(
+            cleanup_artifact,
+            "restartable",
+            "cleanup-harness-rebuild",
+        );
+        store_manager
+            .set_running(cleanup_store_id)
+            .map_err(|error| error.message())?;
+        ledger.grant_with_metadata(
+            &cleanup_artifact.package,
+            "store-control.cleanup-harness",
+            &["kill"],
+            "store",
+            CapabilityClass::StoreControl,
+            Some(cleanup_store_id),
+            None,
+            "cleanup-harness",
+        );
+        let cleanup_code_id = publisher
+            .allocate(cleanup_artifact)
+            .map_err(|error| error.message())?;
+        publisher
+            .fill(cleanup_code_id)
+            .map_err(|error| error.message())?;
+        publisher
+            .seal(cleanup_code_id)
+            .map_err(|error| error.message())?;
+        publisher
+            .publish_rx(cleanup_code_id)
+            .map_err(|error| error.message())?;
+        publisher
+            .bind_to_store(cleanup_code_id, cleanup_store_id)
+            .map_err(|error| error.message())?;
+        let cleanup_store_snapshot = store_manager
+            .record(cleanup_store_id)
+            .ok_or("cleanup store missing after registration")?
+            .store
+            .clone();
+        let cleanup_code_snapshot = publisher
+            .object(cleanup_code_id)
+            .ok_or("cleanup code object missing after bind")?
+            .clone();
         let cleanup_activation = executor
             .start_activation(
-                &cleanup_store,
-                &cleanup_code,
+                &cleanup_store_snapshot,
+                &cleanup_code_snapshot,
                 ActivationEntry::Symbol("cleanup_harness".to_owned()),
             )
             .map_err(|error| error.message())?;
         executor
             .acquire_dmw_lease(cleanup_activation, "dmw.cleanup.harness")
             .map_err(|error| error.message())?;
-        executor
-            .run_fault_cleanup(
-                &mut cleanup_store,
-                Some(cleanup_activation),
-                Some(&mut cleanup_code),
-                &mut cleanup_ledger,
-                "cleanup-harness",
-            )
+        {
+            let cleanup_store = &mut store_manager
+                .record_mut(cleanup_store_id)
+                .map_err(|error| error.message())?
+                .store;
+            let cleanup_code = publisher
+                .object_mut(cleanup_code_id)
+                .map_err(|error| error.message())?;
+            executor
+                .run_fault_cleanup(
+                    cleanup_store,
+                    Some(cleanup_activation),
+                    Some(cleanup_code),
+                    &mut ledger,
+                    "cleanup-harness",
+                )
+                .map_err(|error| error.message())?;
+        }
+        store_manager
+            .record_current_tombstone(cleanup_store_id, "cleanup-store-dead")
+            .map_err(|error| error.message())?;
+        publisher
+            .record_current_tombstone(cleanup_code_id, "cleanup-code-retired")
             .map_err(|error| error.message())?;
     }
 
@@ -343,6 +397,16 @@ fn build_target_executor_v1(
     }
     for code in publisher.objects() {
         report.code_objects.push(code_object_manifest(code));
+    }
+    for store in store_manager.records() {
+        report
+            .store_records
+            .push(store_record_manifest(&store.store));
+    }
+    for capability in ledger.records() {
+        report
+            .capability_records
+            .push(capability_record_manifest(capability));
     }
     for activation in executor.activations() {
         report
@@ -385,6 +449,7 @@ fn build_target_executor_v1(
         hostcalls: executor.hostcall_trace().to_vec(),
         capabilities: ledger.records().to_vec(),
         waits: Vec::new(),
+        cleanup_transactions: executor.cleanup_transactions().to_vec(),
         tombstones: publisher
             .tombstones()
             .iter()
@@ -940,8 +1005,10 @@ fn demo_migration_package(
             active_authority_count: semantic.active_authority_count(),
             wait_token_count: 0,
             capability_count,
+            capability_record_count: target_v1.capability_records.len(),
             fault_domain_count: semantic.fault_domain_count(),
             store_count: semantic.store_count(),
+            store_record_count: target_v1.store_records.len(),
             transaction_count: 0,
             active_transaction_count: 0,
             fast_path_plan_count: semantic.fast_path_plan_count(),
@@ -964,6 +1031,8 @@ fn demo_migration_package(
             replay_validation_violation_count: target_v1.replay_validation.violation_count,
             target_artifacts: target_v1.target_artifacts.clone(),
             code_objects: target_v1.code_objects.clone(),
+            store_records: target_v1.store_records.clone(),
+            capability_records: target_v1.capability_records.clone(),
             activation_records: target_v1.activation_records.clone(),
             trap_records: target_v1.trap_records.clone(),
             hostcall_trace: target_v1.hostcall_trace.clone(),
@@ -1353,6 +1422,37 @@ fn code_object_manifest(code: &CodeObject) -> CodeObjectManifest {
     }
 }
 
+fn store_record_manifest(store: &StoreRecord) -> StoreRecordManifest {
+    StoreRecordManifest {
+        id: store.id,
+        package: store.package.clone(),
+        artifact: store.artifact.clone(),
+        role: store.role.clone(),
+        fault_policy: store.fault_policy.clone(),
+        fault_domain: store.fault_domain,
+        resource: store.resource,
+        state: store.state.as_str().to_owned(),
+        generation: store.generation,
+        restart_count: store.restart_count,
+    }
+}
+
+fn capability_record_manifest(capability: &CapabilityRecord) -> CapabilityRecordManifest {
+    CapabilityRecordManifest {
+        id: capability.id,
+        subject: capability.subject.clone(),
+        object: capability.object.clone(),
+        rights: capability.operations.as_slice().to_vec(),
+        lifetime: capability.lifetime.clone(),
+        class: capability.class.as_str().to_owned(),
+        owner_store: capability.owner_store,
+        owner_task: capability.owner_task.map(u64::from),
+        source: capability.source.clone(),
+        generation: capability.generation,
+        revoked: capability.revoked,
+    }
+}
+
 fn activation_record_manifest(
     activation: &semantic_core::ActivationRecord,
 ) -> ActivationRecordManifest {
@@ -1383,7 +1483,9 @@ fn trap_record_manifest(trap: &semantic_core::TargetTrapRecord) -> TrapRecordMan
         store: trap.store,
         activation: trap.activation,
         code_object: trap.code_object,
+        code_generation: trap.code_generation,
         artifact: trap.artifact,
+        artifact_generation: trap.artifact_generation,
         offset: trap.offset,
         hostcall: trap.hostcall.clone(),
         fault_policy: trap.fault_policy.clone(),

@@ -564,6 +564,12 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("code object root/count mismatch"));
     }
+    if package.semantic.store_records.len() != package.semantic.store_record_count {
+        return Err(ContractError::new("store record count mismatch"));
+    }
+    if package.semantic.capability_records.len() != package.semantic.capability_record_count {
+        return Err(ContractError::new("capability record count mismatch"));
+    }
     if roots.activation_record_roots.len() != package.semantic.activation_record_count
         || package.semantic.activation_records.len() != package.semantic.activation_record_count
     {
@@ -583,6 +589,32 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
         || package.semantic.migration_objects.len() != package.semantic.migration_object_count
     {
         return Err(ContractError::new("migration object root/count mismatch"));
+    }
+    if roots.cleanup_roots.len() != package.semantic.cleanup_transaction_count
+        || package.semantic.cleanup_transactions.len() != package.semantic.cleanup_transaction_count
+    {
+        return Err(ContractError::new(
+            "cleanup transaction root/count mismatch",
+        ));
+    }
+    if roots.memory_policy_roots.len() != package.semantic.memory_policy_count
+        || package.semantic.memory_policies.len() != package.semantic.memory_policy_count
+    {
+        return Err(ContractError::new("memory policy root/count mismatch"));
+    }
+    if package.semantic.snapshot_validation.violations.len()
+        != package.semantic.snapshot_validation_violation_count
+    {
+        return Err(ContractError::new(
+            "snapshot validation violation count mismatch",
+        ));
+    }
+    if package.semantic.replay_validation.violations.len()
+        != package.semantic.replay_validation_violation_count
+    {
+        return Err(ContractError::new(
+            "replay validation violation count mismatch",
+        ));
     }
     if roots.event_log_tail.is_empty() && package.semantic.event_log_cursor != 0 {
         return Err(ContractError::new(

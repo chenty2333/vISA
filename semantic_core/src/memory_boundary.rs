@@ -7,6 +7,8 @@ use crate::target_executor::RecordMode;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemoryClass {
     StoreLinearMemory,
+    StoreLocalHeap,
+    GuestMemory,
     CodeMemory,
     ActivationStack,
     DmaMemory,
@@ -16,12 +18,15 @@ pub enum MemoryClass {
     TrapFrameMemory,
     ReadonlyMetadataMemory,
     StoreTableMemory,
+    SnapshotMetadataMemory,
 }
 
 impl MemoryClass {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::StoreLinearMemory => "store-linear-memory",
+            Self::StoreLocalHeap => "store-local-heap",
+            Self::GuestMemory => "guest-memory",
             Self::CodeMemory => "code-memory",
             Self::ActivationStack => "activation-stack",
             Self::DmaMemory => "dma-memory",
@@ -31,6 +36,7 @@ impl MemoryClass {
             Self::TrapFrameMemory => "trap-frame-memory",
             Self::ReadonlyMetadataMemory => "readonly-metadata-memory",
             Self::StoreTableMemory => "store-table-memory",
+            Self::SnapshotMetadataMemory => "snapshot-metadata-memory",
         }
     }
 }
@@ -176,9 +182,31 @@ impl MemoryClassPolicy {
     }
 }
 
-pub const MEMORY_CLASS_POLICIES: [MemoryClassPolicy; 10] = [
+pub const MEMORY_CLASS_POLICIES: [MemoryClassPolicy; 13] = [
     MemoryClassPolicy {
         class: MemoryClass::StoreLinearMemory,
+        owner_kind: OwnerKind::Store,
+        permissions: PermSet::new(true, true, false),
+        migratable: MigrationPolicy::Migrated,
+        snapshot_policy: SnapshotPolicy::Include,
+        cleanup_policy: CleanupPolicy::DropWithStore,
+        can_alias_guest_memory: true,
+        can_cross_pending: true,
+        can_be_executable: false,
+    },
+    MemoryClassPolicy {
+        class: MemoryClass::StoreLocalHeap,
+        owner_kind: OwnerKind::Store,
+        permissions: PermSet::new(true, true, false),
+        migratable: MigrationPolicy::Migrated,
+        snapshot_policy: SnapshotPolicy::Include,
+        cleanup_policy: CleanupPolicy::DropWithStore,
+        can_alias_guest_memory: false,
+        can_cross_pending: true,
+        can_be_executable: false,
+    },
+    MemoryClassPolicy {
+        class: MemoryClass::GuestMemory,
         owner_kind: OwnerKind::Store,
         permissions: PermSet::new(true, true, false),
         migratable: MigrationPolicy::Migrated,
@@ -234,7 +262,7 @@ pub const MEMORY_CLASS_POLICIES: [MemoryClassPolicy; 10] = [
     },
     MemoryClassPolicy {
         class: MemoryClass::DmwWindowMemory,
-        owner_kind: OwnerKind::TargetExecutor,
+        owner_kind: OwnerKind::Substrate,
         permissions: PermSet::new(true, true, false),
         migratable: MigrationPolicy::NeverMigrated,
         snapshot_policy: SnapshotPolicy::RejectIfLive,
@@ -283,6 +311,17 @@ pub const MEMORY_CLASS_POLICIES: [MemoryClassPolicy; 10] = [
         migratable: MigrationPolicy::Migrated,
         snapshot_policy: SnapshotPolicy::ConvertToLogicalImport,
         cleanup_policy: CleanupPolicy::DropWithStore,
+        can_alias_guest_memory: false,
+        can_cross_pending: true,
+        can_be_executable: false,
+    },
+    MemoryClassPolicy {
+        class: MemoryClass::SnapshotMetadataMemory,
+        owner_kind: OwnerKind::TargetExecutor,
+        permissions: PermSet::new(true, true, false),
+        migratable: MigrationPolicy::Migrated,
+        snapshot_policy: SnapshotPolicy::Include,
+        cleanup_policy: CleanupPolicy::PreserveSemantic,
         can_alias_guest_memory: false,
         can_cross_pending: true,
         can_be_executable: false,
@@ -693,10 +732,19 @@ mod tests {
             policy(MemoryClass::DmwWindowMemory).class,
             MemoryClass::DmwWindowMemory
         );
+        assert_eq!(
+            policy(MemoryClass::DmwWindowMemory).owner_kind,
+            OwnerKind::Substrate
+        );
         assert_ne!(
             policy(MemoryClass::DmwWindowMemory).class,
             policy(MemoryClass::StoreLinearMemory).class
         );
+        assert_eq!(
+            policy(MemoryClass::StoreLocalHeap).cleanup_policy,
+            CleanupPolicy::DropWithStore
+        );
+        assert!(policy(MemoryClass::GuestMemory).can_alias_guest_memory);
         assert_eq!(
             policy(MemoryClass::CodeMemory).migratable,
             MigrationPolicy::Rebuilt
@@ -722,6 +770,10 @@ mod tests {
         assert_eq!(
             policy(MemoryClass::StoreTableMemory).snapshot_policy,
             SnapshotPolicy::ConvertToLogicalImport
+        );
+        assert_eq!(
+            policy(MemoryClass::SnapshotMetadataMemory).owner_kind,
+            OwnerKind::TargetExecutor
         );
     }
 

@@ -14,6 +14,7 @@ pub enum ContractObjectKind {
     Hostcall,
     Capability,
     WaitToken,
+    CleanupTransaction,
     MemoryObject,
     Tombstone,
     ExternalObject,
@@ -30,6 +31,7 @@ impl ContractObjectKind {
             Self::Hostcall => "hostcall",
             Self::Capability => "capability",
             Self::WaitToken => "wait-token",
+            Self::CleanupTransaction => "cleanup-transaction",
             Self::MemoryObject => "memory-object",
             Self::Tombstone => "tombstone",
             Self::ExternalObject => "external-object",
@@ -1012,7 +1014,7 @@ impl CodePublisher {
         Ok(())
     }
 
-    fn object_mut(&mut self, id: CodeObjectId) -> Result<&mut CodeObject, CodePublisherError> {
+    pub fn object_mut(&mut self, id: CodeObjectId) -> Result<&mut CodeObject, CodePublisherError> {
         self.objects
             .iter_mut()
             .find(|object| object.id == id)
@@ -1030,6 +1032,19 @@ impl CodePublisher {
         self.next_tombstone_event += 1;
         self.tombstones
             .push(TombstoneRecord::new(kind, id, generation, event, reason));
+    }
+
+    pub fn record_current_tombstone(
+        &mut self,
+        id: CodeObjectId,
+        reason: &str,
+    ) -> Result<(), CodePublisherError> {
+        let generation = self
+            .object(id)
+            .ok_or(CodePublisherError::CodeObjectMissing)?
+            .generation;
+        self.record_tombstone(ContractObjectKind::CodeObject, id, generation, reason);
+        Ok(())
     }
 }
 
@@ -1188,7 +1203,7 @@ impl TargetStoreManager {
         Ok(())
     }
 
-    fn record_mut(
+    pub fn record_mut(
         &mut self,
         store: StoreId,
     ) -> Result<&mut ManagedStoreRecord, TargetStoreManagerError> {
@@ -1196,6 +1211,20 @@ impl TargetStoreManager {
             .iter_mut()
             .find(|record| record.store.id == store)
             .ok_or(TargetStoreManagerError::StoreMissing)
+    }
+
+    pub fn record_current_tombstone(
+        &mut self,
+        store: StoreId,
+        reason: &str,
+    ) -> Result<(), TargetStoreManagerError> {
+        let generation = self
+            .record(store)
+            .ok_or(TargetStoreManagerError::StoreMissing)?
+            .store
+            .generation;
+        self.record_tombstone(ContractObjectKind::Store, store, generation, reason);
+        Ok(())
     }
 
     fn record_tombstone(
@@ -1254,15 +1283,16 @@ impl ActivationState {
     }
 }
 
+#[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostcallReturnTag {
-    Ok,
-    Errno,
-    Pending,
-    Trap,
-    KillStore,
-    RestartSyscall,
-    BadAbi,
+    Ok = 0,
+    Errno = 1,
+    Pending = 2,
+    Trap = 3,
+    KillStore = 4,
+    RestartSyscall = 5,
+    BadAbi = 6,
 }
 
 impl HostcallReturnTag {
@@ -1277,15 +1307,20 @@ impl HostcallReturnTag {
             Self::BadAbi => "bad-abi",
         }
     }
+
+    pub const fn as_u16(self) -> u16 {
+        self as u16
+    }
 }
 
+#[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordMode {
-    Deterministic,
-    RecordInput,
-    RecordOutput,
-    RecordInputOutput,
-    ForbiddenDuringReplay,
+    Deterministic = 0,
+    RecordInput = 1,
+    RecordOutput = 2,
+    RecordInputOutput = 3,
+    ForbiddenDuringReplay = 4,
 }
 
 impl RecordMode {
@@ -1297,6 +1332,10 @@ impl RecordMode {
             Self::RecordInputOutput => "record-input-output",
             Self::ForbiddenDuringReplay => "forbidden-during-replay",
         }
+    }
+
+    pub const fn as_u16(self) -> u16 {
+        self as u16
     }
 }
 
@@ -1355,6 +1394,121 @@ impl ActivationRecord {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WireObjectRef {
+    pub id: u64,
+    pub generation: u64,
+}
+
+impl WireObjectRef {
+    pub const NULL: Self = Self {
+        id: 0,
+        generation: 0,
+    };
+
+    pub const fn new(id: u64, generation: u64) -> Self {
+        Self { id, generation }
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ArtifactRefV1(pub WireObjectRef);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CodeObjectRefV1(pub WireObjectRef);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StoreRefV1(pub WireObjectRef);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ActivationRefV1(pub WireObjectRef);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TrapRefV1(pub WireObjectRef);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WaitTokenRefV1(pub WireObjectRef);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CapabilityRefV1(pub WireObjectRef);
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CapabilityHandleV1 {
+    pub capability: CapabilityRefV1,
+    pub rights_mask: u64,
+    pub object_class: u16,
+    pub reserved: [u16; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HostcallFrameV1 {
+    pub magic: u32,
+    pub abi_version: u16,
+    pub frame_size: u16,
+    pub flags: u32,
+    pub record_mode: u16,
+    pub ret_tag: u16,
+    pub activation: ActivationRefV1,
+    pub store: StoreRefV1,
+    pub code_object: CodeObjectRefV1,
+    pub artifact: ArtifactRefV1,
+    pub hostcall_number: u32,
+    pub cap_arg_count: u16,
+    pub reserved0: u16,
+    pub hostcall_seq: u64,
+    pub caller_offset: u64,
+    pub args: [u64; 6],
+    pub cap_args: [CapabilityHandleV1; 4],
+    pub ret0: u64,
+    pub ret1: u64,
+    pub trap_out: TrapRefV1,
+    pub wait_token_out: WaitTokenRefV1,
+}
+
+impl HostcallFrameV1 {
+    pub const MAGIC: u32 = 0x564d_4843;
+    pub const ABI_VERSION: u16 = 1;
+    pub const FRAME_SIZE: u16 = core::mem::size_of::<Self>() as u16;
+}
+
+impl Default for HostcallFrameV1 {
+    fn default() -> Self {
+        Self {
+            magic: Self::MAGIC,
+            abi_version: Self::ABI_VERSION,
+            frame_size: Self::FRAME_SIZE,
+            flags: 0,
+            record_mode: RecordMode::Deterministic.as_u16(),
+            ret_tag: HostcallReturnTag::Ok.as_u16(),
+            activation: ActivationRefV1(WireObjectRef::NULL),
+            store: StoreRefV1(WireObjectRef::NULL),
+            code_object: CodeObjectRefV1(WireObjectRef::NULL),
+            artifact: ArtifactRefV1(WireObjectRef::NULL),
+            hostcall_number: 0,
+            cap_arg_count: 0,
+            reserved0: 0,
+            hostcall_seq: 0,
+            caller_offset: 0,
+            args: [0; 6],
+            cap_args: [CapabilityHandleV1::default(); 4],
+            ret0: 0,
+            ret1: 0,
+            trap_out: TrapRefV1(WireObjectRef::NULL),
+            wait_token_out: WaitTokenRefV1(WireObjectRef::NULL),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetTrapClass {
     GuestTrap,
@@ -1400,7 +1554,9 @@ pub struct TargetTrapRecord {
     pub store: Option<StoreId>,
     pub activation: Option<ActivationId>,
     pub code_object: Option<CodeObjectId>,
+    pub code_generation: Option<Generation>,
     pub artifact: Option<TargetArtifactId>,
+    pub artifact_generation: Option<Generation>,
     pub offset: Option<u64>,
     pub hostcall: Option<String>,
     pub fault_policy: String,
@@ -1426,20 +1582,30 @@ impl TargetTrapRecord {
             .artifact
             .map(|artifact| artifact.to_string())
             .unwrap_or_else(|| "none".to_string());
+        let code_generation = self
+            .code_generation
+            .map(|generation| generation.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let artifact_generation = self
+            .artifact_generation
+            .map(|generation| generation.to_string())
+            .unwrap_or_else(|| "none".to_string());
         let offset = self
             .offset
             .map(|offset| format!("{offset:#x}"))
             .unwrap_or_else(|| "none".to_string());
         let hostcall = self.hostcall.as_deref().unwrap_or("none");
         format!(
-            "trap id={} generation={} class={} store={} activation={} code={} artifact={} offset={} hostcall={} policy={} effect={} detail={}",
+            "trap id={} generation={} class={} store={} activation={} code={} code_generation={} artifact={} artifact_generation={} offset={} hostcall={} policy={} effect={} detail={}",
             self.id,
             self.generation,
             self.class.as_str(),
             store,
             activation,
             code,
+            code_generation,
             artifact,
+            artifact_generation,
             offset,
             hostcall,
             self.fault_policy,
@@ -1507,7 +1673,7 @@ pub struct HostcallFrame {
 
 impl HostcallFrame {
     pub const ABI_VERSION: &'static str = "vmos-target-hostcall-frame-v1";
-    pub const FRAME_SIZE: u16 = 128;
+    pub const FRAME_SIZE: u16 = HostcallFrameV1::FRAME_SIZE;
 
     pub fn new(
         activation: ActivationId,
@@ -2499,7 +2665,9 @@ impl TargetExecutor {
             store: Some(store),
             activation,
             code_object: code.map(|code| code.id),
+            code_generation: code.map(|code| code.generation),
             artifact: code.map(|code| code.artifact_id),
+            artifact_generation: code.map(|_| 1),
             offset: Some(0),
             hostcall: hostcall.map(|hostcall| hostcall.to_string()),
             fault_policy: "harness-classification".to_string(),
@@ -2648,6 +2816,7 @@ impl TargetExecutor {
         }
         let revoked = capabilities.revoke_owner_store(store.id);
         let mut unbound = false;
+        let mut code_generation = None;
         if let Some(code) = code {
             if code.bound_store == Some(store.id) {
                 code.bound_store = None;
@@ -2656,9 +2825,22 @@ impl TargetExecutor {
                 code.generation += 1;
                 unbound = true;
             }
+            code_generation = Some(code.generation);
         }
         store.state = StoreState::Dead;
         store.generation += 1;
+        if let Some(activation) = activation {
+            if let Some(record) = self
+                .activations
+                .iter_mut()
+                .find(|record| record.id == activation)
+            {
+                record.store_generation = store.generation;
+                if let Some(code_generation) = code_generation {
+                    record.code_generation = code_generation;
+                }
+            }
+        }
         let cleanup = self
             .cleanup_transactions
             .iter_mut()
@@ -2928,7 +3110,9 @@ impl TargetExecutor {
             store: Some(store),
             activation: Some(activation_id),
             code_object: code.map(|code| code.id),
+            code_generation: code.map(|code| code.generation),
             artifact: code.map(|code| code.artifact_id),
+            artifact_generation: code.map(|_| 1),
             offset: Some(0),
             hostcall,
             fault_policy: fault_policy.to_string(),
@@ -3307,6 +3491,24 @@ mod tests {
         let mut registry = ArtifactRegistry::with_expected(expected_list);
         let verified = registry.verify(image()).unwrap();
         assert_eq!(verified.manifest_binding_hash, "binding-1");
+    }
+
+    #[test]
+    fn hostcall_frame_v1_wire_abi_is_fixed_layout() {
+        assert_eq!(
+            HostcallFrameV1::FRAME_SIZE as usize,
+            core::mem::size_of::<HostcallFrameV1>()
+        );
+        assert_eq!(HostcallFrameV1::default().magic, HostcallFrameV1::MAGIC);
+        assert_eq!(
+            HostcallFrameV1::default().record_mode,
+            RecordMode::Deterministic.as_u16()
+        );
+        assert_eq!(
+            HostcallFrameV1::default().ret_tag,
+            HostcallReturnTag::Ok.as_u16()
+        );
+        assert_eq!(WireObjectRef::NULL, WireObjectRef::new(0, 0));
     }
 
     #[test]
@@ -3711,7 +3913,9 @@ mod tests {
             store: Some(stale_store.id),
             activation: Some(999),
             code_object: Some(retired_code.id),
+            code_generation: Some(retired_code.generation),
             artifact: Some(retired_code.artifact_id),
+            artifact_generation: Some(1),
             offset: Some(0),
             hostcall: Some("hostcall.bad".to_string()),
             fault_policy: "debug".to_string(),
@@ -3747,6 +3951,7 @@ mod tests {
             hostcalls: Vec::new(),
             capabilities: Vec::new(),
             waits: Vec::new(),
+            cleanup_transactions: Vec::new(),
             tombstones: {
                 let mut tombstones = Vec::new();
                 tombstones.push(tombstone);
@@ -3770,6 +3975,72 @@ mod tests {
         assert!(violations.iter().any(|violation| {
             violation.kind == ContractViolationKind::DanglingEdge
                 && violation.edge == "trap->activation"
+        }));
+    }
+
+    #[test]
+    fn contract_graph_validator_rejects_cleanup_effect_mismatch() {
+        let (artifact, store, code, capabilities) = running_store_and_code();
+        let cleanup = FaultCleanupTransaction {
+            id: 7,
+            store: store.store.id,
+            activation: None,
+            code_object: Some(code.id),
+            generation: 1,
+            state: CleanupTransactionState::Completed,
+            reason: "inconsistent-cleanup".to_string(),
+            steps: Vec::new(),
+            released_dmw_leases: 0,
+            cancelled_waits: 0,
+            revoked_capabilities: {
+                let mut revoked = Vec::new();
+                revoked.push(capabilities.records()[0].id);
+                revoked
+            },
+            dropped_resources: 1,
+            unbound_code_object: true,
+            effect: FailureEffect::CompleteWithErrno(5),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: {
+                let mut artifacts = Vec::new();
+                artifacts.push(artifact);
+                artifacts
+            },
+            code_objects: {
+                let mut objects = Vec::new();
+                objects.push(code);
+                objects
+            },
+            stores: {
+                let mut stores = Vec::new();
+                stores.push(store.store);
+                stores
+            },
+            activations: Vec::new(),
+            traps: Vec::new(),
+            hostcalls: Vec::new(),
+            capabilities: capabilities.records().to_vec(),
+            waits: Vec::new(),
+            cleanup_transactions: {
+                let mut cleanups = Vec::new();
+                cleanups.push(cleanup);
+                cleanups
+            },
+            tombstones: Vec::new(),
+        };
+        let violations = validate_contract_graph(&snapshot);
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+                && violation.edge == "cleanup->store"
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+                && violation.edge == "cleanup->code"
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+                && violation.edge == "cleanup->capability"
         }));
     }
 
