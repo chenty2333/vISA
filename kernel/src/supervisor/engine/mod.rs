@@ -1,10 +1,9 @@
-mod api;
-#[cfg(not(target_os = "none"))]
-mod wasmi_backend;
+#![allow(unused_imports)]
 
-#[cfg(target_os = "none")]
-pub(crate) use api::SupervisorEngine;
-#[cfg(not(target_os = "none"))]
+mod api;
+
 pub(crate) use api::{
-    BufferedModule, ModuleInstance, SupervisorEngine, WasmFn, expect_len, expect_ok,
+    ArtifactFormat, ArtifactInstance, ArtifactLoadError, BufferedArtifactInstance, BufferedModule,
+    ModuleInstance, RuntimeOnlyExecutor, RuntimeOnlyProfile, SupervisorArtifact, SupervisorEngine,
+    WasmFn, expect_len, expect_ok,
 };

@@ -44,6 +44,8 @@ pub struct CompilerManifest {
     pub engine_version: String,
     pub execution_mode: String,
     pub artifact_format: String,
+    #[serde(default)]
+    pub runtime_executor_abi: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -149,6 +151,8 @@ pub struct RequiredArtifactProfileManifest {
     pub compiler_engine: String,
     pub compiler_execution_mode: String,
     pub artifact_format: String,
+    #[serde(default)]
+    pub runtime_executor_abi: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

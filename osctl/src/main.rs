@@ -244,11 +244,12 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
 
 fn print_artifact_summary(manifest: &ArtifactBundleManifest) {
     println!(
-        "artifact bundle profile={} arch={} engine={} mode={} signature_profile={}",
+        "artifact bundle profile={} arch={} engine={} mode={} runtime_executor={} signature_profile={}",
         manifest.artifact_profile,
         manifest.target.arch,
         manifest.compiler.engine,
         manifest.compiler.execution_mode,
+        manifest.compiler.runtime_executor_abi,
         manifest.target.artifact_signature_profile
     );
     println!(

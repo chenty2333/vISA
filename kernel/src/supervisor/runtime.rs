@@ -12,7 +12,7 @@ use vmos_abi::{
     StepTag, SyscallContext,
 };
 
-use super::engine::SupervisorEngine;
+use super::engine::RuntimeOnlyExecutor;
 use super::events::Event;
 use super::linux::{LinuxCallResult, LinuxFrontend, LinuxPlan};
 use super::net::NetworkPlane;
@@ -38,8 +38,8 @@ static mut ACTIVE_RUNTIME: *mut PrototypeRuntime<'static> = null_mut();
 pub(crate) fn runtime() -> Result<&'static mut PrototypeRuntime<'static>, &'static str> {
     unsafe {
         if ACTIVE_RUNTIME.is_null() {
-            let engine = Box::leak(Box::new(SupervisorEngine::default()));
-            crate::kdebug!("supervisor engine ready");
+            let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
+            crate::kdebug!("runtime-only supervisor executor ready");
             let runtime = Box::leak(Box::new(PrototypeRuntime::new(engine)?));
             crate::kdebug!("prototype2 runtime ready");
             ACTIVE_RUNTIME = runtime as *mut _;
@@ -52,7 +52,7 @@ pub(crate) fn runtime() -> Result<&'static mut PrototypeRuntime<'static>, &'stat
 pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) console: ConsoleService,
     pub(super) vfs: VfsService,
-    pub(super) engine: &'engine SupervisorEngine,
+    pub(super) engine: &'engine RuntimeOnlyExecutor,
     pub(super) procfs: Option<ProcfsService>,
     pub(super) devfs: DevfsService,
     pub(super) epoll: EpollService,
@@ -76,7 +76,7 @@ pub(crate) struct PrototypeRuntime<'engine> {
 }
 
 impl<'engine> PrototypeRuntime<'engine> {
-    pub(super) fn new(engine: &'engine SupervisorEngine) -> Result<Self, &'static str> {
+    pub(super) fn new(engine: &'engine RuntimeOnlyExecutor) -> Result<Self, &'static str> {
         crate::kdebug!("bootstrapping semantic graph");
         let mut semantic = bootstrap_graph();
         crate::kdebug!("bootstrapping network plane");

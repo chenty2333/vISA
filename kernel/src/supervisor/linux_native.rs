@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 
+use super::super::engine::RuntimeOnlyExecutor;
 use super::super::types::WaitRestartClass;
 use super::LinuxPlan;
 use vmos_abi::{
@@ -38,9 +39,7 @@ pub(crate) struct LinuxFrontend {
 }
 
 impl LinuxFrontend {
-    pub(crate) fn new(
-        _engine: &super::super::engine::SupervisorEngine,
-    ) -> Result<Self, &'static str> {
+    pub(crate) fn new(_engine: &RuntimeOnlyExecutor) -> Result<Self, &'static str> {
         Ok(Self {
             arg_buffer: Vec::new(),
             result_buffer: Vec::new(),

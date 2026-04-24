@@ -7,7 +7,11 @@ use semantic_core::{
     GuestStateSnapshot, HostcallClass, MigrationPackage, ResourceHandle, ResourceKind,
     SemanticGraph, SemanticWaitKind, StoreState, SubstrateBoundarySnapshot, TaskState, WaitHandle,
 };
-use supervisor_catalog::SUPERVISOR_WASM_MODULES;
+use supervisor_catalog::{
+    DMW_LAYOUT, MACHINE_ABI_VERSION, RUNTIME_ONLY_EXECUTOR_ABI, SUPERVISOR_ABI_VERSION,
+    SUPERVISOR_ARTIFACT_FORMAT, SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_EXECUTION_MODE,
+    SUPERVISOR_WASM_MODULES, WASM_FEATURE_PROFILE,
+};
 use vmos_abi::PlanKind;
 
 use super::events::Event;
@@ -483,16 +487,17 @@ fn artifact_profile() -> ArtifactProfile {
     ArtifactProfile {
         artifact_profile: "target-native-runtime".to_string(),
         target_arch: "target-native".to_string(),
-        machine_abi_version: "vmos-machine-abi-v0".to_string(),
-        supervisor_abi_version: "vmos-supervisor-abi-v0".to_string(),
-        wasm_feature_profile: "wasm32-core-mvp-single-memory".to_string(),
+        machine_abi_version: MACHINE_ABI_VERSION.to_string(),
+        supervisor_abi_version: SUPERVISOR_ABI_VERSION.to_string(),
+        wasm_feature_profile: WASM_FEATURE_PROFILE.to_string(),
         memory64: false,
         multi_memory: false,
-        dmw_layout: "logical-activation-leases-v0".to_string(),
+        dmw_layout: DMW_LAYOUT.to_string(),
         network_contract_version: service_core::net_contract::NETWORK_CONTRACT_VERSION.to_string(),
-        compiler_engine: "wasmtime".to_string(),
-        compiler_execution_mode: "precompiled-core-module".to_string(),
-        artifact_format: "cwasm".to_string(),
+        compiler_engine: SUPERVISOR_COMPILER_ENGINE.to_string(),
+        compiler_execution_mode: SUPERVISOR_EXECUTION_MODE.to_string(),
+        artifact_format: SUPERVISOR_ARTIFACT_FORMAT.to_string(),
+        runtime_executor_abi: RUNTIME_ONLY_EXECUTOR_ABI.to_string(),
     }
 }
 

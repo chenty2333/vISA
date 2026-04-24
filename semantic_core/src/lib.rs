@@ -2852,12 +2852,13 @@ pub struct ArtifactProfile {
     pub compiler_engine: String,
     pub compiler_execution_mode: String,
     pub artifact_format: String,
+    pub runtime_executor_abi: String,
 }
 
 impl ArtifactProfile {
     pub fn summary(&self) -> String {
         format!(
-            "artifact_profile={} target_arch={} machine_abi={} supervisor_abi={} wasm_profile={} dmw_layout={} network={} engine={} mode={} format={}",
+            "artifact_profile={} target_arch={} machine_abi={} supervisor_abi={} wasm_profile={} dmw_layout={} network={} engine={} mode={} format={} runtime_executor={}",
             self.artifact_profile,
             self.target_arch,
             self.machine_abi_version,
@@ -2867,7 +2868,8 @@ impl ArtifactProfile {
             self.network_contract_version,
             self.compiler_engine,
             self.compiler_execution_mode,
-            self.artifact_format
+            self.artifact_format,
+            self.runtime_executor_abi
         )
     }
 }
@@ -3422,6 +3424,7 @@ mod tests {
             compiler_engine: "wasmtime".to_string(),
             compiler_execution_mode: "precompiled-core-module".to_string(),
             artifact_format: "cwasm".to_string(),
+            runtime_executor_abi: "vmos-runtime-only-executor-v0".to_string(),
         }
     }
 }

@@ -1,6 +1,6 @@
 #![no_std]
 
-pub const SUPERVISOR_CONTRACT_VERSION: &str = "vmos-supervisor-contract-v1";
+pub const SUPERVISOR_CONTRACT_VERSION: &str = "vmos-supervisor-contract-v2";
 pub const SUPERVISOR_WORLD: &str = "wasm-supervisor-world-v1";
 pub const MACHINE_ABI_VERSION: &str = "vmos-machine-abi-v0";
 pub const SUPERVISOR_ABI_VERSION: &str = "vmos-supervisor-abi-v0";
@@ -8,6 +8,10 @@ pub const WASM_FEATURE_PROFILE: &str = "wasm32-core-mvp-single-memory";
 pub const DMW_LAYOUT: &str = "logical-activation-leases-v0";
 pub const LINUX_ABI_PROFILE: &str = "linux-x86_64-demo-socket-v0";
 pub const ARTIFACT_SIGNATURE_PROFILE: &str = "prototype-self-signed-sha256";
+pub const SUPERVISOR_COMPILER_ENGINE: &str = "wasmtime";
+pub const SUPERVISOR_EXECUTION_MODE: &str = "precompiled-core-module";
+pub const SUPERVISOR_ARTIFACT_FORMAT: &str = "cwasm";
+pub const RUNTIME_ONLY_EXECUTOR_ABI: &str = "vmos-runtime-only-executor-v0";
 
 pub struct WasmModuleSpec {
     pub package: &'static str,

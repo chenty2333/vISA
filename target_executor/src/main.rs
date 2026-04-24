@@ -3,24 +3,19 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod runtime;
+
 use artifact_manifest::{
     ArtifactBundleManifest, GuestStateManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationPackageManifest, MigrationTargetManifest, ModuleArtifactManifest,
-    RequiredArtifactProfileManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SubstrateBoundaryManifest,
+    MigrationPackageManifest, MigrationTargetManifest, RequiredArtifactProfileManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SubstrateBoundaryManifest,
 };
 use contract_core::{
-    validate_artifact_manifest, validate_manifest_entry, validate_migration_against_manifest,
-    validate_replay_quiescent,
+    validate_artifact_manifest, validate_migration_against_manifest, validate_replay_quiescent,
 };
+use runtime::RuntimeOnlyExecutor;
 use semantic_core::{FrontendKind, SemanticGraph, StoreState, TaskState};
-use service_core::net_contract::{
-    NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
-    VIRTIO_NET0_TX_QUEUE_DEPTH,
-};
-use sha2::{Digest, Sha256};
 use supervisor_catalog::{SUPERVISOR_WASM_MODULES, WasmModuleSpec};
-use wasmtime::{Config, Engine, Instance, Module, Precompiled, Store};
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
 
@@ -39,7 +34,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| workspace_root.join(DEFAULT_ARTIFACT_ROOT));
     let migration_path = env::args().nth(2).map(PathBuf::from);
     let manifest = read_manifest(&artifact_root)?;
-    let engine = runtime_engine()?;
+    let executor = RuntimeOnlyExecutor::host_validation(workspace_root.clone())?;
     let mut semantic = SemanticGraph::new();
     let mut stores = Vec::with_capacity(SUPERVISOR_WASM_MODULES.len());
 
@@ -48,33 +43,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     semantic.set_task_state(1, TaskState::Running);
 
     for spec in SUPERVISOR_WASM_MODULES {
-        let entry = find_entry(&manifest, spec)?;
-        validate_manifest_entry(spec, entry)?;
-        let module_path = workspace_root.join(&entry.cwasm_path);
-        let module_bytes = fs::read(&module_path)?;
-        if sha256_hex(&module_bytes) != entry.cwasm_sha256 {
-            return Err(format!("{} cwasm hash mismatch", spec.package).into());
-        }
-
-        match Engine::detect_precompiled(&module_bytes) {
-            Some(Precompiled::Module) => {}
-            Some(Precompiled::Component) => {
-                return Err(format!("{} is a component artifact", spec.package).into());
-            }
-            None => return Err(format!("{} is not a precompiled artifact", spec.package).into()),
-        }
-
-        let module = unsafe { Module::deserialize(&engine, &module_bytes)? };
-        validate_exports(spec, &module)?;
-        let mut store = Store::new(&engine, ());
-        let instance = Instance::new(&mut store, &module, &[])?;
-        smoke_instance(spec, &instance, &mut store)?;
+        let store = executor.load_store(&manifest, spec)?;
         register_store_semantics(&mut semantic, spec);
-        stores.push(LoadedStore {
-            package: spec.package,
-            role: spec.role.as_str(),
-            fault_policy: spec.fault_policy.as_str(),
-        });
+        stores.push(store);
     }
 
     println!(
@@ -196,6 +167,7 @@ fn demo_migration_package(
             compiler_engine: manifest.compiler.engine.clone(),
             compiler_execution_mode: manifest.compiler.execution_mode.clone(),
             artifact_format: manifest.compiler.artifact_format.clone(),
+            runtime_executor_abi: manifest.compiler.runtime_executor_abi.clone(),
         },
         guest: GuestStateManifest {
             canonical_isa: "riscv64".to_owned(),
@@ -434,120 +406,6 @@ fn restore_migration_package(
     Ok(())
 }
 
-fn find_entry<'a>(
-    manifest: &'a ArtifactBundleManifest,
-    spec: &WasmModuleSpec,
-) -> Result<&'a ModuleArtifactManifest, Box<dyn Error>> {
-    manifest
-        .modules
-        .iter()
-        .find(|entry| entry.package == spec.package)
-        .ok_or_else(|| format!("manifest is missing {}", spec.package).into())
-}
-
-fn validate_exports(spec: &WasmModuleSpec, module: &Module) -> Result<(), Box<dyn Error>> {
-    let export_names = module
-        .exports()
-        .map(|export| export.name().to_owned())
-        .collect::<Vec<_>>();
-    for expected in spec.expected_exports {
-        if !export_names.iter().any(|name| name == expected) {
-            return Err(format!("{} missing export `{expected}`", spec.package).into());
-        }
-    }
-    Ok(())
-}
-
-fn smoke_instance(
-    spec: &WasmModuleSpec,
-    instance: &Instance,
-    store: &mut Store<()>,
-) -> Result<(), Box<dyn Error>> {
-    check_u32_export(instance, store, "request_capacity")?;
-    check_u32_export(instance, store, "response_capacity")?;
-    check_u32_export(instance, store, "buffer_capacity")?;
-    check_u32_export(instance, store, "arg_buffer_capacity")?;
-    check_u32_export(instance, store, "result_buffer_capacity")?;
-    check_u32_export(instance, store, "request_ptr")?;
-    check_u32_export(instance, store, "response_ptr")?;
-    check_u32_export(instance, store, "buffer_ptr")?;
-    check_u32_export(instance, store, "arg_buffer_ptr")?;
-    check_u32_export(instance, store, "result_buffer_ptr")?;
-
-    if spec.package == "console_service" {
-        if let Ok(func) = instance.get_typed_func::<(u32, u32), i32>(&mut *store, "commit_write") {
-            let rc = func.call(&mut *store, (0, 0))?;
-            if rc != 0 {
-                return Err("console_service commit_write(0, 0) failed".into());
-            }
-        }
-    }
-    if spec.package == "wasm_app" {
-        if let Ok(func) = instance.get_typed_func::<(), u64>(&mut *store, "run") {
-            let _ = func.call(&mut *store, ())?;
-        }
-    }
-    if matches!(
-        spec.package,
-        "driver_virtio_net" | "net_core" | "linux_socket_service"
-    ) {
-        check_u32_export_eq(
-            instance,
-            store,
-            "network_contract_version",
-            NETWORK_CONTRACT_ABI_VERSION,
-        )?;
-    }
-    if matches!(spec.package, "driver_virtio_net" | "net_core") {
-        check_u32_export_eq(instance, store, "packet_mtu", VIRTIO_NET0_MTU)?;
-        check_u32_export_eq(
-            instance,
-            store,
-            "packet_rx_queue_depth",
-            VIRTIO_NET0_RX_QUEUE_DEPTH,
-        )?;
-        check_u32_export_eq(
-            instance,
-            store,
-            "packet_tx_queue_depth",
-            VIRTIO_NET0_TX_QUEUE_DEPTH,
-        )?;
-    }
-    Ok(())
-}
-
-fn check_u32_export(
-    instance: &Instance,
-    store: &mut Store<()>,
-    export: &str,
-) -> Result<(), Box<dyn Error>> {
-    if let Ok(func) = instance.get_typed_func::<(), u32>(&mut *store, export) {
-        let value = func.call(&mut *store, ())?;
-        if value == 0 {
-            return Err(format!("export `{export}` returned zero").into());
-        }
-    }
-    Ok(())
-}
-
-fn check_u32_export_eq(
-    instance: &Instance,
-    store: &mut Store<()>,
-    export: &str,
-    expected: u32,
-) -> Result<(), Box<dyn Error>> {
-    let func = instance.get_typed_func::<(), u32>(&mut *store, export)?;
-    let value = func.call(&mut *store, ())?;
-    if value != expected {
-        return Err(format!("export `{export}` returned {value}, expected {expected}").into());
-    }
-    Ok(())
-}
-
-fn runtime_engine() -> Result<Engine, Box<dyn Error>> {
-    Ok(Engine::new(&Config::new())?)
-}
-
 fn read_manifest(artifact_root: &Path) -> Result<ArtifactBundleManifest, Box<dyn Error>> {
     let bytes = fs::read(artifact_root.join("manifest.json"))?;
     Ok(serde_json::from_slice(&bytes)?)
@@ -565,16 +423,4 @@ fn workspace_root() -> Result<PathBuf, Box<dyn Error>> {
         .parent()
         .ok_or("target_executor must live in workspace root")?
         .to_path_buf())
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex::encode(hasher.finalize())
-}
-
-struct LoadedStore {
-    package: &'static str,
-    role: &'static str,
-    fault_policy: &'static str,
 }

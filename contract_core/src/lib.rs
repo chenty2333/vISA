@@ -9,9 +9,10 @@ use service_core::net_contract::NETWORK_CONTRACT_VERSION;
 use sha2::{Digest, Sha256};
 use supervisor_catalog::{
     ARTIFACT_SIGNATURE_PROFILE, CapabilitySpec, DMW_LAYOUT, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
-    SUPERVISOR_ABI_VERSION, SUPERVISOR_CONTRACT_VERSION, SUPERVISOR_WASM_MODULES, SUPERVISOR_WORLD,
-    WASM_FEATURE_PROFILE, WasmModuleSpec, catalog_contract_fingerprint, module_dependencies,
-    package_set_fingerprint,
+    RUNTIME_ONLY_EXECUTOR_ABI, SUPERVISOR_ABI_VERSION, SUPERVISOR_ARTIFACT_FORMAT,
+    SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_CONTRACT_VERSION, SUPERVISOR_EXECUTION_MODE,
+    SUPERVISOR_WASM_MODULES, SUPERVISOR_WORLD, WASM_FEATURE_PROFILE, WasmModuleSpec,
+    catalog_contract_fingerprint, module_dependencies, package_set_fingerprint,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,11 +61,17 @@ pub fn validate_artifact_manifest(manifest: &ArtifactBundleManifest) -> Contract
         return Err(ContractError::new("unsupported manifest schema version"));
     }
     validate_supervisor_contract(manifest)?;
-    if manifest.compiler.artifact_format != "cwasm" {
+    if manifest.compiler.engine != SUPERVISOR_COMPILER_ENGINE {
+        return Err(ContractError::new("manifest compiler engine mismatch"));
+    }
+    if manifest.compiler.artifact_format != SUPERVISOR_ARTIFACT_FORMAT {
         return Err(ContractError::new("manifest artifact format mismatch"));
     }
-    if manifest.compiler.execution_mode != "precompiled-core-module" {
+    if manifest.compiler.execution_mode != SUPERVISOR_EXECUTION_MODE {
         return Err(ContractError::new("manifest execution mode mismatch"));
+    }
+    if manifest.compiler.runtime_executor_abi != RUNTIME_ONLY_EXECUTOR_ABI {
+        return Err(ContractError::new("manifest runtime executor ABI mismatch"));
     }
     if manifest.target.linux_abi_profile != LINUX_ABI_PROFILE {
         return Err(ContractError::new("manifest Linux ABI profile mismatch"));
@@ -222,6 +229,12 @@ pub fn validate_manifest_entry(
             spec.package
         )));
     }
+    if !entry.cwasm_path.ends_with(".cwasm") {
+        return Err(ContractError::new(format!(
+            "{} artifact path is not a cwasm module",
+            spec.package
+        )));
+    }
     validate_capabilities(spec, entry)?;
     Ok(())
 }
@@ -296,6 +309,7 @@ pub fn validate_migration_against_manifest(
     if required.compiler_engine != manifest.compiler.engine
         || required.compiler_execution_mode != manifest.compiler.execution_mode
         || required.artifact_format != manifest.compiler.artifact_format
+        || required.runtime_executor_abi != manifest.compiler.runtime_executor_abi
     {
         return Err(ContractError::new(
             "package compiler/artifact mode mismatch",

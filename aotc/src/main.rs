@@ -19,8 +19,9 @@ use service_core::net_contract::{
 use sha2::{Digest, Sha256};
 use supervisor_catalog::{
     ARTIFACT_SIGNATURE_PROFILE, DMW_LAYOUT, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
-    SUPERVISOR_ABI_VERSION, SUPERVISOR_WASM_MODULES, WASM_FEATURE_PROFILE, WasmModuleSpec,
-    module_dependencies,
+    RUNTIME_ONLY_EXECUTOR_ABI, SUPERVISOR_ABI_VERSION, SUPERVISOR_ARTIFACT_FORMAT,
+    SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_EXECUTION_MODE, SUPERVISOR_WASM_MODULES,
+    WASM_FEATURE_PROFILE, WasmModuleSpec, module_dependencies,
 };
 use wasmtime::{Config, Engine, ExternType, Instance, Module, Precompiled, Store, Strategy};
 
@@ -272,10 +273,11 @@ fn compile_artifacts(
             network_contract_version: NETWORK_CONTRACT_VERSION.to_owned(),
         },
         compiler: CompilerManifest {
-            engine: "wasmtime".to_owned(),
+            engine: SUPERVISOR_COMPILER_ENGINE.to_owned(),
             engine_version: WASMTIME_CRATE_VERSION.to_owned(),
-            execution_mode: "precompiled-core-module".to_owned(),
-            artifact_format: "cwasm".to_owned(),
+            execution_mode: SUPERVISOR_EXECUTION_MODE.to_owned(),
+            artifact_format: SUPERVISOR_ARTIFACT_FORMAT.to_owned(),
+            runtime_executor_abi: RUNTIME_ONLY_EXECUTOR_ABI.to_owned(),
         },
         modules,
     };

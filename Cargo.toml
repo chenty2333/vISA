@@ -44,7 +44,6 @@ supervisor_catalog = { path = "supervisor_catalog" }
 uart_16550 = "0.3.2"
 vmos_abi = { path = "abi" }
 wasmtime = { version = "43.0.0", default-features = false }
-wasmi = { version = "1.0.9", default-features = false }
 x86_64 = { version = "0.15.4", default-features = false, features = ["abi_x86_interrupt", "instructions"] }
 xmas-elf = { version = "0.9.1", default-features = false }
 
