@@ -358,7 +358,11 @@ pub struct CodeObjectManifest {
 pub struct ActivationRecordManifest {
     pub id: u64,
     pub store: u64,
+    #[serde(default)]
+    pub store_generation: u64,
     pub code_object: u64,
+    #[serde(default)]
+    pub code_generation: u64,
     pub artifact: u64,
     pub entry: String,
     pub generation: u64,
@@ -388,14 +392,42 @@ pub struct TrapRecordManifest {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct HostcallTraceManifest {
+    #[serde(default)]
+    pub abi_version: String,
+    #[serde(default)]
+    pub flags: u32,
     pub activation: u64,
+    #[serde(default)]
+    pub store: u64,
+    #[serde(default)]
+    pub store_generation: u64,
+    #[serde(default)]
+    pub code_object: u64,
+    #[serde(default)]
+    pub code_generation: u64,
+    #[serde(default)]
+    pub artifact: u64,
     pub hostcall_number: u32,
     pub name: String,
     pub category: String,
     pub object: String,
     pub operation: String,
+    #[serde(default)]
+    pub args: [u64; 6],
+    #[serde(default)]
+    pub cap_args: Vec<u64>,
     pub allowed: bool,
     pub result: String,
+    #[serde(default)]
+    pub ret_tag: String,
+    #[serde(default)]
+    pub ret0: u64,
+    #[serde(default)]
+    pub ret1: u64,
+    #[serde(default)]
+    pub trap_out: Option<u64>,
+    #[serde(default)]
+    pub wait_token_out: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

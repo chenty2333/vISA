@@ -117,12 +117,17 @@ impl TargetTrapMetadata {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostcallCategory {
     Service,
+    Device,
+    PacketDevice,
     Mmio,
     Dma,
     Irq,
+    Virtqueue,
     Dmw,
     CodePublish,
     Snapshot,
+    GuestMemory,
+    Timer,
     Wait,
 }
 
@@ -130,12 +135,17 @@ impl HostcallCategory {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Service => "service",
+            Self::Device => "device",
+            Self::PacketDevice => "packet-device",
             Self::Mmio => "mmio",
             Self::Dma => "dma",
             Self::Irq => "irq",
+            Self::Virtqueue => "virtqueue",
             Self::Dmw => "dmw",
             Self::CodePublish => "code-publish",
             Self::Snapshot => "snapshot",
+            Self::GuestMemory => "guest-memory",
+            Self::Timer => "timer",
             Self::Wait => "wait",
         }
     }
@@ -143,9 +153,37 @@ impl HostcallCategory {
     pub const fn requires_capability(self) -> bool {
         matches!(
             self,
-            Self::Mmio | Self::Dma | Self::Irq | Self::Dmw | Self::CodePublish | Self::Snapshot
+            Self::Device
+                | Self::PacketDevice
+                | Self::Mmio
+                | Self::Dma
+                | Self::Irq
+                | Self::Virtqueue
+                | Self::Dmw
+                | Self::CodePublish
+                | Self::Snapshot
+                | Self::GuestMemory
+                | Self::Timer
         )
     }
+}
+
+pub const fn capability_class_requires_hostcall_gate(class: CapabilityClass) -> bool {
+    matches!(
+        class,
+        CapabilityClass::Device
+            | CapabilityClass::PacketDevice
+            | CapabilityClass::MmioRegion
+            | CapabilityClass::DmaBuffer
+            | CapabilityClass::IrqLine
+            | CapabilityClass::VirtioQueue
+            | CapabilityClass::DmwWindow
+            | CapabilityClass::Timer
+            | CapabilityClass::Snapshot
+            | CapabilityClass::NetInterface
+            | CapabilityClass::NetSocket
+            | CapabilityClass::GuestMemoryAccess
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -186,6 +224,11 @@ impl HostcallSpec {
             self.operation,
             self.may_pending
         )
+    }
+
+    pub fn requires_capability(&self) -> bool {
+        self.category.requires_capability()
+            || capability_class_requires_hostcall_gate(CapabilityClass::from_object(&self.object))
     }
 }
 
@@ -230,6 +273,36 @@ pub struct TargetArtifactImage {
     pub capabilities: Vec<TargetCapabilitySpec>,
     pub hostcalls: Vec<HostcallSpec>,
     pub payload_len: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExpectedTargetArtifact {
+    pub package: String,
+    pub artifact_name: String,
+    pub target_profile: String,
+    pub abi_fingerprint: String,
+    pub manifest_binding_hash: String,
+    pub code_hash: String,
+}
+
+impl ExpectedTargetArtifact {
+    pub fn new(
+        package: &str,
+        artifact_name: &str,
+        target_profile: &str,
+        abi_fingerprint: &str,
+        manifest_binding_hash: &str,
+        code_hash: &str,
+    ) -> Self {
+        Self {
+            package: package.to_string(),
+            artifact_name: artifact_name.to_string(),
+            target_profile: target_profile.to_string(),
+            abi_fingerprint: abi_fingerprint.to_string(),
+            manifest_binding_hash: manifest_binding_hash.to_string(),
+            code_hash: code_hash.to_string(),
+        }
+    }
 }
 
 impl TargetArtifactImage {
@@ -326,6 +399,11 @@ pub enum ArtifactRegistryError {
     EmptyTargetProfile,
     EmptyAbiFingerprint,
     DuplicateArtifact,
+    UnexpectedArtifact,
+    TargetProfileMismatch,
+    AbiFingerprintMismatch,
+    ManifestBindingMismatch,
+    CodeHashMismatch,
 }
 
 impl ArtifactRegistryError {
@@ -337,18 +415,36 @@ impl ArtifactRegistryError {
             Self::EmptyTargetProfile => "artifact target profile is empty",
             Self::EmptyAbiFingerprint => "artifact ABI fingerprint is empty",
             Self::DuplicateArtifact => "artifact identity was already verified",
+            Self::UnexpectedArtifact => "artifact is not present in expected manifest policy",
+            Self::TargetProfileMismatch => "artifact target profile does not match expected policy",
+            Self::AbiFingerprintMismatch => {
+                "artifact ABI fingerprint does not match expected policy"
+            }
+            Self::ManifestBindingMismatch => {
+                "artifact manifest binding hash does not match expected policy"
+            }
+            Self::CodeHashMismatch => "artifact code hash does not match expected policy",
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct ArtifactRegistry {
+    expected: Vec<ExpectedTargetArtifact>,
     verified: Vec<VerifiedArtifact>,
 }
 
 impl ArtifactRegistry {
     pub const fn new() -> Self {
         Self {
+            expected: Vec::new(),
+            verified: Vec::new(),
+        }
+    }
+
+    pub fn with_expected(expected: Vec<ExpectedTargetArtifact>) -> Self {
+        Self {
+            expected,
             verified: Vec::new(),
         }
     }
@@ -378,6 +474,25 @@ impl ArtifactRegistry {
             .any(|verified| verified.artifact_id == image.id)
         {
             return Err(ArtifactRegistryError::DuplicateArtifact);
+        }
+        if !self.expected.is_empty() {
+            let Some(expected) = self.expected.iter().find(|expected| {
+                expected.package == image.package && expected.artifact_name == image.artifact_name
+            }) else {
+                return Err(ArtifactRegistryError::UnexpectedArtifact);
+            };
+            if expected.target_profile != image.target_profile {
+                return Err(ArtifactRegistryError::TargetProfileMismatch);
+            }
+            if expected.abi_fingerprint != image.abi_fingerprint {
+                return Err(ArtifactRegistryError::AbiFingerprintMismatch);
+            }
+            if expected.manifest_binding_hash != image.manifest_binding_hash {
+                return Err(ArtifactRegistryError::ManifestBindingMismatch);
+            }
+            if expected.code_hash != image.code_hash {
+                return Err(ArtifactRegistryError::CodeHashMismatch);
+            }
         }
         let verified = VerifiedArtifact {
             artifact_id: image.id,
@@ -844,17 +959,23 @@ impl ActivationState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostcallReturnTag {
-    Complete,
+    Ok,
+    Errno,
     Pending,
     Trap,
+    KillStore,
+    RestartSyscall,
 }
 
 impl HostcallReturnTag {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Complete => "complete",
+            Self::Ok => "ok",
+            Self::Errno => "errno",
             Self::Pending => "pending",
             Self::Trap => "trap",
+            Self::KillStore => "kill-store",
+            Self::RestartSyscall => "restart-syscall",
         }
     }
 }
@@ -863,7 +984,9 @@ impl HostcallReturnTag {
 pub struct ActivationRecord {
     pub id: ActivationId,
     pub store: StoreId,
+    pub store_generation: Generation,
     pub code_object: CodeObjectId,
+    pub code_generation: Generation,
     pub artifact: TargetArtifactId,
     pub entry: ActivationEntry,
     pub generation: Generation,
@@ -892,10 +1015,12 @@ impl ActivationRecord {
             .unwrap_or_else(|| "none".to_string());
         let return_tag = self.return_tag.map(|tag| tag.as_str()).unwrap_or("none");
         format!(
-            "activation id={} store={} code={} artifact={} entry={} state={} generation={} start={} exit={} dmw_leases={} wait={} trap={} return={}",
+            "activation id={} store={} store_generation={} code={} code_generation={} artifact={} entry={} state={} generation={} start={} exit={} dmw_leases={} wait={} trap={} return={}",
             self.id,
             self.store,
+            self.store_generation,
             self.code_object,
+            self.code_generation,
             self.artifact,
             self.entry.summary(),
             self.state.as_str(),
@@ -1004,16 +1129,31 @@ impl TargetTrapRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostcallFrame {
+    pub abi_version: String,
+    pub flags: u32,
     pub activation: ActivationId,
     pub store: StoreId,
+    pub store_generation: Generation,
+    pub code_object: CodeObjectId,
+    pub code_generation: Generation,
+    pub artifact: TargetArtifactId,
     pub hostcall_number: u32,
     pub subject: String,
     pub object: String,
     pub operation: String,
     pub generation: Generation,
+    pub args: [u64; 6],
+    pub cap_args: Vec<CapabilityId>,
+    pub ret_tag: HostcallReturnTag,
+    pub ret0: u64,
+    pub ret1: u64,
+    pub trap_out: Option<TargetTrapId>,
+    pub wait_token_out: Option<WaitId>,
 }
 
 impl HostcallFrame {
+    pub const ABI_VERSION: &'static str = "vmos-target-hostcall-frame-v1";
+
     pub fn new(
         activation: ActivationId,
         store: StoreId,
@@ -1024,41 +1164,111 @@ impl HostcallFrame {
         generation: Generation,
     ) -> Self {
         Self {
+            abi_version: Self::ABI_VERSION.to_string(),
+            flags: 0,
             activation,
             store,
+            store_generation: 0,
+            code_object: 0,
+            code_generation: 0,
+            artifact: 0,
             hostcall_number,
             subject: subject.to_string(),
             object: object.to_string(),
             operation: operation.to_string(),
             generation,
+            args: [0; 6],
+            cap_args: Vec::new(),
+            ret_tag: HostcallReturnTag::Ok,
+            ret0: 0,
+            ret1: 0,
+            trap_out: None,
+            wait_token_out: None,
         }
+    }
+
+    pub fn new_bound(
+        activation: ActivationId,
+        store: &StoreRecord,
+        code: &CodeObject,
+        hostcall_number: u32,
+        subject: &str,
+        object: &str,
+        operation: &str,
+        generation: Generation,
+    ) -> Self {
+        let mut frame = Self::new(
+            activation,
+            store.id,
+            hostcall_number,
+            subject,
+            object,
+            operation,
+            generation,
+        );
+        frame.store_generation = store.generation;
+        frame.code_object = code.id;
+        frame.code_generation = code.generation;
+        frame.artifact = code.artifact_id;
+        frame
+    }
+
+    pub fn with_args(mut self, args: [u64; 6]) -> Self {
+        self.args = args;
+        self
+    }
+
+    pub fn with_cap_args(mut self, cap_args: Vec<CapabilityId>) -> Self {
+        self.cap_args = cap_args;
+        self
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostcallTraceRecord {
+    pub abi_version: String,
+    pub flags: u32,
     pub activation: ActivationId,
+    pub store: StoreId,
+    pub store_generation: Generation,
+    pub code_object: CodeObjectId,
+    pub code_generation: Generation,
+    pub artifact: TargetArtifactId,
     pub hostcall_number: u32,
     pub name: String,
     pub category: HostcallCategory,
     pub object: String,
     pub operation: String,
+    pub args: [u64; 6],
+    pub cap_args: Vec<CapabilityId>,
     pub allowed: bool,
     pub result: String,
+    pub ret_tag: HostcallReturnTag,
+    pub ret0: u64,
+    pub ret1: u64,
+    pub trap_out: Option<TargetTrapId>,
+    pub wait_token_out: Option<WaitId>,
 }
 
 impl HostcallTraceRecord {
     pub fn summary(&self) -> String {
         format!(
-            "hostcall activation={} number={} name={} category={} object={} op={} allowed={} result={}",
+            "hostcall abi={} activation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} object={} op={} allowed={} result={} ret={}",
+            self.abi_version,
             self.activation,
+            self.store,
+            self.store_generation,
+            self.code_object,
+            self.code_generation,
+            self.artifact,
             self.hostcall_number,
             self.name,
             self.category.as_str(),
             self.object,
             self.operation,
             self.allowed,
-            self.result
+            self.result,
+            self.ret_tag.as_str()
         )
     }
 }
@@ -1131,6 +1341,9 @@ pub enum TargetExecutorError {
     ActivationMissing,
     ActivationNotRunning,
     ActivationStoreMismatch,
+    CodeObjectMismatch,
+    HostcallFrameMismatch,
+    HostcallAbiMismatch,
     HostcallNotDeclared,
     CapabilityDenied,
     DmwLeaseActive,
@@ -1145,6 +1358,9 @@ impl TargetExecutorError {
             Self::ActivationMissing => "activation is missing",
             Self::ActivationNotRunning => "activation is not running",
             Self::ActivationStoreMismatch => "activation/store mismatch",
+            Self::CodeObjectMismatch => "activation/code object attribution mismatch",
+            Self::HostcallFrameMismatch => "hostcall frame does not match declared hostcall",
+            Self::HostcallAbiMismatch => "hostcall frame ABI version mismatch",
             Self::HostcallNotDeclared => "hostcall is not declared by code object",
             Self::CapabilityDenied => "hostcall capability gate denied access",
             Self::DmwLeaseActive => "active DMW lease cannot cross exit boundary",
@@ -1199,7 +1415,9 @@ impl TargetExecutor {
         self.activations.push(ActivationRecord {
             id,
             store: store.id,
+            store_generation: store.generation,
             code_object: code.id,
+            code_generation: code.generation,
             artifact: code.artifact_id,
             entry,
             generation: 1,
@@ -1220,20 +1438,43 @@ impl TargetExecutor {
         frame: HostcallFrame,
         capabilities: &CapabilityLedger,
     ) -> Result<(), TargetExecutorError> {
+        if frame.abi_version != HostcallFrame::ABI_VERSION {
+            return Err(TargetExecutorError::HostcallAbiMismatch);
+        }
         let activation_index = self.activation_index(frame.activation)?;
-        let activation = &self.activations[activation_index];
+        let activation = self.activations[activation_index].clone();
         if activation.state != ActivationState::Running {
             return Err(TargetExecutorError::ActivationNotRunning);
         }
-        if activation.store != frame.store {
+        if activation.store != frame.store || activation.store_generation != frame.store_generation
+        {
             return Err(TargetExecutorError::ActivationStoreMismatch);
+        }
+        if activation.code_object != code.id
+            || activation.code_generation != code.generation
+            || activation.artifact != code.artifact_id
+            || frame.code_object != code.id
+            || frame.code_generation != code.generation
+            || frame.artifact != code.artifact_id
+            || code.bound_store != Some(frame.store)
+        {
+            self.record_trap_for_activation(
+                activation_index,
+                TargetTrapClass::CodeObjectTrap,
+                Some(code),
+                Some(format!("hostcall#{}", frame.hostcall_number)),
+                "attribution-failure",
+                FailureEffect::CompleteWithErrno(5),
+                "hostcall frame did not match activation code object attribution",
+            );
+            return Err(TargetExecutorError::CodeObjectMismatch);
         }
         let Some(spec) = code
             .hostcalls
             .iter()
             .find(|spec| spec.number == frame.hostcall_number)
         else {
-            self.record_trap_for_activation(
+            let trap = self.record_trap_for_activation(
                 activation_index,
                 TargetTrapClass::HostcallTrap,
                 Some(code),
@@ -1242,8 +1483,45 @@ impl TargetExecutor {
                 FailureEffect::CompleteWithErrno(38),
                 "hostcall not declared by artifact",
             );
+            self.record_trace(
+                &frame,
+                &HostcallSpec::new(
+                    frame.hostcall_number,
+                    "hostcall.undeclared",
+                    HostcallCategory::Service,
+                    &frame.object,
+                    &frame.operation,
+                    false,
+                ),
+                false,
+                "undeclared",
+                HostcallReturnTag::Trap,
+                Some(trap),
+                None,
+            );
             return Err(TargetExecutorError::HostcallNotDeclared);
         };
+        if frame.object != spec.object || frame.operation != spec.operation {
+            let trap = self.record_trap_for_activation(
+                activation_index,
+                TargetTrapClass::HostcallTrap,
+                Some(code),
+                Some(spec.name.clone()),
+                "frame-mismatch",
+                FailureEffect::CompleteWithErrno(22),
+                "hostcall frame object/operation did not match manifest declaration",
+            );
+            self.record_trace(
+                &frame,
+                spec,
+                false,
+                "frame-mismatch",
+                HostcallReturnTag::Trap,
+                Some(trap),
+                None,
+            );
+            return Err(TargetExecutorError::HostcallFrameMismatch);
+        }
         self.event_log.push(format!(
             "HostcallEntered activation={} name={} category={} subject={} object={} op={}",
             frame.activation,
@@ -1254,8 +1532,7 @@ impl TargetExecutor {
             frame.operation
         ));
         if spec.may_pending && self.activations[activation_index].active_dmw_leases != 0 {
-            self.record_trace(frame.activation, spec, false, "dmw-lease-active");
-            self.record_trap_for_activation(
+            let trap = self.record_trap_for_activation(
                 activation_index,
                 TargetTrapClass::WindowTrap,
                 Some(code),
@@ -1264,14 +1541,35 @@ impl TargetExecutor {
                 FailureEffect::CompleteWithErrno(14),
                 "pending hostcall attempted with active DMW lease",
             );
+            self.record_trace(
+                &frame,
+                spec,
+                false,
+                "dmw-lease-active",
+                HostcallReturnTag::Trap,
+                Some(trap),
+                None,
+            );
             return Err(TargetExecutorError::DmwLeaseActive);
         }
-        if spec.category.requires_capability() {
+        let requires_capability = spec.requires_capability()
+            || capabilities
+                .generation_of(&frame.subject, &frame.object)
+                .is_some();
+        if requires_capability {
             match capabilities.check(&frame.subject, &frame.object, &frame.operation) {
                 Ok(capability) => {
                     if capability.generation != frame.generation {
-                        self.record_trace(frame.activation, spec, false, "capability-generation");
-                        self.record_trap_for_activation(
+                        self.event_log.push(format!(
+                            "CapabilityGenerationMismatch activation={} subject={} object={} op={} expected={} actual={}",
+                            frame.activation,
+                            frame.subject,
+                            frame.object,
+                            frame.operation,
+                            frame.generation,
+                            capability.generation
+                        ));
+                        let trap = self.record_trap_for_activation(
                             activation_index,
                             TargetTrapClass::CapabilityTrap,
                             Some(code),
@@ -1279,6 +1577,15 @@ impl TargetExecutor {
                             "rebind-or-fail",
                             FailureEffect::CompleteWithErrno(1),
                             "capability generation mismatch",
+                        );
+                        self.record_trace(
+                            &frame,
+                            spec,
+                            false,
+                            "capability-generation",
+                            HostcallReturnTag::Trap,
+                            Some(trap),
+                            None,
                         );
                         return Err(TargetExecutorError::CapabilityDenied);
                     }
@@ -1292,8 +1599,7 @@ impl TargetExecutor {
                         frame.operation,
                         reason.as_str()
                     ));
-                    self.record_trace(frame.activation, spec, false, reason.as_str());
-                    self.record_trap_for_activation(
+                    let trap = self.record_trap_for_activation(
                         activation_index,
                         TargetTrapClass::CapabilityTrap,
                         Some(code),
@@ -1302,13 +1608,30 @@ impl TargetExecutor {
                         FailureEffect::CompleteWithErrno(1),
                         "hostcall capability gate denied access",
                     );
+                    self.record_trace(
+                        &frame,
+                        spec,
+                        false,
+                        reason.as_str(),
+                        HostcallReturnTag::Trap,
+                        Some(trap),
+                        None,
+                    );
                     return Err(TargetExecutorError::CapabilityDenied);
                 }
             }
         }
-        self.record_trace(frame.activation, spec, true, "complete");
+        self.record_trace(
+            &frame,
+            spec,
+            true,
+            "complete",
+            HostcallReturnTag::Ok,
+            None,
+            None,
+        );
         let activation = &mut self.activations[activation_index];
-        activation.return_tag = Some(HostcallReturnTag::Complete);
+        activation.return_tag = Some(HostcallReturnTag::Ok);
         activation.generation += 1;
         Ok(())
     }
@@ -1358,6 +1681,15 @@ impl TargetExecutor {
         Ok(())
     }
 
+    pub fn release_all_leases_for_activation(
+        &mut self,
+        activation: ActivationId,
+        reason: &str,
+    ) -> Result<u32, TargetExecutorError> {
+        self.activation_index(activation)?;
+        Ok(self.release_all_leases_for_activation_id(activation, reason))
+    }
+
     pub fn pending_exit(
         &mut self,
         activation: ActivationId,
@@ -1403,7 +1735,7 @@ impl TargetExecutor {
         let exit_event = self.next_event("activation-returned");
         let activation = &mut self.activations[activation_index];
         activation.state = ActivationState::Returned;
-        activation.return_tag = Some(HostcallReturnTag::Complete);
+        activation.return_tag = Some(HostcallReturnTag::Ok);
         activation.exit_event = Some(exit_event);
         activation.generation += 1;
         Ok(())
@@ -1535,20 +1867,37 @@ impl TargetExecutor {
 
     fn record_trace(
         &mut self,
-        activation: ActivationId,
+        frame: &HostcallFrame,
         spec: &HostcallSpec,
         allowed: bool,
         result: &str,
+        ret_tag: HostcallReturnTag,
+        trap_out: Option<TargetTrapId>,
+        wait_token_out: Option<WaitId>,
     ) {
         self.hostcall_trace.push(HostcallTraceRecord {
-            activation,
+            abi_version: frame.abi_version.clone(),
+            flags: frame.flags,
+            activation: frame.activation,
+            store: frame.store,
+            store_generation: frame.store_generation,
+            code_object: frame.code_object,
+            code_generation: frame.code_generation,
+            artifact: frame.artifact,
             hostcall_number: spec.number,
             name: spec.name.clone(),
             category: spec.category,
             object: spec.object.clone(),
             operation: spec.operation.clone(),
+            args: frame.args,
+            cap_args: frame.cap_args.clone(),
             allowed,
             result: result.to_string(),
+            ret_tag,
+            ret0: frame.ret0,
+            ret1: frame.ret1,
+            trap_out,
+            wait_token_out,
         });
     }
 
@@ -1564,6 +1913,7 @@ impl TargetExecutor {
     ) -> TargetTrapId {
         let activation_id = self.activations[activation_index].id;
         let store = self.activations[activation_index].store;
+        self.release_all_leases_for_activation_id(activation_id, "trap-quarantine");
         let id = self.next_trap_id;
         self.next_trap_id += 1;
         self.traps.push(TargetTrapRecord {
@@ -1587,6 +1937,40 @@ impl TargetExecutor {
         activation.exit_event = Some(exit_event);
         activation.generation += 1;
         id
+    }
+
+    fn release_all_leases_for_activation_id(
+        &mut self,
+        activation: ActivationId,
+        reason: &str,
+    ) -> u32 {
+        let mut released = 0;
+        for lease in &mut self.dmw_leases {
+            if lease.activation == activation && lease.active {
+                lease.active = false;
+                lease.generation += 1;
+                released += 1;
+                self.event_log.push(format!(
+                    "DmwLeaseReleased activation={activation} lease={} reason={reason}",
+                    lease.id
+                ));
+            }
+        }
+        if released != 0 {
+            if let Some(index) = self
+                .activations
+                .iter()
+                .position(|record| record.id == activation)
+            {
+                self.activations[index].active_dmw_leases = self.activations[index]
+                    .active_dmw_leases
+                    .saturating_sub(released);
+            }
+            self.event_log.push(format!(
+                "DmwLeaseQuarantined activation={activation} released={released} reason={reason}"
+            ));
+        }
+        released
     }
 
     fn activation_index(&self, activation: ActivationId) -> Result<usize, TargetExecutorError> {
@@ -1691,6 +2075,14 @@ mod tests {
         ));
         image.hostcalls.push(HostcallSpec::new(
             7,
+            "hostcall.packet-device.denied",
+            HostcallCategory::PacketDevice,
+            "packet-device.net0",
+            "rx",
+            false,
+        ));
+        image.hostcalls.push(HostcallSpec::new(
+            8,
             "hostcall.wait.pending",
             HostcallCategory::Wait,
             "wait.timer",
@@ -1778,6 +2170,40 @@ mod tests {
     }
 
     #[test]
+    fn registry_policy_rejects_manifest_binding_and_hash_mismatch() {
+        let expected = ExpectedTargetArtifact::new(
+            "driver_virtio_net",
+            "driver_virtio_net.cwasm",
+            "host-validation",
+            "abi-1",
+            "binding-1",
+            "hash-1",
+        );
+        let mut expected_list = Vec::new();
+        expected_list.push(expected);
+        let mut registry = ArtifactRegistry::with_expected(expected_list);
+        let mut bad = image();
+        bad.code_hash = "hash-2".to_string();
+        assert_eq!(
+            registry.verify(bad),
+            Err(ArtifactRegistryError::CodeHashMismatch)
+        );
+
+        let mut expected_list = Vec::new();
+        expected_list.push(ExpectedTargetArtifact::new(
+            "driver_virtio_net",
+            "driver_virtio_net.cwasm",
+            "host-validation",
+            "abi-1",
+            "binding-1",
+            "hash-1",
+        ));
+        let mut registry = ArtifactRegistry::with_expected(expected_list);
+        let verified = registry.verify(image()).unwrap();
+        assert_eq!(verified.manifest_binding_hash, "binding-1");
+    }
+
+    #[test]
     fn hostcall_capability_gate_allows_granted_mmio_and_traps_ungranted_privileged_hostcalls() {
         let (_artifact, store, code, capabilities) = running_store_and_code();
         let mut executor = TargetExecutor::new();
@@ -1791,9 +2217,10 @@ mod tests {
         executor
             .invoke_hostcall(
                 &code,
-                HostcallFrame::new(
+                HostcallFrame::new_bound(
                     activation,
-                    store.store.id,
+                    &store.store,
+                    &code,
                     1,
                     "driver_virtio_net",
                     "mmio.virtio-net",
@@ -1811,6 +2238,7 @@ mod tests {
             (4, "irq.denied", "bind"),
             (5, "dmw.denied", "open"),
             (6, "code-publish.denied", "publish"),
+            (7, "packet-device.net0", "rx"),
         ] {
             let activation = executor
                 .start_activation(
@@ -1822,9 +2250,10 @@ mod tests {
             assert_eq!(
                 executor.invoke_hostcall(
                     &code,
-                    HostcallFrame::new(
+                    HostcallFrame::new_bound(
                         activation,
-                        store.store.id,
+                        &store.store,
+                        &code,
                         number,
                         "driver_virtio_net",
                         object,
@@ -1836,7 +2265,7 @@ mod tests {
                 Err(TargetExecutorError::CapabilityDenied)
             );
         }
-        assert_eq!(executor.traps().len(), 5);
+        assert_eq!(executor.traps().len(), 6);
         assert!(
             executor
                 .traps()
@@ -1849,6 +2278,39 @@ mod tests {
                 .iter()
                 .any(|event| event.contains("CapabilityDenied"))
         );
+    }
+
+    #[test]
+    fn hostcall_rejects_code_object_attribution_mismatch() {
+        let (_artifact, store, code, capabilities) = running_store_and_code();
+        let mut other_code = code.clone();
+        other_code.id = code.id + 100;
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("_start".to_string()),
+            )
+            .unwrap();
+        assert_eq!(
+            executor.invoke_hostcall(
+                &other_code,
+                HostcallFrame::new_bound(
+                    activation,
+                    &store.store,
+                    &other_code,
+                    1,
+                    "driver_virtio_net",
+                    "mmio.virtio-net",
+                    "map",
+                    1,
+                ),
+                &capabilities,
+            ),
+            Err(TargetExecutorError::CodeObjectMismatch)
+        );
+        assert_eq!(executor.traps()[0].class, TargetTrapClass::CodeObjectTrap);
     }
 
     #[test]
@@ -1872,10 +2334,11 @@ mod tests {
         assert_eq!(
             executor.invoke_hostcall(
                 &code,
-                HostcallFrame::new(
+                HostcallFrame::new_bound(
                     activation,
-                    store.store.id,
-                    7,
+                    &store.store,
+                    &code,
+                    8,
                     "driver_virtio_net",
                     "wait.timer",
                     "park",
@@ -1886,6 +2349,7 @@ mod tests {
             Err(TargetExecutorError::DmwLeaseActive)
         );
         assert_eq!(executor.traps()[0].class, TargetTrapClass::WindowTrap);
+        assert!(!executor.dmw_leases()[0].active);
         executor.release_dmw_lease(lease).unwrap();
         assert_eq!(executor.snapshot_barrier(), Ok(()));
     }

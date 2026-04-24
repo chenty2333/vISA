@@ -22,8 +22,8 @@ use runtime::RuntimeOnlyExecutor;
 use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, BoundaryKind, BoundaryStatus,
     CapabilityClass, CapabilityLedger, CodeObject, CodePublishState, CodePublisher,
-    EntrypointState, FrontendKind, HostcallCategory, HostcallFrame, HostcallLinkState,
-    HostcallSpec, HostcallTraceRecord, ManagedStoreRecord, MemoryLayoutState,
+    EntrypointState, ExpectedTargetArtifact, FrontendKind, HostcallCategory, HostcallFrame,
+    HostcallLinkState, HostcallSpec, HostcallTraceRecord, ManagedStoreRecord, MemoryLayoutState,
     MigrationObjectRecord, RuntimeMode, SemanticGraph, StoreState, TargetAddressMapEntry,
     TargetArtifactImage, TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan,
     TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState, TrapSurfaceState,
@@ -236,7 +236,7 @@ fn build_target_executor_v1(
     plan: &ValidatedArtifactPlan,
     semantic: &SemanticGraph,
 ) -> Result<TargetExecutorV1Report, Box<dyn Error>> {
-    let mut registry = ArtifactRegistry::new();
+    let mut registry = ArtifactRegistry::with_expected(expected_target_artifacts(plan));
     let mut publisher = CodePublisher::new();
     let mut store_manager = TargetStoreManager::new();
     let mut executor = TargetExecutor::new();
@@ -330,9 +330,10 @@ fn run_activation_harness(
         executor
             .invoke_hostcall(
                 code,
-                HostcallFrame::new(
+                HostcallFrame::new_bound(
                     activation,
-                    store.store.id,
+                    &store.store,
+                    code,
                     spec.number,
                     &code.package,
                     &spec.object,
@@ -364,9 +365,10 @@ fn run_activation_harness(
                 .map_err(|error| error.message())?;
             let _ = executor.invoke_hostcall(
                 code,
-                HostcallFrame::new(
+                HostcallFrame::new_bound(
                     denied,
-                    store.store.id,
+                    &store.store,
+                    code,
                     number,
                     &code.package,
                     object,
@@ -389,9 +391,10 @@ fn run_activation_harness(
             .map_err(|error| error.message())?;
         let _ = executor.invoke_hostcall(
             code,
-            HostcallFrame::new(
+            HostcallFrame::new_bound(
                 dmw,
-                store.store.id,
+                &store.store,
+                code,
                 9005,
                 &code.package,
                 "wait.timer",
@@ -472,7 +475,7 @@ fn target_artifact_image(
                 category,
                 &capability.name,
                 right,
-                category == HostcallCategory::Wait,
+                matches!(category, HostcallCategory::Wait | HostcallCategory::Timer),
             ));
             next_hostcall += 1;
         }
@@ -529,23 +532,49 @@ fn target_artifact_image(
 }
 
 fn hostcall_category_for_object(object: &str) -> HostcallCategory {
-    if object.starts_with("mmio.") {
+    if object.starts_with("packet-device.") {
+        HostcallCategory::PacketDevice
+    } else if object.starts_with("device.") {
+        HostcallCategory::Device
+    } else if object.starts_with("mmio.") {
         HostcallCategory::Mmio
     } else if object.starts_with("dma.") {
         HostcallCategory::Dma
     } else if object.starts_with("irq.") {
         HostcallCategory::Irq
+    } else if object.starts_with("virtqueue.") {
+        HostcallCategory::Virtqueue
     } else if object.starts_with("dmw.") {
         HostcallCategory::Dmw
     } else if object.starts_with("code-publish.") {
         HostcallCategory::CodePublish
     } else if object.starts_with("snapshot.") {
         HostcallCategory::Snapshot
-    } else if object.starts_with("wait.") || object.starts_with("timer.") {
+    } else if object.starts_with("guest-memory.") {
+        HostcallCategory::GuestMemory
+    } else if object.starts_with("timer.") {
+        HostcallCategory::Timer
+    } else if object.starts_with("wait.") {
         HostcallCategory::Wait
     } else {
         HostcallCategory::Service
     }
+}
+
+fn expected_target_artifacts(plan: &ValidatedArtifactPlan) -> Vec<ExpectedTargetArtifact> {
+    plan.modules
+        .iter()
+        .map(|entry| {
+            ExpectedTargetArtifact::new(
+                &entry.package,
+                &entry.artifact_name,
+                &plan.artifact_profile,
+                &entry.abi_fingerprint,
+                &entry.manifest_binding_hash,
+                &entry.cwasm_sha256,
+            )
+        })
+        .collect()
 }
 
 fn grant_verified_capabilities(
@@ -840,10 +869,12 @@ fn semantic_roots(
                     .map(|trap| trap.to_string())
                     .unwrap_or_else(|| "none".to_owned());
                 format!(
-                    "activation id={} store={} code={} state={} entry={} wait={} trap={} dmw={}",
+                    "activation id={} store={} store_generation={} code={} code_generation={} state={} entry={} wait={} trap={} dmw={}",
                     activation.id,
                     activation.store,
+                    activation.store_generation,
                     activation.code_object,
+                    activation.code_generation,
                     activation.state,
                     activation.entry,
                     wait,
@@ -875,14 +906,18 @@ fn semantic_roots(
             .iter()
             .map(|trace| {
                 format!(
-                    "hostcall activation={} number={} category={} object={} op={} allowed={} result={}",
+                    "hostcall abi={} activation={} store={} code={} number={} category={} object={} op={} allowed={} result={} ret={}",
+                    trace.abi_version,
                     trace.activation,
+                    trace.store,
+                    trace.code_object,
                     trace.hostcall_number,
                     trace.category,
                     trace.object,
                     trace.operation,
                     trace.allowed,
-                    trace.result
+                    trace.result,
+                    trace.ret_tag
                 )
             })
             .collect(),
@@ -972,7 +1007,9 @@ fn activation_record_manifest(
     ActivationRecordManifest {
         id: activation.id,
         store: activation.store,
+        store_generation: activation.store_generation,
         code_object: activation.code_object,
+        code_generation: activation.code_generation,
         artifact: activation.artifact,
         entry: activation.entry.summary(),
         generation: activation.generation,
@@ -1004,14 +1041,28 @@ fn trap_record_manifest(trap: &semantic_core::TargetTrapRecord) -> TrapRecordMan
 
 fn hostcall_trace_manifest(trace: &HostcallTraceRecord) -> HostcallTraceManifest {
     HostcallTraceManifest {
+        abi_version: trace.abi_version.clone(),
+        flags: trace.flags,
         activation: trace.activation,
+        store: trace.store,
+        store_generation: trace.store_generation,
+        code_object: trace.code_object,
+        code_generation: trace.code_generation,
+        artifact: trace.artifact,
         hostcall_number: trace.hostcall_number,
         name: trace.name.clone(),
         category: trace.category.as_str().to_owned(),
         object: trace.object.clone(),
         operation: trace.operation.clone(),
+        args: trace.args,
+        cap_args: trace.cap_args.clone(),
         allowed: trace.allowed,
         result: trace.result.clone(),
+        ret_tag: trace.ret_tag.as_str().to_owned(),
+        ret0: trace.ret0,
+        ret1: trace.ret1,
+        trap_out: trace.trap_out,
+        wait_token_out: trace.wait_token_out,
     }
 }
 

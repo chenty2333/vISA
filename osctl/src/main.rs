@@ -628,10 +628,12 @@ fn inspect_package_object(
                 let trap = display_option_u64(activation.trap);
                 let ret = activation.return_tag.as_deref().unwrap_or("none");
                 let line = format!(
-                    "activation id={} store={} code={} artifact={} entry={} state={} generation={} start={} exit={} dmw={} wait={} trap={} return={}",
+                    "activation id={} store={} store_generation={} code={} code_generation={} artifact={} entry={} state={} generation={} start={} exit={} dmw={} wait={} trap={} return={}",
                     activation.id,
                     activation.store,
+                    activation.store_generation,
                     activation.code_object,
+                    activation.code_generation,
                     activation.artifact,
                     activation.entry,
                     activation.state,
@@ -729,15 +731,24 @@ fn inspect_package_object(
             );
             for trace in &package.semantic.hostcall_trace {
                 let line = format!(
-                    "hostcall activation={} number={} name={} category={} object={} op={} allowed={} result={}",
+                    "hostcall abi={} activation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} object={} op={} allowed={} result={} ret={} trap_out={} wait_out={}",
+                    trace.abi_version,
                     trace.activation,
+                    trace.store,
+                    trace.store_generation,
+                    trace.code_object,
+                    trace.code_generation,
+                    trace.artifact,
                     trace.hostcall_number,
                     trace.name,
                     trace.category,
                     trace.object,
                     trace.operation,
                     trace.allowed,
-                    trace.result
+                    trace.result,
+                    display_default(&trace.ret_tag, "none"),
+                    display_option_u64(trace.trap_out),
+                    display_option_u64(trace.wait_token_out)
                 );
                 print_if_matches(&line, filter);
             }
