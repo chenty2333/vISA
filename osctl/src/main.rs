@@ -80,6 +80,21 @@ fn run() -> Result<(), Box<dyn Error>> {
             };
             print_graph(Path::new(&path))
         }
+        "activation" => {
+            let mut blocked_only = false;
+            let mut path = None;
+            for arg in args {
+                if arg == "--blocked" {
+                    blocked_only = true;
+                } else if path.is_none() {
+                    path = Some(arg);
+                } else {
+                    return Err("activation received too many positional paths".into());
+                }
+            }
+            let path = path.ok_or("activation requires a migration package JSON path")?;
+            print_activation(Path::new(&path), blocked_only)
+        }
         "event-log" => {
             let Some(subcommand) = args.next() else {
                 return Err("event-log requires a subcommand".into());
@@ -147,6 +162,7 @@ fn print_usage() {
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!("  osctl state <manifest-or-migration.json>");
     eprintln!("  osctl graph <migration.json>");
+    eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
         "  osctl replay --until <event-cursor> [--manifest <manifest.json>] [--json] <migration.json>"
@@ -323,7 +339,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} tasks={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} executor_transitions={}",
+            "semantic state package={} cursor={} tasks={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.task_count,
@@ -335,6 +351,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.authority_count,
             package.semantic.boundary_count,
             package.semantic.artifact_verification_count,
+            package.semantic.store_activation_count,
             package.semantic.executor_transition_count
         );
         println!(
@@ -403,7 +420,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
 fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
     println!(
-        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} executor_transition_roots={}",
+        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.task_roots.len(),
@@ -414,6 +431,7 @@ fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
         package.semantic.roots.fast_path_roots.len(),
         package.semantic.roots.boundary_roots.len(),
         package.semantic.roots.artifact_verification_roots.len(),
+        package.semantic.roots.store_activation_roots.len(),
         package.semantic.roots.executor_transition_roots.len()
     );
     print_roots("task", &package.semantic.roots.task_roots);
@@ -426,6 +444,10 @@ fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
     print_roots(
         "artifact-verification",
         &package.semantic.roots.artifact_verification_roots,
+    );
+    print_roots(
+        "store-activation",
+        &package.semantic.roots.store_activation_roots,
     );
     print_roots(
         "executor-transition",
@@ -444,6 +466,24 @@ fn print_event_log_tail(path: &Path) -> Result<(), Box<dyn Error>> {
     );
     for event in &package.semantic.roots.event_log_tail {
         println!("{event}");
+    }
+    Ok(())
+}
+
+fn print_activation(path: &Path, blocked_only: bool) -> Result<(), Box<dyn Error>> {
+    let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
+    println!(
+        "activation package={} cursor={} roots={} blocked_only={}",
+        package.package_id,
+        package.semantic.event_log_cursor,
+        package.semantic.roots.store_activation_roots.len(),
+        blocked_only
+    );
+    for activation in &package.semantic.roots.store_activation_roots {
+        if blocked_only && activation.contains(" blocked=none ") {
+            continue;
+        }
+        println!("{activation}");
     }
     Ok(())
 }
@@ -491,7 +531,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: tasks={} resources={} authorities={} stores={} caps={} boundaries={} artifacts={} executor_transitions={} event_tail={}",
+        "replay roots: tasks={} resources={} authorities={} stores={} caps={} boundaries={} artifacts={} activations={} executor_transitions={} event_tail={}",
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
         package.semantic.roots.authority_roots.len(),
@@ -499,6 +539,7 @@ fn replay_until(
         package.semantic.roots.capability_roots.len(),
         package.semantic.roots.boundary_roots.len(),
         package.semantic.roots.artifact_verification_roots.len(),
+        package.semantic.roots.store_activation_roots.len(),
         package.semantic.roots.executor_transition_roots.len(),
         package.semantic.roots.event_log_tail.len()
     );
@@ -507,6 +548,9 @@ fn replay_until(
     }
     for artifact in &package.semantic.roots.artifact_verification_roots {
         println!("replay artifact {artifact}");
+    }
+    for activation in &package.semantic.roots.store_activation_roots {
+        println!("replay activation {activation}");
     }
     for transition in &package.semantic.roots.executor_transition_roots {
         println!("replay executor {transition}");
@@ -552,10 +596,12 @@ fn print_replay_json(
             "capabilities": package.semantic.roots.capability_roots.len(),
             "boundaries": package.semantic.roots.boundary_roots.len(),
             "artifacts": package.semantic.roots.artifact_verification_roots.len(),
+            "activations": package.semantic.roots.store_activation_roots.len(),
             "executor_transitions": package.semantic.roots.executor_transition_roots.len(),
             "event_tail": package.semantic.roots.event_log_tail.len(),
             "boundary_roots": &package.semantic.roots.boundary_roots,
             "artifact_verification_roots": &package.semantic.roots.artifact_verification_roots,
+            "store_activation_roots": &package.semantic.roots.store_activation_roots,
             "executor_transition_roots": &package.semantic.roots.executor_transition_roots
         }
     });
@@ -574,7 +620,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} executor_transitions={}",
+        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.active_authority_count,
@@ -586,6 +632,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.fast_path_plan_count,
         package.semantic.boundary_count,
         package.semantic.artifact_verification_count,
+        package.semantic.store_activation_count,
         package.semantic.executor_transition_count
     );
     println!(
@@ -610,6 +657,10 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
     print_roots(
         "artifact-verification",
         &package.semantic.roots.artifact_verification_roots,
+    );
+    print_roots(
+        "store-activation",
+        &package.semantic.roots.store_activation_roots,
     );
     print_roots(
         "executor-transition",

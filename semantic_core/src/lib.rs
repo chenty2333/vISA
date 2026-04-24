@@ -22,6 +22,7 @@ pub type PlanId = u64;
 pub type AuthorityId = u64;
 pub type BoundaryId = u64;
 pub type ArtifactId = u64;
+pub type StoreActivationId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeMode {
@@ -1188,6 +1189,173 @@ pub struct StoreRebindReport {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoreActivationHandle {
+    pub store: StoreId,
+    pub generation: Generation,
+}
+
+impl StoreActivationHandle {
+    pub const fn new(store: StoreId, generation: Generation) -> Self {
+        Self { store, generation }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodePublishState {
+    NotPublished,
+    Published,
+    Dropped,
+}
+
+impl CodePublishState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotPublished => "not-published",
+            Self::Published => "published",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemoryLayoutState {
+    Planned,
+    Verified,
+    Dropped,
+}
+
+impl MemoryLayoutState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Verified => "verified",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostcallLinkState {
+    NotLinked,
+    Linked,
+    Dropped,
+}
+
+impl HostcallLinkState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotLinked => "not-linked",
+            Self::Linked => "linked",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrapSurfaceState {
+    ContractDeclared,
+    Linked,
+    Dropped,
+}
+
+impl TrapSurfaceState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ContractDeclared => "contract-declared",
+            Self::Linked => "linked",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntrypointState {
+    NotRunnable,
+    Runnable,
+    Dropped,
+}
+
+impl EntrypointState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotRunnable => "not-runnable",
+            Self::Runnable => "runnable",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoreActivationRecord {
+    pub id: StoreActivationId,
+    pub store: StoreId,
+    pub package: String,
+    pub manifest_binding_hash: String,
+    pub cwasm_sha256: String,
+    pub code_publish_state: CodePublishState,
+    pub memory_layout_state: MemoryLayoutState,
+    pub hostcall_table_state: HostcallLinkState,
+    pub trap_surface_state: TrapSurfaceState,
+    pub entrypoint_state: EntrypointState,
+    pub blocked_by: Option<String>,
+    pub generation: Generation,
+}
+
+impl StoreActivationRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: StoreActivationId,
+        store: StoreId,
+        package: &str,
+        manifest_binding_hash: &str,
+        cwasm_sha256: &str,
+        code_publish_state: CodePublishState,
+        memory_layout_state: MemoryLayoutState,
+        hostcall_table_state: HostcallLinkState,
+        trap_surface_state: TrapSurfaceState,
+        entrypoint_state: EntrypointState,
+        blocked_by: Option<&str>,
+    ) -> Self {
+        Self {
+            id,
+            store,
+            package: package.to_string(),
+            manifest_binding_hash: manifest_binding_hash.to_string(),
+            cwasm_sha256: cwasm_sha256.to_string(),
+            code_publish_state,
+            memory_layout_state,
+            hostcall_table_state,
+            trap_surface_state,
+            entrypoint_state,
+            blocked_by: blocked_by.map(|value| value.to_string()),
+            generation: 1,
+        }
+    }
+
+    pub fn summary(&self) -> String {
+        let blocked_by = self
+            .blocked_by
+            .as_ref()
+            .map(String::as_str)
+            .unwrap_or("none");
+        format!(
+            "store-activation store={} package={} binding={} cwasm={} code={} memory={} hostcalls={} traps={} entry={} blocked={} generation={}",
+            self.store,
+            self.package,
+            self.manifest_binding_hash,
+            self.cwasm_sha256,
+            self.code_publish_state.as_str(),
+            self.memory_layout_state.as_str(),
+            self.hostcall_table_state.as_str(),
+            self.trap_surface_state.as_str(),
+            self.entrypoint_state.as_str(),
+            blocked_by,
+            self.generation
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StoreResourceCleanupReport {
     pub store: StoreId,
     pub closed_resources: usize,
@@ -1470,6 +1638,28 @@ pub enum EventKind {
         blocked_by: Option<String>,
         hostcall_table: String,
         trap_surface: String,
+    },
+    StoreActivationRecorded {
+        activation: StoreActivationId,
+        store: StoreId,
+        package: String,
+        code_publish_state: CodePublishState,
+        memory_layout_state: MemoryLayoutState,
+        hostcall_table_state: HostcallLinkState,
+        trap_surface_state: TrapSurfaceState,
+        entrypoint_state: EntrypointState,
+        blocked_by: Option<String>,
+        generation: Generation,
+    },
+    StoreActivationHandleValidated {
+        store: StoreId,
+        generation: Generation,
+    },
+    StoreActivationHandleRejected {
+        store: StoreId,
+        expected: Generation,
+        actual: Option<Generation>,
+        reason: GenerationCheckError,
     },
     StoreTrap {
         store: StoreId,
@@ -1834,6 +2024,46 @@ impl EventKind {
                     "StoreExecutorTransition store={store} {from}->{to} blocked={blocked_by} hostcalls={hostcall_table} traps={trap_surface}"
                 )
             }
+            Self::StoreActivationRecorded {
+                activation,
+                store,
+                package,
+                code_publish_state,
+                memory_layout_state,
+                hostcall_table_state,
+                trap_surface_state,
+                entrypoint_state,
+                blocked_by,
+                generation,
+            } => {
+                let blocked_by = blocked_by.as_deref().unwrap_or("none");
+                format!(
+                    "StoreActivationRecorded activation={activation} store={store} package={package} code={} memory={} hostcalls={} traps={} entry={} blocked={blocked_by} generation={generation}",
+                    code_publish_state.as_str(),
+                    memory_layout_state.as_str(),
+                    hostcall_table_state.as_str(),
+                    trap_surface_state.as_str(),
+                    entrypoint_state.as_str()
+                )
+            }
+            Self::StoreActivationHandleValidated { store, generation } => {
+                format!("StoreActivationHandleValidated store={store} generation={generation}")
+            }
+            Self::StoreActivationHandleRejected {
+                store,
+                expected,
+                actual,
+                reason,
+            } => match actual {
+                Some(actual) => format!(
+                    "StoreActivationHandleRejected store={store} expected={expected} actual={actual} reason={}",
+                    reason.as_str()
+                ),
+                None => format!(
+                    "StoreActivationHandleRejected store={store} expected={expected} actual=missing reason={}",
+                    reason.as_str()
+                ),
+            },
             Self::StoreTrap {
                 store,
                 trap,
@@ -2017,6 +2247,7 @@ pub struct SemanticGraph {
     fast_path_plans: Vec<FastPathPlanRecord>,
     boundaries: Vec<BoundaryRecord>,
     artifact_verifications: Vec<ArtifactVerificationRecord>,
+    store_activations: Vec<StoreActivationRecord>,
     capabilities: CapabilityLedger,
     event_log: EventLog,
     next_resource_id: ResourceId,
@@ -2027,6 +2258,7 @@ pub struct SemanticGraph {
     next_plan_id: PlanId,
     next_boundary_id: BoundaryId,
     next_artifact_id: ArtifactId,
+    next_activation_id: StoreActivationId,
 }
 
 impl SemanticGraph {
@@ -2046,6 +2278,7 @@ impl SemanticGraph {
             fast_path_plans: Vec::new(),
             boundaries: Vec::new(),
             artifact_verifications: Vec::new(),
+            store_activations: Vec::new(),
             capabilities: CapabilityLedger::new(),
             event_log: EventLog::with_runtime_mode(runtime_mode),
             next_resource_id: 1,
@@ -2056,6 +2289,7 @@ impl SemanticGraph {
             next_plan_id: 1,
             next_boundary_id: 1,
             next_artifact_id: 1,
+            next_activation_id: 1,
         }
     }
 
@@ -2201,6 +2435,88 @@ impl SemanticGraph {
             },
         );
         self.artifact_verifications.push(record);
+        id
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_store_activation(
+        &mut self,
+        store: StoreId,
+        package: &str,
+        manifest_binding_hash: &str,
+        cwasm_sha256: &str,
+        code_publish_state: CodePublishState,
+        memory_layout_state: MemoryLayoutState,
+        hostcall_table_state: HostcallLinkState,
+        trap_surface_state: TrapSurfaceState,
+        entrypoint_state: EntrypointState,
+        blocked_by: Option<&str>,
+    ) -> StoreActivationId {
+        if let Some(index) = self
+            .store_activations
+            .iter()
+            .position(|record| record.store == store)
+        {
+            self.store_activations[index].package = package.to_string();
+            self.store_activations[index].manifest_binding_hash = manifest_binding_hash.to_string();
+            self.store_activations[index].cwasm_sha256 = cwasm_sha256.to_string();
+            self.store_activations[index].code_publish_state = code_publish_state;
+            self.store_activations[index].memory_layout_state = memory_layout_state;
+            self.store_activations[index].hostcall_table_state = hostcall_table_state;
+            self.store_activations[index].trap_surface_state = trap_surface_state;
+            self.store_activations[index].entrypoint_state = entrypoint_state;
+            self.store_activations[index].blocked_by = blocked_by.map(|value| value.to_string());
+            self.store_activations[index].generation += 1;
+            let record = &self.store_activations[index];
+            self.event_log.push(
+                "activation",
+                EventKind::StoreActivationRecorded {
+                    activation: record.id,
+                    store,
+                    package: record.package.clone(),
+                    code_publish_state,
+                    memory_layout_state,
+                    hostcall_table_state,
+                    trap_surface_state,
+                    entrypoint_state,
+                    blocked_by: record.blocked_by.clone(),
+                    generation: record.generation,
+                },
+            );
+            return record.id;
+        }
+
+        let id = self.next_activation_id;
+        self.next_activation_id += 1;
+        let record = StoreActivationRecord::new(
+            id,
+            store,
+            package,
+            manifest_binding_hash,
+            cwasm_sha256,
+            code_publish_state,
+            memory_layout_state,
+            hostcall_table_state,
+            trap_surface_state,
+            entrypoint_state,
+            blocked_by,
+        );
+        self.event_log.push(
+            "activation",
+            EventKind::StoreActivationRecorded {
+                activation: id,
+                store,
+                package: record.package.clone(),
+                code_publish_state,
+                memory_layout_state,
+                hostcall_table_state,
+                trap_surface_state,
+                entrypoint_state,
+                blocked_by: record.blocked_by.clone(),
+                generation: record.generation,
+            },
+        );
+        self.store_activations.push(record);
         id
     }
 
@@ -3438,6 +3754,7 @@ impl SemanticGraph {
                 fast_path_plans: self.fast_path_plans.clone(),
                 boundaries: self.boundaries.clone(),
                 artifact_verifications: self.artifact_verifications.clone(),
+                store_activations: self.store_activations.clone(),
                 capabilities: self.capabilities.records().to_vec(),
             },
         }
@@ -3477,6 +3794,10 @@ impl SemanticGraph {
 
     pub fn artifact_verification_count(&self) -> usize {
         self.artifact_verifications.len()
+    }
+
+    pub fn store_activation_count(&self) -> usize {
+        self.store_activations.len()
     }
 
     pub fn active_fast_path_plan_count(&self) -> usize {
@@ -3578,6 +3899,72 @@ impl SemanticGraph {
 
     pub fn artifact_verifications(&self) -> &[ArtifactVerificationRecord] {
         &self.artifact_verifications
+    }
+
+    pub fn artifact_verification_for_package(
+        &self,
+        package: &str,
+    ) -> Option<&ArtifactVerificationRecord> {
+        self.artifact_verifications
+            .iter()
+            .find(|record| record.package == package)
+    }
+
+    pub fn store_activations(&self) -> &[StoreActivationRecord] {
+        &self.store_activations
+    }
+
+    pub fn store_activation_handle(&self, store: StoreId) -> Option<StoreActivationHandle> {
+        self.store_activations
+            .iter()
+            .find(|record| record.store == store)
+            .map(|record| StoreActivationHandle::new(record.store, record.generation))
+    }
+
+    pub fn validate_store_activation_handle(
+        &mut self,
+        handle: StoreActivationHandle,
+    ) -> Result<(), GenerationCheckError> {
+        let activation = self
+            .store_activations
+            .iter()
+            .find(|record| record.store == handle.store);
+        let actual = activation.map(|record| record.generation);
+        let result = match activation {
+            None => Err(GenerationCheckError::Missing),
+            Some(record) if record.generation != handle.generation => {
+                Err(GenerationCheckError::GenerationMismatch {
+                    expected: handle.generation,
+                    actual,
+                })
+            }
+            Some(_) => Ok(()),
+        };
+
+        match result {
+            Ok(()) => {
+                self.event_log.push(
+                    "activation",
+                    EventKind::StoreActivationHandleValidated {
+                        store: handle.store,
+                        generation: handle.generation,
+                    },
+                );
+                Ok(())
+            }
+            Err(reason) => {
+                self.event_log.push(
+                    "activation",
+                    EventKind::StoreActivationHandleRejected {
+                        store: handle.store,
+                        expected: handle.generation,
+                        actual,
+                        reason,
+                    },
+                );
+                Err(reason)
+            }
+        }
     }
 
     pub fn event_log_tail(&self, count: usize) -> &[EventRecord] {
@@ -3792,6 +4179,7 @@ pub struct SemanticSnapshot {
     pub fast_path_plans: Vec<FastPathPlanRecord>,
     pub boundaries: Vec<BoundaryRecord>,
     pub artifact_verifications: Vec<ArtifactVerificationRecord>,
+    pub store_activations: Vec<StoreActivationRecord>,
     pub capabilities: Vec<CapabilityRecord>,
 }
 
@@ -3870,7 +4258,7 @@ impl MigrationPackage {
             self.substrate_boundary.background_copy_pages
         ));
         lines.push(format!(
-            "semantic roots: tasks={} resources={} authorities={} waits={} capabilities={} fault_domains={} stores={} transactions={} fastpath_plans={} boundaries={} artifacts={}",
+            "semantic roots: tasks={} resources={} authorities={} waits={} capabilities={} fault_domains={} stores={} transactions={} fastpath_plans={} boundaries={} artifacts={} activations={}",
             self.semantic.tasks.len(),
             self.semantic.resources.len(),
             self.semantic.authority_bindings.len(),
@@ -3881,7 +4269,8 @@ impl MigrationPackage {
             self.semantic.transactions.len(),
             self.semantic.fast_path_plans.len(),
             self.semantic.boundaries.len(),
-            self.semantic.artifact_verifications.len()
+            self.semantic.artifact_verifications.len(),
+            self.semantic.store_activations.len()
         ));
         lines.push(format!(
             "required artifacts: {}",
@@ -4064,6 +4453,58 @@ mod tests {
         assert_eq!(
             graph.event_log_tail(1)[0].kind.summary(),
             "ArtifactVerificationRecorded artifact=1 package=vfs_service name=vfs state=host-validated binding=binding-a blocked=target-runtime-only-loader generation=2"
+        );
+    }
+
+    #[test]
+    fn store_activation_roots_and_handles_are_generation_checked() {
+        let mut graph = SemanticGraph::new();
+        let store = graph.register_store("vfs_service", "vfs", "service", "restartable");
+        graph.record_store_activation(
+            store,
+            "vfs_service",
+            "binding-a",
+            "cwasm-a",
+            CodePublishState::NotPublished,
+            MemoryLayoutState::Verified,
+            HostcallLinkState::NotLinked,
+            TrapSurfaceState::ContractDeclared,
+            EntrypointState::NotRunnable,
+            Some("code-publish-not-linked"),
+        );
+        let handle = graph
+            .store_activation_handle(store)
+            .expect("activation handle");
+        assert_eq!(graph.validate_store_activation_handle(handle), Ok(()));
+
+        graph.record_store_activation(
+            store,
+            "vfs_service",
+            "binding-a",
+            "cwasm-a",
+            CodePublishState::Published,
+            MemoryLayoutState::Verified,
+            HostcallLinkState::NotLinked,
+            TrapSurfaceState::ContractDeclared,
+            EntrypointState::NotRunnable,
+            Some("hostcall-table-not-linked"),
+        );
+
+        assert_eq!(graph.store_activation_count(), 1);
+        assert_eq!(
+            graph.validate_store_activation_handle(handle),
+            Err(GenerationCheckError::GenerationMismatch {
+                expected: 1,
+                actual: Some(2)
+            })
+        );
+        assert_eq!(
+            graph.store_activations()[0].summary(),
+            "store-activation store=1 package=vfs_service binding=binding-a cwasm=cwasm-a code=published memory=verified hostcalls=not-linked traps=contract-declared entry=not-runnable blocked=hostcall-table-not-linked generation=2"
+        );
+        assert_eq!(
+            graph.event_log_tail(1)[0].kind.summary(),
+            "StoreActivationHandleRejected store=1 expected=1 actual=2 reason=generation-mismatch"
         );
     }
 

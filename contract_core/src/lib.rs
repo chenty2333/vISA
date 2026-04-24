@@ -473,6 +473,13 @@ pub fn validate_migration_against_manifest(
             "package artifact verification count does not match manifest",
         ));
     }
+    if package.semantic.store_activation_count != 0
+        && package.semantic.store_activation_count != manifest.modules.len()
+    {
+        return Err(ContractError::new(
+            "package store activation count does not match manifest",
+        ));
+    }
     Ok(())
 }
 
@@ -538,6 +545,9 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
         return Err(ContractError::new(
             "artifact verification root/count mismatch",
         ));
+    }
+    if roots.store_activation_roots.len() != package.semantic.store_activation_count {
+        return Err(ContractError::new("store activation root/count mismatch"));
     }
     if roots.executor_transition_roots.len() != package.semantic.executor_transition_count {
         return Err(ContractError::new(

@@ -16,8 +16,9 @@ use contract_core::{
 };
 use runtime::RuntimeOnlyExecutor;
 use semantic_core::{
-    ArtifactVerificationState, BoundaryKind, BoundaryStatus, FrontendKind, RuntimeMode,
-    SemanticGraph, StoreState, TaskState,
+    ArtifactVerificationState, BoundaryKind, BoundaryStatus, CodePublishState, EntrypointState,
+    FrontendKind, HostcallLinkState, MemoryLayoutState, RuntimeMode, SemanticGraph, StoreState,
+    TaskState, TrapSurfaceState,
 };
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
@@ -131,6 +132,18 @@ fn register_store_semantics(semantic: &mut SemanticGraph, entry: &ValidatedArtif
         &entry.signature_scheme,
         &entry.signer,
         ArtifactVerificationState::HostValidated,
+        Some("target-runtime-only-loader"),
+    );
+    semantic.record_store_activation(
+        store,
+        &entry.package,
+        &entry.manifest_binding_hash,
+        &entry.cwasm_sha256,
+        CodePublishState::NotPublished,
+        MemoryLayoutState::Verified,
+        HostcallLinkState::NotLinked,
+        TrapSurfaceState::ContractDeclared,
+        EntrypointState::NotRunnable,
         Some("target-runtime-only-loader"),
     );
     for capability in &entry.capabilities {
@@ -284,6 +297,7 @@ fn demo_migration_package(
             active_fast_path_plan_count: semantic.active_fast_path_plan_count(),
             boundary_count: semantic.boundary_count(),
             artifact_verification_count: semantic.artifact_verification_count(),
+            store_activation_count: semantic.store_activation_count(),
             executor_transition_count: semantic.store_executor_transition_count(),
             network_socket_count: 1,
             network_rx_queue_bytes: 0,
@@ -387,6 +401,11 @@ fn semantic_roots(
             .iter()
             .map(|artifact| artifact.summary())
             .collect(),
+        store_activation_roots: semantic
+            .store_activations()
+            .iter()
+            .map(|activation| activation.summary())
+            .collect(),
         executor_transition_roots: semantic
             .store_executor_transition_tail(semantic.store_executor_transition_count()),
         event_log_tail: semantic
@@ -488,7 +507,7 @@ fn restore_migration_package(
         package.guest.canonical_isa
     );
     println!(
-        "restore plan: import semantic roots tasks={} resources={} authorities={}/{} waits={} pending_waits={} transactions={} active_transactions={} fastpath={}/{} boundaries={} artifacts={} executor_transitions={} sockets={} rx_bytes={} event_cursor={}",
+        "restore plan: import semantic roots tasks={} resources={} authorities={}/{} waits={} pending_waits={} transactions={} active_transactions={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} sockets={} rx_bytes={} event_cursor={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.active_authority_count,
@@ -501,6 +520,7 @@ fn restore_migration_package(
         package.semantic.fast_path_plan_count,
         package.semantic.boundary_count,
         package.semantic.artifact_verification_count,
+        package.semantic.store_activation_count,
         package.semantic.executor_transition_count,
         package.semantic.network_socket_count,
         package.semantic.network_rx_queue_bytes,
