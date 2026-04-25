@@ -919,6 +919,8 @@ fn command_envelope_records_events_and_rejects_without_partial_mutation() {
     });
     assert_eq!(result.effects[0].kind, "grant-capability");
     assert!(result.violations.is_empty());
+    assert_eq!(graph.command_results().len(), 1);
+    assert_eq!(graph.command_results()[0], result);
 
     let wait_count = graph.wait_count();
     let event_count = graph.event_count();
@@ -948,6 +950,8 @@ fn command_envelope_records_events_and_rejects_without_partial_mutation() {
     });
     assert_eq!(graph.wait_count(), wait_count);
     assert_eq!(graph.event_count(), event_count);
+    assert_eq!(graph.command_results().len(), 2);
+    assert_eq!(graph.command_results()[1], rejected);
 }
 
 #[test]
@@ -976,6 +980,8 @@ fn command_envelope_epoch_mismatch_is_atomic() {
         violations
     });
     assert_eq!(graph.event_count(), before);
+    assert_eq!(graph.command_results().len(), 1);
+    assert_eq!(graph.command_results()[0], result);
 }
 
 #[test]

@@ -8,9 +8,9 @@ use std::path::Path;
 use artifact_manifest::{
     ActivationRecordManifest, ArtifactBundleManifest, BoundaryValidationReportManifest,
     CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
-    ContractObjectRefManifest, HostcallTraceManifest, MigrationPackageManifest,
-    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TrapRecordManifest,
-    WaitRecordManifest,
+    CommandResultManifest, ContractObjectRefManifest, HostcallTraceManifest,
+    MigrationPackageManifest, StoreRecordManifest, SubstrateEventManifest,
+    TargetArtifactImageManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactSubstrateCompatibilityReport, VIEW_SCHEMA_V1, ValidatedArtifactPlan,
@@ -128,7 +128,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let path = path.ok_or("caps requires a manifest/package JSON path")?;
             print_caps(Path::new(&path), subject.as_deref())
         }
-        "store" | "cap" | "capability" | "wait" | "cleanup" => {
+        "store" | "cap" | "capability" | "wait" | "cleanup" | "command" => {
             handle_view_command(&command, args.collect())
         }
         "state" => {
@@ -283,8 +283,8 @@ fn print_usage() {
     eprintln!("  osctl substrate events [--json] <migration.json>");
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
-    eprintln!("  osctl store|cap|wait|cleanup list --json <migration.json>");
-    eprintln!("  osctl store|cap|wait|cleanup show --json <migration.json> <id>");
+    eprintln!("  osctl store|cap|wait|cleanup|command list --json <migration.json>");
+    eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
     eprintln!("  osctl graph [--live|--history] [--json] <migration.json>");
     eprintln!("  osctl activation [--blocked] <migration.json>");
@@ -393,6 +393,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "store" => "store",
         "wait" => "wait",
         "cleanup" => "cleanup",
+        "command" => "command",
         _ => "unknown",
     }
 }
@@ -776,6 +777,12 @@ fn stable_views_for_kind(
             .iter()
             .map(cleanup_view_v1)
             .collect()),
+        "command" => Ok(package
+            .semantic
+            .command_results
+            .iter()
+            .map(command_result_view_v1)
+            .collect()),
         _ => Err(format!("stable view does not support `{kind}`").into()),
     }
 }
@@ -1083,6 +1090,28 @@ fn substrate_event_view_v1(event: &SubstrateEventManifest) -> serde_json::Value 
             "operation": &event.operation
         },
         "last_error": &event.explanation
+    })
+}
+
+fn command_result_view_v1(result: &CommandResultManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "command",
+        "id": result.id,
+        "generation": 1,
+        "state": &result.status,
+        "issuer": &result.issuer,
+        "command_name": &result.command,
+        "references": {
+            "events": &result.events,
+            "effects": &result.effects,
+        },
+        "violations": &result.violations,
+        "last_transition": {
+            "event_count": result.events.len(),
+            "effect_count": result.effects.len(),
+        },
+        "last_error": result.violations.first(),
     })
 }
 
@@ -2140,6 +2169,32 @@ fn inspect_package_object(
                 print_roots_filtered("cleanup", &package.semantic.roots.cleanup_roots, filter);
             }
         }
+        "command" => {
+            println!(
+                "inspect command package={} count={}",
+                package.package_id, package.semantic.command_result_count
+            );
+            for result in &package.semantic.command_results {
+                let line = format!(
+                    "command id={} issuer={} name={} status={} events={} effects={} violations={}",
+                    result.id,
+                    result.issuer,
+                    result.command,
+                    result.status,
+                    result.events.len(),
+                    result.effects.len(),
+                    result.violations.join("|")
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.command_results.is_empty() {
+                print_roots_filtered(
+                    "command",
+                    &package.semantic.roots.command_result_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -2314,6 +2369,17 @@ fn inspect_package_object_json(
                 .map(serde_json::to_value)
                 .collect::<Result<Vec<_>, _>>()?,
             serde_json::json!({ "root_count": package.semantic.roots.cleanup_roots.len() }),
+        ),
+        "command" => (
+            "command",
+            package.semantic.command_result_count,
+            package
+                .semantic
+                .command_results
+                .iter()
+                .map(command_result_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "root_count": package.semantic.roots.command_result_roots.len() }),
         ),
         "contract" => (
             "contract",
@@ -2660,7 +2726,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} substrate_events={} event_tail={}",
+        "replay roots: tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} substrate_events={} command_results={} event_tail={}",
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
         package.semantic.roots.authority_roots.len(),
@@ -2679,6 +2745,7 @@ fn replay_until(
         package.semantic.roots.hostcall_trace_roots.len(),
         package.semantic.roots.migration_object_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
+        package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.event_log_tail.len()
     );
     for boundary in &package.semantic.roots.boundary_roots {
@@ -2775,6 +2842,7 @@ fn print_replay_json(
             "snapshot_validation": package.semantic.roots.snapshot_validation_roots.len(),
             "replay_validation": package.semantic.roots.replay_validation_roots.len(),
             "substrate_events": package.semantic.roots.substrate_event_roots.len(),
+            "command_results": package.semantic.roots.command_result_roots.len(),
             "event_tail": package.semantic.roots.event_log_tail.len(),
             "boundary_roots": &package.semantic.roots.boundary_roots,
             "artifact_verification_roots": &package.semantic.roots.artifact_verification_roots,
@@ -2794,7 +2862,8 @@ fn print_replay_json(
             "memory_policy_roots": &package.semantic.roots.memory_policy_roots,
             "snapshot_validation_roots": &package.semantic.roots.snapshot_validation_roots,
             "replay_validation_roots": &package.semantic.roots.replay_validation_roots,
-            "substrate_event_roots": &package.semantic.roots.substrate_event_roots
+            "substrate_event_roots": &package.semantic.roots.substrate_event_roots,
+            "command_result_roots": &package.semantic.roots.command_result_roots
         }
     });
     println!("{}", serde_json::to_string_pretty(&value)?);
@@ -2812,7 +2881,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} substrate_events={}",
+        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} substrate_events={} command_results={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.active_authority_count,
@@ -2832,7 +2901,8 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.trap_record_count,
         package.semantic.hostcall_trace_count,
         package.semantic.migration_object_count,
-        package.semantic.substrate_event_count
+        package.semantic.substrate_event_count,
+        package.semantic.command_result_count
     );
     println!(
         "substrate boundary: irq={} dma={} net_inputs={} dmw={} active_mmio={} active_dma={} active_irq={} active_packet_device={} active_virtqueue={} cow_epoch={} background_pages={}",
@@ -2883,6 +2953,10 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
     print_roots(
         "substrate-event",
         &package.semantic.roots.substrate_event_roots,
+    );
+    print_roots(
+        "command-result",
+        &package.semantic.roots.command_result_roots,
     );
 }
 
@@ -3316,6 +3390,30 @@ mod tests {
         assert_eq!(
             view["last_error"],
             "driver.fake_net observed DmaAuthority::dma_alloc as unsupported"
+        );
+    }
+
+    #[test]
+    fn command_result_view_v1_exposes_status_events_and_violations() {
+        let view = command_result_view_v1(&CommandResultManifest {
+            id: 5,
+            issuer: "target-executor-command-probe".to_owned(),
+            command: "create-wait".to_owned(),
+            status: "rejected".to_owned(),
+            events: Vec::new(),
+            effects: Vec::new(),
+            violations: vec!["create-wait requires owner task or owner store".to_owned()],
+        });
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "command");
+        assert_eq!(view["id"], 5);
+        assert_eq!(view["state"], "rejected");
+        assert_eq!(view["issuer"], "target-executor-command-probe");
+        assert_eq!(view["command_name"], "create-wait");
+        assert_eq!(view["last_transition"]["event_count"], 0);
+        assert_eq!(
+            view["last_error"],
+            "create-wait requires owner task or owner store"
         );
     }
 

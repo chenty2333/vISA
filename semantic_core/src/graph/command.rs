@@ -166,25 +166,37 @@ impl SemanticCommand {
 impl SemanticGraph {
     pub fn apply_envelope(&mut self, envelope: CommandEnvelope) -> CommandResult {
         let command_name = envelope.command.name();
-        if envelope.command_id == 0 {
-            return rejected_command_result(
+        let result = if envelope.command_id == 0 {
+            rejected_command_result(
                 envelope.command_id,
                 envelope.issuer,
                 command_name,
                 "command id=0 is invalid",
-            );
-        }
-        if let Some(expected_epoch) = envelope.expected_epoch {
+            )
+        } else if let Some(expected_epoch) = envelope.expected_epoch {
             let actual_epoch = self.event_count() as u64;
             if expected_epoch != actual_epoch {
-                return rejected_command_result(
+                rejected_command_result(
                     envelope.command_id,
                     envelope.issuer,
                     command_name,
                     "expected epoch mismatch",
-                );
+                )
+            } else {
+                self.apply_envelope_prechecked(envelope, command_name)
             }
-        }
+        } else {
+            self.apply_envelope_prechecked(envelope, command_name)
+        };
+        self.command_results.push(result.clone());
+        result
+    }
+
+    fn apply_envelope_prechecked(
+        &mut self,
+        envelope: CommandEnvelope,
+        command_name: &'static str,
+    ) -> CommandResult {
         match self.apply(envelope.command) {
             Ok(outcome) => CommandResult {
                 command_id: envelope.command_id,

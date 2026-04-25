@@ -9,15 +9,15 @@ use artifact_manifest::{
     ActivationRecordManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
     BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
     CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
-    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, ContractObjectRefManifest,
-    ContractViolationManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    RequiredArtifactProfileManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    StoreRecordManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
-    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
-    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest,
-    WaitRecordManifest,
+    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
+    CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
+    GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, RequiredArtifactProfileManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
+    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
+    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
+    TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -28,12 +28,13 @@ use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, AuthorityObjectRef, BoundaryKind,
     BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass,
     CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
-    CodePublisher, ContractGraphSnapshot, ContractObjectKind, ContractObjectRef, ContractViolation,
-    EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration,
-    FrontendKind, HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec,
-    HostcallTraceRecord, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
-    MigrationObjectRecord, PackageReplayValidator, ReplayPackageValidationState, RuntimeMode,
-    SemanticGraph, SnapshotBarrierValidator, StoreRecord, StoreState, TargetAddressMapEntry,
+    CodePublisher, CommandEnvelope, CommandResult, ContractGraphSnapshot, ContractObjectKind,
+    ContractObjectRef, ContractViolation, EntrypointState, EventKind, EventRecord,
+    ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HostcallCategory,
+    HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, ManagedStoreRecord,
+    MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord, PackageReplayValidator,
+    ReplayPackageValidationState, RestartPolicy, RuntimeMode, SemanticCommand, SemanticGraph,
+    SemanticWaitKind, SnapshotBarrierValidator, StoreRecord, StoreState, TargetAddressMapEntry,
     TargetArtifactImage, TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan,
     TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState, TombstoneRecord,
     TrapSurfaceState, VerifiedArtifact, memory_class_policies, validate_contract_graph,
@@ -61,6 +62,7 @@ struct TargetExecutorV1Report {
     replay_validation: BoundaryValidationReportManifest,
     target_event_tail: Vec<String>,
     substrate_events: Vec<SubstrateEventManifest>,
+    command_results: Vec<CommandResultManifest>,
 }
 
 fn main() {
@@ -93,6 +95,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         stores.push(store);
     }
     record_substrate_conformance_evidence(&mut semantic);
+    record_command_surface_evidence(&mut semantic);
     let target_v1 = build_target_executor_v1(&plan, &semantic)?;
 
     println!(
@@ -262,6 +265,26 @@ fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
             Some(SubstrateRequester::new("target-executor-substrate-probe")),
         ),
     );
+}
+
+fn record_command_surface_evidence(semantic: &mut SemanticGraph) {
+    let command = CommandEnvelope::new(
+        1,
+        "target-executor-command-probe",
+        SemanticCommand::CreateWait {
+            wait: 9000,
+            owner_task: None,
+            owner_store: None,
+            owner_store_generation: None,
+            kind: SemanticWaitKind::Timer,
+            generation: 1,
+            blockers: Vec::new(),
+            deadline: None,
+            restart_policy: RestartPolicy::Never,
+            saved_context: None,
+        },
+    );
+    let _ = semantic.apply_envelope(command);
 }
 
 fn record_substrate_event(semantic: &mut SemanticGraph, event: SubstrateEvent) {
@@ -540,6 +563,11 @@ fn build_target_executor_v1(
         .collect();
     report.target_event_tail = executor.event_log().to_vec();
     report.substrate_events = substrate_event_manifests(semantic.event_log().tail(usize::MAX));
+    report.command_results = semantic
+        .command_results()
+        .iter()
+        .map(command_result_manifest)
+        .collect();
     Ok(report)
 }
 
@@ -1140,6 +1168,7 @@ fn demo_migration_package(
             snapshot_validation_violation_count: target_v1.snapshot_validation.violation_count,
             replay_validation_violation_count: target_v1.replay_validation.violation_count,
             substrate_event_count: target_v1.substrate_events.len(),
+            command_result_count: target_v1.command_results.len(),
             target_artifacts: target_v1.target_artifacts.clone(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
@@ -1156,6 +1185,7 @@ fn demo_migration_package(
             snapshot_validation: target_v1.snapshot_validation.clone(),
             replay_validation: target_v1.replay_validation.clone(),
             substrate_events: target_v1.substrate_events.clone(),
+            command_results: target_v1.command_results.clone(),
             network_socket_count: 1,
             network_rx_queue_bytes: 0,
         },
@@ -1532,6 +1562,16 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        command_result_roots: target_v1
+            .command_results
+            .iter()
+            .map(|result| {
+                format!(
+                    "command-result:{}:{}:{} issuer={}",
+                    result.id, result.command, result.status, result.issuer
+                )
+            })
+            .collect(),
         event_log_tail: semantic
             .event_log_tail(16)
             .iter()
@@ -1788,6 +1828,25 @@ fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateEventManifes
             })
         }
         _ => None,
+    }
+}
+
+fn command_result_manifest(result: &CommandResult) -> CommandResultManifest {
+    CommandResultManifest {
+        id: result.command_id,
+        issuer: result.issuer.clone(),
+        command: result.command.to_owned(),
+        status: result.status.as_str().to_owned(),
+        events: result.events.clone(),
+        effects: result
+            .effects
+            .iter()
+            .map(|effect| CommandEffectManifest {
+                kind: effect.kind.clone(),
+                target: effect.target.map(contract_object_ref_manifest),
+            })
+            .collect(),
+        violations: result.violations.clone(),
     }
 }
 

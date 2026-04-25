@@ -273,6 +273,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub substrate_event_count: usize,
     #[serde(default)]
+    pub command_result_count: usize,
+    #[serde(default)]
     pub target_artifacts: Vec<TargetArtifactImageManifest>,
     #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
@@ -304,6 +306,8 @@ pub struct SemanticSnapshotManifest {
     pub replay_validation: BoundaryValidationReportManifest,
     #[serde(default)]
     pub substrate_events: Vec<SubstrateEventManifest>,
+    #[serde(default)]
+    pub command_results: Vec<CommandResultManifest>,
     #[serde(default)]
     pub network_socket_count: u32,
     #[serde(default)]
@@ -365,6 +369,8 @@ pub struct SemanticRootSetManifest {
     #[serde(default)]
     pub substrate_event_roots: Vec<String>,
     #[serde(default)]
+    pub command_result_roots: Vec<String>,
+    #[serde(default)]
     pub event_log_tail: Vec<String>,
 }
 
@@ -381,6 +387,26 @@ pub struct SubstrateEventManifest {
     #[serde(default)]
     pub capability: Option<CapabilityHandleArgManifest>,
     pub explanation: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CommandResultManifest {
+    pub id: u64,
+    pub issuer: String,
+    pub command: String,
+    pub status: String,
+    pub events: Vec<u64>,
+    #[serde(default)]
+    pub effects: Vec<CommandEffectManifest>,
+    #[serde(default)]
+    pub violations: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CommandEffectManifest {
+    pub kind: String,
+    #[serde(default)]
+    pub target: Option<ContractObjectRefManifest>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

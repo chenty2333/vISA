@@ -10,6 +10,9 @@ impl SemanticGraph {
     pub fn event_log_tail(&self, count: usize) -> &[EventRecord] {
         self.event_log.tail(count)
     }
+    pub fn command_results(&self) -> &[CommandResult] {
+        &self.command_results
+    }
     pub fn check_invariants(&self) -> Result<(), SemanticInvariantError> {
         for task in &self.tasks {
             for resource in &task.resources {
