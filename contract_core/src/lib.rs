@@ -8,6 +8,10 @@ use artifact_manifest::{
 };
 use service_core::net_contract::NETWORK_CONTRACT_VERSION;
 use sha2::{Digest, Sha256};
+use substrate_api::{
+    AuthorityMismatch, AuthorityRequirementSet, SubstrateAuthorityRequirements,
+    SubstrateCapabilitySet, SubstrateCompatibilityReport, SubstrateProfile,
+};
 use supervisor_catalog::{
     ARTIFACT_SIGNATURE_PROFILE, CAPABILITY_ABI_VERSION, COMPONENT_MODEL_VERSION, CapabilitySpec,
     DMW_LAYOUT, HOSTCALL_ABI_VERSION, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
@@ -406,6 +410,34 @@ pub struct ValidatedArtifactEntry {
     pub manifest_binding_hash: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubstrateCompatibilityItem {
+    pub authority: String,
+    pub expected: String,
+    pub actual: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleSubstrateCompatibilityReport {
+    pub package: String,
+    pub substrate_profile_required: String,
+    pub ok: bool,
+    pub profile_ok: bool,
+    pub authority_ok: bool,
+    pub missing_required: Vec<SubstrateCompatibilityItem>,
+    pub degraded_optional: Vec<SubstrateCompatibilityItem>,
+    pub forbidden_requested: Vec<String>,
+    pub forbidden_authorities: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactSubstrateCompatibilityReport {
+    pub artifact_profile: String,
+    pub module_count: usize,
+    pub ok: bool,
+    pub modules: Vec<ModuleSubstrateCompatibilityReport>,
+}
+
 pub fn contract_hex(value: u64) -> String {
     format!("{value:016x}")
 }
@@ -514,6 +546,151 @@ pub fn build_validated_artifact_plan(
         runtime_executor_abi: manifest.compiler.runtime_executor_abi.clone(),
         modules,
     })
+}
+
+pub fn check_artifact_manifest_substrate_compatibility(
+    manifest: &ArtifactBundleManifest,
+    capabilities: SubstrateCapabilitySet,
+) -> ContractResult<ArtifactSubstrateCompatibilityReport> {
+    let plan = build_validated_artifact_plan(manifest)?;
+    let modules = plan
+        .modules
+        .iter()
+        .map(|module| check_module_substrate_compatibility(module, capabilities))
+        .collect::<ContractResult<Vec<_>>>()?;
+    let ok = modules.iter().all(|module| module.ok);
+    Ok(ArtifactSubstrateCompatibilityReport {
+        artifact_profile: plan.artifact_profile,
+        module_count: modules.len(),
+        ok,
+        modules,
+    })
+}
+
+pub fn check_module_substrate_compatibility(
+    module: &ValidatedArtifactEntry,
+    capabilities: SubstrateCapabilitySet,
+) -> ContractResult<ModuleSubstrateCompatibilityReport> {
+    let Some(profile) = SubstrateProfile::parse(&module.interfaces.substrate_profile_required)
+    else {
+        return Err(ContractError::new(format!(
+            "{} unknown substrate profile {}",
+            module.package, module.interfaces.substrate_profile_required
+        )));
+    };
+    let profile_report = capabilities.check_profile(profile);
+    let required = parse_authority_requirements(
+        &module.package,
+        "required",
+        &module.interfaces.substrate_authorities.required,
+    )?;
+    let optional = parse_authority_requirements(
+        &module.package,
+        "optional",
+        &module.interfaces.substrate_authorities.optional,
+    )?;
+    let authority_report = SubstrateAuthorityRequirements {
+        required,
+        optional,
+        forbidden: AuthorityRequirementSet::default(),
+    }
+    .check(capabilities);
+    let forbidden_requested = forbidden_requested_by_module(module);
+    let missing_required = combine_missing(&profile_report, &authority_report);
+    let degraded_optional =
+        compatibility_items_from_mismatches(&authority_report.degraded_optional);
+    let profile_ok = profile_report.ok;
+    let authority_ok = authority_report.ok;
+    Ok(ModuleSubstrateCompatibilityReport {
+        package: module.package.clone(),
+        substrate_profile_required: module.interfaces.substrate_profile_required.clone(),
+        ok: profile_ok && authority_ok && forbidden_requested.is_empty(),
+        profile_ok,
+        authority_ok,
+        missing_required,
+        degraded_optional,
+        forbidden_requested,
+        forbidden_authorities: module.interfaces.substrate_authorities.forbidden.clone(),
+    })
+}
+
+fn parse_authority_requirements(
+    package: &str,
+    list_name: &str,
+    tokens: &[String],
+) -> ContractResult<AuthorityRequirementSet> {
+    AuthorityRequirementSet::from_tokens(tokens.iter().map(String::as_str)).map_err(|err| {
+        ContractError::new(format!(
+            "{package} has invalid {list_name} substrate authority token `{}`: {}",
+            err.token, err.reason
+        ))
+    })
+}
+
+fn forbidden_requested_by_module(module: &ValidatedArtifactEntry) -> Vec<String> {
+    module
+        .interfaces
+        .substrate_authorities
+        .forbidden
+        .iter()
+        .filter(|forbidden| {
+            module
+                .interfaces
+                .substrate_authorities
+                .required
+                .iter()
+                .any(|required| required == *forbidden)
+                || module
+                    .interfaces
+                    .substrate_authorities
+                    .optional
+                    .iter()
+                    .any(|optional| optional == *forbidden)
+                || module.capabilities.iter().any(|capability| {
+                    capability_matches_forbidden_authority(&capability.name, forbidden)
+                })
+        })
+        .cloned()
+        .collect()
+}
+
+fn capability_matches_forbidden_authority(capability: &str, forbidden: &str) -> bool {
+    match forbidden {
+        "direct-dma" => capability == "direct-dma" || capability.starts_with("dma."),
+        "raw-mmio" => capability == "raw-mmio" || capability.starts_with("mmio."),
+        "raw-irq" => capability == "raw-irq" || capability.starts_with("irq."),
+        other => capability == other,
+    }
+}
+
+fn combine_missing(
+    profile_report: &SubstrateCompatibilityReport,
+    authority_report: &SubstrateCompatibilityReport,
+) -> Vec<SubstrateCompatibilityItem> {
+    let mut out = compatibility_items_from_mismatches(&profile_report.missing_required);
+    for item in compatibility_items_from_mismatches(&authority_report.missing_required) {
+        if !out.iter().any(|existing| {
+            existing.authority == item.authority
+                && existing.expected == item.expected
+                && existing.actual == item.actual
+        }) {
+            out.push(item);
+        }
+    }
+    out
+}
+
+fn compatibility_items_from_mismatches(
+    items: &[AuthorityMismatch],
+) -> Vec<SubstrateCompatibilityItem> {
+    items
+        .iter()
+        .map(|item| SubstrateCompatibilityItem {
+            authority: item.authority.to_owned(),
+            expected: item.required.to_owned(),
+            actual: item.actual.to_owned(),
+        })
+        .collect()
 }
 
 pub fn manifest_entry_for_package<'a>(
@@ -1406,6 +1583,91 @@ mod tests {
 
         let err = validate_artifact_manifest(&manifest).expect_err("bad binding must fail");
         assert!(err.to_string().contains("manifest binding hash mismatch"));
+    }
+
+    #[test]
+    fn substrate_compatibility_accepts_host_validation_capabilities() {
+        let manifest = valid_manifest();
+        let report = check_artifact_manifest_substrate_compatibility(
+            &manifest,
+            SubstrateCapabilitySet::host_validation(),
+        )
+        .expect("compatibility report");
+
+        assert!(report.ok);
+        assert_eq!(report.module_count, SUPERVISOR_WASM_MODULES.len());
+        assert!(report.modules.iter().all(|module| module.ok));
+    }
+
+    #[test]
+    fn substrate_compatibility_reports_missing_required_authority() {
+        let manifest = valid_manifest();
+        let report = check_artifact_manifest_substrate_compatibility(
+            &manifest,
+            SubstrateCapabilitySet::semantic_harness(),
+        )
+        .expect("compatibility report");
+        let driver = report
+            .modules
+            .iter()
+            .find(|module| module.package == "driver_virtio_net")
+            .expect("driver report");
+
+        assert!(!report.ok);
+        assert!(!driver.ok);
+        assert!(
+            driver
+                .missing_required
+                .iter()
+                .any(|item| item.authority == "dma")
+        );
+        assert!(
+            driver
+                .missing_required
+                .iter()
+                .any(|item| item.authority == "mmio")
+        );
+        assert!(driver.forbidden_requested.is_empty());
+    }
+
+    #[test]
+    fn substrate_compatibility_rejects_unknown_required_authority() {
+        let manifest = valid_manifest();
+        let plan = build_validated_artifact_plan(&manifest).expect("valid plan");
+        let mut linux = plan.entry("linux_syscall").expect("linux module").clone();
+        linux
+            .interfaces
+            .substrate_authorities
+            .required
+            .push("raw-mmio".to_owned());
+
+        let err =
+            check_module_substrate_compatibility(&linux, SubstrateCapabilitySet::host_validation())
+                .expect_err("raw requirement token must fail before load");
+
+        assert!(
+            err.to_string()
+                .contains("invalid required substrate authority token")
+        );
+    }
+
+    #[test]
+    fn substrate_compatibility_rejects_forbidden_capability_manifest() {
+        let manifest = valid_manifest();
+        let plan = build_validated_artifact_plan(&manifest).expect("valid plan");
+        let mut linux = plan.entry("linux_syscall").expect("linux module").clone();
+        linux.capabilities.push(CapabilityManifest {
+            name: "mmio.pci.bar0".to_owned(),
+            rights: vec!["read".to_owned()],
+            lifetime: "store".to_owned(),
+        });
+
+        let report =
+            check_module_substrate_compatibility(&linux, SubstrateCapabilitySet::host_validation())
+                .expect("compatibility report");
+
+        assert!(!report.ok);
+        assert_eq!(report.forbidden_requested, vec!["raw-mmio".to_owned()]);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use alloc::string::String;
 use alloc::vec::Vec;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -122,6 +123,80 @@ impl SubstrateCapabilitySet {
         }
     }
 
+    pub const fn for_profile(profile: SubstrateProfile) -> Self {
+        match profile {
+            SubstrateProfile::SemanticHarness => Self::semantic_harness(),
+            SubstrateProfile::MinimalBareMetal => Self {
+                console: true,
+                timer: true,
+                event_queue: true,
+                guest_memory: false,
+                artifact_loading: true,
+                dmw: DmwSupport::None,
+                mmio: false,
+                irq: false,
+                dma: DmaSupport::None,
+                snapshot: SnapshotSupport::None,
+                code_publish: CodePublishSupport::MetadataOnly,
+            },
+            SubstrateProfile::GuestFrontend => Self {
+                console: true,
+                timer: true,
+                event_queue: true,
+                guest_memory: true,
+                artifact_loading: true,
+                dmw: DmwSupport::Logical,
+                mmio: false,
+                irq: false,
+                dma: DmaSupport::None,
+                snapshot: SnapshotSupport::None,
+                code_publish: CodePublishSupport::MetadataOnly,
+            },
+            SubstrateProfile::DeviceCapable => Self {
+                console: true,
+                timer: true,
+                event_queue: true,
+                guest_memory: true,
+                artifact_loading: true,
+                dmw: DmwSupport::Logical,
+                mmio: true,
+                irq: true,
+                dma: DmaSupport::Mediated,
+                snapshot: SnapshotSupport::None,
+                code_publish: CodePublishSupport::MetadataOnly,
+            },
+            SubstrateProfile::SnapshotReplayCapable => Self {
+                console: true,
+                timer: true,
+                event_queue: true,
+                guest_memory: true,
+                artifact_loading: true,
+                dmw: DmwSupport::Logical,
+                mmio: false,
+                irq: false,
+                dma: DmaSupport::None,
+                snapshot: SnapshotSupport::DeterministicReplay,
+                code_publish: CodePublishSupport::MetadataOnly,
+            },
+        }
+    }
+
+    pub const fn host_validation() -> Self {
+        Self {
+            console: true,
+            timer: true,
+            event_queue: true,
+            guest_memory: true,
+            artifact_loading: true,
+            dmw: DmwSupport::Logical,
+            mmio: true,
+            irq: true,
+            dma: DmaSupport::Mediated,
+            snapshot: SnapshotSupport::DeterministicReplay,
+            code_publish: CodePublishSupport::MetadataOnly,
+        }
+    }
+
     pub const fn supports_profile(self, profile: SubstrateProfile) -> bool {
         profile.requirements().is_satisfied_by(self)
     }
@@ -146,6 +221,17 @@ pub enum SubstrateProfile {
 }
 
 impl SubstrateProfile {
+    pub const fn parse(value: &str) -> Option<Self> {
+        match value.as_bytes() {
+            b"semantic-harness" => Some(Self::SemanticHarness),
+            b"minimal-bare-metal" => Some(Self::MinimalBareMetal),
+            b"guest-frontend" => Some(Self::GuestFrontend),
+            b"device-capable" => Some(Self::DeviceCapable),
+            b"snapshot-replay-capable" => Some(Self::SnapshotReplayCapable),
+            _ => None,
+        }
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::SemanticHarness => "semantic-harness",
@@ -243,6 +329,43 @@ pub struct AuthorityRequirementSet {
 }
 
 impl AuthorityRequirementSet {
+    pub fn from_tokens<'a>(
+        tokens: impl IntoIterator<Item = &'a str>,
+    ) -> Result<Self, AuthorityRequirementParseError> {
+        let mut requirements = Self::default();
+        for token in tokens {
+            requirements.add_token(token)?;
+        }
+        Ok(requirements)
+    }
+
+    pub fn add_token(&mut self, token: &str) -> Result<(), AuthorityRequirementParseError> {
+        match token {
+            "console" => self.console = true,
+            "timer" => self.timer = true,
+            "event-queue" => self.event_queue = true,
+            "guest-memory" => self.guest_memory = true,
+            "artifact-loading" => self.artifact_loading = true,
+            "mmio" => self.mmio = true,
+            "irq" => self.irq = true,
+            _ => {
+                let Some((authority, requirement)) = token.split_once(':') else {
+                    return Err(AuthorityRequirementParseError::unknown(token));
+                };
+                match authority {
+                    "dmw" => self.dmw = parse_dmw_requirement(token, requirement)?,
+                    "dma" => self.dma = parse_dma_requirement(token, requirement)?,
+                    "snapshot" => self.snapshot = parse_snapshot_requirement(token, requirement)?,
+                    "code-publish" => {
+                        self.code_publish = parse_code_publish_requirement(token, requirement)?
+                    }
+                    _ => return Err(AuthorityRequirementParseError::unknown(token)),
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub const fn is_satisfied_by(self, capabilities: SubstrateCapabilitySet) -> bool {
         (!self.console || capabilities.console)
             && (!self.timer || capabilities.timer)
@@ -369,6 +492,76 @@ impl AuthorityRequirementSet {
             ));
         }
         out
+    }
+}
+
+fn parse_dmw_requirement(
+    token: &str,
+    requirement: &str,
+) -> Result<DmwRequirement, AuthorityRequirementParseError> {
+    match requirement {
+        "any" => Ok(DmwRequirement::Any),
+        "logical-or-better" => Ok(DmwRequirement::LogicalOrBetter),
+        "real-mmu-window" => Ok(DmwRequirement::RealMmuWindow),
+        "none" => Ok(DmwRequirement::None),
+        _ => Err(AuthorityRequirementParseError::unknown(token)),
+    }
+}
+
+fn parse_dma_requirement(
+    token: &str,
+    requirement: &str,
+) -> Result<DmaRequirement, AuthorityRequirementParseError> {
+    match requirement {
+        "any" => Ok(DmaRequirement::Any),
+        "bounce-buffer-or-better" => Ok(DmaRequirement::BounceBufferOrBetter),
+        "mediated-or-better" => Ok(DmaRequirement::MediatedOrBetter),
+        "iommu-strict" => Ok(DmaRequirement::IommuStrict),
+        "none" => Ok(DmaRequirement::None),
+        _ => Err(AuthorityRequirementParseError::unknown(token)),
+    }
+}
+
+fn parse_snapshot_requirement(
+    token: &str,
+    requirement: &str,
+) -> Result<SnapshotRequirement, AuthorityRequirementParseError> {
+    match requirement {
+        "any" => Ok(SnapshotRequirement::Any),
+        "barrier-only-or-better" => Ok(SnapshotRequirement::BarrierOnlyOrBetter),
+        "cow-pages-or-better" => Ok(SnapshotRequirement::CowPagesOrBetter),
+        "deterministic-replay" => Ok(SnapshotRequirement::DeterministicReplay),
+        "none" => Ok(SnapshotRequirement::None),
+        _ => Err(AuthorityRequirementParseError::unknown(token)),
+    }
+}
+
+fn parse_code_publish_requirement(
+    token: &str,
+    requirement: &str,
+) -> Result<CodePublishRequirement, AuthorityRequirementParseError> {
+    match requirement {
+        "any" => Ok(CodePublishRequirement::Any),
+        "metadata-only" => Ok(CodePublishRequirement::MetadataOnly),
+        "runtime-only" => Ok(CodePublishRequirement::RuntimeOnly),
+        "native-wx" => Ok(CodePublishRequirement::NativeWx),
+        "none" => Ok(CodePublishRequirement::None),
+        _ => Err(AuthorityRequirementParseError::unknown(token)),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorityRequirementParseError {
+    pub token: String,
+    pub reason: &'static str,
+}
+
+impl AuthorityRequirementParseError {
+    pub fn unknown(token: &str) -> Self {
+        Self {
+            token: token.into(),
+            reason: "unknown authority requirement",
+        }
     }
 }
 

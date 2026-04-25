@@ -27,6 +27,57 @@ fn semantic_harness_profile_is_precise() {
 }
 
 #[test]
+fn profile_capability_sets_satisfy_their_own_contract() {
+    for profile in [
+        SubstrateProfile::SemanticHarness,
+        SubstrateProfile::MinimalBareMetal,
+        SubstrateProfile::GuestFrontend,
+        SubstrateProfile::DeviceCapable,
+        SubstrateProfile::SnapshotReplayCapable,
+    ] {
+        assert_eq!(SubstrateProfile::parse(profile.as_str()), Some(profile));
+        assert!(SubstrateCapabilitySet::for_profile(profile).supports_profile(profile));
+    }
+}
+
+#[test]
+fn host_validation_capabilities_cover_all_declared_contract_profiles() {
+    let capabilities = SubstrateCapabilitySet::host_validation();
+
+    assert!(capabilities.supports_profile(SubstrateProfile::SemanticHarness));
+    assert!(capabilities.supports_profile(SubstrateProfile::MinimalBareMetal));
+    assert!(capabilities.supports_profile(SubstrateProfile::GuestFrontend));
+    assert!(capabilities.supports_profile(SubstrateProfile::DeviceCapable));
+    assert!(capabilities.supports_profile(SubstrateProfile::SnapshotReplayCapable));
+}
+
+#[test]
+fn authority_requirements_parse_manifest_tokens() {
+    let requirements = AuthorityRequirementSet::from_tokens([
+        "console",
+        "timer",
+        "event-queue",
+        "guest-memory",
+        "artifact-loading",
+        "dmw:logical-or-better",
+        "mmio",
+        "irq",
+        "dma:mediated-or-better",
+        "snapshot:deterministic-replay",
+        "code-publish:metadata-only",
+    ])
+    .unwrap();
+
+    assert!(requirements.is_satisfied_by(SubstrateCapabilitySet::host_validation()));
+    assert_eq!(
+        AuthorityRequirementSet::from_tokens(["raw-mmio"])
+            .unwrap_err()
+            .token,
+        "raw-mmio"
+    );
+}
+
+#[test]
 fn missing_optional_and_forbidden_authorities_are_reported() {
     let requirements = SubstrateAuthorityRequirements {
         required: AuthorityRequirementSet {

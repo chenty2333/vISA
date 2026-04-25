@@ -10,10 +10,12 @@ use artifact_manifest::{
     CleanupTransactionManifest, MigrationPackageManifest, StoreRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
-    VIEW_SCHEMA_V1, ValidatedArtifactPlan, build_validated_artifact_plan,
+    ArtifactSubstrateCompatibilityReport, VIEW_SCHEMA_V1, ValidatedArtifactPlan,
+    build_validated_artifact_plan, check_artifact_manifest_substrate_compatibility,
     validate_migration_against_manifest, validate_migration_package, validate_replay_quiescent,
 };
 use semantic_core::{CapabilityClass, RuntimeMode};
+use substrate_api::{SubstrateCapabilitySet, SubstrateProfile};
 
 const OSCTL_JSON_SCHEMA_VERSION: &str = "vmos-osctl-json-v1";
 
@@ -58,6 +60,35 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             let path = path.ok_or("plan requires a manifest JSON path")?;
             print_plan(Path::new(&path), json)
+        }
+        "substrate" => {
+            let Some(subcommand) = args.next() else {
+                return Err("substrate requires a subcommand".into());
+            };
+            if subcommand != "check" {
+                return Err(
+                    "substrate syntax is: osctl substrate check [--json] [--profile <name>] <manifest.json>"
+                        .into(),
+                );
+            }
+            let mut json = false;
+            let mut profile = "host-validation".to_owned();
+            let mut path = None;
+            while let Some(arg) = args.next() {
+                if arg == "--json" {
+                    json = true;
+                } else if arg == "--profile" {
+                    profile = args
+                        .next()
+                        .ok_or("substrate check --profile requires a value")?;
+                } else if path.is_none() {
+                    path = Some(arg);
+                } else {
+                    return Err("substrate check received too many positional paths".into());
+                }
+            }
+            let path = path.ok_or("substrate check requires a manifest JSON path")?;
+            check_substrate_compatibility(Path::new(&path), &profile, json)
         }
         "modes" => print_modes(),
         "caps" => {
@@ -212,6 +243,7 @@ fn print_usage() {
     eprintln!("  osctl summary <manifest-or-migration.json>");
     eprintln!("  osctl check <manifest-or-migration.json>");
     eprintln!("  osctl plan [--json] <manifest.json>");
+    eprintln!("  osctl substrate check [--json] [--profile <name>] <manifest.json>");
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!("  osctl store|cap|wait|cleanup list --json <migration.json>");
@@ -631,6 +663,122 @@ fn print_plan(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     }
     print_plan_text(&plan);
     Ok(())
+}
+
+fn check_substrate_compatibility(
+    path: &Path,
+    profile: &str,
+    json: bool,
+) -> Result<(), Box<dyn Error>> {
+    let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&fs::read(path)?)?;
+    let capabilities = substrate_capabilities_for_profile(profile)
+        .ok_or_else(|| format!("unknown substrate profile `{profile}`"))?;
+    let report = check_artifact_manifest_substrate_compatibility(&manifest, capabilities)?;
+    if json {
+        print_substrate_compatibility_json(profile, capabilities, &report)?;
+    } else {
+        print_substrate_compatibility_text(profile, &report);
+    }
+    if report.ok {
+        Ok(())
+    } else {
+        Err("substrate compatibility check failed".into())
+    }
+}
+
+fn substrate_capabilities_for_profile(profile: &str) -> Option<SubstrateCapabilitySet> {
+    if profile == "host-validation" {
+        return Some(SubstrateCapabilitySet::host_validation());
+    }
+    SubstrateProfile::parse(profile).map(SubstrateCapabilitySet::for_profile)
+}
+
+fn print_substrate_compatibility_text(
+    profile: &str,
+    report: &ArtifactSubstrateCompatibilityReport,
+) {
+    println!(
+        "substrate check profile={} artifact_profile={} ok={} modules={}",
+        profile, report.artifact_profile, report.ok, report.module_count
+    );
+    for module in &report.modules {
+        println!(
+            "module {} required_profile={} ok={} missing_required={} degraded_optional={} forbidden_requested={}",
+            module.package,
+            module.substrate_profile_required,
+            module.ok,
+            module.missing_required.len(),
+            module.degraded_optional.len(),
+            module.forbidden_requested.len()
+        );
+        for missing in &module.missing_required {
+            println!(
+                "  missing authority={} required={} actual={}",
+                missing.authority, missing.expected, missing.actual
+            );
+        }
+        for degraded in &module.degraded_optional {
+            println!(
+                "  degraded authority={} required={} actual={}",
+                degraded.authority, degraded.expected, degraded.actual
+            );
+        }
+    }
+}
+
+fn print_substrate_compatibility_json(
+    profile: &str,
+    capabilities: SubstrateCapabilitySet,
+    report: &ArtifactSubstrateCompatibilityReport,
+) -> Result<(), Box<dyn Error>> {
+    let value = serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+        "kind": "substrate-compatibility",
+        "command": "substrate.check",
+        "profile": profile,
+        "capabilities": substrate_capabilities_json(capabilities),
+        "artifact_profile": &report.artifact_profile,
+        "ok": report.ok,
+        "module_count": report.module_count,
+        "modules": report.modules.iter().map(|module| serde_json::json!({
+            "package": &module.package,
+            "substrate_profile_required": &module.substrate_profile_required,
+            "ok": module.ok,
+            "profile_ok": module.profile_ok,
+            "authority_ok": module.authority_ok,
+            "missing_required": module.missing_required.iter().map(|item| serde_json::json!({
+                "authority": &item.authority,
+                "expected": &item.expected,
+                "actual": &item.actual
+            })).collect::<Vec<_>>(),
+            "degraded_optional": module.degraded_optional.iter().map(|item| serde_json::json!({
+                "authority": &item.authority,
+                "expected": &item.expected,
+                "actual": &item.actual
+            })).collect::<Vec<_>>(),
+            "forbidden_authorities": &module.forbidden_authorities,
+            "forbidden_requested": &module.forbidden_requested
+        })).collect::<Vec<_>>()
+    });
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn substrate_capabilities_json(capabilities: SubstrateCapabilitySet) -> serde_json::Value {
+    serde_json::json!({
+        "console": capabilities.console,
+        "timer": capabilities.timer,
+        "event_queue": capabilities.event_queue,
+        "guest_memory": capabilities.guest_memory,
+        "artifact_loading": capabilities.artifact_loading,
+        "dmw": capabilities.dmw.as_str(),
+        "mmio": capabilities.mmio,
+        "irq": capabilities.irq,
+        "dma": capabilities.dma.as_str(),
+        "snapshot": capabilities.snapshot.as_str(),
+        "code_publish": capabilities.code_publish.as_str()
+    })
 }
 
 fn print_modes() -> Result<(), Box<dyn Error>> {
@@ -2353,6 +2501,21 @@ mod tests {
         assert_eq!(view["references"]["target_store"]["generation"], 1);
         assert_eq!(view["references"]["result_store"]["generation"], 2);
         assert_eq!(view["references"]["revoked_capabilities"][0]["id"], 4);
+    }
+
+    #[test]
+    fn substrate_profile_selection_is_stable_for_json_checks() {
+        let host = substrate_capabilities_for_profile("host-validation").expect("host profile");
+        let semantic =
+            substrate_capabilities_for_profile("semantic-harness").expect("semantic profile");
+
+        assert!(host.artifact_loading);
+        assert_eq!(host.dmw.as_str(), "logical");
+        assert!(host.mmio);
+        assert_eq!(host.snapshot.as_str(), "deterministic-replay");
+        assert!(!semantic.artifact_loading);
+        assert_eq!(semantic.dma.as_str(), "none");
+        assert!(substrate_capabilities_for_profile("unknown-profile").is_none());
     }
 
     #[test]

@@ -179,6 +179,7 @@ dependencies = [
  "hex",
  "service_core",
  "sha2",
+ "substrate_api",
  "supervisor_catalog",
 ]
 
@@ -763,6 +764,7 @@ dependencies = [
  "semantic_core",
  "serde_json",
  "service_core",
+ "substrate_api",
  "supervisor_catalog",
 ]
 
