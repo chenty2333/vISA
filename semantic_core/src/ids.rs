@@ -3,6 +3,7 @@ pub type ResourceId = u64;
 pub type CapabilityId = u64;
 pub type FaultDomainId = u64;
 pub type EventId = u64;
+pub type CommandId = u64;
 pub type WaitId = u64;
 pub type Generation = u64;
 pub type SnapshotBarrierId = u64;

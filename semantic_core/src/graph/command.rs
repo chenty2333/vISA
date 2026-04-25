@@ -62,6 +62,73 @@ pub enum SemanticCommand {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandEnvelope {
+    pub command_id: CommandId,
+    pub issuer: String,
+    pub expected_epoch: Option<u64>,
+    pub command: SemanticCommand,
+}
+
+impl CommandEnvelope {
+    pub fn new(command_id: CommandId, issuer: &str, command: SemanticCommand) -> Self {
+        Self {
+            command_id,
+            issuer: issuer.to_string(),
+            expected_epoch: None,
+            command,
+        }
+    }
+
+    pub fn with_expected_epoch(mut self, expected_epoch: u64) -> Self {
+        self.expected_epoch = Some(expected_epoch);
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandStatus {
+    Applied,
+    Noop,
+    Rejected,
+}
+
+impl CommandStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Noop => "noop",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandEffect {
+    pub kind: String,
+    pub target: Option<ContractObjectRef>,
+}
+
+impl CommandEffect {
+    pub fn new(kind: &str, target: Option<ContractObjectRef>) -> Self {
+        Self {
+            kind: kind.to_string(),
+            target,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandResult {
+    pub command_id: CommandId,
+    pub issuer: String,
+    pub command: &'static str,
+    pub status: CommandStatus,
+    pub events: Vec<EventId>,
+    pub effects: Vec<CommandEffect>,
+    pub violations: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandOutcome {
     pub command: &'static str,
     pub event_count_before: usize,
@@ -97,6 +164,57 @@ impl SemanticCommand {
 }
 
 impl SemanticGraph {
+    pub fn apply_envelope(&mut self, envelope: CommandEnvelope) -> CommandResult {
+        let command_name = envelope.command.name();
+        if envelope.command_id == 0 {
+            return rejected_command_result(
+                envelope.command_id,
+                envelope.issuer,
+                command_name,
+                "command id=0 is invalid",
+            );
+        }
+        if let Some(expected_epoch) = envelope.expected_epoch {
+            let actual_epoch = self.event_count() as u64;
+            if expected_epoch != actual_epoch {
+                return rejected_command_result(
+                    envelope.command_id,
+                    envelope.issuer,
+                    command_name,
+                    "expected epoch mismatch",
+                );
+            }
+        }
+        match self.apply(envelope.command) {
+            Ok(outcome) => CommandResult {
+                command_id: envelope.command_id,
+                issuer: envelope.issuer,
+                command: outcome.command,
+                status: if outcome.changed {
+                    CommandStatus::Applied
+                } else {
+                    CommandStatus::Noop
+                },
+                events: event_refs_between(outcome.event_count_before, outcome.event_count_after),
+                effects: command_effects(&outcome),
+                violations: Vec::new(),
+            },
+            Err(CommandError::PreconditionFailed(detail)) => CommandResult {
+                command_id: envelope.command_id,
+                issuer: envelope.issuer,
+                command: command_name,
+                status: CommandStatus::Rejected,
+                events: Vec::new(),
+                effects: Vec::new(),
+                violations: {
+                    let mut violations = Vec::new();
+                    violations.push(detail);
+                    violations
+                },
+            },
+        }
+    }
+
     pub fn apply(&mut self, command: SemanticCommand) -> Result<CommandOutcome, CommandError> {
         self.preflight_command(&command)?;
         let event_count_before = self.event_count();
@@ -388,4 +506,40 @@ impl SemanticGraph {
             }
         }
     }
+}
+
+fn rejected_command_result(
+    command_id: CommandId,
+    issuer: String,
+    command: &'static str,
+    detail: &str,
+) -> CommandResult {
+    CommandResult {
+        command_id,
+        issuer,
+        command,
+        status: CommandStatus::Rejected,
+        events: Vec::new(),
+        effects: Vec::new(),
+        violations: {
+            let mut violations = Vec::new();
+            violations.push(detail.to_string());
+            violations
+        },
+    }
+}
+
+fn event_refs_between(before: usize, after: usize) -> Vec<EventId> {
+    ((before + 1)..=after)
+        .map(|event| event as EventId)
+        .collect()
+}
+
+fn command_effects(outcome: &CommandOutcome) -> Vec<CommandEffect> {
+    if !outcome.changed {
+        return Vec::new();
+    }
+    let mut effects = Vec::new();
+    effects.push(CommandEffect::new(outcome.command, None));
+    effects
 }

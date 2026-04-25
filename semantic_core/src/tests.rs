@@ -882,6 +882,103 @@ fn command_surface_grants_capability_and_precondition_failures_are_atomic() {
 }
 
 #[test]
+fn command_envelope_records_events_and_rejects_without_partial_mutation() {
+    let mut graph = SemanticGraph::new();
+    let object_ref =
+        AuthorityObjectRef::from_label(CapabilityClass::PacketDevice, "packet-device.net0");
+    let grant = CommandEnvelope::new(
+        1,
+        "test-harness",
+        SemanticCommand::GrantCapability {
+            subject: "driver".to_string(),
+            debug_object_label: "packet-device.net0".to_string(),
+            object_ref,
+            operations: {
+                let mut operations = Vec::new();
+                operations.push("rx".to_string());
+                operations
+            },
+            lifetime: "store".to_string(),
+            owner_store: None,
+            owner_store_generation: None,
+            owner_task: None,
+            source: "command-envelope-test".to_string(),
+            manifest_decl: true,
+        },
+    )
+    .with_expected_epoch(0);
+    let result = graph.apply_envelope(grant);
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(result.command, "grant-capability");
+    assert_eq!(result.issuer, "test-harness");
+    assert_eq!(result.events, {
+        let mut events = Vec::new();
+        events.push(1);
+        events
+    });
+    assert_eq!(result.effects[0].kind, "grant-capability");
+    assert!(result.violations.is_empty());
+
+    let wait_count = graph.wait_count();
+    let event_count = graph.event_count();
+    let bad_wait = CommandEnvelope::new(
+        2,
+        "test-harness",
+        SemanticCommand::CreateWait {
+            wait: 99,
+            owner_task: None,
+            owner_store: None,
+            owner_store_generation: None,
+            kind: SemanticWaitKind::Futex,
+            generation: 1,
+            blockers: Vec::new(),
+            deadline: None,
+            restart_policy: RestartPolicy::Never,
+            saved_context: None,
+        },
+    );
+    let rejected = graph.apply_envelope(bad_wait);
+
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(rejected.violations, {
+        let mut violations = Vec::new();
+        violations.push("create-wait requires owner task or owner store".to_string());
+        violations
+    });
+    assert_eq!(graph.wait_count(), wait_count);
+    assert_eq!(graph.event_count(), event_count);
+}
+
+#[test]
+fn command_envelope_epoch_mismatch_is_atomic() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
+    let before = graph.event_count();
+    let result = graph.apply_envelope(
+        CommandEnvelope::new(
+            3,
+            "test-harness",
+            SemanticCommand::RecordTrap {
+                store: None,
+                task: Some(1),
+                trap: TrapClass::GuestSegfault,
+                detail: "synthetic".to_string(),
+            },
+        )
+        .with_expected_epoch(0),
+    );
+
+    assert_eq!(result.status, CommandStatus::Rejected);
+    assert_eq!(result.violations, {
+        let mut violations = Vec::new();
+        violations.push("expected epoch mismatch".to_string());
+        violations
+    });
+    assert_eq!(graph.event_count(), before);
+}
+
+#[test]
 fn command_surface_wait_and_cleanup_transactions_are_canonical_and_idempotent() {
     let mut graph = SemanticGraph::new();
     graph.ensure_task(7, FrontendKind::LinuxElf, "guest");
