@@ -38,6 +38,308 @@ impl Error for ContractError {}
 
 pub type ContractResult<T> = Result<T, ContractError>;
 
+pub const CONTRACT_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new("semantic-contract-v0.1");
+pub const CONTRACT_SCHEMA: &str = CONTRACT_SCHEMA_VERSION.name;
+pub const VIEW_SCHEMA_V1: u16 = 1;
+pub const EDGE_SCHEMA_V1: u16 = 1;
+pub const EVENT_SCHEMA_V1: u16 = 1;
+pub const TRACE_SCHEMA_V1: u16 = 1;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SchemaVersion {
+    pub name: &'static str,
+}
+
+impl SchemaVersion {
+    pub const fn new(name: &'static str) -> Self {
+        Self { name }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObjectKind {
+    Task,
+    Resource,
+    Capability,
+    WaitToken,
+    FaultDomain,
+    Store,
+    StoreActivation,
+    Activation,
+    Artifact,
+    CodeObject,
+    Boundary,
+    Transaction,
+    Event,
+    Trap,
+    Hostcall,
+    Cleanup,
+    MemoryObject,
+    Tombstone,
+    External,
+}
+
+impl ObjectKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Task => "task",
+            Self::Resource => "resource",
+            Self::Capability => "capability",
+            Self::WaitToken => "wait-token",
+            Self::FaultDomain => "fault-domain",
+            Self::Store => "store",
+            Self::StoreActivation => "store-activation",
+            Self::Activation => "activation",
+            Self::Artifact => "artifact",
+            Self::CodeObject => "code-object",
+            Self::Boundary => "boundary",
+            Self::Transaction => "transaction",
+            Self::Event => "event",
+            Self::Trap => "trap",
+            Self::Hostcall => "hostcall",
+            Self::Cleanup => "cleanup",
+            Self::MemoryObject => "memory-object",
+            Self::Tombstone => "tombstone",
+            Self::External => "external",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObjectRef {
+    pub kind: ObjectKind,
+    pub id: u64,
+    pub generation: u64,
+}
+
+impl ObjectRef {
+    pub fn new(kind: ObjectKind, id: u64, generation: u64) -> ContractResult<Self> {
+        let reference = Self {
+            kind,
+            id,
+            generation,
+        };
+        reference.validate()?;
+        Ok(reference)
+    }
+
+    pub const fn unchecked(kind: ObjectKind, id: u64, generation: u64) -> Self {
+        Self {
+            kind,
+            id,
+            generation,
+        }
+    }
+
+    pub fn validate(self) -> ContractResult<()> {
+        if self.id == 0 {
+            return Err(ContractError::new("object ref id=0 is invalid"));
+        }
+        if self.generation == 0 && self.kind != ObjectKind::External {
+            return Err(ContractError::new(
+                "object ref generation=0 is invalid for internal objects",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefMode {
+    Live,
+    Historical,
+    CleanupEffect,
+    External,
+}
+
+impl RefMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Historical => "historical",
+            Self::CleanupEffect => "cleanup-effect",
+            Self::External => "external",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContractEdge {
+    pub from: ObjectRef,
+    pub to: ObjectRef,
+    pub mode: RefMode,
+    pub label: String,
+    pub epoch: u64,
+}
+
+impl ContractEdge {
+    pub fn new(from: ObjectRef, to: ObjectRef, mode: RefMode, label: &str, epoch: u64) -> Self {
+        Self {
+            from,
+            to,
+            mode,
+            label: label.to_owned(),
+            epoch,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TombstoneRecord {
+    pub object: ObjectRef,
+    pub died_at_event: u64,
+    pub reason: String,
+}
+
+impl TombstoneRecord {
+    pub fn new(object: ObjectRef, died_at_event: u64, reason: &str) -> Self {
+        Self {
+            object,
+            died_at_event,
+            reason: reason.to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TypedRefError {
+    KindMismatch {
+        expected: ObjectKind,
+        actual: ObjectKind,
+    },
+    InvalidRef,
+}
+
+impl fmt::Display for TypedRefError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::KindMismatch { expected, actual } => write!(
+                f,
+                "typed ref kind mismatch: expected {}, got {}",
+                expected.as_str(),
+                actual.as_str()
+            ),
+            Self::InvalidRef => f.write_str("invalid object ref"),
+        }
+    }
+}
+
+impl Error for TypedRefError {}
+
+macro_rules! typed_ref {
+    ($name:ident, $kind:expr) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub struct $name(pub ObjectRef);
+
+        impl $name {
+            pub fn new(id: u64, generation: u64) -> ContractResult<Self> {
+                Ok(Self(ObjectRef::new($kind, id, generation)?))
+            }
+
+            pub fn try_from_ref(reference: ObjectRef) -> Result<Self, TypedRefError> {
+                reference
+                    .validate()
+                    .map_err(|_| TypedRefError::InvalidRef)?;
+                if reference.kind != $kind {
+                    return Err(TypedRefError::KindMismatch {
+                        expected: $kind,
+                        actual: reference.kind,
+                    });
+                }
+                Ok(Self(reference))
+            }
+
+            pub const fn object_ref(self) -> ObjectRef {
+                self.0
+            }
+        }
+    };
+}
+
+typed_ref!(StoreRef, ObjectKind::Store);
+typed_ref!(CapabilityRef, ObjectKind::Capability);
+typed_ref!(WaitTokenRef, ObjectKind::WaitToken);
+typed_ref!(CleanupRef, ObjectKind::Cleanup);
+typed_ref!(TaskRef, ObjectKind::Task);
+typed_ref!(FaultDomainRef, ObjectKind::FaultDomain);
+typed_ref!(ArtifactRef, ObjectKind::Artifact);
+typed_ref!(CodeObjectRef, ObjectKind::CodeObject);
+typed_ref!(ActivationRef, ObjectKind::Activation);
+typed_ref!(TrapRef, ObjectKind::Trap);
+typed_ref!(HostcallTraceRef, ObjectKind::Hostcall);
+typed_ref!(ExternalObjectRef, ObjectKind::External);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoreViewV1 {
+    pub schema: u16,
+    pub kind: ObjectKind,
+    pub object: ObjectRef,
+    pub state: String,
+    pub owner: Option<ObjectRef>,
+    pub references: Vec<ContractEdge>,
+    pub last_transition: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityViewV1 {
+    pub schema: u16,
+    pub kind: ObjectKind,
+    pub object: ObjectRef,
+    pub state: String,
+    pub subject: ObjectRef,
+    pub owner: Option<ObjectRef>,
+    pub references: Vec<ContractEdge>,
+    pub last_transition: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WaitViewV1 {
+    pub schema: u16,
+    pub kind: ObjectKind,
+    pub object: ObjectRef,
+    pub state: String,
+    pub owner: Option<ObjectRef>,
+    pub references: Vec<ContractEdge>,
+    pub last_transition: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CleanupViewV1 {
+    pub schema: u16,
+    pub kind: ObjectKind,
+    pub object: ObjectRef,
+    pub state: String,
+    pub owner: Option<ObjectRef>,
+    pub references: Vec<ContractEdge>,
+    pub last_transition: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContractViolationViewV1 {
+    pub code: String,
+    pub severity: String,
+    pub subject: ObjectRef,
+    pub relation: String,
+    pub ref_mode: RefMode,
+    pub expected_generation: Option<u64>,
+    pub actual_generation: Option<u64>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContractValidationViewV1 {
+    pub schema: u16,
+    pub kind: &'static str,
+    pub package_id: String,
+    pub ok: bool,
+    pub violation_count: usize,
+    pub violations: Vec<ContractViolationViewV1>,
+}
+
 pub const RUNTIME_MODE_RESEARCH: &str = "research";
 pub const RUNTIME_MODE_PRODUCTION: &str = "production";
 pub const RUNTIME_MODE_REPLAY: &str = "replay";
@@ -872,5 +1174,69 @@ mod tests {
                 .to_string(),
             "unsupported runtime mode"
         );
+    }
+
+    #[test]
+    fn object_ref_rejects_null_identity() {
+        assert!(ObjectRef::new(ObjectKind::Store, 0, 1).is_err());
+        assert!(ObjectRef::new(ObjectKind::Store, 1, 0).is_err());
+        assert!(ObjectRef::new(ObjectKind::External, 1, 0).is_ok());
+    }
+
+    #[test]
+    fn same_id_different_generation_is_distinct() {
+        let first = ObjectRef::new(ObjectKind::Store, 7, 1).unwrap();
+        let second = ObjectRef::new(ObjectKind::Store, 7, 2).unwrap();
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn typed_object_kind_mismatch_is_detected() {
+        let cap = ObjectRef::new(ObjectKind::Capability, 3, 1).unwrap();
+
+        assert!(matches!(
+            StoreRef::try_from_ref(cap),
+            Err(TypedRefError::KindMismatch {
+                expected: ObjectKind::Store,
+                actual: ObjectKind::Capability,
+            })
+        ));
+        assert!(CapabilityRef::try_from_ref(cap).is_ok());
+    }
+
+    #[test]
+    fn tombstone_preserves_exact_generation() {
+        let dead_store = ObjectRef::new(ObjectKind::Store, 9, 4).unwrap();
+        let tombstone = TombstoneRecord::new(dead_store, 88, "cleanup-store-dead");
+
+        assert_eq!(tombstone.object, dead_store);
+        assert_eq!(tombstone.object.generation, 4);
+        assert_eq!(tombstone.died_at_event, 88);
+    }
+
+    #[test]
+    fn schema_versions_are_referenced_by_views_edges_events_and_traces() {
+        let store = StoreRef::new(1, 1).unwrap().object_ref();
+        let code = CodeObjectRef::new(2, 1).unwrap().object_ref();
+        let edge = ContractEdge::new(store, code, RefMode::Live, "store->code", 7);
+        let view = StoreViewV1 {
+            schema: VIEW_SCHEMA_V1,
+            kind: ObjectKind::Store,
+            object: store,
+            state: "running".to_owned(),
+            owner: None,
+            references: vec![edge.clone()],
+            last_transition: Some("bound->running".to_owned()),
+            last_error: None,
+        };
+
+        assert_eq!(CONTRACT_SCHEMA_VERSION.name, "semantic-contract-v0.1");
+        assert_eq!(CONTRACT_SCHEMA, CONTRACT_SCHEMA_VERSION.name);
+        assert_eq!(view.schema, VIEW_SCHEMA_V1);
+        assert_eq!(edge.mode, RefMode::Live);
+        assert_eq!(EDGE_SCHEMA_V1, 1);
+        assert_eq!(EVENT_SCHEMA_V1, 1);
+        assert_eq!(TRACE_SCHEMA_V1, 1);
     }
 }
