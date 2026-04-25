@@ -8,8 +8,8 @@ use std::path::Path;
 use artifact_manifest::{
     ActivationRecordManifest, ArtifactBundleManifest, BoundaryValidationReportManifest,
     CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
-    HostcallTraceManifest, MigrationPackageManifest, StoreRecordManifest,
-    TargetArtifactImageManifest, TrapRecordManifest, WaitRecordManifest,
+    ContractObjectRefManifest, HostcallTraceManifest, MigrationPackageManifest,
+    StoreRecordManifest, TargetArtifactImageManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactSubstrateCompatibilityReport, VIEW_SCHEMA_V1, ValidatedArtifactPlan,
@@ -118,10 +118,24 @@ fn run() -> Result<(), Box<dyn Error>> {
             print_state(Path::new(&path))
         }
         "graph" => {
-            let Some(path) = args.next() else {
-                return Err("graph requires a migration package JSON path".into());
-            };
-            print_graph(Path::new(&path))
+            let mut json = false;
+            let mut mode = GraphEdgeMode::Roots;
+            let mut path = None;
+            for arg in args {
+                if arg == "--json" {
+                    json = true;
+                } else if arg == "--live" {
+                    mode = GraphEdgeMode::Live;
+                } else if arg == "--history" {
+                    mode = GraphEdgeMode::History;
+                } else if path.is_none() {
+                    path = Some(arg);
+                } else {
+                    return Err("graph received too many positional paths".into());
+                }
+            }
+            let path = path.ok_or("graph requires a migration package JSON path")?;
+            print_graph(Path::new(&path), mode, json)
         }
         "activation" => {
             let mut blocked_only = false;
@@ -251,7 +265,7 @@ fn print_usage() {
     eprintln!("  osctl store|cap|wait|cleanup list --json <migration.json>");
     eprintln!("  osctl store|cap|wait|cleanup show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
-    eprintln!("  osctl graph <migration.json>");
+    eprintln!("  osctl graph [--live|--history] [--json] <migration.json>");
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
@@ -1155,8 +1169,52 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GraphEdgeMode {
+    Roots,
+    Live,
+    History,
+}
+
+impl GraphEdgeMode {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Roots => "roots",
+            Self::Live => "live",
+            Self::History => "history",
+        }
+    }
+}
+
+fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
+    if json || mode != GraphEdgeMode::Roots {
+        let edges = graph_edges_for_package(&package, mode);
+        if json {
+            let value = serde_json::json!({
+                "schema": VIEW_SCHEMA_V1,
+                "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+                "kind": "contract-graph",
+                "command": "graph",
+                "mode": mode.as_str(),
+                "package": package.package_id,
+                "edge_count": edges.len(),
+                "edges": edges,
+            });
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        } else {
+            println!(
+                "graph package={} mode={} edges={}",
+                package.package_id,
+                mode.as_str(),
+                edges.len()
+            );
+            for edge in edges {
+                println!("{edge}");
+            }
+        }
+        return Ok(());
+    }
     println!(
         "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={}",
         package.package_id,
@@ -1227,6 +1285,320 @@ fn print_graph(path: &Path) -> Result<(), Box<dyn Error>> {
     print_roots("tombstone", &package.semantic.roots.tombstone_roots);
     print_roots("contract", &package.semantic.roots.contract_violation_roots);
     Ok(())
+}
+
+fn graph_edges_for_package(
+    package: &MigrationPackageManifest,
+    mode: GraphEdgeMode,
+) -> Vec<serde_json::Value> {
+    match mode {
+        GraphEdgeMode::Roots => {
+            let mut edges = live_graph_edges(package);
+            edges.extend(history_graph_edges(package));
+            edges
+        }
+        GraphEdgeMode::Live => live_graph_edges(package),
+        GraphEdgeMode::History => history_graph_edges(package),
+    }
+}
+
+fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value> {
+    let mut edges = Vec::new();
+    for activation in &package.semantic.activation_records {
+        if activation.state == "running" {
+            edges.push(graph_edge(
+                object_ref_json("store", activation.store, activation.store_generation),
+                object_ref_json("activation", activation.id, activation.generation),
+                "owns",
+                "live",
+                Some(activation.start_event),
+            ));
+            edges.push(graph_edge(
+                object_ref_json("activation", activation.id, activation.generation),
+                object_ref_json(
+                    "code-object",
+                    activation.code_object,
+                    activation.code_generation,
+                ),
+                "bound-to",
+                "live",
+                Some(activation.start_event),
+            ));
+        }
+    }
+    for code in &package.semantic.code_objects {
+        if let Some(store) = code.bound_store {
+            edges.push(graph_edge(
+                object_ref_json("store", store, code.bound_store_generation.unwrap_or(0)),
+                object_ref_json("code-object", code.id, code.generation),
+                "bound-to",
+                "live",
+                None,
+            ));
+        }
+    }
+    for capability in &package.semantic.capability_records {
+        if capability.revoked {
+            continue;
+        }
+        if let Some(store) = capability.owner_store {
+            edges.push(graph_edge(
+                object_ref_json(
+                    "store",
+                    store,
+                    capability.owner_store_generation.unwrap_or(0),
+                ),
+                object_ref_json("capability", capability.id, capability.generation),
+                "owns",
+                "live",
+                None,
+            ));
+        }
+        if let Some(object_ref) = &capability.object_ref {
+            let mode = if object_ref.scope == "external" || object_ref.object.kind == "external" {
+                "external"
+            } else {
+                "live"
+            };
+            edges.push(graph_edge(
+                object_ref_json("capability", capability.id, capability.generation),
+                object_ref_manifest_json(&object_ref.object),
+                "authorizes",
+                mode,
+                None,
+            ));
+        }
+    }
+    for wait in &package.semantic.wait_records {
+        if wait.state != "pending" {
+            continue;
+        }
+        if let Some(store) = wait.owner_store {
+            edges.push(graph_edge(
+                object_ref_json("wait-token", wait.id, wait.generation),
+                object_ref_json("store", store, wait.owner_store_generation.unwrap_or(0)),
+                "belongs-to",
+                "live",
+                None,
+            ));
+        }
+        if let Some(task) = wait.owner_task {
+            edges.push(graph_edge(
+                object_ref_json("wait-token", wait.id, wait.generation),
+                object_ref_json("task", task, 1),
+                "belongs-to",
+                "live",
+                None,
+            ));
+        }
+        for blocker in &wait.blockers {
+            edges.push(graph_edge(
+                object_ref_json("wait-token", wait.id, wait.generation),
+                object_ref_manifest_json(blocker),
+                "blocks-on",
+                if blocker.kind == "external" {
+                    "external"
+                } else {
+                    "live"
+                },
+                None,
+            ));
+        }
+    }
+    edges
+}
+
+fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value> {
+    let mut edges = Vec::new();
+    for trap in &package.semantic.trap_records {
+        let from = object_ref_json("trap", trap.id, trap.generation);
+        if let Some(store) = trap.store {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("store", store, trap.store_generation.unwrap_or(0)),
+                "recorded",
+                "historical",
+                None,
+            ));
+        }
+        if let Some(activation) = trap.activation {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(
+                    "activation",
+                    activation,
+                    trap.activation_generation.unwrap_or(0),
+                ),
+                "recorded",
+                "historical",
+                None,
+            ));
+        }
+        if let Some(code_object) = trap.code_object {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(
+                    "code-object",
+                    code_object,
+                    trap.code_generation.unwrap_or(0),
+                ),
+                "recorded",
+                "historical",
+                None,
+            ));
+        }
+        if let Some(artifact) = trap.artifact {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("artifact", artifact, trap.artifact_generation.unwrap_or(1)),
+                "recorded",
+                "historical",
+                None,
+            ));
+        }
+    }
+    for hostcall in &package.semantic.hostcall_trace {
+        let from = object_ref_json("hostcall", hostcall.id, hostcall.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "activation",
+                hostcall.activation,
+                hostcall.activation_generation,
+            ),
+            "recorded",
+            "historical",
+            None,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("store", hostcall.store, hostcall.store_generation),
+            "recorded",
+            "historical",
+            None,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "code-object",
+                hostcall.code_object,
+                hostcall.code_generation,
+            ),
+            "recorded",
+            "historical",
+            None,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("artifact", hostcall.artifact, 1),
+            "recorded",
+            "historical",
+            None,
+        ));
+        if let Some(trap) = hostcall.trap_out {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("trap", trap, 1),
+                "caused",
+                "historical",
+                None,
+            ));
+        }
+        if let Some(wait) = hostcall.wait_token_out {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("wait-token", wait, 1),
+                "caused",
+                "historical",
+                None,
+            ));
+        }
+    }
+    for cleanup in &package.semantic.cleanup_transactions {
+        let from = object_ref_json("cleanup", cleanup.id, cleanup.generation);
+        let target_generation = if cleanup.target_store_generation == 0 {
+            cleanup.store_generation
+        } else {
+            cleanup.target_store_generation
+        };
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("store", cleanup.store, target_generation),
+            "killed",
+            "cleanup-effect",
+            Some(cleanup.started_at),
+        ));
+        if let Some(activation) = cleanup.activation {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(
+                    "activation",
+                    activation,
+                    cleanup.activation_generation.unwrap_or(0),
+                ),
+                "released",
+                "cleanup-effect",
+                cleanup.finished_at,
+            ));
+        }
+        if let Some(code) = cleanup.code_object {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("code-object", code, cleanup.code_generation.unwrap_or(0)),
+                "unbound",
+                "cleanup-effect",
+                cleanup.finished_at,
+            ));
+        }
+        for capability in &cleanup.revoked_capability_refs {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(capability),
+                "revoked",
+                "cleanup-effect",
+                cleanup.finished_at,
+            ));
+        }
+        for effect in &cleanup.effects {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(&effect.target),
+                &effect.kind,
+                "cleanup-effect",
+                Some(effect.event_seq),
+            ));
+        }
+    }
+    edges
+}
+
+fn graph_edge(
+    from: serde_json::Value,
+    to: serde_json::Value,
+    relation: &str,
+    mode: &str,
+    created_at_event: Option<u64>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "from": from,
+        "to": to,
+        "relation": relation,
+        "mode": mode,
+        "created_at_event": created_at_event,
+    })
+}
+
+fn object_ref_json(kind: &str, id: u64, generation: u64) -> serde_json::Value {
+    serde_json::json!({
+        "kind": kind,
+        "id": id,
+        "generation": generation,
+    })
+}
+
+fn object_ref_manifest_json(object: &ContractObjectRefManifest) -> serde_json::Value {
+    object_ref_json(&object.kind, object.id, object.generation)
 }
 
 fn print_event_log_tail(path: &Path) -> Result<(), Box<dyn Error>> {
@@ -2821,6 +3193,225 @@ mod tests {
         assert_eq!(hostcall["owner"]["activation_generation"], 6);
         assert_eq!(hostcall["call"]["caller_offset"], 16);
         assert_eq!(hostcall["last_error"], "hostcall-denied");
+    }
+
+    #[test]
+    fn graph_json_edges_separate_live_history_and_cleanup_modes() {
+        let mut package = minimal_graph_package();
+        package
+            .semantic
+            .activation_records
+            .push(ActivationRecordManifest {
+                id: 10,
+                store: 1,
+                store_generation: 2,
+                code_object: 3,
+                code_generation: 4,
+                artifact: 5,
+                entry: "_start".to_owned(),
+                generation: 6,
+                state: "running".to_owned(),
+                start_event: 7,
+                ..ActivationRecordManifest::default()
+            });
+        package.semantic.code_objects.push(CodeObjectManifest {
+            id: 3,
+            artifact_id: 5,
+            package: "driver".to_owned(),
+            owner_profile: "host-validation".to_owned(),
+            generation: 4,
+            state: "bound-to-store".to_owned(),
+            bound_store: Some(1),
+            bound_store_generation: Some(2),
+            ..CodeObjectManifest::default()
+        });
+        package
+            .semantic
+            .capability_records
+            .push(CapabilityRecordManifest {
+                id: 20,
+                subject: "driver".to_owned(),
+                object: "packet-device.net0".to_owned(),
+                object_ref: Some(AuthorityObjectRefManifest {
+                    scope: "internal".to_owned(),
+                    class: "packet-device".to_owned(),
+                    object: ContractObjectRefManifest {
+                        kind: "resource".to_owned(),
+                        id: 99,
+                        generation: 1,
+                    },
+                }),
+                rights: vec!["rx".to_owned()],
+                lifetime: "store".to_owned(),
+                class: "packet-device".to_owned(),
+                owner_store: Some(1),
+                owner_store_generation: Some(2),
+                source: "test".to_owned(),
+                generation: 1,
+                manifest_decl: true,
+                ..CapabilityRecordManifest::default()
+            });
+        package.semantic.wait_records.push(WaitRecordManifest {
+            id: 30,
+            owner_store: Some(1),
+            owner_store_generation: Some(2),
+            kind: "device-irq".to_owned(),
+            generation: 1,
+            state: "pending".to_owned(),
+            blockers: vec![ContractObjectRefManifest {
+                kind: "capability".to_owned(),
+                id: 20,
+                generation: 1,
+            }],
+            restart_policy: "restart-if-allowed".to_owned(),
+            ..WaitRecordManifest::default()
+        });
+        package.semantic.trap_records.push(TrapRecordManifest {
+            id: 40,
+            generation: 1,
+            class: "capability-trap".to_owned(),
+            store: Some(1),
+            store_generation: Some(2),
+            activation: Some(10),
+            activation_generation: Some(6),
+            code_object: Some(3),
+            code_generation: Some(4),
+            artifact: Some(5),
+            artifact_generation: Some(1),
+            fault_policy: "restart".to_owned(),
+            effect: "cleanup".to_owned(),
+            detail: "denied".to_owned(),
+            ..TrapRecordManifest::default()
+        });
+        package.semantic.hostcall_trace.push(HostcallTraceManifest {
+            id: 50,
+            generation: 1,
+            activation: 10,
+            activation_generation: 6,
+            store: 1,
+            store_generation: 2,
+            code_object: 3,
+            code_generation: 4,
+            artifact: 5,
+            hostcall_number: 1,
+            name: "hostcall.packet-device.net0.rx".to_owned(),
+            category: "packet-device".to_owned(),
+            object: "packet-device.net0".to_owned(),
+            operation: "rx".to_owned(),
+            allowed: true,
+            result: "complete".to_owned(),
+            ..HostcallTraceManifest::default()
+        });
+        package
+            .semantic
+            .cleanup_transactions
+            .push(CleanupTransactionManifest {
+                id: 60,
+                store: 1,
+                store_generation: 2,
+                target_store_generation: 2,
+                activation: Some(10),
+                activation_generation: Some(6),
+                code_object: Some(3),
+                code_generation: Some(4),
+                generation: 1,
+                started_at: 8,
+                finished_at: Some(9),
+                state: "completed".to_owned(),
+                reason: "fault".to_owned(),
+                released_dmw_leases: 0,
+                cancelled_waits: 1,
+                revoked_capabilities: vec![20],
+                revoked_capability_refs: vec![ContractObjectRefManifest {
+                    kind: "capability".to_owned(),
+                    id: 20,
+                    generation: 1,
+                }],
+                dropped_resources: 0,
+                unbound_code_object: true,
+                effect: "restart".to_owned(),
+                steps: Vec::new(),
+                effects: Vec::new(),
+                result_store_generation: Some(3),
+            });
+
+        let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "owns"
+            && edge["to"]["kind"] == "activation"));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "authorizes"
+            && edge["to"]["kind"] == "resource"));
+
+        let history = graph_edges_for_package(&package, GraphEdgeMode::History);
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "hostcall"
+            && edge["to"]["kind"] == "activation"));
+        assert!(history.iter().any(|edge| edge["mode"] == "cleanup-effect"
+            && edge["relation"] == "revoked"
+            && edge["to"]["kind"] == "capability"));
+    }
+
+    fn minimal_graph_package() -> MigrationPackageManifest {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "package_format": "vmos-semantic-package-v1",
+            "package_id": "graph-test",
+            "source": { "arch": "x86_64" },
+            "target": { "arch_requirement": "target-native" },
+            "required_artifact_profile": {
+                "artifact_profile": "host-validation",
+                "target_arch": "target-native",
+                "machine_abi_version": "test",
+                "supervisor_abi_version": "test",
+                "wasm_feature_profile": "test",
+                "memory64": false,
+                "multi_memory": false,
+                "dmw_layout": "logical",
+                "network_contract_version": "test",
+                "compiler_engine": "wasmtime",
+                "compiler_execution_mode": "precompiled-core-module",
+                "artifact_format": "cwasm",
+                "runtime_executor_abi": "vmos-runtime-only-executor-v0"
+            },
+            "guest": {
+                "canonical_isa": "riscv64",
+                "register_count": 33,
+                "memory_page_count": 0,
+                "vma_count": 0,
+                "signal_queue_count": 0,
+                "note": "test"
+            },
+            "semantic": {
+                "barrier_id": 1,
+                "event_log_cursor": 0,
+                "task_count": 0,
+                "resource_count": 0,
+                "wait_token_count": 0,
+                "capability_count": 0,
+                "fault_domain_count": 0
+            },
+            "logical_capabilities": [],
+            "substrate_boundary": {
+                "timer_epoch": 0,
+                "pending_irq_causes": 0,
+                "pending_dma_completions": 0,
+                "active_dmw_lease_count": 0,
+                "active_mmio_authority_count": 0,
+                "active_dma_authority_count": 0,
+                "active_irq_authority_count": 0,
+                "active_packet_device_authority_count": 0,
+                "active_virtio_queue_authority_count": 0,
+                "pending_network_inputs": 0,
+                "random_epoch": 0,
+                "scheduler_decision_cursor": 0,
+                "cow_epoch": 0,
+                "background_copy_pages": 0,
+                "native_state_policy": "test"
+            },
+            "not_migrated": []
+        }))
+        .expect("minimal graph package")
     }
 
     #[test]
