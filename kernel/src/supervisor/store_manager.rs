@@ -36,10 +36,16 @@ impl StoreRuntimeState {
 
     const fn from_semantic(state: StoreState) -> Self {
         match state {
-            StoreState::Created | StoreState::Instantiating => Self::Loaded,
+            StoreState::Created | StoreState::Bound | StoreState::Instantiating => Self::Loaded,
             StoreState::Running => Self::Running,
-            StoreState::Degraded | StoreState::Draining => Self::Draining,
-            StoreState::Restarting | StoreState::Rebinding => Self::Restarting,
+            StoreState::Suspended
+            | StoreState::Degraded
+            | StoreState::Draining
+            | StoreState::Faulted
+            | StoreState::Cleaning => Self::Draining,
+            StoreState::Restarting | StoreState::Rebinding | StoreState::Rebound => {
+                Self::Restarting
+            }
             StoreState::Dead => Self::Dead,
         }
     }
