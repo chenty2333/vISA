@@ -13,9 +13,11 @@ use artifact_manifest::{
     TargetArtifactImageManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
-    ArtifactSubstrateCompatibilityReport, VIEW_SCHEMA_V1, ValidatedArtifactPlan,
-    build_validated_artifact_plan, check_artifact_manifest_substrate_compatibility,
-    validate_migration_against_manifest, validate_migration_package, validate_replay_quiescent,
+    ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
+    InterfaceHostCapabilitySet, VIEW_SCHEMA_V1, ValidatedArtifactPlan,
+    build_validated_artifact_plan, check_artifact_manifest_interface_compatibility,
+    check_artifact_manifest_substrate_compatibility, validate_migration_against_manifest,
+    validate_migration_package, validate_replay_quiescent,
 };
 use semantic_core::{CapabilityClass, RuntimeMode};
 use substrate_api::{SubstrateCapabilitySet, SubstrateProfile};
@@ -111,6 +113,35 @@ fn run() -> Result<(), Box<dyn Error>> {
                         .into(),
                 ),
             }
+        }
+        "interface" => {
+            let Some(subcommand) = args.next() else {
+                return Err("interface requires a subcommand".into());
+            };
+            if subcommand != "check" {
+                return Err(
+                    "interface syntax is: osctl interface check [--json] [--profile <name>] <manifest.json>"
+                        .into(),
+                );
+            }
+            let mut json = false;
+            let mut profile = "host-validation".to_owned();
+            let mut path = None;
+            while let Some(arg) = args.next() {
+                if arg == "--json" {
+                    json = true;
+                } else if arg == "--profile" {
+                    profile = args
+                        .next()
+                        .ok_or("interface check --profile requires a value")?;
+                } else if path.is_none() {
+                    path = Some(arg);
+                } else {
+                    return Err("interface check received too many positional paths".into());
+                }
+            }
+            let path = path.ok_or("interface check requires a manifest JSON path")?;
+            check_interface_compatibility(Path::new(&path), &profile, json)
         }
         "modes" => print_modes(),
         "caps" => {
@@ -281,6 +312,7 @@ fn print_usage() {
     eprintln!("  osctl plan [--json] <manifest.json>");
     eprintln!("  osctl substrate check [--json] [--profile <name>] <manifest.json>");
     eprintln!("  osctl substrate events [--json] <migration.json>");
+    eprintln!("  osctl interface check [--json] [--profile <name>] <manifest.json>");
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!("  osctl store|cap|wait|cleanup|command list --json <migration.json>");
@@ -1027,6 +1059,108 @@ fn substrate_capabilities_json(capabilities: SubstrateCapabilitySet) -> serde_js
         "snapshot": capabilities.snapshot.as_str(),
         "code_publish": capabilities.code_publish.as_str()
     })
+}
+
+fn check_interface_compatibility(
+    path: &Path,
+    profile: &str,
+    json: bool,
+) -> Result<(), Box<dyn Error>> {
+    let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&fs::read(path)?)?;
+    let capabilities = interface_capabilities_for_profile(profile)
+        .ok_or_else(|| format!("unknown interface profile `{profile}`"))?;
+    let report = check_artifact_manifest_interface_compatibility(&manifest, &capabilities)?;
+    if json {
+        print_interface_compatibility_json(profile, &capabilities, &report)?;
+    } else {
+        print_interface_compatibility_text(profile, &report);
+    }
+    if report.ok {
+        Ok(())
+    } else {
+        Err("interface compatibility check failed".into())
+    }
+}
+
+fn interface_capabilities_for_profile(profile: &str) -> Option<InterfaceHostCapabilitySet> {
+    match profile {
+        "host-validation" => Some(InterfaceHostCapabilitySet::host_validation()),
+        "none" => Some(InterfaceHostCapabilitySet::empty()),
+        _ => None,
+    }
+}
+
+fn print_interface_compatibility_text(
+    profile: &str,
+    report: &ArtifactInterfaceCompatibilityReport,
+) {
+    println!(
+        "interface check profile={} artifact_profile={} ok={} modules={}",
+        profile, report.artifact_profile, report.ok, report.module_count
+    );
+    for module in &report.modules {
+        println!(
+            "module {} ok={} missing_wasi={} degraded_wasi={} missing_wit={} version_mismatch={}",
+            module.package,
+            module.ok,
+            module.missing_required_wasi_worlds.len(),
+            module.degraded_optional_wasi_worlds.len(),
+            module.missing_custom_wit_worlds.len(),
+            module.version_mismatches.len()
+        );
+        for world in &module.missing_required_wasi_worlds {
+            println!("  missing required_wasi_world={world}");
+        }
+        for world in &module.missing_custom_wit_worlds {
+            println!("  missing custom_wit_world={world}");
+        }
+        for mismatch in &module.version_mismatches {
+            println!(
+                "  version field={} expected={} actual={}",
+                mismatch.field, mismatch.expected, mismatch.actual
+            );
+        }
+    }
+}
+
+fn print_interface_compatibility_json(
+    profile: &str,
+    capabilities: &InterfaceHostCapabilitySet,
+    report: &ArtifactInterfaceCompatibilityReport,
+) -> Result<(), Box<dyn Error>> {
+    let value = serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+        "kind": "interface-compatibility",
+        "command": "interface.check",
+        "profile": profile,
+        "capabilities": {
+            "wasi_worlds": &capabilities.wasi_worlds,
+            "custom_wit_worlds": &capabilities.custom_wit_worlds,
+            "component_model_version": &capabilities.component_model_version,
+            "wasi_profile": &capabilities.wasi_profile,
+            "hostcall_abi_version": &capabilities.hostcall_abi_version,
+            "capability_abi_version": &capabilities.capability_abi_version,
+            "semantic_contract_version": &capabilities.semantic_contract_version
+        },
+        "artifact_profile": &report.artifact_profile,
+        "ok": report.ok,
+        "module_count": report.module_count,
+        "modules": report.modules.iter().map(|module| serde_json::json!({
+            "package": &module.package,
+            "ok": module.ok,
+            "missing_required_wasi_worlds": &module.missing_required_wasi_worlds,
+            "degraded_optional_wasi_worlds": &module.degraded_optional_wasi_worlds,
+            "missing_custom_wit_worlds": &module.missing_custom_wit_worlds,
+            "version_mismatches": module.version_mismatches.iter().map(|mismatch| serde_json::json!({
+                "field": &mismatch.field,
+                "expected": &mismatch.expected,
+                "actual": &mismatch.actual
+            })).collect::<Vec<_>>()
+        })).collect::<Vec<_>>()
+    });
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
 }
 
 fn print_substrate_events(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
@@ -3649,6 +3783,20 @@ mod tests {
         assert!(!semantic.artifact_loading);
         assert_eq!(semantic.dma.as_str(), "none");
         assert!(substrate_capabilities_for_profile("unknown-profile").is_none());
+    }
+
+    #[test]
+    fn interface_profile_selection_is_stable_for_json_checks() {
+        let host = interface_capabilities_for_profile("host-validation").expect("host profile");
+        let none = interface_capabilities_for_profile("none").expect("none profile");
+
+        assert!(
+            host.custom_wit_worlds
+                .iter()
+                .any(|world| world == "semantic:machine")
+        );
+        assert!(none.custom_wit_worlds.is_empty());
+        assert!(interface_capabilities_for_profile("unknown-profile").is_none());
     }
 
     #[test]

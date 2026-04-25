@@ -438,6 +438,73 @@ pub struct ArtifactSubstrateCompatibilityReport {
     pub modules: Vec<ModuleSubstrateCompatibilityReport>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InterfaceHostCapabilitySet {
+    pub wasi_worlds: Vec<String>,
+    pub custom_wit_worlds: Vec<String>,
+    pub component_model_version: String,
+    pub wasi_profile: String,
+    pub hostcall_abi_version: String,
+    pub capability_abi_version: String,
+    pub semantic_contract_version: String,
+}
+
+impl InterfaceHostCapabilitySet {
+    pub fn empty() -> Self {
+        Self {
+            wasi_worlds: Vec::new(),
+            custom_wit_worlds: Vec::new(),
+            component_model_version: COMPONENT_MODEL_VERSION.to_owned(),
+            wasi_profile: WASI_PROFILE_NONE.to_owned(),
+            hostcall_abi_version: HOSTCALL_ABI_VERSION.to_owned(),
+            capability_abi_version: CAPABILITY_ABI_VERSION.to_owned(),
+            semantic_contract_version: SEMANTIC_CONTRACT_SCHEMA_VERSION.to_owned(),
+        }
+    }
+
+    pub fn host_validation() -> Self {
+        let mut capabilities = Self::empty();
+        for module in SUPERVISOR_WASM_MODULES {
+            let interfaces = module_interface_spec(module);
+            for world in interfaces.required_wasi_worlds {
+                push_unique(&mut capabilities.wasi_worlds, world);
+            }
+            for world in interfaces.optional_wasi_worlds {
+                push_unique(&mut capabilities.wasi_worlds, world);
+            }
+            for world in interfaces.custom_wit_worlds {
+                push_unique(&mut capabilities.custom_wit_worlds, world);
+            }
+        }
+        capabilities
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InterfaceVersionMismatch {
+    pub field: String,
+    pub expected: String,
+    pub actual: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleInterfaceCompatibilityReport {
+    pub package: String,
+    pub ok: bool,
+    pub missing_required_wasi_worlds: Vec<String>,
+    pub degraded_optional_wasi_worlds: Vec<String>,
+    pub missing_custom_wit_worlds: Vec<String>,
+    pub version_mismatches: Vec<InterfaceVersionMismatch>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactInterfaceCompatibilityReport {
+    pub artifact_profile: String,
+    pub module_count: usize,
+    pub ok: bool,
+    pub modules: Vec<ModuleInterfaceCompatibilityReport>,
+}
+
 pub fn contract_hex(value: u64) -> String {
     format!("{value:016x}")
 }
@@ -567,6 +634,55 @@ pub fn check_artifact_manifest_substrate_compatibility(
     })
 }
 
+pub fn check_artifact_manifest_interface_compatibility(
+    manifest: &ArtifactBundleManifest,
+    capabilities: &InterfaceHostCapabilitySet,
+) -> ContractResult<ArtifactInterfaceCompatibilityReport> {
+    let plan = build_validated_artifact_plan(manifest)?;
+    let modules = plan
+        .modules
+        .iter()
+        .map(|module| check_module_interface_compatibility(module, capabilities))
+        .collect::<Vec<_>>();
+    let ok = modules.iter().all(|module| module.ok);
+    Ok(ArtifactInterfaceCompatibilityReport {
+        artifact_profile: plan.artifact_profile,
+        module_count: modules.len(),
+        ok,
+        modules,
+    })
+}
+
+pub fn check_module_interface_compatibility(
+    module: &ValidatedArtifactEntry,
+    capabilities: &InterfaceHostCapabilitySet,
+) -> ModuleInterfaceCompatibilityReport {
+    let missing_required_wasi_worlds = missing_interfaces(
+        &module.interfaces.required_wasi_worlds,
+        &capabilities.wasi_worlds,
+    );
+    let degraded_optional_wasi_worlds = missing_interfaces(
+        &module.interfaces.optional_wasi_worlds,
+        &capabilities.wasi_worlds,
+    );
+    let missing_custom_wit_worlds = missing_interfaces(
+        &module.interfaces.custom_wit_worlds,
+        &capabilities.custom_wit_worlds,
+    );
+    let version_mismatches = interface_version_mismatches(module, capabilities);
+    let ok = missing_required_wasi_worlds.is_empty()
+        && missing_custom_wit_worlds.is_empty()
+        && version_mismatches.is_empty();
+    ModuleInterfaceCompatibilityReport {
+        package: module.package.clone(),
+        ok,
+        missing_required_wasi_worlds,
+        degraded_optional_wasi_worlds,
+        missing_custom_wit_worlds,
+        version_mismatches,
+    }
+}
+
 pub fn check_module_substrate_compatibility(
     module: &ValidatedArtifactEntry,
     capabilities: SubstrateCapabilitySet,
@@ -625,6 +741,74 @@ fn parse_authority_requirements(
             err.token, err.reason
         ))
     })
+}
+
+fn push_unique(values: &mut Vec<String>, value: &str) {
+    if !values.iter().any(|existing| existing == value) {
+        values.push(value.to_owned());
+    }
+}
+
+fn missing_interfaces(required: &[String], available: &[String]) -> Vec<String> {
+    required
+        .iter()
+        .filter(|required| !available.iter().any(|available| available == *required))
+        .cloned()
+        .collect()
+}
+
+fn interface_version_mismatches(
+    module: &ValidatedArtifactEntry,
+    capabilities: &InterfaceHostCapabilitySet,
+) -> Vec<InterfaceVersionMismatch> {
+    let interfaces = &module.interfaces;
+    let mut mismatches = Vec::new();
+    push_version_mismatch(
+        &mut mismatches,
+        "component_model_version",
+        &interfaces.component_model_version,
+        &capabilities.component_model_version,
+    );
+    push_version_mismatch(
+        &mut mismatches,
+        "wasi_profile",
+        &interfaces.wasi_profile,
+        &capabilities.wasi_profile,
+    );
+    push_version_mismatch(
+        &mut mismatches,
+        "hostcall_abi_version",
+        &interfaces.hostcall_abi_version,
+        &capabilities.hostcall_abi_version,
+    );
+    push_version_mismatch(
+        &mut mismatches,
+        "capability_abi_version",
+        &interfaces.capability_abi_version,
+        &capabilities.capability_abi_version,
+    );
+    push_version_mismatch(
+        &mut mismatches,
+        "semantic_contract_version",
+        &interfaces.semantic_contract_version,
+        &capabilities.semantic_contract_version,
+    );
+    mismatches
+}
+
+fn push_version_mismatch(
+    mismatches: &mut Vec<InterfaceVersionMismatch>,
+    field: &str,
+    expected: &str,
+    actual: &str,
+) {
+    if expected != actual {
+        mismatches.push(InterfaceVersionMismatch {
+            field: field.to_owned(),
+            expected: expected.to_owned(),
+            actual: actual.to_owned(),
+        });
+    }
 }
 
 fn forbidden_requested_by_module(module: &ValidatedArtifactEntry) -> Vec<String> {
@@ -1597,6 +1781,65 @@ mod tests {
         assert!(report.ok);
         assert_eq!(report.module_count, SUPERVISOR_WASM_MODULES.len());
         assert!(report.modules.iter().all(|module| module.ok));
+    }
+
+    #[test]
+    fn interface_compatibility_accepts_host_validation_worlds() {
+        let manifest = valid_manifest();
+        let capabilities = InterfaceHostCapabilitySet::host_validation();
+        let report = check_artifact_manifest_interface_compatibility(&manifest, &capabilities)
+            .expect("interface compatibility report");
+
+        assert!(report.ok);
+        assert_eq!(report.module_count, SUPERVISOR_WASM_MODULES.len());
+        assert!(report.modules.iter().all(|module| module.ok));
+    }
+
+    #[test]
+    fn interface_compatibility_reports_missing_custom_wit_world() {
+        let manifest = valid_manifest();
+        let capabilities = InterfaceHostCapabilitySet::empty();
+        let report = check_artifact_manifest_interface_compatibility(&manifest, &capabilities)
+            .expect("interface compatibility report");
+        let driver = report
+            .modules
+            .iter()
+            .find(|module| module.package == "driver_virtio_net")
+            .expect("driver report");
+
+        assert!(!report.ok);
+        assert!(!driver.ok);
+        assert!(
+            driver
+                .missing_custom_wit_worlds
+                .iter()
+                .any(|world| world == "semantic:driverkit")
+        );
+        assert!(driver.version_mismatches.is_empty());
+    }
+
+    #[test]
+    fn interface_compatibility_reports_version_mismatch_separately() {
+        let manifest = valid_manifest();
+        let mut capabilities = InterfaceHostCapabilitySet::host_validation();
+        capabilities.hostcall_abi_version = "wire-v0".to_owned();
+        let report = check_artifact_manifest_interface_compatibility(&manifest, &capabilities)
+            .expect("interface compatibility report");
+        let linux = report
+            .modules
+            .iter()
+            .find(|module| module.package == "linux_syscall")
+            .expect("linux report");
+
+        assert!(!report.ok);
+        assert!(
+            linux
+                .version_mismatches
+                .iter()
+                .any(|mismatch| mismatch.field == "hostcall_abi_version"
+                    && mismatch.expected == HOSTCALL_ABI_VERSION
+                    && mismatch.actual == "wire-v0")
+        );
     }
 
     #[test]
