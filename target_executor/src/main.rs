@@ -14,9 +14,10 @@ use artifact_manifest::{
     MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
     MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
     RequiredArtifactProfileManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    StoreRecordManifest, SubstrateBoundaryManifest, TargetAddressMapEntryManifest,
-    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
-    TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest, WaitRecordManifest,
+    StoreRecordManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
+    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
+    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -28,15 +29,16 @@ use semantic_core::{
     BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass,
     CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
     CodePublisher, ContractGraphSnapshot, ContractObjectKind, ContractObjectRef, ContractViolation,
-    EntrypointState, ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind,
-    HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
-    ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
-    PackageReplayValidator, ReplayPackageValidationState, RuntimeMode, SemanticGraph,
-    SnapshotBarrierValidator, StoreRecord, StoreState, TargetAddressMapEntry, TargetArtifactImage,
-    TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass,
-    TargetTrapMetadata, TaskState, TombstoneRecord, TrapSurfaceState, VerifiedArtifact,
-    memory_class_policies, validate_contract_graph,
+    EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration,
+    FrontendKind, HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec,
+    HostcallTraceRecord, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
+    MigrationObjectRecord, PackageReplayValidator, ReplayPackageValidationState, RuntimeMode,
+    SemanticGraph, SnapshotBarrierValidator, StoreRecord, StoreState, TargetAddressMapEntry,
+    TargetArtifactImage, TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan,
+    TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState, TombstoneRecord,
+    TrapSurfaceState, VerifiedArtifact, memory_class_policies, validate_contract_graph,
 };
+use substrate_api::{SubstrateEvent, SubstrateRequester};
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
 
@@ -58,6 +60,7 @@ struct TargetExecutorV1Report {
     snapshot_validation: BoundaryValidationReportManifest,
     replay_validation: BoundaryValidationReportManifest,
     target_event_tail: Vec<String>,
+    substrate_events: Vec<SubstrateEventManifest>,
 }
 
 fn main() {
@@ -89,6 +92,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         register_store_semantics(&mut semantic, entry);
         stores.push(store);
     }
+    record_substrate_conformance_evidence(&mut semantic);
     let target_v1 = build_target_executor_v1(&plan, &semantic)?;
 
     println!(
@@ -247,6 +251,60 @@ fn publish_host_boundary_status(semantic: &mut SemanticGraph, manifest: &Artifac
         "semantic-package-v1",
         Some("target-replay-runner"),
     );
+}
+
+fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
+    record_substrate_event(
+        semantic,
+        SubstrateEvent::unsupported(
+            "DmaAuthority",
+            "dma_alloc",
+            Some(SubstrateRequester::new("target-executor-substrate-probe")),
+        ),
+    );
+}
+
+fn record_substrate_event(semantic: &mut SemanticGraph, event: SubstrateEvent) {
+    match event {
+        SubstrateEvent::Unsupported {
+            authority,
+            operation,
+            requester,
+        } => {
+            let (requester, artifact, store) = substrate_requester_parts(requester);
+            semantic.record_substrate_unsupported(authority, operation, requester, artifact, store);
+        }
+        SubstrateEvent::CapabilityDenied {
+            authority,
+            operation,
+            requester,
+            capability,
+        } => {
+            let (requester, artifact, store) = substrate_requester_parts(requester);
+            semantic.record_substrate_capability_denied(
+                authority,
+                operation,
+                requester,
+                artifact,
+                store,
+                capability.map(|capability| capability.id),
+                capability.map(|capability| capability.generation),
+            );
+        }
+    }
+}
+
+fn substrate_requester_parts(
+    requester: Option<SubstrateRequester>,
+) -> (Option<String>, Option<u64>, Option<u64>) {
+    let Some(requester) = requester else {
+        return (None, None, None);
+    };
+    (
+        Some(requester.subject),
+        requester.artifact.map(|artifact| artifact.id),
+        requester.store.map(|store| store.id),
+    )
 }
 
 fn build_target_executor_v1(
@@ -481,6 +539,7 @@ fn build_target_executor_v1(
         .map(contract_violation_manifest)
         .collect();
     report.target_event_tail = executor.event_log().to_vec();
+    report.substrate_events = substrate_event_manifests(semantic.event_log().tail(usize::MAX));
     Ok(report)
 }
 
@@ -1080,6 +1139,7 @@ fn demo_migration_package(
             memory_policy_count: target_v1.memory_policies.len(),
             snapshot_validation_violation_count: target_v1.snapshot_validation.violation_count,
             replay_validation_violation_count: target_v1.replay_validation.violation_count,
+            substrate_event_count: target_v1.substrate_events.len(),
             target_artifacts: target_v1.target_artifacts.clone(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
@@ -1095,6 +1155,7 @@ fn demo_migration_package(
             memory_policies: target_v1.memory_policies.clone(),
             snapshot_validation: target_v1.snapshot_validation.clone(),
             replay_validation: target_v1.replay_validation.clone(),
+            substrate_events: target_v1.substrate_events.clone(),
             network_socket_count: 1,
             network_rx_queue_bytes: 0,
         },
@@ -1458,6 +1519,19 @@ fn semantic_roots(
             .collect(),
         snapshot_validation_roots: validation_roots(&target_v1.snapshot_validation),
         replay_validation_roots: validation_roots(&target_v1.replay_validation),
+        substrate_event_roots: target_v1
+            .substrate_events
+            .iter()
+            .map(|event| {
+                format!(
+                    "substrate-event:{}:{}:{} requester={}",
+                    event.event_kind,
+                    event.authority,
+                    event.operation,
+                    event.requester.as_deref().unwrap_or("none")
+                )
+            })
+            .collect(),
         event_log_tail: semantic
             .event_log_tail(16)
             .iter()
@@ -1650,6 +1724,70 @@ fn cap_arg_manifest(arg: &CapabilityHandleArg) -> CapabilityHandleArgManifest {
         generation: arg.generation,
         rights_mask: arg.rights_mask,
         rights: arg.rights.clone(),
+    }
+}
+
+fn substrate_event_manifests(events: &[EventRecord]) -> Vec<SubstrateEventManifest> {
+    events.iter().filter_map(substrate_event_manifest).collect()
+}
+
+fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateEventManifest> {
+    match &event.kind {
+        EventKind::SubstrateUnsupported {
+            authority,
+            operation,
+            requester,
+            artifact,
+            store,
+        } => {
+            let requester_label = requester.as_deref().unwrap_or("unknown");
+            Some(SubstrateEventManifest {
+                id: event.id,
+                epoch: event.epoch,
+                event_kind: "unsupported".to_owned(),
+                authority: authority.clone(),
+                operation: operation.clone(),
+                requester: requester.clone(),
+                artifact: *artifact,
+                store: *store,
+                capability: None,
+                explanation: format!(
+                    "{requester_label} observed {authority}::{operation} as unsupported"
+                ),
+            })
+        }
+        EventKind::SubstrateCapabilityDenied {
+            authority,
+            operation,
+            requester,
+            artifact,
+            store,
+            capability,
+            capability_generation,
+        } => {
+            let requester_label = requester.as_deref().unwrap_or("unknown");
+            Some(SubstrateEventManifest {
+                id: event.id,
+                epoch: event.epoch,
+                event_kind: "capability-denied".to_owned(),
+                authority: authority.clone(),
+                operation: operation.clone(),
+                requester: requester.clone(),
+                artifact: *artifact,
+                store: *store,
+                capability: capability.map(|id| CapabilityHandleArgManifest {
+                    id,
+                    object: "substrate-capability".to_owned(),
+                    generation: capability_generation.unwrap_or(0),
+                    rights_mask: 0,
+                    rights: Vec::new(),
+                }),
+                explanation: format!(
+                    "{requester_label} was denied {authority}::{operation} by capability gate"
+                ),
+            })
+        }
+        _ => None,
     }
 }
 

@@ -1530,6 +1530,28 @@ fn substrate_unsupported_is_event_log_visible() {
     );
 }
 
+#[test]
+fn substrate_capability_denied_is_event_log_visible() {
+    let mut graph = SemanticGraph::new();
+
+    let event = graph.record_substrate_capability_denied(
+        "DmaAuthority",
+        "dma_alloc",
+        Some("driver.fake_net".to_string()),
+        Some(9),
+        Some(4),
+        Some(7),
+        Some(2),
+    );
+
+    let record = graph.event_log_tail(1).first().expect("event was recorded");
+    assert_eq!(record.id, event);
+    assert_eq!(
+        record.kind.summary(),
+        "SubstrateCapabilityDenied authority=DmaAuthority op=dma_alloc requester=driver.fake_net artifact=9 store=4 capability=7 generation=2"
+    );
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

@@ -9,7 +9,8 @@ use artifact_manifest::{
     ActivationRecordManifest, ArtifactBundleManifest, BoundaryValidationReportManifest,
     CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
     ContractObjectRefManifest, HostcallTraceManifest, MigrationPackageManifest,
-    StoreRecordManifest, TargetArtifactImageManifest, TrapRecordManifest, WaitRecordManifest,
+    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ArtifactSubstrateCompatibilityReport, VIEW_SCHEMA_V1, ValidatedArtifactPlan,
@@ -67,30 +68,49 @@ fn run() -> Result<(), Box<dyn Error>> {
             let Some(subcommand) = args.next() else {
                 return Err("substrate requires a subcommand".into());
             };
-            if subcommand != "check" {
-                return Err(
-                    "substrate syntax is: osctl substrate check [--json] [--profile <name>] <manifest.json>"
-                        .into(),
-                );
-            }
-            let mut json = false;
-            let mut profile = "host-validation".to_owned();
-            let mut path = None;
-            while let Some(arg) = args.next() {
-                if arg == "--json" {
-                    json = true;
-                } else if arg == "--profile" {
-                    profile = args
-                        .next()
-                        .ok_or("substrate check --profile requires a value")?;
-                } else if path.is_none() {
-                    path = Some(arg);
-                } else {
-                    return Err("substrate check received too many positional paths".into());
+            match subcommand.as_str() {
+                "check" => {
+                    let mut json = false;
+                    let mut profile = "host-validation".to_owned();
+                    let mut path = None;
+                    while let Some(arg) = args.next() {
+                        if arg == "--json" {
+                            json = true;
+                        } else if arg == "--profile" {
+                            profile = args
+                                .next()
+                                .ok_or("substrate check --profile requires a value")?;
+                        } else if path.is_none() {
+                            path = Some(arg);
+                        } else {
+                            return Err("substrate check received too many positional paths".into());
+                        }
+                    }
+                    let path = path.ok_or("substrate check requires a manifest JSON path")?;
+                    check_substrate_compatibility(Path::new(&path), &profile, json)
                 }
+                "events" => {
+                    let mut json = false;
+                    let mut path = None;
+                    for arg in args {
+                        if arg == "--json" {
+                            json = true;
+                        } else if path.is_none() {
+                            path = Some(arg);
+                        } else {
+                            return Err(
+                                "substrate events received too many positional paths".into()
+                            );
+                        }
+                    }
+                    let path = path.ok_or("substrate events requires a migration package JSON path")?;
+                    print_substrate_events(Path::new(&path), json)
+                }
+                _ => Err(
+                    "substrate syntax is: osctl substrate check [--json] [--profile <name>] <manifest.json> | osctl substrate events [--json] <migration.json>"
+                        .into(),
+                ),
             }
-            let path = path.ok_or("substrate check requires a manifest JSON path")?;
-            check_substrate_compatibility(Path::new(&path), &profile, json)
         }
         "modes" => print_modes(),
         "caps" => {
@@ -260,6 +280,7 @@ fn print_usage() {
     eprintln!("  osctl check <manifest-or-migration.json>");
     eprintln!("  osctl plan [--json] <manifest.json>");
     eprintln!("  osctl substrate check [--json] [--profile <name>] <manifest.json>");
+    eprintln!("  osctl substrate events [--json] <migration.json>");
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!("  osctl store|cap|wait|cleanup list --json <migration.json>");
@@ -998,6 +1019,70 @@ fn substrate_capabilities_json(capabilities: SubstrateCapabilitySet) -> serde_js
         "dma": capabilities.dma.as_str(),
         "snapshot": capabilities.snapshot.as_str(),
         "code_publish": capabilities.code_publish.as_str()
+    })
+}
+
+fn print_substrate_events(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
+    let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
+    if json {
+        let value = serde_json::json!({
+            "schema": VIEW_SCHEMA_V1,
+            "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+            "kind": "substrate-events",
+            "command": "substrate.events",
+            "package": &package.package_id,
+            "event_count": package.semantic.substrate_events.len(),
+            "events": package.semantic.substrate_events.iter().map(substrate_event_view_v1).collect::<Vec<_>>(),
+            "references": {
+                "event_log_cursor": package.semantic.event_log_cursor,
+                "root_count": package.semantic.roots.substrate_event_roots.len()
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
+
+    println!(
+        "substrate events package={} events={} roots={}",
+        package.package_id,
+        package.semantic.substrate_events.len(),
+        package.semantic.roots.substrate_event_roots.len()
+    );
+    for event in &package.semantic.substrate_events {
+        println!(
+            "{} authority={} operation={} requester={} explanation={}",
+            event.event_kind,
+            event.authority,
+            event.operation,
+            event.requester.as_deref().unwrap_or("none"),
+            event.explanation
+        );
+    }
+    Ok(())
+}
+
+fn substrate_event_view_v1(event: &SubstrateEventManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "substrate-event",
+        "id": event.id,
+        "generation": 1,
+        "state": &event.event_kind,
+        "authority": &event.authority,
+        "operation": &event.operation,
+        "requester": &event.requester,
+        "capability": &event.capability,
+        "references": {
+            "artifact": event.artifact,
+            "store": event.store,
+            "event_epoch": event.epoch
+        },
+        "last_transition": {
+            "event_kind": &event.event_kind,
+            "authority": &event.authority,
+            "operation": &event.operation
+        },
+        "last_error": &event.explanation
     })
 }
 
@@ -2575,7 +2660,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} event_tail={}",
+        "replay roots: tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} substrate_events={} event_tail={}",
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
         package.semantic.roots.authority_roots.len(),
@@ -2593,6 +2678,7 @@ fn replay_until(
         package.semantic.roots.trap_roots.len(),
         package.semantic.roots.hostcall_trace_roots.len(),
         package.semantic.roots.migration_object_roots.len(),
+        package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.event_log_tail.len()
     );
     for boundary in &package.semantic.roots.boundary_roots {
@@ -2688,6 +2774,7 @@ fn print_replay_json(
             "memory_policies": package.semantic.roots.memory_policy_roots.len(),
             "snapshot_validation": package.semantic.roots.snapshot_validation_roots.len(),
             "replay_validation": package.semantic.roots.replay_validation_roots.len(),
+            "substrate_events": package.semantic.roots.substrate_event_roots.len(),
             "event_tail": package.semantic.roots.event_log_tail.len(),
             "boundary_roots": &package.semantic.roots.boundary_roots,
             "artifact_verification_roots": &package.semantic.roots.artifact_verification_roots,
@@ -2706,7 +2793,8 @@ fn print_replay_json(
             "cleanup_roots": &package.semantic.roots.cleanup_roots,
             "memory_policy_roots": &package.semantic.roots.memory_policy_roots,
             "snapshot_validation_roots": &package.semantic.roots.snapshot_validation_roots,
-            "replay_validation_roots": &package.semantic.roots.replay_validation_roots
+            "replay_validation_roots": &package.semantic.roots.replay_validation_roots,
+            "substrate_event_roots": &package.semantic.roots.substrate_event_roots
         }
     });
     println!("{}", serde_json::to_string_pretty(&value)?);
@@ -2724,7 +2812,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} substrate_events={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.active_authority_count,
@@ -2743,7 +2831,8 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.activation_record_count,
         package.semantic.trap_record_count,
         package.semantic.hostcall_trace_count,
-        package.semantic.migration_object_count
+        package.semantic.migration_object_count,
+        package.semantic.substrate_event_count
     );
     println!(
         "substrate boundary: irq={} dma={} net_inputs={} dmw={} active_mmio={} active_dma={} active_irq={} active_packet_device={} active_virtqueue={} cow_epoch={} background_pages={}",
@@ -2790,6 +2879,10 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
     print_roots(
         "migration-object",
         &package.semantic.roots.migration_object_roots,
+    );
+    print_roots(
+        "substrate-event",
+        &package.semantic.roots.substrate_event_roots,
     );
 }
 
@@ -3193,6 +3286,37 @@ mod tests {
         assert_eq!(hostcall["owner"]["activation_generation"], 6);
         assert_eq!(hostcall["call"]["caller_offset"], 16);
         assert_eq!(hostcall["last_error"], "hostcall-denied");
+    }
+
+    #[test]
+    fn substrate_event_view_v1_explains_unsupported_authority() {
+        let view = substrate_event_view_v1(&SubstrateEventManifest {
+            id: 21,
+            epoch: 34,
+            event_kind: "unsupported".to_owned(),
+            authority: "DmaAuthority".to_owned(),
+            operation: "dma_alloc".to_owned(),
+            requester: Some("driver.fake_net".to_owned()),
+            artifact: Some(9),
+            store: Some(4),
+            capability: None,
+            explanation: "driver.fake_net observed DmaAuthority::dma_alloc as unsupported"
+                .to_owned(),
+        });
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "substrate-event");
+        assert_eq!(view["id"], 21);
+        assert_eq!(view["state"], "unsupported");
+        assert_eq!(view["authority"], "DmaAuthority");
+        assert_eq!(view["operation"], "dma_alloc");
+        assert_eq!(view["requester"], "driver.fake_net");
+        assert_eq!(view["references"]["artifact"], 9);
+        assert_eq!(view["references"]["store"], 4);
+        assert_eq!(view["references"]["event_epoch"], 34);
+        assert_eq!(
+            view["last_error"],
+            "driver.fake_net observed DmaAuthority::dma_alloc as unsupported"
+        );
     }
 
     #[test]

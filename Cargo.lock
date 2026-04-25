@@ -1069,6 +1069,7 @@ dependencies = [
  "serde_json",
  "service_core",
  "sha2",
+ "substrate_api",
  "supervisor_catalog",
  "wasmtime",
 ]

@@ -271,6 +271,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub replay_validation_violation_count: usize,
     #[serde(default)]
+    pub substrate_event_count: usize,
+    #[serde(default)]
     pub target_artifacts: Vec<TargetArtifactImageManifest>,
     #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
@@ -300,6 +302,8 @@ pub struct SemanticSnapshotManifest {
     pub snapshot_validation: BoundaryValidationReportManifest,
     #[serde(default)]
     pub replay_validation: BoundaryValidationReportManifest,
+    #[serde(default)]
+    pub substrate_events: Vec<SubstrateEventManifest>,
     #[serde(default)]
     pub network_socket_count: u32,
     #[serde(default)]
@@ -359,7 +363,24 @@ pub struct SemanticRootSetManifest {
     #[serde(default)]
     pub replay_validation_roots: Vec<String>,
     #[serde(default)]
+    pub substrate_event_roots: Vec<String>,
+    #[serde(default)]
     pub event_log_tail: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SubstrateEventManifest {
+    pub id: u64,
+    pub epoch: u64,
+    pub event_kind: String,
+    pub authority: String,
+    pub operation: String,
+    pub requester: Option<String>,
+    pub artifact: Option<u64>,
+    pub store: Option<u64>,
+    #[serde(default)]
+    pub capability: Option<CapabilityHandleArgManifest>,
+    pub explanation: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
