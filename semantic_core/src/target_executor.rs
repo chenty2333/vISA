@@ -1999,6 +1999,7 @@ impl DmwLeaseRecord {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CleanupStep {
+    StopNewActivation,
     SealActivation,
     PreventHostcalls,
     ReleaseDmwLeases,
@@ -2008,6 +2009,7 @@ pub enum CleanupStep {
     UnbindCodeObject,
     MarkStoreState,
     RecordTransition,
+    EmitTombstones,
     RecordFailureEffect,
     EmitReport,
 }
@@ -2015,6 +2017,7 @@ pub enum CleanupStep {
 impl CleanupStep {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::StopNewActivation => "stop-new-activation",
             Self::SealActivation => "seal-activation",
             Self::PreventHostcalls => "prevent-hostcalls",
             Self::ReleaseDmwLeases => "release-dmw-leases",
@@ -2024,6 +2027,7 @@ impl CleanupStep {
             Self::UnbindCodeObject => "unbind-code-object",
             Self::MarkStoreState => "mark-store-state",
             Self::RecordTransition => "record-transition",
+            Self::EmitTombstones => "emit-tombstones",
             Self::RecordFailureEffect => "record-failure-effect",
             Self::EmitReport => "emit-report",
         }
@@ -2034,6 +2038,7 @@ impl CleanupStep {
 pub enum CleanupStepState {
     NotStarted,
     Done,
+    SkippedStaleGeneration,
     FailedRecoverable,
     FailedFatal,
 }
@@ -2043,6 +2048,7 @@ impl CleanupStepState {
         match self {
             Self::NotStarted => "not-started",
             Self::Done => "done",
+            Self::SkippedStaleGeneration => "skipped-stale-generation",
             Self::FailedRecoverable => "failed-recoverable",
             Self::FailedFatal => "failed-fatal",
         }
@@ -2052,33 +2058,95 @@ impl CleanupStepState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CleanupStepRecord {
     pub step: CleanupStep,
+    pub target: Option<ContractObjectRef>,
+    pub observed_generation: Option<Generation>,
     pub state: CleanupStepState,
     pub detail: String,
+    pub error: Option<String>,
+    pub idempotency_key: String,
+    pub event_seq: EventId,
 }
 
 impl CleanupStepRecord {
     pub fn done(step: CleanupStep, detail: &str) -> Self {
         Self {
             step,
+            target: None,
+            observed_generation: None,
             state: CleanupStepState::Done,
             detail: detail.to_string(),
+            error: None,
+            idempotency_key: step.as_str().to_string(),
+            event_seq: 0,
         }
     }
 
     pub fn pending(step: CleanupStep) -> Self {
         Self {
             step,
+            target: None,
+            observed_generation: None,
             state: CleanupStepState::NotStarted,
             detail: String::new(),
+            error: None,
+            idempotency_key: step.as_str().to_string(),
+            event_seq: 0,
         }
     }
 
+    pub fn skipped_stale_generation(
+        step: CleanupStep,
+        target: ContractObjectRef,
+        observed_generation: Generation,
+        event_seq: EventId,
+    ) -> Self {
+        Self {
+            step,
+            target: Some(target),
+            observed_generation: Some(observed_generation),
+            state: CleanupStepState::SkippedStaleGeneration,
+            detail: "stale generation did not mutate newer object".to_string(),
+            error: Some("stale-generation".to_string()),
+            idempotency_key: step.as_str().to_string(),
+            event_seq,
+        }
+    }
+
+    pub fn with_target(mut self, target: ContractObjectRef) -> Self {
+        self.target = Some(target);
+        self
+    }
+
+    pub fn with_observed_generation(mut self, generation: Generation) -> Self {
+        self.observed_generation = Some(generation);
+        self
+    }
+
+    pub fn with_event_seq(mut self, event_seq: EventId) -> Self {
+        self.event_seq = event_seq;
+        self
+    }
+
     pub fn summary(&self) -> String {
+        let target = self
+            .target
+            .map(ContractObjectRef::summary)
+            .unwrap_or_else(|| "none".to_string());
+        let observed = self
+            .observed_generation
+            .map(|generation| generation.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let error = self.error.clone().unwrap_or_else(|| "none".to_string());
         format!(
-            "{}:{}:{}",
+            "{}:{}:{}:target={}:observed={}:error={}:event={}:key={}",
             self.step.as_str(),
             self.state.as_str(),
-            self.detail
+            self.detail,
+            target,
+            observed,
+            error,
+            self.event_seq,
+            self.idempotency_key
         )
     }
 }
@@ -2087,6 +2155,7 @@ impl CleanupStepRecord {
 pub enum CleanupTransactionState {
     Pending,
     Completed,
+    SkippedStaleGeneration,
 }
 
 impl CleanupTransactionState {
@@ -2094,7 +2163,94 @@ impl CleanupTransactionState {
         match self {
             Self::Pending => "pending",
             Self::Completed => "completed",
+            Self::SkippedStaleGeneration => "skipped-stale-generation",
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CleanupEffectKind {
+    StopNewActivation,
+    SealActivation,
+    ReleaseLeases,
+    CancelWaits,
+    RevokeCapability,
+    DropResources,
+    UnbindCode,
+    MarkStoreDead,
+    EmitTombstone,
+    RecordFailureEffect,
+}
+
+impl CleanupEffectKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StopNewActivation => "stop-new-activation",
+            Self::SealActivation => "seal-activation",
+            Self::ReleaseLeases => "release-leases",
+            Self::CancelWaits => "cancel-waits",
+            Self::RevokeCapability => "revoke-capability",
+            Self::DropResources => "drop-resources",
+            Self::UnbindCode => "unbind-code",
+            Self::MarkStoreDead => "mark-store-dead",
+            Self::EmitTombstone => "emit-tombstone",
+            Self::RecordFailureEffect => "record-failure-effect",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CleanupEffectStatus {
+    Applied,
+    AlreadyApplied,
+    SkippedStaleGeneration,
+}
+
+impl CleanupEffectStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::AlreadyApplied => "already-applied",
+            Self::SkippedStaleGeneration => "skipped-stale-generation",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CleanupEffectRecord {
+    pub kind: CleanupEffectKind,
+    pub target: ContractObjectRef,
+    pub expected_generation: Generation,
+    pub status: CleanupEffectStatus,
+    pub event_seq: EventId,
+}
+
+impl CleanupEffectRecord {
+    pub const fn new(
+        kind: CleanupEffectKind,
+        target: ContractObjectRef,
+        expected_generation: Generation,
+        status: CleanupEffectStatus,
+        event_seq: EventId,
+    ) -> Self {
+        Self {
+            kind,
+            target,
+            expected_generation,
+            status,
+            event_seq,
+        }
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "{}:{}:{}@{}:event={}",
+            self.kind.as_str(),
+            self.status.as_str(),
+            self.target.summary(),
+            self.expected_generation,
+            self.event_seq
+        )
     }
 }
 
@@ -2108,9 +2264,12 @@ pub struct FaultCleanupTransaction {
     pub code_object: Option<CodeObjectId>,
     pub code_generation: Option<Generation>,
     pub generation: Generation,
+    pub started_at: EventId,
+    pub finished_at: Option<EventId>,
     pub state: CleanupTransactionState,
     pub reason: String,
     pub steps: Vec<CleanupStepRecord>,
+    pub effects: Vec<CleanupEffectRecord>,
     pub released_dmw_leases: u32,
     pub cancelled_waits: u32,
     pub revoked_capabilities: Vec<CapabilityId>,
@@ -2123,7 +2282,7 @@ pub struct FaultCleanupTransaction {
 impl FaultCleanupTransaction {
     pub fn summary(&self) -> String {
         format!(
-            "cleanup id={} store={}@{} activation={} code={} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
+            "cleanup id={} store={}@{} activation={} code={} generation={} started={} finished={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={} effects={}",
             self.id,
             self.store,
             self.store_generation,
@@ -2136,6 +2295,10 @@ impl FaultCleanupTransaction {
                 .map(|(code, generation)| format!("{code}@{generation}"))
                 .unwrap_or_else(|| "none".to_string()),
             self.generation,
+            self.started_at,
+            self.finished_at
+                .map(|event| event.to_string())
+                .unwrap_or_else(|| "none".to_string()),
             self.state.as_str(),
             self.reason,
             self.released_dmw_leases,
@@ -2147,6 +2310,11 @@ impl FaultCleanupTransaction {
             self.steps
                 .iter()
                 .map(CleanupStepRecord::summary)
+                .collect::<Vec<_>>()
+                .join("|"),
+            self.effects
+                .iter()
+                .map(CleanupEffectRecord::summary)
                 .collect::<Vec<_>>()
                 .join("|")
         )
@@ -2169,6 +2337,8 @@ pub enum TargetExecutorError {
     DmwLeaseActive,
     DmwLeaseMissing,
     PendingCleanupActive,
+    CleanupTransactionMissing,
+    CleanupStoreMismatch,
 }
 
 impl TargetExecutorError {
@@ -2188,6 +2358,8 @@ impl TargetExecutorError {
             Self::DmwLeaseActive => "active DMW lease cannot cross exit boundary",
             Self::DmwLeaseMissing => "DMW lease is missing",
             Self::PendingCleanupActive => "pending cleanup transaction blocks this boundary",
+            Self::CleanupTransactionMissing => "cleanup transaction is missing",
+            Self::CleanupStoreMismatch => "cleanup transaction targets a different store",
         }
     }
 }
@@ -2205,6 +2377,7 @@ pub struct TargetExecutor {
     dmw_leases: Vec<DmwLeaseRecord>,
     hostcall_trace: Vec<HostcallTraceRecord>,
     cleanup_transactions: Vec<FaultCleanupTransaction>,
+    tombstones: Vec<TombstoneRecord>,
     event_log: Vec<String>,
 }
 
@@ -2222,6 +2395,7 @@ impl TargetExecutor {
             dmw_leases: Vec::new(),
             hostcall_trace: Vec::new(),
             cleanup_transactions: Vec::new(),
+            tombstones: Vec::new(),
             event_log: Vec::new(),
         }
     }
@@ -2914,6 +3088,7 @@ impl TargetExecutor {
         }) {
             return existing.id;
         }
+        let started_at = self.next_event("fault-cleanup-started");
         let id = self.next_cleanup_id;
         self.next_cleanup_id += 1;
         self.cleanup_transactions.push(FaultCleanupTransaction {
@@ -2925,24 +3100,15 @@ impl TargetExecutor {
             code_object,
             code_generation,
             generation: 1,
+            started_at,
+            finished_at: None,
             state: CleanupTransactionState::Pending,
             reason: reason.to_string(),
-            steps: [
-                CleanupStep::SealActivation,
-                CleanupStep::PreventHostcalls,
-                CleanupStep::ReleaseDmwLeases,
-                CleanupStep::CancelWaitTokens,
-                CleanupStep::RevokeCapabilities,
-                CleanupStep::DropResourceArena,
-                CleanupStep::UnbindCodeObject,
-                CleanupStep::MarkStoreState,
-                CleanupStep::RecordTransition,
-                CleanupStep::RecordFailureEffect,
-                CleanupStep::EmitReport,
-            ]
-            .iter()
-            .map(|step| CleanupStepRecord::pending(*step))
-            .collect(),
+            steps: Self::cleanup_step_order()
+                .iter()
+                .map(|step| CleanupStepRecord::pending(*step))
+                .collect(),
+            effects: Vec::new(),
             released_dmw_leases: 0,
             cancelled_waits: 0,
             revoked_capabilities: Vec::new(),
@@ -2980,8 +3146,71 @@ impl TargetExecutor {
             return Ok(existing.id);
         }
         let id = self.begin_fault_cleanup_transaction(store, activation, code.as_deref(), reason);
+        self.apply_fault_cleanup_transaction(id, store, code, capabilities)
+    }
+
+    pub fn apply_fault_cleanup_transaction(
+        &mut self,
+        cleanup_id: CleanupTransactionId,
+        store: &mut StoreRecord,
+        code: Option<&mut CodeObject>,
+        capabilities: &mut CapabilityLedger,
+    ) -> Result<CleanupTransactionId, TargetExecutorError> {
+        let Some(cleanup_index) = self
+            .cleanup_transactions
+            .iter()
+            .position(|cleanup| cleanup.id == cleanup_id)
+        else {
+            return Err(TargetExecutorError::CleanupTransactionMissing);
+        };
+        if self.cleanup_transactions[cleanup_index].state != CleanupTransactionState::Pending {
+            return Ok(cleanup_id);
+        }
+        if self.cleanup_transactions[cleanup_index].store != store.id {
+            return Err(TargetExecutorError::CleanupStoreMismatch);
+        }
+
+        let activation = self.cleanup_transactions[cleanup_index].activation;
+        let reason = self.cleanup_transactions[cleanup_index].reason.clone();
+        let expected_store_generation = self.cleanup_transactions[cleanup_index].store_generation;
+        if store.generation != expected_store_generation {
+            let event = self.next_event("fault-cleanup-stale-generation");
+            let target = ContractObjectRef::new(
+                ContractObjectKind::Store,
+                store.id,
+                expected_store_generation,
+            );
+            let cleanup = &mut self.cleanup_transactions[cleanup_index];
+            cleanup.state = CleanupTransactionState::SkippedStaleGeneration;
+            cleanup.generation += 1;
+            cleanup.finished_at = Some(event);
+            cleanup.steps = Self::cleanup_step_order()
+                .iter()
+                .map(|step| {
+                    CleanupStepRecord::skipped_stale_generation(
+                        *step,
+                        target,
+                        store.generation,
+                        event,
+                    )
+                })
+                .collect();
+            cleanup.effects.push(CleanupEffectRecord::new(
+                CleanupEffectKind::RecordFailureEffect,
+                target,
+                expected_store_generation,
+                CleanupEffectStatus::SkippedStaleGeneration,
+                event,
+            ));
+            self.event_log.push(format!(
+                "FaultCleanupSkipped cleanup={cleanup_id} store={} expected_generation={} observed_generation={}",
+                store.id, expected_store_generation, store.generation
+            ));
+            return Ok(cleanup_id);
+        }
+
         let released = activation
-            .map(|activation| self.release_all_leases_for_activation_id(activation, reason))
+            .map(|activation| self.release_all_leases_for_activation_id(activation, &reason))
             .unwrap_or(0);
         let mut cancelled_waits = 0;
         let mut final_activation_generation = None;
@@ -3024,6 +3253,7 @@ impl TargetExecutor {
             .collect::<Vec<_>>();
         let mut unbound = false;
         let mut code_generation = None;
+        let mut code_ref = None;
         if let Some(code) = code {
             if code.bound_store == Some(store.id) {
                 code.bound_store = None;
@@ -3033,9 +3263,11 @@ impl TargetExecutor {
                 unbound = true;
             }
             code_generation = Some(code.generation);
+            code_ref = Some(code.object_ref());
         }
         store.state = StoreState::Dead;
         store.generation += 1;
+        let store_ref = store.object_ref();
         if let Some(activation) = activation {
             if let Some(record) = self
                 .activations
@@ -3048,14 +3280,43 @@ impl TargetExecutor {
                 }
             }
         }
+        let finished_at = self.next_event("fault-cleanup-completed");
+        self.tombstones.push(TombstoneRecord::new(
+            ContractObjectKind::Store,
+            store.id,
+            store.generation,
+            finished_at,
+            "fault-cleanup-store-dead",
+        ));
+        if let Some(activation) = activation {
+            if let Some(generation) = final_activation_generation {
+                self.tombstones.push(TombstoneRecord::new(
+                    ContractObjectKind::Activation,
+                    activation,
+                    generation,
+                    finished_at,
+                    "fault-cleanup-activation-dropped",
+                ));
+            }
+        }
+        if let Some(code_ref) = code_ref {
+            self.tombstones.push(TombstoneRecord::new(
+                ContractObjectKind::CodeObject,
+                code_ref.id,
+                code_ref.generation,
+                finished_at,
+                "fault-cleanup-code-retired",
+            ));
+        }
         let cleanup = self
             .cleanup_transactions
             .iter_mut()
-            .find(|cleanup| cleanup.id == id)
+            .find(|cleanup| cleanup.id == cleanup_id)
             .expect("cleanup transaction must exist");
         cleanup.state = CleanupTransactionState::Completed;
         cleanup.generation += 1;
         cleanup.store_generation = store.generation;
+        cleanup.finished_at = Some(finished_at);
         cleanup.activation_generation =
             final_activation_generation.or(cleanup.activation_generation);
         cleanup.code_generation = code_generation.or(cleanup.code_generation);
@@ -3067,59 +3328,110 @@ impl TargetExecutor {
         cleanup.unbound_code_object = unbound;
         cleanup.effect = FailureEffect::CompleteWithErrno(5);
         let mut steps = Vec::new();
-        steps.push(CleanupStepRecord::done(
-            CleanupStep::SealActivation,
-            "activation sealed",
-        ));
-        steps.push(CleanupStepRecord::done(
-            CleanupStep::PreventHostcalls,
-            "activation dropped",
-        ));
-        steps.push(CleanupStepRecord::done(
-            CleanupStep::ReleaseDmwLeases,
-            "leases released",
-        ));
-        steps.push(CleanupStepRecord::done(
-            CleanupStep::CancelWaitTokens,
-            "no wait tokens in harness",
-        ));
-        steps.push(CleanupStepRecord::done(
-            CleanupStep::RevokeCapabilities,
-            "store-owned capabilities revoked",
-        ));
-        steps.push(CleanupStepRecord::done(
-            CleanupStep::DropResourceArena,
-            "resource arena dropped",
-        ));
-        steps.push(CleanupStepRecord::done(
-            CleanupStep::UnbindCodeObject,
-            "code object unbound",
-        ));
-        steps.push(CleanupStepRecord::done(
-            CleanupStep::MarkStoreState,
-            "store marked dead",
-        ));
-        steps.push(CleanupStepRecord::done(
-            CleanupStep::RecordTransition,
-            "cleanup transition recorded",
-        ));
-        steps.push(CleanupStepRecord::done(
-            CleanupStep::RecordFailureEffect,
-            "failure effect recorded",
-        ));
-        steps.push(CleanupStepRecord::done(
-            CleanupStep::EmitReport,
-            "cleanup report emitted",
-        ));
+        steps.push(
+            CleanupStepRecord::done(CleanupStep::StopNewActivation, "new activations stopped")
+                .with_target(store_ref)
+                .with_observed_generation(store.generation)
+                .with_event_seq(finished_at),
+        );
+        steps.push(
+            CleanupStepRecord::done(CleanupStep::SealActivation, "activation sealed")
+                .with_target(store_ref)
+                .with_observed_generation(store.generation)
+                .with_event_seq(finished_at),
+        );
+        steps.push(
+            CleanupStepRecord::done(CleanupStep::PreventHostcalls, "activation dropped")
+                .with_target(store_ref)
+                .with_observed_generation(store.generation)
+                .with_event_seq(finished_at),
+        );
+        steps.push(
+            CleanupStepRecord::done(CleanupStep::ReleaseDmwLeases, "leases released")
+                .with_target(store_ref)
+                .with_observed_generation(store.generation)
+                .with_event_seq(finished_at),
+        );
+        steps.push(
+            CleanupStepRecord::done(CleanupStep::CancelWaitTokens, "no wait tokens in harness")
+                .with_target(store_ref)
+                .with_observed_generation(store.generation)
+                .with_event_seq(finished_at),
+        );
+        steps.push(
+            CleanupStepRecord::done(
+                CleanupStep::RevokeCapabilities,
+                "store-owned capabilities revoked",
+            )
+            .with_target(store_ref)
+            .with_observed_generation(store.generation)
+            .with_event_seq(finished_at),
+        );
+        steps.push(
+            CleanupStepRecord::done(CleanupStep::DropResourceArena, "resource arena dropped")
+                .with_target(store_ref)
+                .with_observed_generation(store.generation)
+                .with_event_seq(finished_at),
+        );
+        steps.push(
+            CleanupStepRecord::done(CleanupStep::UnbindCodeObject, "code object unbound")
+                .with_target(store_ref)
+                .with_observed_generation(store.generation)
+                .with_event_seq(finished_at),
+        );
+        steps.push(
+            CleanupStepRecord::done(CleanupStep::MarkStoreState, "store marked dead")
+                .with_target(store_ref)
+                .with_observed_generation(store.generation)
+                .with_event_seq(finished_at),
+        );
+        steps.push(
+            CleanupStepRecord::done(CleanupStep::RecordTransition, "cleanup transition recorded")
+                .with_target(store_ref)
+                .with_observed_generation(store.generation)
+                .with_event_seq(finished_at),
+        );
+        steps.push(
+            CleanupStepRecord::done(CleanupStep::EmitTombstones, "cleanup tombstones emitted")
+                .with_target(store_ref)
+                .with_observed_generation(store.generation)
+                .with_event_seq(finished_at),
+        );
+        steps.push(
+            CleanupStepRecord::done(CleanupStep::RecordFailureEffect, "failure effect recorded")
+                .with_target(store_ref)
+                .with_observed_generation(store.generation)
+                .with_event_seq(finished_at),
+        );
+        steps.push(
+            CleanupStepRecord::done(CleanupStep::EmitReport, "cleanup report emitted")
+                .with_target(store_ref)
+                .with_observed_generation(store.generation)
+                .with_event_seq(finished_at),
+        );
         cleanup.steps = steps;
+        cleanup.effects = Self::cleanup_effects_for_completed_transaction(
+            store_ref,
+            activation
+                .zip(final_activation_generation)
+                .map(|(id, generation)| {
+                    ContractObjectRef::new(ContractObjectKind::Activation, id, generation)
+                }),
+            code_ref,
+            &cleanup.revoked_capability_refs,
+            released,
+            cancelled_waits,
+            cleanup.dropped_resources,
+            finished_at,
+        );
         self.event_log.push(format!(
-            "FaultCleanupCompleted cleanup={id} store={} released_dmw={} revoked_caps={} unbound_code={}",
+            "FaultCleanupCompleted cleanup={cleanup_id} store={} released_dmw={} revoked_caps={} unbound_code={}",
             store.id,
             released,
             cleanup.revoked_capabilities.len(),
             unbound
         ));
-        Ok(id)
+        Ok(cleanup_id)
     }
 
     pub fn classify_migration_objects(
@@ -3177,8 +3489,207 @@ impl TargetExecutor {
         &self.cleanup_transactions
     }
 
+    pub fn tombstones(&self) -> &[TombstoneRecord] {
+        &self.tombstones
+    }
+
+    pub fn cleanup_state_digest(
+        &self,
+        store: &StoreRecord,
+        code: Option<&CodeObject>,
+        capabilities: &CapabilityLedger,
+    ) -> String {
+        let code_state = code
+            .map(|code| {
+                format!(
+                    "code:{}@{}:{}:bound={}",
+                    code.id,
+                    code.generation,
+                    code.state.as_str(),
+                    code.bound_store
+                        .map(|store| store.to_string())
+                        .unwrap_or_else(|| "none".to_string())
+                )
+            })
+            .unwrap_or_else(|| "code:none".to_string());
+        let activation_state = self
+            .activations
+            .iter()
+            .map(|activation| {
+                format!(
+                    "act:{}@{}:{}:store={}@{}:code={}@{}:leases={}:wait={}",
+                    activation.id,
+                    activation.generation,
+                    activation.state.as_str(),
+                    activation.store,
+                    activation.store_generation,
+                    activation.code_object,
+                    activation.code_generation,
+                    activation.active_dmw_leases,
+                    activation
+                        .blocked_wait
+                        .map(|wait| wait.to_string())
+                        .unwrap_or_else(|| "none".to_string())
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let lease_state = self
+            .dmw_leases
+            .iter()
+            .map(|lease| {
+                format!(
+                    "lease:{}@{}:activation={}:active={}",
+                    lease.id, lease.generation, lease.activation, lease.active
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let capability_state = capabilities
+            .records()
+            .iter()
+            .map(|capability| {
+                format!(
+                    "cap:{}@{}:owner={}:revoked={}",
+                    capability.id,
+                    capability.generation,
+                    capability
+                        .owner_store
+                        .map(|store| store.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                    capability.revoked
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "store:{}@{}:{}|{}|activations=[{}]|leases=[{}]|caps=[{}]",
+            store.id,
+            store.generation,
+            store.state.as_str(),
+            code_state,
+            activation_state,
+            lease_state,
+            capability_state
+        )
+    }
+
     pub fn event_log(&self) -> &[String] {
         &self.event_log
+    }
+
+    fn cleanup_step_order() -> [CleanupStep; 13] {
+        [
+            CleanupStep::StopNewActivation,
+            CleanupStep::SealActivation,
+            CleanupStep::PreventHostcalls,
+            CleanupStep::ReleaseDmwLeases,
+            CleanupStep::CancelWaitTokens,
+            CleanupStep::RevokeCapabilities,
+            CleanupStep::DropResourceArena,
+            CleanupStep::UnbindCodeObject,
+            CleanupStep::MarkStoreState,
+            CleanupStep::RecordTransition,
+            CleanupStep::EmitTombstones,
+            CleanupStep::RecordFailureEffect,
+            CleanupStep::EmitReport,
+        ]
+    }
+
+    fn cleanup_effects_for_completed_transaction(
+        store_ref: ContractObjectRef,
+        activation_ref: Option<ContractObjectRef>,
+        code_ref: Option<ContractObjectRef>,
+        capability_refs: &[ContractObjectRef],
+        released_dmw_leases: u32,
+        cancelled_waits: u32,
+        dropped_resources: u32,
+        event_seq: EventId,
+    ) -> Vec<CleanupEffectRecord> {
+        let mut effects = Vec::new();
+        effects.push(CleanupEffectRecord::new(
+            CleanupEffectKind::StopNewActivation,
+            store_ref,
+            store_ref.generation,
+            CleanupEffectStatus::Applied,
+            event_seq,
+        ));
+        if let Some(activation_ref) = activation_ref {
+            effects.push(CleanupEffectRecord::new(
+                CleanupEffectKind::SealActivation,
+                activation_ref,
+                activation_ref.generation,
+                CleanupEffectStatus::Applied,
+                event_seq,
+            ));
+        }
+        if released_dmw_leases != 0 {
+            effects.push(CleanupEffectRecord::new(
+                CleanupEffectKind::ReleaseLeases,
+                store_ref,
+                store_ref.generation,
+                CleanupEffectStatus::Applied,
+                event_seq,
+            ));
+        }
+        if cancelled_waits != 0 {
+            effects.push(CleanupEffectRecord::new(
+                CleanupEffectKind::CancelWaits,
+                store_ref,
+                store_ref.generation,
+                CleanupEffectStatus::Applied,
+                event_seq,
+            ));
+        }
+        for capability_ref in capability_refs {
+            effects.push(CleanupEffectRecord::new(
+                CleanupEffectKind::RevokeCapability,
+                *capability_ref,
+                capability_ref.generation,
+                CleanupEffectStatus::Applied,
+                event_seq,
+            ));
+        }
+        if dropped_resources != 0 {
+            effects.push(CleanupEffectRecord::new(
+                CleanupEffectKind::DropResources,
+                store_ref,
+                store_ref.generation,
+                CleanupEffectStatus::Applied,
+                event_seq,
+            ));
+        }
+        if let Some(code_ref) = code_ref {
+            effects.push(CleanupEffectRecord::new(
+                CleanupEffectKind::UnbindCode,
+                code_ref,
+                code_ref.generation,
+                CleanupEffectStatus::Applied,
+                event_seq,
+            ));
+        }
+        effects.push(CleanupEffectRecord::new(
+            CleanupEffectKind::MarkStoreDead,
+            store_ref,
+            store_ref.generation,
+            CleanupEffectStatus::Applied,
+            event_seq,
+        ));
+        effects.push(CleanupEffectRecord::new(
+            CleanupEffectKind::EmitTombstone,
+            store_ref,
+            store_ref.generation,
+            CleanupEffectStatus::Applied,
+            event_seq,
+        ));
+        effects.push(CleanupEffectRecord::new(
+            CleanupEffectKind::RecordFailureEffect,
+            store_ref,
+            store_ref.generation,
+            CleanupEffectStatus::Applied,
+            event_seq,
+        ));
+        effects
     }
 
     fn cap_arg_denial_reason(
@@ -4243,9 +4754,12 @@ mod tests {
             code_object: Some(code.id),
             code_generation: Some(code.generation),
             generation: 1,
+            started_at: 1,
+            finished_at: Some(2),
             state: CleanupTransactionState::Completed,
             reason: "inconsistent-cleanup".to_string(),
             steps: Vec::new(),
+            effects: Vec::new(),
             released_dmw_leases: 0,
             cancelled_waits: 0,
             revoked_capabilities: {
@@ -4573,9 +5087,12 @@ mod tests {
             code_object: None,
             code_generation: None,
             generation: 1,
+            started_at: 1,
+            finished_at: None,
             state: CleanupTransactionState::Pending,
             reason: "edge-mode-test".to_string(),
             steps: Vec::new(),
+            effects: Vec::new(),
             released_dmw_leases: 0,
             cancelled_waits: 0,
             revoked_capabilities: Vec::new(),
@@ -4801,6 +5318,23 @@ mod tests {
         assert_eq!(code.state, CodeObjectState::Retired);
         assert_eq!(code.bound_store, None);
         assert!(capabilities.records().iter().all(|record| record.revoked));
+        assert!(
+            executor
+                .tombstones()
+                .iter()
+                .any(|tombstone| tombstone.kind == ContractObjectKind::Store
+                    && tombstone.id == store.id
+                    && tombstone.generation == store.generation)
+        );
+        assert!(
+            cleanup
+                .effects
+                .iter()
+                .any(|effect| effect.kind == CleanupEffectKind::MarkStoreDead
+                    && effect.status == CleanupEffectStatus::Applied
+                    && effect.target == store.object_ref())
+        );
+        let digest_after_once = executor.cleanup_state_digest(&store, Some(&code), &capabilities);
         assert_eq!(executor.snapshot_barrier(), Ok(()));
 
         let cleanup_id_again = executor
@@ -4815,11 +5349,70 @@ mod tests {
         assert_eq!(cleanup_id_again, cleanup_id);
         assert_eq!(executor.cleanup_transactions().len(), 1);
         assert_eq!(
+            executor.cleanup_state_digest(&store, Some(&code), &capabilities),
+            digest_after_once
+        );
+        assert_eq!(
             executor.cleanup_transactions()[0]
                 .revoked_capabilities
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn fault_cleanup_stale_generation_is_visible_and_does_not_mutate_rebound_store() {
+        let (_artifact, store, mut code, mut capabilities) = running_store_and_code();
+        let mut store = store.store.clone();
+        let mut executor = TargetExecutor::new();
+        let cleanup_id = executor.begin_fault_cleanup_transaction(
+            &store,
+            None,
+            Some(&code),
+            "stale-cleanup-test",
+        );
+        assert_eq!(
+            executor.snapshot_barrier(),
+            Err(TargetExecutorError::PendingCleanupActive)
+        );
+
+        store.generation += 1;
+        store.state = StoreState::Running;
+        let digest_before = executor.cleanup_state_digest(&store, Some(&code), &capabilities);
+        executor
+            .apply_fault_cleanup_transaction(
+                cleanup_id,
+                &mut store,
+                Some(&mut code),
+                &mut capabilities,
+            )
+            .unwrap();
+        assert_eq!(store.state, StoreState::Running);
+        assert_eq!(code.state, CodeObjectState::BoundToStore);
+        assert_eq!(code.bound_store, Some(store.id));
+        assert!(capabilities.records().iter().all(|record| !record.revoked));
+        assert_eq!(
+            executor.cleanup_state_digest(&store, Some(&code), &capabilities),
+            digest_before
+        );
+        let cleanup = &executor.cleanup_transactions()[0];
+        assert_eq!(
+            cleanup.state,
+            CleanupTransactionState::SkippedStaleGeneration
+        );
+        assert!(cleanup.steps.iter().all(|step| step.state
+            == CleanupStepState::SkippedStaleGeneration
+            && step.observed_generation == Some(store.generation)));
+        assert!(cleanup.effects.iter().any(|effect| {
+            effect.status == CleanupEffectStatus::SkippedStaleGeneration
+                && effect.target
+                    == ContractObjectRef::new(
+                        ContractObjectKind::Store,
+                        store.id,
+                        store.generation - 1,
+                    )
+        }));
+        assert_eq!(executor.snapshot_barrier(), Ok(()));
     }
 
     #[test]

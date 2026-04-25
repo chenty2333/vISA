@@ -237,12 +237,17 @@ impl FaultDomainState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreState {
     Created,
+    Bound,
     Instantiating,
     Running,
+    Suspended,
     Degraded,
     Draining,
+    Faulted,
+    Cleaning,
     Restarting,
     Rebinding,
+    Rebound,
     Dead,
 }
 
@@ -250,12 +255,17 @@ impl StoreState {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Created => "created",
+            Self::Bound => "bound",
             Self::Instantiating => "instantiating",
             Self::Running => "running",
+            Self::Suspended => "suspended",
             Self::Degraded => "degraded",
             Self::Draining => "draining",
+            Self::Faulted => "faulted",
+            Self::Cleaning => "cleaning",
             Self::Restarting => "restarting",
             Self::Rebinding => "rebinding",
+            Self::Rebound => "rebound",
             Self::Dead => "dead",
         }
     }
@@ -263,11 +273,15 @@ impl StoreState {
     pub const fn fault_domain_state(self) -> FaultDomainState {
         match self {
             Self::Created => FaultDomainState::Created,
-            Self::Instantiating | Self::Rebinding => FaultDomainState::Initializing,
+            Self::Bound | Self::Instantiating | Self::Cleaning | Self::Rebinding => {
+                FaultDomainState::Initializing
+            }
             Self::Running => FaultDomainState::Running,
+            Self::Suspended => FaultDomainState::Draining,
             Self::Degraded => FaultDomainState::Degraded,
             Self::Draining => FaultDomainState::Draining,
-            Self::Restarting => FaultDomainState::Restarting,
+            Self::Faulted | Self::Restarting => FaultDomainState::Restarting,
+            Self::Rebound => FaultDomainState::Running,
             Self::Dead => FaultDomainState::Dead,
         }
     }

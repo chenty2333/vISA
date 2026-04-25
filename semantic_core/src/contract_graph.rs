@@ -757,6 +757,103 @@ impl ContractGraphValidator {
                     }
                 }
             }
+            Self::validate_cleanup_effects(snapshot, violations, cleanup);
+        }
+    }
+
+    fn validate_cleanup_effects(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+        cleanup: &FaultCleanupTransaction,
+    ) {
+        let from = cleanup.object_ref();
+        for effect in &cleanup.effects {
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "cleanup->effect-target",
+                effect.target.kind,
+                effect.target.id,
+                effect.expected_generation,
+                ContractEdgeMode::CleanupEffect,
+            );
+            if effect.status != CleanupEffectStatus::Applied {
+                continue;
+            }
+            match effect.kind {
+                CleanupEffectKind::MarkStoreDead => {
+                    match snapshot.stores.iter().find(|store| {
+                        store.id == effect.target.id
+                            && store.generation == effect.expected_generation
+                    }) {
+                        Some(store) if store.state == StoreState::Dead => {}
+                        Some(store) => violations.push(ContractViolation::new(
+                            ContractViolationKind::LiveObjectReferencesDeadObject,
+                            "cleanup->effect-target",
+                            from,
+                            Some(store.object_ref()),
+                            "mark-store-dead effect target is not dead",
+                        )),
+                        None => {}
+                    }
+                }
+                CleanupEffectKind::RevokeCapability => {
+                    match snapshot.capabilities.iter().find(|capability| {
+                        capability.id == effect.target.id
+                            && capability.generation == effect.expected_generation
+                    }) {
+                        Some(capability) if capability.revoked => {}
+                        Some(capability) => violations.push(ContractViolation::new(
+                            ContractViolationKind::LiveObjectReferencesDeadObject,
+                            "cleanup->effect-target",
+                            from,
+                            Some(capability.object_ref()),
+                            "revoke-capability effect target is still active",
+                        )),
+                        None => {}
+                    }
+                }
+                CleanupEffectKind::UnbindCode => {
+                    match snapshot.code_objects.iter().find(|code| {
+                        code.id == effect.target.id && code.generation == effect.expected_generation
+                    }) {
+                        Some(code)
+                            if code.bound_store != Some(cleanup.store)
+                                && matches!(
+                                    code.state,
+                                    CodeObjectState::Faulted
+                                        | CodeObjectState::Retired
+                                        | CodeObjectState::Unpublished
+                                ) => {}
+                        Some(code) => violations.push(ContractViolation::new(
+                            ContractViolationKind::LiveObjectReferencesDeadObject,
+                            "cleanup->effect-target",
+                            from,
+                            Some(code.object_ref()),
+                            "unbind-code effect left code live or bound",
+                        )),
+                        None => {}
+                    }
+                }
+                CleanupEffectKind::EmitTombstone => {
+                    if !Self::has_tombstone(snapshot, effect.target) {
+                        violations.push(ContractViolation::new(
+                            ContractViolationKind::DanglingEdge,
+                            "cleanup->effect-target",
+                            from,
+                            Some(effect.target),
+                            "emit-tombstone effect has no matching tombstone",
+                        ));
+                    }
+                }
+                CleanupEffectKind::StopNewActivation
+                | CleanupEffectKind::SealActivation
+                | CleanupEffectKind::ReleaseLeases
+                | CleanupEffectKind::CancelWaits
+                | CleanupEffectKind::DropResources
+                | CleanupEffectKind::RecordFailureEffect => {}
+            }
         }
     }
 

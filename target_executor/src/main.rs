@@ -433,6 +433,7 @@ fn build_target_executor_v1(
         .tombstones()
         .iter()
         .chain(store_manager.tombstones().iter())
+        .chain(executor.tombstones().iter())
     {
         report.tombstones.push(tombstone_manifest(tombstone));
     }
@@ -454,6 +455,7 @@ fn build_target_executor_v1(
             .tombstones()
             .iter()
             .chain(store_manager.tombstones().iter())
+            .chain(executor.tombstones().iter())
             .cloned()
             .collect(),
         external_objects: Vec::new(),
