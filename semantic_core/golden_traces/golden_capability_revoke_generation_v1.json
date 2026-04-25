@@ -4,7 +4,7 @@
   "commands": [
     {
       "op": "GrantCapability",
-      "cap": 4,
+      "cap": 1,
       "subject": "driver_virtio_net",
       "object_ref": {
         "scope": "internal",
@@ -27,13 +27,13 @@
       "owner_store": 1,
       "blocker": {
         "kind": "capability",
-        "id": 4,
+        "id": 1,
         "generation": 1
       }
     },
     {
       "op": "RevokeCapability",
-      "cap": 4,
+      "cap": 1,
       "generation": 2
     },
     {
@@ -45,7 +45,7 @@
   "events": [
     {
       "kind": "CapabilityGranted",
-      "cap": 4,
+      "cap": 1,
       "generation": 1
     },
     {
@@ -55,7 +55,7 @@
     },
     {
       "kind": "CapabilityRevoked",
-      "cap": 4,
+      "cap": 1,
       "generation": 2
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "kind": "CapabilityDenied",
-      "cap": 4,
+      "cap": 1,
       "code": "revoked"
     }
   ],
@@ -73,7 +73,7 @@
     "capability": {
       "schema": 1,
       "kind": "capability",
-      "id": 4,
+      "id": 1,
       "generation": 2,
       "state": "revoked",
       "subject": "driver_virtio_net",

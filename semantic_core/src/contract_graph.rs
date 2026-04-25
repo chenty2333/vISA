@@ -210,29 +210,16 @@ impl ContractGraphValidator {
                 ));
             }
             if let Some(store_id) = code.bound_store {
-                match snapshot.stores.iter().find(|store| store.id == store_id) {
-                    Some(store) if store.state == StoreState::Dead => {
-                        violations.push(ContractViolation::new(
-                            ContractViolationKind::LiveObjectReferencesDeadObject,
-                            "code->store",
-                            from,
-                            Some(store.object_ref()),
-                            "bound code object references a dead store",
-                        ));
-                    }
-                    Some(_) => {}
-                    None => violations.push(ContractViolation::new(
-                        ContractViolationKind::DanglingEdge,
-                        "code->store",
-                        from,
-                        Some(ContractObjectRef::new(
-                            ContractObjectKind::Store,
-                            store_id,
-                            0,
-                        )),
-                        "bound code object references missing store",
-                    )),
-                }
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "code->store",
+                    ContractObjectKind::Store,
+                    store_id,
+                    code.bound_store_generation.unwrap_or(0),
+                    ContractEdgeMode::Live,
+                );
             }
         }
     }
@@ -356,23 +343,28 @@ impl ContractGraphValidator {
         for trap in &snapshot.traps {
             let from = trap.object_ref();
             if let Some(activation_id) = trap.activation {
-                if snapshot
-                    .activations
-                    .iter()
-                    .all(|activation| activation.id != activation_id)
-                {
-                    violations.push(ContractViolation::new(
-                        ContractViolationKind::DanglingEdge,
-                        "trap->activation",
-                        from,
-                        Some(ContractObjectRef::new(
-                            ContractObjectKind::Activation,
-                            activation_id,
-                            0,
-                        )),
-                        "trap references missing activation",
-                    ));
-                }
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "trap->activation",
+                    ContractObjectKind::Activation,
+                    activation_id,
+                    trap.activation_generation.unwrap_or(0),
+                    ContractEdgeMode::Historical,
+                );
+            }
+            if let Some(store_id) = trap.store {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "trap->store",
+                    ContractObjectKind::Store,
+                    store_id,
+                    trap.store_generation.unwrap_or(0),
+                    ContractEdgeMode::Historical,
+                );
             }
             if let Some(code_id) = trap.code_object {
                 match snapshot.code_objects.iter().find(|code| code.id == code_id) {
@@ -505,8 +497,8 @@ impl ContractGraphValidator {
         violations: &mut Vec<ContractViolation>,
     ) {
         for capability in &snapshot.capabilities {
+            let from = capability.object_ref();
             if let Some(store_id) = capability.owner_store {
-                let from = capability.object_ref();
                 match snapshot.stores.iter().find(|store| store.id == store_id) {
                     Some(store) if store.state == StoreState::Dead && !capability.revoked => {
                         violations.push(ContractViolation::new(
@@ -531,11 +523,34 @@ impl ContractGraphValidator {
                     )),
                 }
             }
+            match capability.object_ref {
+                Some(object_ref) => Self::check_authority_object_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "capability->object",
+                    object_ref,
+                    if capability.revoked {
+                        ContractEdgeMode::Historical
+                    } else {
+                        ContractEdgeMode::Live
+                    },
+                ),
+                None if !capability.revoked => violations.push(ContractViolation::new(
+                    ContractViolationKind::DanglingEdge,
+                    "capability->object",
+                    from,
+                    None,
+                    "active capability is missing authority object ref",
+                )),
+                None => {}
+            }
         }
     }
 
     fn validate_waits(snapshot: &ContractGraphSnapshot, violations: &mut Vec<ContractViolation>) {
         for wait in &snapshot.waits {
+            let from = wait.object_ref();
             if wait.state == WaitState::Pending
                 && wait.owner_task.is_none()
                 && wait.owner_store.is_none()
@@ -543,7 +558,7 @@ impl ContractGraphValidator {
                 violations.push(ContractViolation::new(
                     ContractViolationKind::DanglingEdge,
                     "wait->owner",
-                    wait.object_ref(),
+                    from,
                     None,
                     "pending wait has no owner task or owner store",
                 ));
@@ -555,26 +570,57 @@ impl ContractGraphValidator {
                 violations.push(ContractViolation::new(
                     ContractViolationKind::DanglingEdge,
                     "wait->blocker",
-                    wait.object_ref(),
+                    from,
                     None,
                     "pending wait has no blocker or deadline",
                 ));
             }
-            if wait.state == WaitState::Pending
-                && wait.owner_store.is_some_and(|owner_store| {
-                    snapshot
-                        .stores
-                        .iter()
-                        .any(|store| store.id == owner_store && store.state == StoreState::Dead)
-                })
-            {
-                violations.push(ContractViolation::new(
-                    ContractViolationKind::LiveObjectReferencesDeadObject,
-                    "wait->owner-store",
-                    wait.object_ref(),
-                    None,
-                    "pending wait is owned by a dead store",
-                ));
+            if wait.state == WaitState::Pending {
+                if let Some(owner_store) = wait.owner_store {
+                    match snapshot.stores.iter().find(|store| store.id == owner_store) {
+                        Some(store) if store.state == StoreState::Dead => {
+                            violations.push(ContractViolation::new(
+                                ContractViolationKind::LiveObjectReferencesDeadObject,
+                                "wait->owner-store",
+                                from,
+                                Some(store.object_ref()),
+                                "pending wait is owned by a dead store",
+                            ));
+                        }
+                        Some(store) => Self::check_generation_edge(
+                            snapshot,
+                            violations,
+                            from,
+                            "wait->owner-store",
+                            ContractObjectKind::Store,
+                            store.id,
+                            store.generation,
+                            ContractEdgeMode::Live,
+                        ),
+                        None => violations.push(ContractViolation::new(
+                            ContractViolationKind::DanglingEdge,
+                            "wait->owner-store",
+                            from,
+                            Some(ContractObjectRef::new(
+                                ContractObjectKind::Store,
+                                owner_store,
+                                0,
+                            )),
+                            "pending wait references missing owner store",
+                        )),
+                    }
+                }
+                for blocker in &wait.blockers {
+                    Self::check_contract_ref_edge(
+                        snapshot,
+                        violations,
+                        from,
+                        "wait->blocker",
+                        *blocker,
+                        ContractEdgeMode::Live,
+                        None,
+                    );
+                }
             }
         }
     }
@@ -674,7 +720,9 @@ impl ContractGraphValidator {
                 match snapshot.code_objects.iter().find(|code| code.id == code_id) {
                     Some(code) => {
                         if cleanup.state == CleanupTransactionState::Completed {
-                            if code.bound_store == Some(cleanup.store) {
+                            if code.bound_store == Some(cleanup.store)
+                                && code.bound_store_generation == Some(cleanup.store_generation)
+                            {
                                 violations.push(ContractViolation::new(
                                     ContractViolationKind::LiveObjectReferencesDeadObject,
                                     "cleanup->code",
@@ -846,7 +894,9 @@ impl ContractGraphValidator {
                         code.id == effect.target.id && code.generation == effect.expected_generation
                     }) {
                         Some(code)
-                            if code.bound_store != Some(cleanup.store)
+                            if (code.bound_store != Some(cleanup.store)
+                                || code.bound_store_generation
+                                    != Some(cleanup.store_generation))
                                 && matches!(
                                     code.state,
                                     CodeObjectState::Faulted
@@ -999,6 +1049,96 @@ impl ContractGraphValidator {
                 "external edge is missing provider/class metadata",
             )),
         }
+    }
+
+    fn check_authority_object_edge(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+        from: ContractObjectRef,
+        edge: &str,
+        authority: AuthorityObjectRef,
+        semantics: ContractEdgeMode,
+    ) {
+        let object = authority.object();
+        let class = authority.class().as_str();
+        if matches!(authority, AuthorityObjectRef::External { .. }) {
+            if Self::has_declared_object(snapshot, object, Some(class)) {
+                return;
+            }
+            if Self::has_declared_object(snapshot, object, None) {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    edge,
+                    from,
+                    Some(object),
+                    "external authority object declaration has mismatched class metadata",
+                ));
+            } else {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMissingDeclaration,
+                    edge,
+                    from,
+                    Some(object),
+                    "external authority object is missing a matching declaration",
+                ));
+            }
+            return;
+        }
+        Self::check_contract_ref_edge(
+            snapshot,
+            violations,
+            from,
+            edge,
+            object,
+            semantics,
+            Some(class),
+        );
+    }
+
+    fn check_contract_ref_edge(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+        from: ContractObjectRef,
+        edge: &str,
+        target: ContractObjectRef,
+        semantics: ContractEdgeMode,
+        class: Option<&str>,
+    ) {
+        if Self::is_graph_modeled_kind(target.kind) {
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                edge,
+                target.kind,
+                target.id,
+                target.generation,
+                semantics,
+            );
+            return;
+        }
+
+        if Self::has_declared_object(snapshot, target, class) {
+            return;
+        }
+        if class.is_some() && Self::has_declared_object(snapshot, target, None) {
+            violations.push(ContractViolation::new(
+                ContractViolationKind::ExternalEdgeMetadataMismatch,
+                edge,
+                from,
+                Some(target),
+                "declared authority/wait target has mismatched class metadata",
+            ));
+            return;
+        }
+
+        violations.push(ContractViolation::new(
+            ContractViolationKind::ExternalEdgeMissingDeclaration,
+            edge,
+            from,
+            Some(target),
+            "authority/wait target is not represented by a declared contract object",
+        ));
     }
 
     fn check_generation_edge(
@@ -1250,6 +1390,32 @@ impl ContractGraphValidator {
             | ContractObjectKind::EventLog
             | ContractObjectKind::Tombstone => None,
         }
+    }
+
+    fn is_graph_modeled_kind(kind: ContractObjectKind) -> bool {
+        matches!(
+            kind,
+            ContractObjectKind::Artifact
+                | ContractObjectKind::CodeObject
+                | ContractObjectKind::Store
+                | ContractObjectKind::Activation
+                | ContractObjectKind::Trap
+                | ContractObjectKind::Hostcall
+                | ContractObjectKind::Capability
+                | ContractObjectKind::WaitToken
+                | ContractObjectKind::CleanupTransaction
+                | ContractObjectKind::ExternalObject
+        )
+    }
+
+    fn has_declared_object(
+        snapshot: &ContractGraphSnapshot,
+        object: ContractObjectRef,
+        class: Option<&str>,
+    ) -> bool {
+        snapshot.external_objects.iter().any(|declaration| {
+            declaration.object == object && class.is_none_or(|class| declaration.class == class)
+        })
     }
 
     fn has_tombstone(snapshot: &ContractGraphSnapshot, object: ContractObjectRef) -> bool {

@@ -958,7 +958,17 @@ fn inspect_package_object(
                 package.package_id, package.semantic.code_object_count
             );
             for code in &package.semantic.code_objects {
-                let store = display_option_u64(code.bound_store);
+                let store = code.bound_store.map_or_else(
+                    || "none".to_owned(),
+                    |store| {
+                        format!(
+                            "{store}@{}",
+                            code.bound_store_generation
+                                .map(|generation| generation.to_string())
+                                .unwrap_or_else(|| "unknown".to_owned())
+                        )
+                    },
+                );
                 let table = display_option_u64(code.hostcall_table);
                 let line = format!(
                     "code id={} artifact={} package={} state={} generation={} store={} hostcall_table={} text={:#x}+{}:{} rodata={:#x}+{}:{} hostcalls={}",
@@ -1104,13 +1114,17 @@ fn inspect_package_object(
             );
             for trap in &package.semantic.trap_records {
                 let line = format!(
-                    "trap id={} class={} store={} activation={} code={} artifact={} offset={} hostcall={} policy={} effect={} detail={}",
+                    "trap id={} class={} store={}@{} activation={}@{} code={}@{} artifact={}@{} offset={} hostcall={} policy={} effect={} detail={}",
                     trap.id,
                     trap.class,
                     display_option_u64(trap.store),
+                    display_option_u64(trap.store_generation),
                     display_option_u64(trap.activation),
+                    display_option_u64(trap.activation_generation),
                     display_option_u64(trap.code_object),
+                    display_option_u64(trap.code_generation),
                     display_option_u64(trap.artifact),
+                    display_option_u64(trap.artifact_generation),
                     display_option_u64(trap.offset),
                     trap.hostcall.as_deref().unwrap_or("none"),
                     trap.fault_policy,
@@ -2167,6 +2181,12 @@ mod tests {
         AuthorityObjectRefManifest, CleanupEffectManifest, CleanupStepManifest,
         ContractObjectRefManifest,
     };
+    use semantic_core::{
+        AuthorityObjectRef, CapabilityClass, ContractGraphSnapshot, ContractObjectKind,
+        ContractObjectRef, ExternalObjectDeclaration, FrontendKind, RestartPolicy, SemanticCommand,
+        SemanticGraph, SemanticWaitKind, StoreState, WaitCancelReason, WaitState,
+        validate_contract_graph,
+    };
 
     #[test]
     fn store_view_v1_exposes_stable_identity_state_and_references() {
@@ -2303,38 +2323,21 @@ mod tests {
     }
 
     #[test]
-    fn golden_traces_parse_and_capture_expected_final_views() {
+    fn golden_traces_replay_to_expected_final_views() {
         let wait = parse_golden(include_str!(
             "../../semantic_core/golden_traces/golden_wait_pending_resume_v1.json"
         ));
-        assert_eq!(wait["schema"], "vmos-golden-trace-v1");
-        assert_eq!(wait["validation"]["ok"], true);
-        assert_eq!(wait["final_views"]["wait"]["state"], "consumed");
-        assert!(wait["commands"].as_array().expect("commands").len() >= 3);
+        replay_wait_golden(&wait);
 
         let capability = parse_golden(include_str!(
             "../../semantic_core/golden_traces/golden_capability_revoke_generation_v1.json"
         ));
-        assert_eq!(capability["final_views"]["capability"]["state"], "revoked");
-        assert_eq!(
-            capability["final_views"]["wait"]["cancel_reason"],
-            "capability-revoked"
-        );
-        assert_eq!(capability["expected_violation_codes"][0], "revoked");
+        replay_capability_golden(&capability);
 
         let cleanup = parse_golden(include_str!(
             "../../semantic_core/golden_traces/golden_driver_fault_cleanup_generation_safe_v1.json"
         ));
-        assert_eq!(cleanup["validation"]["ok"], true);
-        assert_eq!(cleanup["final_views"]["store"]["generation"], 2);
-        assert_eq!(
-            cleanup["final_views"]["cleanup"]["state"],
-            "skipped-stale-generation"
-        );
-        assert_eq!(
-            cleanup["state_digest"]["cleanup_once"],
-            cleanup["state_digest"]["cleanup_twice"]
-        );
+        replay_cleanup_golden(&cleanup);
     }
 
     fn parse_golden(source: &str) -> serde_json::Value {
@@ -2344,5 +2347,187 @@ mod tests {
         assert!(value["events"].as_array().expect("events").len() > 0);
         assert!(value["validation"]["ok"].as_bool().expect("validation ok"));
         value
+    }
+
+    fn replay_wait_golden(value: &serde_json::Value) {
+        let mut graph = SemanticGraph::new();
+        graph.ensure_task(7, FrontendKind::LinuxElf, "guest");
+        for command in value["commands"].as_array().expect("commands") {
+            match command["op"].as_str().expect("op") {
+                "CreateWait" => graph
+                    .apply(SemanticCommand::CreateWait {
+                        wait: command["wait"].as_u64().expect("wait"),
+                        owner_task: command["owner_task"].as_u64().map(|task| task as u32),
+                        owner_store: command["owner_store"].as_u64(),
+                        kind: SemanticWaitKind::Timer,
+                        generation: command["generation"].as_u64().expect("generation"),
+                        blockers: Vec::new(),
+                        deadline: command["deadline"].as_u64(),
+                        restart_policy: RestartPolicy::RestartWithAdjustedTimeout,
+                        saved_context: None,
+                    })
+                    .expect("create wait"),
+                "ResolveWait" => graph
+                    .apply(SemanticCommand::ResolveWait {
+                        wait: command["wait"].as_u64().expect("wait"),
+                        reason: command["reason"].as_str().expect("reason").to_owned(),
+                    })
+                    .expect("resolve wait"),
+                "ConsumeWait" => {
+                    graph.record_wait_consumed(command["wait"].as_u64().expect("wait"));
+                    continue;
+                }
+                other => panic!("unsupported wait golden command {other}"),
+            };
+        }
+        let wait = graph
+            .wait_records()
+            .iter()
+            .find(|wait| wait.id == 21)
+            .expect("wait 21");
+        assert_eq!(wait.state, WaitState::Consumed);
+        assert_eq!(value["final_views"]["wait"]["state"], wait.state.as_str());
+        let snapshot = ContractGraphSnapshot {
+            waits: graph.wait_records().to_vec(),
+            ..ContractGraphSnapshot::default()
+        };
+        assert_eq!(validate_contract_graph(&snapshot), Vec::new());
+    }
+
+    fn replay_capability_golden(value: &serde_json::Value) {
+        let mut graph = SemanticGraph::new();
+        let store =
+            graph.register_store("driver_virtio_net", "driver.cwasm", "driver", "restartable");
+        let object = ContractObjectRef::new(ContractObjectKind::Resource, 99, 1);
+        let authority = AuthorityObjectRef::internal(CapabilityClass::PacketDevice, object);
+        for command in value["commands"].as_array().expect("commands") {
+            match command["op"].as_str().expect("op") {
+                "GrantCapability" => {
+                    graph
+                        .apply(SemanticCommand::GrantCapability {
+                            subject: command["subject"].as_str().expect("subject").to_owned(),
+                            debug_object_label: "packet-device.net0".to_owned(),
+                            object_ref: authority,
+                            operations: vec!["rx".to_owned(), "tx".to_owned()],
+                            lifetime: "store".to_owned(),
+                            owner_store: Some(store),
+                            owner_task: None,
+                            source: "golden-replay".to_owned(),
+                            manifest_decl: true,
+                        })
+                        .expect("grant capability");
+                }
+                "CreateWait" => {
+                    graph
+                        .apply(SemanticCommand::CreateWait {
+                            wait: command["wait"].as_u64().expect("wait"),
+                            owner_task: None,
+                            owner_store: Some(store),
+                            kind: SemanticWaitKind::DeviceIrq,
+                            generation: 1,
+                            blockers: vec![ContractObjectRef::new(
+                                ContractObjectKind::Capability,
+                                command["blocker"]["id"].as_u64().expect("cap blocker"),
+                                command["blocker"]["generation"]
+                                    .as_u64()
+                                    .expect("cap generation"),
+                            )],
+                            deadline: None,
+                            restart_policy: RestartPolicy::RestartIfAllowed,
+                            saved_context: None,
+                        })
+                        .expect("create wait");
+                }
+                "RevokeCapability" => {
+                    graph
+                        .apply(SemanticCommand::RevokeCapability {
+                            cap: command["cap"].as_u64().expect("cap"),
+                        })
+                        .expect("revoke capability");
+                }
+                "CancelWait" => {
+                    graph
+                        .apply(SemanticCommand::CancelWait {
+                            wait: command["wait"].as_u64().expect("wait"),
+                            errno: 125,
+                            reason: WaitCancelReason::CapabilityRevoked,
+                        })
+                        .expect("cancel wait");
+                }
+                other => panic!("unsupported capability golden command {other}"),
+            }
+        }
+
+        let cap = graph.capabilities().records()[0].clone();
+        assert!(cap.revoked);
+        assert_eq!(cap.generation, 2);
+        assert_eq!(value["final_views"]["capability"]["id"], cap.id);
+        let wait = graph
+            .wait_records()
+            .iter()
+            .find(|wait| wait.id == 22)
+            .expect("wait 22");
+        assert_eq!(wait.state, WaitState::Cancelled);
+        assert_eq!(
+            wait.cancel_reason,
+            Some(WaitCancelReason::CapabilityRevoked)
+        );
+        let snapshot = ContractGraphSnapshot {
+            stores: graph.stores().to_vec(),
+            capabilities: graph.capabilities().records().to_vec(),
+            waits: graph.wait_records().to_vec(),
+            external_objects: vec![ExternalObjectDeclaration::new(
+                object,
+                "golden-replay",
+                CapabilityClass::PacketDevice.as_str(),
+                "packet-device.net0",
+            )],
+            ..ContractGraphSnapshot::default()
+        };
+        assert_eq!(validate_contract_graph(&snapshot), Vec::new());
+        assert_eq!(value["expected_violation_codes"][0], "revoked");
+    }
+
+    fn replay_cleanup_golden(value: &serde_json::Value) {
+        let mut graph = SemanticGraph::new();
+        let store =
+            graph.register_store("driver_virtio_net", "driver.cwasm", "driver", "restartable");
+        graph
+            .apply(SemanticCommand::BeginCleanup {
+                cleanup: 77,
+                store,
+                generation: 1,
+                reason: "driver-fault".to_owned(),
+            })
+            .expect("begin cleanup");
+        let rebound = graph.rebind_store_instance(store).expect("rebind store");
+        graph
+            .apply(SemanticCommand::ApplyCleanupStep {
+                cleanup: 77,
+                step: semantic_core::CleanupStep::MarkStoreState,
+                target: ContractObjectRef::new(ContractObjectKind::Store, store, 1),
+                observed_generation: rebound.generation,
+            })
+            .expect("apply cleanup step");
+        graph
+            .apply(SemanticCommand::CommitCleanup { cleanup: 77 })
+            .expect("commit cleanup");
+
+        assert_eq!(rebound.generation, 2);
+        assert_eq!(graph.stores()[0].state, StoreState::Rebinding);
+        assert!(graph.event_log_tail(4).iter().any(|event| {
+            event
+                .summary()
+                .contains("CleanupStepApplied cleanup=77 step=mark-store-state")
+        }));
+        assert_eq!(
+            value["final_views"]["store"]["generation"],
+            rebound.generation
+        );
+        assert_eq!(value["final_views"]["store"]["state"], "rebinding");
+        assert_eq!(
+            value["state_digest"]["cleanup_once"],
+            value["state_digest"]["cleanup_twice"]
+        );
     }
 }

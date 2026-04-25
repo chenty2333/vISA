@@ -27,14 +27,15 @@ use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, AuthorityObjectRef, BoundaryKind,
     BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass,
     CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
-    CodePublisher, ContractGraphSnapshot, ContractObjectRef, ContractViolation, EntrypointState,
-    ExpectedTargetArtifact, FrontendKind, HostcallCategory, HostcallFrame, HostcallLinkState,
-    HostcallSpec, HostcallTraceRecord, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
-    MigrationObjectRecord, PackageReplayValidator, ReplayPackageValidationState, RuntimeMode,
-    SemanticGraph, SnapshotBarrierValidator, StoreRecord, StoreState, TargetAddressMapEntry,
-    TargetArtifactImage, TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan,
-    TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState, TombstoneRecord,
-    TrapSurfaceState, VerifiedArtifact, memory_class_policies, validate_contract_graph,
+    CodePublisher, ContractGraphSnapshot, ContractObjectKind, ContractObjectRef, ContractViolation,
+    EntrypointState, ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind,
+    HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
+    ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
+    PackageReplayValidator, ReplayPackageValidationState, RuntimeMode, SemanticGraph,
+    SnapshotBarrierValidator, StoreRecord, StoreState, TargetAddressMapEntry, TargetArtifactImage,
+    TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass,
+    TargetTrapMetadata, TaskState, TombstoneRecord, TrapSurfaceState, VerifiedArtifact,
+    memory_class_policies, validate_contract_graph,
 };
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
@@ -287,16 +288,16 @@ fn build_target_executor_v1(
         publisher
             .publish_rx(code_id)
             .map_err(|error| error.message())?;
+        let store = store_manager
+            .record(store_id)
+            .ok_or("store manager lost store after register")?;
         publisher
-            .bind_to_store(code_id, store_id)
+            .bind_to_store(code_id, &store.store)
             .map_err(|error| error.message())?;
         let code = publisher
             .object(code_id)
             .ok_or("publisher lost code object after bind")?
             .clone();
-        let store = store_manager
-            .record(store_id)
-            .ok_or("store manager lost store after register")?;
 
         run_activation_harness(index, &mut executor, store, &code, &ledger)?;
     }
@@ -310,15 +311,28 @@ fn build_target_executor_v1(
         store_manager
             .set_running(cleanup_store_id)
             .map_err(|error| error.message())?;
-        ledger.grant_with_metadata(
+        let cleanup_store_snapshot = store_manager
+            .record(cleanup_store_id)
+            .ok_or("cleanup store missing after registration")?
+            .store
+            .clone();
+        ledger.grant_with_authority_ref(
             &cleanup_artifact.package,
             "store-control.cleanup-harness",
+            AuthorityObjectRef::internal(
+                CapabilityClass::StoreControl,
+                ContractObjectRef::new(
+                    ContractObjectKind::Store,
+                    cleanup_store_snapshot.id,
+                    cleanup_store_snapshot.generation,
+                ),
+            ),
             &["kill"],
             "store",
-            CapabilityClass::StoreControl,
             Some(cleanup_store_id),
             None,
             "cleanup-harness",
+            true,
         );
         let cleanup_code_id = publisher
             .allocate(cleanup_artifact)
@@ -333,13 +347,8 @@ fn build_target_executor_v1(
             .publish_rx(cleanup_code_id)
             .map_err(|error| error.message())?;
         publisher
-            .bind_to_store(cleanup_code_id, cleanup_store_id)
+            .bind_to_store(cleanup_code_id, &cleanup_store_snapshot)
             .map_err(|error| error.message())?;
-        let cleanup_store_snapshot = store_manager
-            .record(cleanup_store_id)
-            .ok_or("cleanup store missing after registration")?
-            .store
-            .clone();
         let cleanup_code_snapshot = publisher
             .object(cleanup_code_id)
             .ok_or("cleanup code object missing after bind")?
@@ -439,6 +448,7 @@ fn build_target_executor_v1(
     {
         report.tombstones.push(tombstone_manifest(tombstone));
     }
+    let external_objects = declared_authority_objects(ledger.records());
     let contract_snapshot = ContractGraphSnapshot {
         artifacts: verified_artifacts,
         code_objects: publisher.objects().to_vec(),
@@ -460,7 +470,7 @@ fn build_target_executor_v1(
             .chain(executor.tombstones().iter())
             .cloned()
             .collect(),
-        external_objects: Vec::new(),
+        external_objects,
         explicit_edges: Vec::new(),
     };
     report.contract_violations = validate_contract_graph(&contract_snapshot)
@@ -469,6 +479,29 @@ fn build_target_executor_v1(
         .collect();
     report.target_event_tail = executor.event_log().to_vec();
     Ok(report)
+}
+
+fn declared_authority_objects(capabilities: &[CapabilityRecord]) -> Vec<ExternalObjectDeclaration> {
+    let mut declarations = Vec::new();
+    for capability in capabilities {
+        let Some(object_ref) = capability.object_ref else {
+            continue;
+        };
+        let object = object_ref.object();
+        if declarations
+            .iter()
+            .any(|declaration: &ExternalObjectDeclaration| declaration.object == object)
+        {
+            continue;
+        }
+        declarations.push(ExternalObjectDeclaration::new(
+            object,
+            "target-executor-authority",
+            object_ref.class().as_str(),
+            &capability.debug_object_label,
+        ));
+    }
+    declarations
 }
 
 fn run_activation_harness(
@@ -888,7 +921,7 @@ fn grant_verified_capabilities(
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        ledger.grant_with_metadata(
+        ledger.grant_manifest_binding(
             &verified.package,
             &capability.object,
             &operations,
@@ -912,10 +945,8 @@ fn capability_handle_arg_for(
         .as_slice()
         .iter()
         .position(|right| right == &spec.operation)?;
-    Some(CapabilityHandleArg::new(
-        capability.id,
-        &capability.object,
-        capability.generation,
+    Some(CapabilityHandleArg::from_record(
+        capability,
         1u64 << index,
         &[spec.operation.as_str()],
     ))
@@ -1218,7 +1249,14 @@ fn semantic_roots(
             .map(|code| {
                 let store = code
                     .bound_store
-                    .map(|store| store.to_string())
+                    .map(|store| {
+                        format!(
+                            "{store}@{}",
+                            code.bound_store_generation
+                                .map(|generation| generation.to_string())
+                                .unwrap_or_else(|| "unknown".to_owned())
+                        )
+                    })
                     .unwrap_or_else(|| "none".to_owned());
                 format!(
                     "code-object id={} artifact={} package={} state={} store={} generation={}",
@@ -1451,6 +1489,7 @@ fn code_object_manifest(code: &CodeObject) -> CodeObjectManifest {
         generation: code.generation,
         state: code.state.as_str().to_owned(),
         bound_store: code.bound_store,
+        bound_store_generation: code.bound_store_generation,
         hostcall_table: code.hostcall_table,
         text_start: code.text.start,
         text_len: code.text.len,
@@ -1532,7 +1571,9 @@ fn trap_record_manifest(trap: &semantic_core::TargetTrapRecord) -> TrapRecordMan
         generation: trap.generation,
         class: trap.class.as_str().to_owned(),
         store: trap.store,
+        store_generation: trap.store_generation,
         activation: trap.activation,
+        activation_generation: trap.activation_generation,
         code_object: trap.code_object,
         code_generation: trap.code_generation,
         artifact: trap.artifact,

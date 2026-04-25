@@ -812,6 +812,7 @@ pub struct CodeObject {
     pub hostcalls: Vec<HostcallSpec>,
     pub state: CodeObjectState,
     pub bound_store: Option<StoreId>,
+    pub bound_store_generation: Option<Generation>,
     pub code_hash: String,
 }
 
@@ -819,7 +820,14 @@ impl CodeObject {
     pub fn summary(&self) -> String {
         let store = self
             .bound_store
-            .map(|store| store.to_string())
+            .map(|store| {
+                format!(
+                    "{store}@{}",
+                    self.bound_store_generation
+                        .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "unknown".to_string())
+                )
+            })
             .unwrap_or_else(|| "none".to_string());
         let hostcall_table = self
             .hostcall_table
@@ -903,6 +911,7 @@ impl CodePublisher {
             hostcalls: artifact.hostcalls.clone(),
             state: CodeObjectState::AllocatedRw,
             bound_store: None,
+            bound_store_generation: None,
             code_hash: artifact.code_hash.clone(),
         });
         Ok(id)
@@ -930,9 +939,9 @@ impl CodePublisher {
     pub fn bind_to_store(
         &mut self,
         id: CodeObjectId,
-        store: StoreId,
+        store: &StoreRecord,
     ) -> Result<(), CodePublisherError> {
-        if store == 0 {
+        if store.id == 0 {
             return Err(CodePublisherError::StoreMissing);
         }
         let object = self.object_mut(id)?;
@@ -940,7 +949,8 @@ impl CodePublisher {
             return Err(CodePublisherError::InvalidTransition);
         }
         object.state = CodeObjectState::BoundToStore;
-        object.bound_store = Some(store);
+        object.bound_store = Some(store.id);
+        object.bound_store_generation = Some(store.generation);
         object.hostcall_table = Some(1000 + id);
         object.generation += 1;
         Ok(())
@@ -990,6 +1000,7 @@ impl CodePublisher {
         }
         object.state = CodeObjectState::Unpublished;
         object.bound_store = None;
+        object.bound_store_generation = None;
         object.hostcall_table = None;
         object.generation += 1;
         Ok(())
@@ -1617,7 +1628,9 @@ pub struct TargetTrapRecord {
     pub generation: Generation,
     pub class: TargetTrapClass,
     pub store: Option<StoreId>,
+    pub store_generation: Option<Generation>,
     pub activation: Option<ActivationId>,
+    pub activation_generation: Option<Generation>,
     pub code_object: Option<CodeObjectId>,
     pub code_generation: Option<Generation>,
     pub artifact: Option<TargetArtifactId>,
@@ -1638,6 +1651,14 @@ impl TargetTrapRecord {
         let activation = self
             .activation
             .map(|activation| activation.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let store_generation = self
+            .store_generation
+            .map(|generation| generation.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let activation_generation = self
+            .activation_generation
+            .map(|generation| generation.to_string())
             .unwrap_or_else(|| "none".to_string());
         let code = self
             .code_object
@@ -1661,12 +1682,14 @@ impl TargetTrapRecord {
             .unwrap_or_else(|| "none".to_string());
         let hostcall = self.hostcall.as_deref().unwrap_or("none");
         format!(
-            "trap id={} generation={} class={} store={} activation={} code={} code_generation={} artifact={} artifact_generation={} offset={} hostcall={} policy={} effect={} detail={}",
+            "trap id={} generation={} class={} store={} store_generation={} activation={} activation_generation={} code={} code_generation={} artifact={} artifact_generation={} offset={} hostcall={} policy={} effect={} detail={}",
             self.id,
             self.generation,
             self.class.as_str(),
             store,
+            store_generation,
             activation,
+            activation_generation,
             code,
             code_generation,
             artifact,
@@ -1718,6 +1741,18 @@ impl CapabilityHandleArg {
             self.rights.clone(),
             self.class_hint?,
         ))
+    }
+
+    pub fn from_record(record: &CapabilityRecord, rights_mask: u64, rights: &[&str]) -> Self {
+        Self {
+            id: record.id,
+            object: record.debug_object_label.clone(),
+            object_ref: record.object_ref,
+            generation: record.generation,
+            class_hint: Some(record.class),
+            rights_mask,
+            rights: rights.iter().map(|right| (*right).to_string()).collect(),
+        }
     }
 }
 
@@ -2431,7 +2466,10 @@ impl TargetExecutor {
         if store.state != StoreState::Running {
             return Err(TargetExecutorError::StoreNotRunning);
         }
-        if code.state != CodeObjectState::BoundToStore || code.bound_store != Some(store.id) {
+        if code.state != CodeObjectState::BoundToStore
+            || code.bound_store != Some(store.id)
+            || code.bound_store_generation != Some(store.generation)
+        {
             return Err(TargetExecutorError::CodeObjectNotBound);
         }
         let id = self.next_activation_id;
@@ -2616,6 +2654,7 @@ impl TargetExecutor {
             || wire_frame.code_generation() != code.generation
             || wire_frame.artifact_id() != code.artifact_id
             || code.bound_store != Some(wire_frame.store_id())
+            || code.bound_store_generation != Some(wire_frame.store_generation())
         {
             self.record_trap_for_activation(
                 activation_index,
@@ -3062,12 +3101,30 @@ impl TargetExecutor {
     ) -> TargetTrapId {
         let id = self.next_trap_id;
         self.next_trap_id += 1;
+        let activation_generation = activation.and_then(|activation| {
+            self.activations
+                .iter()
+                .find(|record| record.id == activation)
+                .map(|record| record.generation)
+        });
+        let store_generation = code
+            .and_then(|code| code.bound_store_generation)
+            .or_else(|| {
+                activation.and_then(|activation| {
+                    self.activations
+                        .iter()
+                        .find(|record| record.id == activation)
+                        .map(|record| record.store_generation)
+                })
+            });
         self.traps.push(TargetTrapRecord {
             id,
             generation: 1,
             class,
             store: Some(store),
+            store_generation,
             activation,
+            activation_generation,
             code_object: code.map(|code| code.id),
             code_generation: code.map(|code| code.generation),
             artifact: code.map(|code| code.artifact_id),
@@ -3134,6 +3191,8 @@ impl TargetExecutor {
                 && cleanup.store_generation == store.generation
                 && cleanup.activation == activation
                 && cleanup.activation_generation == activation_generation
+                && cleanup.code_object == code_object
+                && cleanup.code_generation == code_generation
                 && cleanup.reason == reason
                 && cleanup.state == CleanupTransactionState::Pending
         }) {
@@ -3188,10 +3247,23 @@ impl TargetExecutor {
         capabilities: &mut CapabilityLedger,
         reason: &str,
     ) -> Result<CleanupTransactionId, TargetExecutorError> {
+        let activation_generation = activation.and_then(|activation| {
+            self.activations
+                .iter()
+                .find(|record| record.id == activation)
+                .map(|record| record.generation)
+        });
+        let code_object = code.as_deref().map(|code| code.id);
+        let code_generation = code.as_deref().map(|code| code.generation);
         if let Some(existing) = self.cleanup_transactions.iter().find(|cleanup| {
             cleanup.store == store.id
+                && cleanup.store_generation == store.generation
                 && cleanup.activation == activation
+                && cleanup.activation_generation == activation_generation
+                && cleanup.code_object == code_object
+                && cleanup.code_generation == code_generation
                 && cleanup.reason == reason
+                && store.state == StoreState::Dead
                 && cleanup.state == CleanupTransactionState::Completed
         }) {
             return Ok(existing.id);
@@ -3306,8 +3378,11 @@ impl TargetExecutor {
         let mut code_generation = None;
         let mut code_ref = None;
         if let Some(code) = code {
-            if code.bound_store == Some(store.id) {
+            if code.bound_store == Some(store.id)
+                && code.bound_store_generation == Some(expected_store_generation)
+            {
                 code.bound_store = None;
+                code.bound_store_generation = None;
                 code.hostcall_table = None;
                 code.state = CodeObjectState::Retired;
                 code.generation += 1;
@@ -3332,6 +3407,13 @@ impl TargetExecutor {
             }
         }
         let finished_at = self.next_event("fault-cleanup-completed");
+        self.tombstones.push(TombstoneRecord::new(
+            ContractObjectKind::Store,
+            store.id,
+            expected_store_generation,
+            finished_at,
+            "fault-cleanup-store-target-retired",
+        ));
         self.tombstones.push(TombstoneRecord::new(
             ContractObjectKind::Store,
             store.id,
@@ -3553,12 +3635,15 @@ impl TargetExecutor {
         let code_state = code
             .map(|code| {
                 format!(
-                    "code:{}@{}:{}:bound={}",
+                    "code:{}@{}:{}:bound={}@{}",
                     code.id,
                     code.generation,
                     code.state.as_str(),
                     code.bound_store
                         .map(|store| store.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                    code.bound_store_generation
+                        .map(|generation| generation.to_string())
                         .unwrap_or_else(|| "none".to_string())
                 )
             })
@@ -3902,15 +3987,26 @@ impl TargetExecutor {
     ) -> TargetTrapId {
         let activation_id = self.activations[activation_index].id;
         let store = self.activations[activation_index].store;
+        let store_generation = self.activations[activation_index].store_generation;
         self.release_all_leases_for_activation_id(activation_id, "trap-quarantine");
         let id = self.next_trap_id;
         self.next_trap_id += 1;
+        let exit_event = self.next_event("activation-trapped");
+        let activation = &mut self.activations[activation_index];
+        activation.state = ActivationState::Trapped;
+        activation.trap = Some(id);
+        activation.return_tag = Some(HostcallReturnTag::Trap);
+        activation.exit_event = Some(exit_event);
+        activation.generation += 1;
+        let activation_generation = activation.generation;
         self.traps.push(TargetTrapRecord {
             id,
             generation: 1,
             class,
             store: Some(store),
+            store_generation: Some(store_generation),
             activation: Some(activation_id),
+            activation_generation: Some(activation_generation),
             code_object: code.map(|code| code.id),
             code_generation: code.map(|code| code.generation),
             artifact: code.map(|code| code.artifact_id),
@@ -3921,15 +4017,7 @@ impl TargetExecutor {
             effect,
             detail: detail.to_string(),
         });
-        let exit_event = self.next_event("activation-trapped");
-        let activation = &mut self.activations[activation_index];
-        activation.state = ActivationState::Trapped;
-        activation.trap = Some(id);
-        activation.return_tag = Some(HostcallReturnTag::Trap);
-        activation.exit_event = Some(exit_event);
-        activation.generation += 1;
-        let generation = activation.generation;
-        self.refresh_hostcall_activation_generation(activation_id, generation);
+        self.refresh_hostcall_activation_generation(activation_id, activation_generation);
         id
     }
 
@@ -4179,9 +4267,10 @@ mod tests {
         publisher.fill(code_id).unwrap();
         publisher.seal(code_id).unwrap();
         publisher.publish_rx(code_id).unwrap();
-        publisher.bind_to_store(code_id, store_id).unwrap();
+        let store_record = stores.record(store_id).unwrap().store.clone();
+        publisher.bind_to_store(code_id, &store_record).unwrap();
         let mut capabilities = CapabilityLedger::new();
-        capabilities.grant_with_metadata(
+        capabilities.grant_manifest_binding(
             "driver_virtio_net",
             "mmio.virtio-net",
             &["map"],
@@ -4212,13 +4301,7 @@ mod tests {
             .iter()
             .position(|right| right == operation)
             .unwrap();
-        CapabilityHandleArg::new(
-            cap.id,
-            &cap.object,
-            cap.generation,
-            1u64 << index,
-            &[operation],
-        )
+        CapabilityHandleArg::from_record(cap, 1u64 << index, &[operation])
     }
 
     #[test]
@@ -4250,7 +4333,8 @@ mod tests {
         let store_id =
             stores.register_verified_artifact(&verified, "restartable", "rebuild-from-artifact");
         stores.set_running(store_id).unwrap();
-        publisher.bind_to_store(code_id, store_id).unwrap();
+        let store_record = stores.record(store_id).unwrap().store.clone();
+        publisher.bind_to_store(code_id, &store_record).unwrap();
         assert_eq!(
             publisher.object(code_id).unwrap().state,
             CodeObjectState::BoundToStore
@@ -4557,13 +4641,7 @@ mod tests {
             )
             .unwrap();
         let mut cap_args = Vec::new();
-        cap_args.push(CapabilityHandleArg::new(
-            cap.id,
-            &cap.object,
-            cap.generation,
-            1,
-            &["map"],
-        ));
+        cap_args.push(CapabilityHandleArg::from_record(&cap, 1, &["map"]));
         executor
             .invoke_hostcall(
                 &code,
@@ -4590,13 +4668,9 @@ mod tests {
             )
             .unwrap();
         let mut stale_cap_args = Vec::new();
-        stale_cap_args.push(CapabilityHandleArg::new(
-            cap.id,
-            &cap.object,
-            cap.generation + 1,
-            1,
-            &["map"],
-        ));
+        let mut stale_arg = CapabilityHandleArg::from_record(&cap, 1, &["map"]);
+        stale_arg.generation += 1;
+        stale_cap_args.push(stale_arg);
         assert_eq!(
             executor.invoke_hostcall(
                 &code,
@@ -4630,13 +4704,7 @@ mod tests {
             )
             .unwrap();
         let mut bad_mask_cap_args = Vec::new();
-        bad_mask_cap_args.push(CapabilityHandleArg::new(
-            cap.id,
-            &cap.object,
-            cap.generation,
-            0,
-            &["map"],
-        ));
+        bad_mask_cap_args.push(CapabilityHandleArg::from_record(&cap, 0, &["map"]));
         assert_eq!(
             executor.invoke_hostcall(
                 &code,
@@ -4728,7 +4796,9 @@ mod tests {
             generation: 1,
             class: TargetTrapClass::HostcallTrap,
             store: Some(stale_store.id),
+            store_generation: Some(stale_store.generation),
             activation: Some(999),
+            activation_generation: Some(1),
             code_object: Some(retired_code.id),
             code_generation: Some(retired_code.generation),
             artifact: Some(retired_code.artifact_id),
@@ -5171,7 +5241,9 @@ mod tests {
             generation: 1,
             class: TargetTrapClass::SupervisorStoreTrap,
             store: Some(current_store.id),
+            store_generation: Some(historical_store_generation),
             activation: None,
+            activation_generation: None,
             code_object: None,
             code_generation: None,
             artifact: None,
@@ -5423,6 +5495,48 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn completed_cleanup_for_old_generation_does_not_suppress_rebound_generation() {
+        let (_artifact, store, code, mut capabilities) = running_store_and_code();
+        let mut old_store = store.store.clone();
+        let mut old_code = code.clone();
+        let mut executor = TargetExecutor::new();
+
+        let old_cleanup = executor
+            .run_fault_cleanup(
+                &mut old_store,
+                None,
+                Some(&mut old_code),
+                &mut capabilities,
+                "same-fault",
+            )
+            .unwrap();
+        assert_eq!(old_store.state, StoreState::Dead);
+
+        let mut rebound_store = old_store.clone();
+        rebound_store.state = StoreState::Running;
+        let mut rebound_code = old_code.clone();
+        rebound_code.state = CodeObjectState::BoundToStore;
+        rebound_code.bound_store = Some(rebound_store.id);
+        rebound_code.bound_store_generation = Some(rebound_store.generation);
+        rebound_code.generation += 1;
+
+        let next_cleanup = executor
+            .run_fault_cleanup(
+                &mut rebound_store,
+                None,
+                Some(&mut rebound_code),
+                &mut capabilities,
+                "same-fault",
+            )
+            .unwrap();
+
+        assert_ne!(next_cleanup, old_cleanup);
+        assert_eq!(executor.cleanup_transactions().len(), 2);
+        assert_eq!(rebound_store.state, StoreState::Dead);
+        assert_eq!(rebound_code.bound_store, None);
     }
 
     #[test]

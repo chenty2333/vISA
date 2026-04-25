@@ -393,6 +393,8 @@ pub struct CodeObjectManifest {
     pub generation: u64,
     pub state: String,
     pub bound_store: Option<u64>,
+    #[serde(default)]
+    pub bound_store_generation: Option<u64>,
     pub hostcall_table: Option<u64>,
     pub text_start: u64,
     pub text_len: u64,
@@ -494,7 +496,11 @@ pub struct TrapRecordManifest {
     pub generation: u64,
     pub class: String,
     pub store: Option<u64>,
+    #[serde(default)]
+    pub store_generation: Option<u64>,
     pub activation: Option<u64>,
+    #[serde(default)]
+    pub activation_generation: Option<u64>,
     pub code_object: Option<u64>,
     #[serde(default)]
     pub code_generation: Option<u64>,

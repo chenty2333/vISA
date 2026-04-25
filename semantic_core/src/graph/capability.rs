@@ -8,7 +8,7 @@ impl SemanticGraph {
         operations: &[&str],
         lifetime: &str,
     ) -> CapabilityId {
-        self.grant_capability_with_source(
+        self.grant_manifest_capability_with_source(
             subject,
             object,
             operations,
@@ -24,7 +24,7 @@ impl SemanticGraph {
         operations: &[&str],
         lifetime: &str,
     ) -> CapabilityId {
-        self.grant_capability_with_source(
+        self.grant_manifest_capability_with_source(
             subject,
             object,
             operations,
@@ -33,7 +33,7 @@ impl SemanticGraph {
             "artifact-manifest",
         )
     }
-    pub fn grant_capability_with_source(
+    pub fn grant_manifest_capability_with_source(
         &mut self,
         subject: &str,
         object: &str,
@@ -43,7 +43,7 @@ impl SemanticGraph {
         source: &str,
     ) -> CapabilityId {
         let owner_store = self.store_id(subject);
-        let cap = self.capabilities.grant_with_metadata(
+        let cap = self.capabilities.grant_manifest_binding(
             subject,
             object,
             operations,
@@ -52,6 +52,32 @@ impl SemanticGraph {
             owner_store,
             None,
             source,
+        );
+        self.event_log
+            .push("capability", EventKind::CapabilityGranted { cap });
+        cap
+    }
+    pub fn grant_capability_with_authority_ref(
+        &mut self,
+        subject: &str,
+        debug_object_label: &str,
+        object_ref: AuthorityObjectRef,
+        operations: &[&str],
+        lifetime: &str,
+        source: &str,
+        manifest_decl: bool,
+    ) -> CapabilityId {
+        let owner_store = self.store_id(subject);
+        let cap = self.capabilities.grant_with_authority_ref(
+            subject,
+            debug_object_label,
+            object_ref,
+            operations,
+            lifetime,
+            owner_store,
+            None,
+            source,
+            manifest_decl,
         );
         self.event_log
             .push("capability", EventKind::CapabilityGranted { cap });

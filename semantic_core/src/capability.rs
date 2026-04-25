@@ -339,7 +339,7 @@ impl CapabilityLedger {
         operations: &[&str],
         lifetime: &str,
     ) -> CapabilityId {
-        self.grant_with_metadata(
+        self.grant_manifest_binding(
             subject,
             object,
             operations,
@@ -351,7 +351,7 @@ impl CapabilityLedger {
         )
     }
 
-    pub fn grant_with_metadata(
+    pub fn grant_manifest_binding(
         &mut self,
         subject: &str,
         object: &str,
@@ -497,15 +497,17 @@ impl CapabilityLedger {
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        let delegated = self.grant_with_metadata(
+        let object_ref = parent.object_ref?;
+        let delegated = self.grant_with_authority_ref(
             subject,
             &parent.object,
+            object_ref,
             &operations,
             lifetime,
-            parent.class,
             parent.owner_store,
             parent.owner_task,
             "delegated",
+            parent.manifest_decl,
         );
         if let Some(record) = self
             .records
@@ -530,15 +532,17 @@ impl CapabilityLedger {
         if !parent.operations.contains_all(operations) {
             return None;
         }
-        let attenuated = self.grant_with_metadata(
+        let object_ref = parent.object_ref?;
+        let attenuated = self.grant_with_authority_ref(
             subject,
             &parent.object,
+            object_ref,
             operations,
             lifetime,
-            parent.class,
             parent.owner_store,
             parent.owner_task,
             "attenuated",
+            parent.manifest_decl,
         );
         if let Some(record) = self
             .records

@@ -26,7 +26,7 @@ fn capability_attenuation_cannot_expand_rights() {
 #[test]
 fn capability_authority_uses_object_ref_not_debug_label() {
     let mut ledger = CapabilityLedger::new();
-    let cap = ledger.grant_with_metadata(
+    let cap = ledger.grant_manifest_binding(
         "driver",
         "mmio.virtio-net",
         &["map"],
@@ -100,7 +100,7 @@ fn capability_authority_uses_object_ref_not_debug_label() {
 #[test]
 fn capability_authority_rejects_stale_revoked_wrong_subject_and_undeclared_external() {
     let mut ledger = CapabilityLedger::new();
-    let cap = ledger.grant_with_metadata(
+    let cap = ledger.grant_manifest_binding(
         "driver",
         "packet-device.net0",
         &["rx", "tx"],
@@ -886,9 +886,13 @@ fn authority_bindings_drive_resource_and_capability_lifecycle() {
 
     assert_eq!(graph.authority_count(), 1);
     assert_eq!(graph.active_authority_count(), 1);
+    let cap_object_ref = graph.capabilities().records()[0]
+        .object_ref
+        .expect("authority binding capability carries object ref");
     assert!(
         graph
-            .check_capability("driver_virtio_net", "mmio.virtio-net0", "write")
+            .capabilities()
+            .check_authority("driver_virtio_net", cap_object_ref, "write", None)
             .is_ok()
     );
     assert_eq!(graph.check_invariants(), Ok(()));
@@ -896,7 +900,9 @@ fn authority_bindings_drive_resource_and_capability_lifecycle() {
     assert!(graph.release_authority_binding(authority, "driver micro-reboot"));
     assert_eq!(graph.active_authority_count(), 0);
     assert_eq!(
-        graph.check_capability("driver_virtio_net", "mmio.virtio-net0", "write"),
+        graph
+            .capabilities()
+            .check_authority("driver_virtio_net", cap_object_ref, "write", None),
         Err(CapabilityDenyReason::Revoked)
     );
     assert_eq!(
@@ -935,14 +941,20 @@ fn packet_device_authority_is_part_of_the_hardware_ledger() {
         graph.authority_bindings()[0].kind,
         AuthorityKind::PacketDevice
     );
+    let cap_object_ref = graph.capabilities().records()[0]
+        .object_ref
+        .expect("packet authority capability carries object ref");
     assert!(
         graph
-            .check_capability("driver_virtio_net", "packet-device.net0", "rx")
+            .capabilities()
+            .check_authority("driver_virtio_net", cap_object_ref, "rx", None)
             .is_ok()
     );
     assert!(graph.revoke_authority_binding(authority, "driver restart"));
     assert_eq!(
-        graph.check_capability("driver_virtio_net", "packet-device.net0", "rx"),
+        graph
+            .capabilities()
+            .check_authority("driver_virtio_net", cap_object_ref, "rx", None),
         Err(CapabilityDenyReason::Revoked)
     );
 }

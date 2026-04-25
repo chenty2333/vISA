@@ -9,12 +9,15 @@ impl SemanticGraph {
         operations: &[&str],
         lifetime: &str,
     ) -> Option<AuthorityId> {
-        let kind = {
+        let (kind, resource_generation) = {
             let resource = self
                 .resources
                 .iter()
                 .find(|candidate| candidate.id == resource && candidate.live)?;
-            AuthorityKind::from_resource_kind(resource.kind)?
+            (
+                AuthorityKind::from_resource_kind(resource.kind)?,
+                resource.generation,
+            )
         };
         let id = self.next_authority_id;
         self.next_authority_id += 1;
@@ -29,13 +32,18 @@ impl SemanticGraph {
             generation: 1,
             state: AuthorityState::Bound,
         });
-        self.grant_capability_with_source(
+        let class = CapabilityClass::from_object(object);
+        self.grant_capability_with_authority_ref(
             subject,
             object,
+            AuthorityObjectRef::internal(
+                class,
+                ContractObjectRef::new(ContractObjectKind::Resource, resource, resource_generation),
+            ),
             operations,
             lifetime,
-            CapabilityClass::from_object(object),
             "authority-binding",
+            true,
         );
         self.event_log.push(
             "authority",
