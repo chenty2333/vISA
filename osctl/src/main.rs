@@ -6,8 +6,10 @@ use std::fs;
 use std::path::Path;
 
 use artifact_manifest::{
-    ArtifactBundleManifest, BoundaryValidationReportManifest, CapabilityRecordManifest,
-    CleanupTransactionManifest, MigrationPackageManifest, StoreRecordManifest, WaitRecordManifest,
+    ActivationRecordManifest, ArtifactBundleManifest, BoundaryValidationReportManifest,
+    CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
+    HostcallTraceManifest, MigrationPackageManifest, StoreRecordManifest,
+    TargetArtifactImageManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactSubstrateCompatibilityReport, VIEW_SCHEMA_V1, ValidatedArtifactPlan,
@@ -369,6 +371,210 @@ fn select_view_by_id(
         .into_iter()
         .find(|view| view.get("id").and_then(serde_json::Value::as_u64) == Some(parsed))
         .ok_or_else(|| format!("object id {id} not found").into())
+}
+
+fn artifact_view_v1(artifact: &TargetArtifactImageManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "artifact",
+        "id": artifact.id,
+        "generation": 1,
+        "state": "verified",
+        "owner": {
+            "package": artifact.package,
+            "role": artifact.role,
+            "target_profile": artifact.target_profile,
+        },
+        "references": {
+            "artifact_name": artifact.artifact_name,
+            "manifest_binding_hash": artifact.manifest_binding_hash,
+            "abi_fingerprint": artifact.abi_fingerprint,
+            "code_hash": artifact.code_hash,
+        },
+        "exports": artifact.exports,
+        "imports": artifact.imports,
+        "hostcall_count": artifact.hostcalls.len(),
+        "capability_count": artifact.capabilities.len(),
+        "memory_plan": artifact.memory_plan,
+        "last_transition": {
+            "kind": artifact.kind,
+            "payload_len": artifact.payload_len,
+            "trap_metadata_count": artifact.trap_metadata.len(),
+            "address_map_count": artifact.address_map.len(),
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn code_object_view_v1(code: &CodeObjectManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "code-object",
+        "id": code.id,
+        "generation": code.generation,
+        "state": code.state,
+        "owner": {
+            "package": code.package,
+            "profile": code.owner_profile,
+        },
+        "references": {
+            "artifact": {
+                "id": code.artifact_id,
+                "generation": 1,
+            },
+            "bound_store": code.bound_store.map(|id| serde_json::json!({
+                "id": id,
+                "generation": code.bound_store_generation,
+            })),
+            "hostcall_table": code.hostcall_table,
+            "code_hash": code.code_hash,
+        },
+        "memory": {
+            "text": {
+                "start": code.text_start,
+                "len": code.text_len,
+                "permission": code.text_permission,
+            },
+            "rodata": {
+                "start": code.rodata_start,
+                "len": code.rodata_len,
+                "permission": code.rodata_permission,
+            },
+        },
+        "hostcall_count": code.hostcalls.len(),
+        "trap_metadata_count": code.trap_metadata.len(),
+        "address_map_count": code.address_map.len(),
+        "last_transition": serde_json::Value::Null,
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn activation_view_v1(activation: &ActivationRecordManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "activation",
+        "id": activation.id,
+        "generation": activation.generation,
+        "state": activation.state,
+        "owner": {
+            "store": activation.store,
+            "store_generation": activation.store_generation,
+        },
+        "references": {
+            "code_object": {
+                "id": activation.code_object,
+                "generation": activation.code_generation,
+            },
+            "artifact": {
+                "id": activation.artifact,
+                "generation": 1,
+            },
+            "blocked_wait": activation.blocked_wait,
+            "trap": activation.trap,
+        },
+        "entry": activation.entry,
+        "start_event": activation.start_event,
+        "exit_event": activation.exit_event,
+        "last_transition": {
+            "active_dmw_leases": activation.active_dmw_leases,
+            "return_tag": activation.return_tag,
+        },
+        "last_error": activation.trap,
+    })
+}
+
+fn trap_view_v1(trap: &TrapRecordManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "trap",
+        "id": trap.id,
+        "generation": trap.generation,
+        "state": "recorded",
+        "owner": {
+            "store": trap.store,
+            "store_generation": trap.store_generation,
+            "activation": trap.activation,
+            "activation_generation": trap.activation_generation,
+        },
+        "references": {
+            "code_object": trap.code_object.map(|id| serde_json::json!({
+                "id": id,
+                "generation": trap.code_generation,
+            })),
+            "artifact": trap.artifact.map(|id| serde_json::json!({
+                "id": id,
+                "generation": trap.artifact_generation,
+            })),
+            "hostcall": trap.hostcall,
+        },
+        "trap_class": trap.class,
+        "offset": trap.offset,
+        "detail": trap.detail,
+        "last_transition": {
+            "fault_policy": trap.fault_policy,
+            "effect": trap.effect,
+        },
+        "last_error": trap.detail,
+    })
+}
+
+fn hostcall_trace_view_v1(hostcall: &HostcallTraceManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "hostcall",
+        "id": hostcall.id,
+        "generation": hostcall.generation,
+        "state": hostcall.result,
+        "owner": {
+            "activation": hostcall.activation,
+            "activation_generation": hostcall.activation_generation,
+            "store": hostcall.store,
+            "store_generation": hostcall.store_generation,
+        },
+        "references": {
+            "code_object": {
+                "id": hostcall.code_object,
+                "generation": hostcall.code_generation,
+            },
+            "artifact": {
+                "id": hostcall.artifact,
+                "generation": 1,
+            },
+            "trap_out": hostcall.trap_out,
+            "wait_token_out": hostcall.wait_token_out,
+        },
+        "abi": {
+            "version": hostcall.abi_version,
+            "frame_size": hostcall.frame_size,
+            "flags": hostcall.flags,
+        },
+        "call": {
+            "number": hostcall.hostcall_number,
+            "sequence": hostcall.hostcall_seq,
+            "caller_offset": hostcall.caller_offset,
+            "name": hostcall.name,
+            "category": hostcall.category,
+            "subject": hostcall.subject,
+            "object": hostcall.object,
+            "operation": hostcall.operation,
+            "record_mode": hostcall.record_mode,
+        },
+        "args": hostcall.args,
+        "cap_args": hostcall.cap_args,
+        "return": {
+            "tag": hostcall.ret_tag,
+            "ret0": hostcall.ret0,
+            "ret1": hostcall.ret1,
+        },
+        "last_transition": {
+            "allowed": hostcall.allowed,
+        },
+        "last_error": if hostcall.allowed {
+            serde_json::Value::Null
+        } else {
+            serde_json::json!("hostcall-denied")
+        },
+    })
 }
 
 fn store_view_v1(store: &StoreRecordManifest) -> serde_json::Value {
@@ -1541,8 +1747,8 @@ fn inspect_package_object_json(
                 .semantic
                 .target_artifacts
                 .iter()
-                .map(serde_json::to_value)
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(artifact_view_v1)
+                .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.target_artifact_roots.len() }),
         ),
         "code" => (
@@ -1552,8 +1758,8 @@ fn inspect_package_object_json(
                 .semantic
                 .code_objects
                 .iter()
-                .map(serde_json::to_value)
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(code_object_view_v1)
+                .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.code_object_roots.len() }),
         ),
         "store" => (
@@ -1574,8 +1780,8 @@ fn inspect_package_object_json(
                 .semantic
                 .activation_records
                 .iter()
-                .map(serde_json::to_value)
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(activation_view_v1)
+                .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.activation_record_roots.len() }),
         ),
         "cap" | "capability" => (
@@ -1626,8 +1832,8 @@ fn inspect_package_object_json(
                 .semantic
                 .trap_records
                 .iter()
-                .map(serde_json::to_value)
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(trap_view_v1)
+                .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.trap_roots.len() }),
         ),
         "hostcall" => (
@@ -1637,8 +1843,8 @@ fn inspect_package_object_json(
                 .semantic
                 .hostcall_trace
                 .iter()
-                .map(serde_json::to_value)
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(hostcall_trace_view_v1)
+                .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.hostcall_trace_roots.len() }),
         ),
         "cleanup" => (
@@ -2501,6 +2707,120 @@ mod tests {
         assert_eq!(view["references"]["target_store"]["generation"], 1);
         assert_eq!(view["references"]["result_store"]["generation"], 2);
         assert_eq!(view["references"]["revoked_capabilities"][0]["id"], 4);
+    }
+
+    #[test]
+    fn executor_object_views_do_not_dump_internal_schema() {
+        let artifact = artifact_view_v1(&TargetArtifactImageManifest {
+            id: 2,
+            package: "driver_virtio_net".to_owned(),
+            artifact_name: "driver_virtio_net".to_owned(),
+            role: "driver".to_owned(),
+            kind: "cwasm".to_owned(),
+            target_profile: "host-validation".to_owned(),
+            abi_fingerprint: "abi".to_owned(),
+            manifest_binding_hash: "binding".to_owned(),
+            code_hash: "code".to_owned(),
+            exports: vec!["memory".to_owned()],
+            payload_len: 4096,
+            ..TargetArtifactImageManifest::default()
+        });
+        assert_eq!(artifact["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(artifact["kind"], "artifact");
+        assert_eq!(artifact["state"], "verified");
+        assert_eq!(artifact["references"]["manifest_binding_hash"], "binding");
+        assert_eq!(artifact["last_transition"]["payload_len"], 4096);
+
+        let code = code_object_view_v1(&CodeObjectManifest {
+            id: 3,
+            artifact_id: 2,
+            package: "driver_virtio_net".to_owned(),
+            owner_profile: "host-validation".to_owned(),
+            generation: 4,
+            state: "bound-to-store".to_owned(),
+            bound_store: Some(1),
+            bound_store_generation: Some(7),
+            text_start: 0x1000,
+            text_len: 128,
+            text_permission: "rx".to_owned(),
+            code_hash: "code".to_owned(),
+            ..CodeObjectManifest::default()
+        });
+        assert_eq!(code["kind"], "code-object");
+        assert_eq!(code["generation"], 4);
+        assert_eq!(code["references"]["bound_store"]["generation"], 7);
+        assert_eq!(code["memory"]["text"]["permission"], "rx");
+    }
+
+    #[test]
+    fn trace_views_expose_attribution_generations() {
+        let activation = activation_view_v1(&ActivationRecordManifest {
+            id: 10,
+            store: 1,
+            store_generation: 2,
+            code_object: 3,
+            code_generation: 4,
+            artifact: 5,
+            entry: "_start".to_owned(),
+            generation: 6,
+            state: "running".to_owned(),
+            start_event: 7,
+            active_dmw_leases: 1,
+            ..ActivationRecordManifest::default()
+        });
+        assert_eq!(activation["kind"], "activation");
+        assert_eq!(activation["owner"]["store_generation"], 2);
+        assert_eq!(activation["references"]["code_object"]["generation"], 4);
+
+        let trap = trap_view_v1(&TrapRecordManifest {
+            id: 11,
+            generation: 1,
+            class: "capability-trap".to_owned(),
+            store: Some(1),
+            store_generation: Some(2),
+            activation: Some(10),
+            activation_generation: Some(6),
+            code_object: Some(3),
+            code_generation: Some(4),
+            artifact: Some(5),
+            artifact_generation: Some(1),
+            fault_policy: "restart".to_owned(),
+            effect: "cleanup".to_owned(),
+            detail: "denied".to_owned(),
+            ..TrapRecordManifest::default()
+        });
+        assert_eq!(trap["kind"], "trap");
+        assert_eq!(trap["owner"]["activation_generation"], 6);
+        assert_eq!(trap["references"]["code_object"]["generation"], 4);
+        assert_eq!(trap["last_error"], "denied");
+
+        let hostcall = hostcall_trace_view_v1(&HostcallTraceManifest {
+            id: 12,
+            generation: 1,
+            abi_version: "vmos-target-hostcall-frame-v1".to_owned(),
+            frame_size: 128,
+            activation: 10,
+            activation_generation: 6,
+            store: 1,
+            store_generation: 2,
+            code_object: 3,
+            code_generation: 4,
+            artifact: 5,
+            hostcall_number: 64,
+            hostcall_seq: 99,
+            caller_offset: 16,
+            name: "mmio.read32".to_owned(),
+            category: "mmio".to_owned(),
+            object: "mmio.bar0".to_owned(),
+            operation: "read32".to_owned(),
+            allowed: false,
+            result: "trap".to_owned(),
+            ..HostcallTraceManifest::default()
+        });
+        assert_eq!(hostcall["kind"], "hostcall");
+        assert_eq!(hostcall["owner"]["activation_generation"], 6);
+        assert_eq!(hostcall["call"]["caller_offset"], 16);
+        assert_eq!(hostcall["last_error"], "hostcall-denied");
     }
 
     #[test]
