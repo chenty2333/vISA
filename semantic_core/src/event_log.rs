@@ -145,6 +145,13 @@ pub enum EventKind {
         object: String,
         operation: String,
     },
+    SubstrateUnsupported {
+        authority: String,
+        operation: String,
+        requester: Option<String>,
+        artifact: Option<ArtifactId>,
+        store: Option<StoreId>,
+    },
     FaultDomainRegistered {
         domain: FaultDomainId,
     },
@@ -509,6 +516,24 @@ impl EventKind {
                 "HostcallEntered label={label} class={} subject={subject} object={object} op={operation}",
                 class.as_str()
             ),
+            Self::SubstrateUnsupported {
+                authority,
+                operation,
+                requester,
+                artifact,
+                store,
+            } => {
+                let requester = requester.as_deref().unwrap_or("none");
+                let artifact = artifact
+                    .map(|artifact| artifact.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                let store = store
+                    .map(|store| store.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                format!(
+                    "SubstrateUnsupported authority={authority} op={operation} requester={requester} artifact={artifact} store={store}"
+                )
+            }
             Self::FaultDomainRegistered { domain } => {
                 format!("FaultDomainRegistered domain={domain}")
             }

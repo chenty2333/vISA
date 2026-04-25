@@ -39,6 +39,7 @@ mod query;
 mod resource;
 mod snapshot;
 mod store;
+mod substrate;
 mod task;
 mod transaction;
 mod wait;

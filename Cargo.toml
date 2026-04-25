@@ -21,6 +21,7 @@ members = [
     "runner",
     "semantic_core",
     "service_core",
+    "substrate_api",
     "supervisor_catalog",
     "target_executor",
     "vfs_service",
@@ -38,6 +39,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 semantic_core = { path = "semantic_core" }
 service_core = { path = "service_core" }
+substrate_api = { path = "substrate_api" }
 sha2 = "0.10"
 spin = "0.9.8"
 supervisor_catalog = { path = "supervisor_catalog" }

@@ -1413,6 +1413,26 @@ fn migration_package_rejects_active_substrate_authorities() {
     }
 }
 
+#[test]
+fn substrate_unsupported_is_event_log_visible() {
+    let mut graph = SemanticGraph::new();
+
+    let event = graph.record_substrate_unsupported(
+        "DmaAuthority",
+        "dma_alloc",
+        Some("driver.fake_net".to_string()),
+        Some(9),
+        Some(4),
+    );
+
+    let record = graph.event_log_tail(1).first().expect("event was recorded");
+    assert_eq!(record.id, event);
+    assert_eq!(
+        record.kind.summary(),
+        "SubstrateUnsupported authority=DmaAuthority op=dma_alloc requester=driver.fake_net artifact=9 store=4"
+    );
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,
