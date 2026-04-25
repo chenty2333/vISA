@@ -182,6 +182,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub active_authority_count: usize,
     pub wait_token_count: usize,
+    #[serde(default)]
+    pub wait_record_count: usize,
     pub capability_count: usize,
     #[serde(default)]
     pub capability_record_count: usize,
@@ -238,6 +240,8 @@ pub struct SemanticSnapshotManifest {
     pub store_records: Vec<StoreRecordManifest>,
     #[serde(default)]
     pub capability_records: Vec<CapabilityRecordManifest>,
+    #[serde(default)]
+    pub wait_records: Vec<WaitRecordManifest>,
     #[serde(default)]
     pub activation_records: Vec<ActivationRecordManifest>,
     #[serde(default)]
@@ -421,6 +425,8 @@ pub struct CapabilityRecordManifest {
     pub id: u64,
     pub subject: String,
     pub object: String,
+    #[serde(default)]
+    pub object_ref: Option<AuthorityObjectRefManifest>,
     pub rights: Vec<String>,
     pub lifetime: String,
     pub class: String,
@@ -428,7 +434,36 @@ pub struct CapabilityRecordManifest {
     pub owner_task: Option<u64>,
     pub source: String,
     pub generation: u64,
+    #[serde(default)]
+    pub parent: Option<u64>,
+    #[serde(default)]
+    pub manifest_decl: bool,
+    #[serde(default)]
+    pub debug_object_label: String,
     pub revoked: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct AuthorityObjectRefManifest {
+    pub scope: String,
+    pub class: String,
+    pub object: ContractObjectRefManifest,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct WaitRecordManifest {
+    pub id: u64,
+    pub owner_task: Option<u64>,
+    pub owner_store: Option<u64>,
+    pub kind: String,
+    pub generation: u64,
+    pub state: String,
+    #[serde(default)]
+    pub blockers: Vec<ContractObjectRefManifest>,
+    pub deadline: Option<u64>,
+    pub cancel_reason: Option<String>,
+    pub restart_policy: String,
+    pub saved_context: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -575,6 +610,25 @@ pub struct CleanupStepManifest {
     pub step: String,
     pub state: String,
     pub detail: String,
+    #[serde(default)]
+    pub target: Option<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub observed_generation: Option<u64>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub idempotency_key: String,
+    #[serde(default)]
+    pub event_seq: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CleanupEffectManifest {
+    pub kind: String,
+    pub target: ContractObjectRefManifest,
+    pub expected_generation: u64,
+    pub status: String,
+    pub event_seq: u64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -590,6 +644,10 @@ pub struct CleanupTransactionManifest {
     #[serde(default)]
     pub code_generation: Option<u64>,
     pub generation: u64,
+    #[serde(default)]
+    pub started_at: u64,
+    #[serde(default)]
+    pub finished_at: Option<u64>,
     pub state: String,
     pub reason: String,
     pub released_dmw_leases: u32,
@@ -601,6 +659,8 @@ pub struct CleanupTransactionManifest {
     pub unbound_code_object: bool,
     pub effect: String,
     pub steps: Vec<CleanupStepManifest>,
+    #[serde(default)]
+    pub effects: Vec<CleanupEffectManifest>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

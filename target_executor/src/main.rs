@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 mod runtime;
 
 use artifact_manifest::{
-    ActivationRecordManifest, ArtifactBundleManifest, BoundaryValidationReportManifest,
-    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
+    ActivationRecordManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
+    BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
+    CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
     CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, ContractObjectRefManifest,
     ContractViolationManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
     MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
@@ -15,7 +16,7 @@ use artifact_manifest::{
     RequiredArtifactProfileManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
     StoreRecordManifest, SubstrateBoundaryManifest, TargetAddressMapEntryManifest,
     TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
-    TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest,
+    TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -23,10 +24,10 @@ use contract_core::{
 };
 use runtime::RuntimeOnlyExecutor;
 use semantic_core::{
-    ActivationEntry, ArtifactRegistry, ArtifactVerificationState, BoundaryKind, BoundaryStatus,
-    BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass, CapabilityHandleArg,
-    CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState, CodePublisher,
-    ContractGraphSnapshot, ContractObjectRef, ContractViolation, EntrypointState,
+    ActivationEntry, ArtifactRegistry, ArtifactVerificationState, AuthorityObjectRef, BoundaryKind,
+    BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass,
+    CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
+    CodePublisher, ContractGraphSnapshot, ContractObjectRef, ContractViolation, EntrypointState,
     ExpectedTargetArtifact, FrontendKind, HostcallCategory, HostcallFrame, HostcallLinkState,
     HostcallSpec, HostcallTraceRecord, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
     MigrationObjectRecord, PackageReplayValidator, ReplayPackageValidationState, RuntimeMode,
@@ -44,6 +45,7 @@ struct TargetExecutorV1Report {
     code_objects: Vec<CodeObjectManifest>,
     store_records: Vec<StoreRecordManifest>,
     capability_records: Vec<CapabilityRecordManifest>,
+    wait_records: Vec<WaitRecordManifest>,
     activation_records: Vec<ActivationRecordManifest>,
     trap_records: Vec<TrapRecordManifest>,
     hostcall_trace: Vec<HostcallTraceManifest>,
@@ -1011,7 +1013,8 @@ fn demo_migration_package(
             resource_count: semantic.resource_count(),
             authority_count: semantic.authority_count(),
             active_authority_count: semantic.active_authority_count(),
-            wait_token_count: 0,
+            wait_token_count: target_v1.wait_records.len(),
+            wait_record_count: target_v1.wait_records.len(),
             capability_count,
             capability_record_count: target_v1.capability_records.len(),
             fault_domain_count: semantic.fault_domain_count(),
@@ -1041,6 +1044,7 @@ fn demo_migration_package(
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
             capability_records: target_v1.capability_records.clone(),
+            wait_records: target_v1.wait_records.clone(),
             activation_records: target_v1.activation_records.clone(),
             trap_records: target_v1.trap_records.clone(),
             hostcall_trace: target_v1.hostcall_trace.clone(),
@@ -1485,6 +1489,7 @@ fn capability_record_manifest(capability: &CapabilityRecord) -> CapabilityRecord
         id: capability.id,
         subject: capability.subject.clone(),
         object: capability.object.clone(),
+        object_ref: capability.object_ref.map(authority_object_ref_manifest),
         rights: capability.operations.as_slice().to_vec(),
         lifetime: capability.lifetime.clone(),
         class: capability.class.as_str().to_owned(),
@@ -1492,6 +1497,9 @@ fn capability_record_manifest(capability: &CapabilityRecord) -> CapabilityRecord
         owner_task: capability.owner_task.map(u64::from),
         source: capability.source.clone(),
         generation: capability.generation,
+        parent: capability.parent,
+        manifest_decl: capability.manifest_decl,
+        debug_object_label: capability.debug_object_label.clone(),
         revoked: capability.revoked,
     }
 }
@@ -1608,6 +1616,21 @@ fn contract_object_ref_manifest(reference: ContractObjectRef) -> ContractObjectR
     }
 }
 
+fn authority_object_ref_manifest(reference: AuthorityObjectRef) -> AuthorityObjectRefManifest {
+    match reference {
+        AuthorityObjectRef::Internal { class, object } => AuthorityObjectRefManifest {
+            scope: "internal".to_owned(),
+            class: class.as_str().to_owned(),
+            object: contract_object_ref_manifest(object),
+        },
+        AuthorityObjectRef::External { class, object } => AuthorityObjectRefManifest {
+            scope: "external".to_owned(),
+            class: class.as_str().to_owned(),
+            object: contract_object_ref_manifest(object),
+        },
+    }
+}
+
 fn contract_violation_manifest(violation: &ContractViolation) -> ContractViolationManifest {
     ContractViolationManifest {
         kind: violation.kind.as_str().to_owned(),
@@ -1630,6 +1653,8 @@ fn cleanup_transaction_manifest(
         code_object: cleanup.code_object,
         code_generation: cleanup.code_generation,
         generation: cleanup.generation,
+        started_at: cleanup.started_at,
+        finished_at: cleanup.finished_at,
         state: cleanup.state.as_str().to_owned(),
         reason: cleanup.reason.clone(),
         released_dmw_leases: cleanup.released_dmw_leases,
@@ -1651,6 +1676,22 @@ fn cleanup_transaction_manifest(
                 step: step.step.as_str().to_owned(),
                 state: step.state.as_str().to_owned(),
                 detail: step.detail.clone(),
+                target: step.target.map(contract_object_ref_manifest),
+                observed_generation: step.observed_generation,
+                error: step.error.clone(),
+                idempotency_key: step.idempotency_key.clone(),
+                event_seq: step.event_seq,
+            })
+            .collect(),
+        effects: cleanup
+            .effects
+            .iter()
+            .map(|effect| CleanupEffectManifest {
+                kind: effect.kind.as_str().to_owned(),
+                target: contract_object_ref_manifest(effect.target),
+                expected_generation: effect.expected_generation,
+                status: effect.status.as_str().to_owned(),
+                event_seq: effect.event_seq,
             })
             .collect(),
     }
