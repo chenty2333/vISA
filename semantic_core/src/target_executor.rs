@@ -4318,17 +4318,19 @@ mod tests {
         let store_record = stores.record(store_id).unwrap().store.clone();
         publisher.bind_to_store(code_id, &store_record).unwrap();
         let mut capabilities = CapabilityLedger::new();
-        capabilities.grant_manifest_binding(
-            "driver_virtio_net",
-            "mmio.virtio-net",
-            &["map"],
-            "store",
-            CapabilityClass::MmioRegion,
-            Some(store_id),
-            Some(store_record.generation),
-            None,
-            "target-executor-test",
-        );
+        capabilities
+            .grant_manifest_binding(
+                "driver_virtio_net",
+                "mmio.virtio-net",
+                &["map"],
+                "store",
+                CapabilityClass::MmioRegion,
+                Some(store_id),
+                Some(store_record.generation),
+                None,
+                "target-executor-test",
+            )
+            .expect("test capability has owner store generation");
         (
             verified,
             stores.record(store_id).unwrap().clone(),
@@ -4983,8 +4985,8 @@ mod tests {
         };
         let violations = validate_contract_graph(&snapshot);
         assert!(violations.iter().any(|violation| {
-            violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
-                && violation.edge == "cleanup->store"
+            violation.kind == ContractViolationKind::GenerationMismatch
+                && violation.edge == "cleanup->result-store"
         }));
         assert!(violations.iter().any(|violation| {
             violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
@@ -5066,6 +5068,72 @@ mod tests {
             violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
                 && violation.edge == "cleanup->code"
         }));
+    }
+
+    #[test]
+    fn completed_cleanup_result_allows_rebound_store_with_result_tombstone() {
+        let (_artifact, store, _code, _capabilities) = running_store_and_code();
+        let target_generation = store.store.generation;
+        let result_generation = target_generation + 1;
+        let mut rebound_store = store.store.clone();
+        rebound_store.state = StoreState::Running;
+        rebound_store.generation = result_generation + 1;
+        let cleanup = FaultCleanupTransaction {
+            id: 23,
+            store: rebound_store.id,
+            store_generation: target_generation,
+            result_store_generation: Some(result_generation),
+            activation: None,
+            activation_generation: None,
+            code_object: None,
+            code_generation: None,
+            generation: 1,
+            started_at: 1,
+            finished_at: Some(2),
+            state: CleanupTransactionState::Completed,
+            reason: "old-cleanup-before-rebind".to_string(),
+            steps: Vec::new(),
+            effects: Vec::new(),
+            released_dmw_leases: 0,
+            cancelled_waits: 0,
+            revoked_capabilities: Vec::new(),
+            revoked_capability_refs: Vec::new(),
+            dropped_resources: 0,
+            unbound_code_object: false,
+            effect: FailureEffect::CompleteWithErrno(5),
+        };
+        let snapshot = ContractGraphSnapshot {
+            stores: {
+                let mut stores = Vec::new();
+                stores.push(rebound_store);
+                stores
+            },
+            cleanup_transactions: {
+                let mut cleanups = Vec::new();
+                cleanups.push(cleanup);
+                cleanups
+            },
+            tombstones: {
+                let mut tombstones = Vec::new();
+                tombstones.push(TombstoneRecord::new(
+                    ContractObjectKind::Store,
+                    store.store.id,
+                    target_generation,
+                    2,
+                    "fault-cleanup-store-target-retired",
+                ));
+                tombstones.push(TombstoneRecord::new(
+                    ContractObjectKind::Store,
+                    store.store.id,
+                    result_generation,
+                    2,
+                    "fault-cleanup-store-dead",
+                ));
+                tombstones
+            },
+            ..ContractGraphSnapshot::default()
+        };
+        assert_eq!(validate_contract_graph(&snapshot), Vec::new());
     }
 
     #[test]

@@ -319,6 +319,21 @@ impl CapabilityRevocationReport {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapabilityGrantError {
+    OwnerStoreGenerationRequired { owner_store: StoreId },
+}
+
+impl CapabilityGrantError {
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::OwnerStoreGenerationRequired { .. } => {
+                "owner_store_generation is required when owner_store is set"
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CapabilityLedger {
     next_id: CapabilityId,
@@ -339,7 +354,7 @@ impl CapabilityLedger {
         object: &str,
         operations: &[&str],
         lifetime: &str,
-    ) -> CapabilityId {
+    ) -> Result<CapabilityId, CapabilityGrantError> {
         self.grant_manifest_binding(
             subject,
             object,
@@ -364,11 +379,8 @@ impl CapabilityLedger {
         owner_store_generation: Option<Generation>,
         owner_task: Option<TaskId>,
         source: &str,
-    ) -> CapabilityId {
-        assert!(
-            owner_store.is_none() || owner_store_generation.is_some(),
-            "owner_store_generation is required when owner_store is set"
-        );
+    ) -> Result<CapabilityId, CapabilityGrantError> {
+        Self::validate_owner_store_generation(owner_store, owner_store_generation)?;
         let object_ref = Some(AuthorityObjectRef::from_label(class, object));
         if let Some(record) = self.records.iter_mut().find(|record| {
             record.subject == subject
@@ -387,7 +399,7 @@ impl CapabilityLedger {
             record.debug_object_label = object.to_string();
             record.generation += 1;
             record.revoked = false;
-            return record.id;
+            return Ok(record.id);
         }
 
         let id = self.next_id;
@@ -410,7 +422,7 @@ impl CapabilityLedger {
             debug_object_label: object.to_string(),
             revoked: false,
         });
-        id
+        Ok(id)
     }
 
     pub fn grant_with_authority_ref(
@@ -425,11 +437,8 @@ impl CapabilityLedger {
         owner_task: Option<TaskId>,
         source: &str,
         manifest_decl: bool,
-    ) -> CapabilityId {
-        assert!(
-            owner_store.is_none() || owner_store_generation.is_some(),
-            "owner_store_generation is required when owner_store is set"
-        );
+    ) -> Result<CapabilityId, CapabilityGrantError> {
+        Self::validate_owner_store_generation(owner_store, owner_store_generation)?;
         if let Some(record) = self
             .records
             .iter_mut()
@@ -447,7 +456,7 @@ impl CapabilityLedger {
             record.manifest_decl = manifest_decl;
             record.generation += 1;
             record.revoked = false;
-            return record.id;
+            return Ok(record.id);
         }
         let id = self.next_id;
         self.next_id += 1;
@@ -479,7 +488,7 @@ impl CapabilityLedger {
             debug_object_label: debug_object_label.to_string(),
             revoked: false,
         });
-        id
+        Ok(id)
     }
 
     pub fn grant_debug_label_only_for_test(
@@ -526,18 +535,20 @@ impl CapabilityLedger {
             .map(String::as_str)
             .collect::<Vec<_>>();
         let object_ref = parent.object_ref?;
-        let delegated = self.grant_with_authority_ref(
-            subject,
-            &parent.object,
-            object_ref,
-            &operations,
-            lifetime,
-            parent.owner_store,
-            parent.owner_store_generation,
-            parent.owner_task,
-            "delegated",
-            parent.manifest_decl,
-        );
+        let delegated = self
+            .grant_with_authority_ref(
+                subject,
+                &parent.object,
+                object_ref,
+                &operations,
+                lifetime,
+                parent.owner_store,
+                parent.owner_store_generation,
+                parent.owner_task,
+                "delegated",
+                parent.manifest_decl,
+            )
+            .ok()?;
         if let Some(record) = self
             .records
             .iter_mut()
@@ -562,18 +573,20 @@ impl CapabilityLedger {
             return None;
         }
         let object_ref = parent.object_ref?;
-        let attenuated = self.grant_with_authority_ref(
-            subject,
-            &parent.object,
-            object_ref,
-            operations,
-            lifetime,
-            parent.owner_store,
-            parent.owner_store_generation,
-            parent.owner_task,
-            "attenuated",
-            parent.manifest_decl,
-        );
+        let attenuated = self
+            .grant_with_authority_ref(
+                subject,
+                &parent.object,
+                object_ref,
+                operations,
+                lifetime,
+                parent.owner_store,
+                parent.owner_store_generation,
+                parent.owner_task,
+                "attenuated",
+                parent.manifest_decl,
+            )
+            .ok()?;
         if let Some(record) = self
             .records
             .iter_mut()
@@ -611,7 +624,27 @@ impl CapabilityLedger {
         true
     }
 
-    pub fn revoke_by_subject_object(
+    pub fn revoke_by_authority_ref(
+        &mut self,
+        subject: &str,
+        object_ref: AuthorityObjectRef,
+        generation: Generation,
+    ) -> Option<CapabilityId> {
+        let record = self.records.iter_mut().find(|record| {
+            record.subject == subject
+                && record.object_ref == Some(object_ref)
+                && record.generation == generation
+        })?;
+        if record.revoked {
+            return None;
+        }
+        record.revoked = true;
+        record.generation += 1;
+        Some(record.id)
+    }
+
+    #[cfg(test)]
+    pub fn revoke_debug_label_only_for_test(
         &mut self,
         subject: &str,
         object: &str,
@@ -623,6 +656,18 @@ impl CapabilityLedger {
         record.revoked = true;
         record.generation += 1;
         Some(record.id)
+    }
+
+    const fn validate_owner_store_generation(
+        owner_store: Option<StoreId>,
+        owner_store_generation: Option<Generation>,
+    ) -> Result<(), CapabilityGrantError> {
+        match (owner_store, owner_store_generation) {
+            (Some(owner_store), None) => {
+                Err(CapabilityGrantError::OwnerStoreGenerationRequired { owner_store })
+            }
+            _ => Ok(()),
+        }
     }
 
     pub fn revoke_subject(&mut self, subject: &str) -> usize {

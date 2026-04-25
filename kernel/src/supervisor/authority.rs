@@ -126,7 +126,7 @@ impl AuthorityPlane {
         object: &str,
     ) -> Result<(), &'static str> {
         semantic
-            .revoke_capability_by_subject_object(subject, object)
+            .revoke_current_capability(subject, object)
             .map(|_| ())
             .ok_or("capability to revoke was not present")
     }

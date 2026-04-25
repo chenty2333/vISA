@@ -267,6 +267,9 @@ impl SemanticGraph {
                     &source,
                     manifest_decl,
                 );
+                let Ok(cap) = cap else {
+                    return false;
+                };
                 self.event_log
                     .push("command", EventKind::CapabilityGranted { cap });
                 true

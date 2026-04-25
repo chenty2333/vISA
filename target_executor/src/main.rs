@@ -290,7 +290,7 @@ fn build_target_executor_v1(
         let store = store_manager
             .record(store_id)
             .ok_or("store manager lost store after register")?;
-        grant_verified_capabilities(&mut ledger, &verified, store_id, store.store.generation);
+        grant_verified_capabilities(&mut ledger, &verified, store_id, store.store.generation)?;
         publisher
             .bind_to_store(code_id, &store.store)
             .map_err(|error| error.message())?;
@@ -316,25 +316,27 @@ fn build_target_executor_v1(
             .ok_or("cleanup store missing after registration")?
             .store
             .clone();
-        ledger.grant_with_authority_ref(
-            &cleanup_artifact.package,
-            "store-control.cleanup-harness",
-            AuthorityObjectRef::internal(
-                CapabilityClass::StoreControl,
-                ContractObjectRef::new(
-                    ContractObjectKind::Store,
-                    cleanup_store_snapshot.id,
-                    cleanup_store_snapshot.generation,
+        ledger
+            .grant_with_authority_ref(
+                &cleanup_artifact.package,
+                "store-control.cleanup-harness",
+                AuthorityObjectRef::internal(
+                    CapabilityClass::StoreControl,
+                    ContractObjectRef::new(
+                        ContractObjectKind::Store,
+                        cleanup_store_snapshot.id,
+                        cleanup_store_snapshot.generation,
+                    ),
                 ),
-            ),
-            &["kill"],
-            "store",
-            Some(cleanup_store_id),
-            Some(cleanup_store_snapshot.generation),
-            None,
-            "cleanup-harness",
-            true,
-        );
+                &["kill"],
+                "store",
+                Some(cleanup_store_id),
+                Some(cleanup_store_snapshot.generation),
+                None,
+                "cleanup-harness",
+                true,
+            )
+            .map_err(|error| error.message())?;
         let cleanup_code_id = publisher
             .allocate(cleanup_artifact)
             .map_err(|error| error.message())?;
@@ -916,25 +918,28 @@ fn grant_verified_capabilities(
     verified: &VerifiedArtifact,
     store_id: u64,
     store_generation: u64,
-) {
+) -> Result<(), &'static str> {
     for capability in &verified.capabilities {
         let operations = capability
             .operations
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        ledger.grant_manifest_binding(
-            &verified.package,
-            &capability.object,
-            &operations,
-            &capability.lifetime,
-            capability.class,
-            Some(store_id),
-            Some(store_generation),
-            None,
-            "target-executor-v1",
-        );
+        ledger
+            .grant_manifest_binding(
+                &verified.package,
+                &capability.object,
+                &operations,
+                &capability.lifetime,
+                capability.class,
+                Some(store_id),
+                Some(store_generation),
+                None,
+                "target-executor-v1",
+            )
+            .map_err(|error| error.message())?;
     }
+    Ok(())
 }
 
 fn capability_handle_arg_for(

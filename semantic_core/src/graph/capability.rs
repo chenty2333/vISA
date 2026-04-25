@@ -49,17 +49,20 @@ impl SemanticGraph {
                 .find(|store| store.id == store_id)
                 .map(|store| store.generation)
         });
-        let cap = self.capabilities.grant_manifest_binding(
-            subject,
-            object,
-            operations,
-            lifetime,
-            class,
-            owner_store,
-            owner_store_generation,
-            None,
-            source,
-        );
+        let cap = self
+            .capabilities
+            .grant_manifest_binding(
+                subject,
+                object,
+                operations,
+                lifetime,
+                class,
+                owner_store,
+                owner_store_generation,
+                None,
+                source,
+            )
+            .expect("graph capability grant derives owner store generation");
         self.event_log
             .push("capability", EventKind::CapabilityGranted { cap });
         cap
@@ -81,18 +84,21 @@ impl SemanticGraph {
                 .find(|store| store.id == store_id)
                 .map(|store| store.generation)
         });
-        let cap = self.capabilities.grant_with_authority_ref(
-            subject,
-            debug_object_label,
-            object_ref,
-            operations,
-            lifetime,
-            owner_store,
-            owner_store_generation,
-            None,
-            source,
-            manifest_decl,
-        );
+        let cap = self
+            .capabilities
+            .grant_with_authority_ref(
+                subject,
+                debug_object_label,
+                object_ref,
+                operations,
+                lifetime,
+                owner_store,
+                owner_store_generation,
+                None,
+                source,
+                manifest_decl,
+            )
+            .expect("graph authority grant derives owner store generation");
         self.event_log
             .push("capability", EventKind::CapabilityGranted { cap });
         cap
@@ -105,14 +111,55 @@ impl SemanticGraph {
             .push("capability", EventKind::CapabilityRevoked { cap });
         true
     }
-    pub fn revoke_capability_by_subject_object(
+    pub fn revoke_capability_generation(
+        &mut self,
+        cap: CapabilityId,
+        generation: Generation,
+    ) -> bool {
+        if !self.capabilities.revoke_generation(cap, generation) {
+            return false;
+        }
+        self.event_log
+            .push("capability", EventKind::CapabilityRevoked { cap });
+        true
+    }
+    pub fn revoke_capability_by_authority_ref(
+        &mut self,
+        subject: &str,
+        object_ref: AuthorityObjectRef,
+        generation: Generation,
+    ) -> Option<CapabilityId> {
+        let cap = self
+            .capabilities
+            .revoke_by_authority_ref(subject, object_ref, generation)?;
+        self.event_log
+            .push("capability", EventKind::CapabilityRevoked { cap });
+        Some(cap)
+    }
+    pub fn revoke_current_capability(
+        &mut self,
+        subject: &str,
+        object: &str,
+    ) -> Option<CapabilityId> {
+        let object_ref = self
+            .active_authority_object_ref(subject, object)
+            .unwrap_or_else(|| {
+                AuthorityObjectRef::from_label(CapabilityClass::from_object(object), object)
+            });
+        let generation = self
+            .capabilities
+            .generation_of_authority(subject, object_ref)?;
+        self.revoke_capability_by_authority_ref(subject, object_ref, generation)
+    }
+    #[cfg(test)]
+    pub fn revoke_debug_label_capability_for_test(
         &mut self,
         subject: &str,
         object: &str,
     ) -> Option<CapabilityId> {
         let cap = self
             .capabilities
-            .revoke_by_subject_object(subject, object)?;
+            .revoke_debug_label_only_for_test(subject, object)?;
         self.event_log
             .push("capability", EventKind::CapabilityRevoked { cap });
         Some(cap)

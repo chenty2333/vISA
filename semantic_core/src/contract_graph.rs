@@ -610,52 +610,55 @@ impl ContractGraphValidator {
                 cleanup.store_generation,
                 ContractEdgeMode::Historical,
             );
-            match snapshot
+            let current_store = snapshot
                 .stores
                 .iter()
-                .find(|store| store.id == cleanup.store)
-            {
-                Some(store) => {
-                    if cleanup.state == CleanupTransactionState::Completed {
-                        match cleanup.result_store_generation {
-                            Some(generation) if generation == store.generation => {}
-                            Some(_) => violations.push(ContractViolation::new(
+                .find(|store| store.id == cleanup.store);
+            if cleanup.state == CleanupTransactionState::Completed {
+                match cleanup.result_store_generation {
+                    Some(generation) => {
+                        let result_ref = ContractObjectRef::new(
+                            ContractObjectKind::Store,
+                            cleanup.store,
+                            generation,
+                        );
+                        match current_store {
+                            Some(store) if generation == store.generation => {
+                                if store.state != StoreState::Dead {
+                                    violations.push(ContractViolation::new(
+                                        ContractViolationKind::LiveObjectReferencesDeadObject,
+                                        "cleanup->result-store",
+                                        from,
+                                        Some(store.object_ref()),
+                                        "completed cleanup result points to a live current store",
+                                    ));
+                                }
+                            }
+                            _ if Self::has_tombstone(snapshot, result_ref) => {}
+                            Some(store) => violations.push(ContractViolation::new(
                                 ContractViolationKind::GenerationMismatch,
                                 "cleanup->result-store",
                                 from,
                                 Some(store.object_ref()),
-                                "completed cleanup result store generation does not match current store",
+                                "completed cleanup result store generation is neither current nor tombstoned",
                             )),
                             None => violations.push(ContractViolation::new(
-                                ContractViolationKind::HistoricalEdgeMissingGeneration,
+                                ContractViolationKind::DanglingEdge,
                                 "cleanup->result-store",
                                 from,
-                                Some(store.object_ref()),
-                                "completed cleanup is missing result store generation",
+                                Some(result_ref),
+                                "completed cleanup result store generation has no current object or tombstone",
                             )),
                         }
-                        if store.state != StoreState::Dead {
-                            violations.push(ContractViolation::new(
-                                ContractViolationKind::LiveObjectReferencesDeadObject,
-                                "cleanup->store",
-                                from,
-                                Some(store.object_ref()),
-                                "completed cleanup did not leave store dead",
-                            ));
-                        }
                     }
-                }
-                None => violations.push(ContractViolation::new(
-                    ContractViolationKind::DanglingEdge,
-                    "cleanup->store",
-                    from,
-                    Some(ContractObjectRef::new(
-                        ContractObjectKind::Store,
-                        cleanup.store,
-                        0,
+                    None => violations.push(ContractViolation::new(
+                        ContractViolationKind::HistoricalEdgeMissingGeneration,
+                        "cleanup->result-store",
+                        from,
+                        current_store.map(StoreRecord::object_ref),
+                        "completed cleanup is missing result store generation",
                     )),
-                    "cleanup references missing store",
-                )),
+                }
             }
             if let Some(activation_id) = cleanup.activation {
                 match cleanup.activation_generation {

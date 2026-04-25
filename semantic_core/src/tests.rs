@@ -5,7 +5,9 @@ use alloc::vec::Vec;
 #[test]
 fn capability_attenuation_cannot_expand_rights() {
     let mut ledger = CapabilityLedger::new();
-    let parent = ledger.grant("driver", "mmio-bar0", &["read"], "store");
+    let parent = ledger
+        .grant("driver", "mmio-bar0", &["read"], "store")
+        .expect("test grant");
 
     assert!(
         ledger
@@ -26,17 +28,19 @@ fn capability_attenuation_cannot_expand_rights() {
 #[test]
 fn capability_authority_uses_object_ref_not_debug_label() {
     let mut ledger = CapabilityLedger::new();
-    let cap = ledger.grant_manifest_binding(
-        "driver",
-        "mmio.virtio-net",
-        &["map"],
-        "store",
-        CapabilityClass::MmioRegion,
-        Some(1),
-        Some(1),
-        None,
-        "manifest",
-    );
+    let cap = ledger
+        .grant_manifest_binding(
+            "driver",
+            "mmio.virtio-net",
+            &["map"],
+            "store",
+            CapabilityClass::MmioRegion,
+            Some(1),
+            Some(1),
+            None,
+            "manifest",
+        )
+        .expect("test grant");
     let record = ledger
         .records()
         .iter()
@@ -64,18 +68,20 @@ fn capability_authority_uses_object_ref_not_debug_label() {
         CapabilityClass::MmioRegion,
         ContractObjectRef::new(ContractObjectKind::Resource, 999, 1),
     );
-    let wrong_cap = wrong_object.grant_with_authority_ref(
-        "driver",
-        "mmio.virtio-net",
-        different_ref,
-        &["map"],
-        "store",
-        Some(1),
-        Some(1),
-        None,
-        "manifest",
-        true,
-    );
+    let wrong_cap = wrong_object
+        .grant_with_authority_ref(
+            "driver",
+            "mmio.virtio-net",
+            different_ref,
+            &["map"],
+            "store",
+            Some(1),
+            Some(1),
+            None,
+            "manifest",
+            true,
+        )
+        .expect("test grant");
     let wrong_record = wrong_object
         .records()
         .iter()
@@ -106,29 +112,33 @@ fn manifest_binding_does_not_overwrite_explicit_authority_ref_by_label() {
         CapabilityClass::MmioRegion,
         ContractObjectRef::new(ContractObjectKind::Resource, 999, 1),
     );
-    let explicit_cap = ledger.grant_with_authority_ref(
-        "driver",
-        "mmio.virtio-net",
-        explicit_ref,
-        &["map"],
-        "store",
-        Some(1),
-        Some(1),
-        None,
-        "explicit",
-        true,
-    );
-    let manifest_cap = ledger.grant_manifest_binding(
-        "driver",
-        "mmio.virtio-net",
-        &["map"],
-        "store",
-        CapabilityClass::MmioRegion,
-        Some(1),
-        Some(1),
-        None,
-        "manifest",
-    );
+    let explicit_cap = ledger
+        .grant_with_authority_ref(
+            "driver",
+            "mmio.virtio-net",
+            explicit_ref,
+            &["map"],
+            "store",
+            Some(1),
+            Some(1),
+            None,
+            "explicit",
+            true,
+        )
+        .expect("test grant");
+    let manifest_cap = ledger
+        .grant_manifest_binding(
+            "driver",
+            "mmio.virtio-net",
+            &["map"],
+            "store",
+            CapabilityClass::MmioRegion,
+            Some(1),
+            Some(1),
+            None,
+            "manifest",
+        )
+        .expect("test grant");
 
     assert_ne!(explicit_cap, manifest_cap);
     let explicit_record = ledger
@@ -184,47 +194,53 @@ fn authority_binding_release_revokes_exact_granted_capability_not_same_label() {
 }
 
 #[test]
-#[should_panic(expected = "owner_store_generation is required")]
 fn capability_grant_rejects_owner_store_without_generation() {
     let mut ledger = CapabilityLedger::new();
-    ledger.grant_manifest_binding(
-        "driver",
-        "mmio.virtio-net",
-        &["map"],
-        "store",
-        CapabilityClass::MmioRegion,
-        Some(1),
-        None,
-        None,
-        "bad-test",
+    assert_eq!(
+        ledger.grant_manifest_binding(
+            "driver",
+            "mmio.virtio-net",
+            &["map"],
+            "store",
+            CapabilityClass::MmioRegion,
+            Some(1),
+            None,
+            None,
+            "bad-test",
+        ),
+        Err(CapabilityGrantError::OwnerStoreGenerationRequired { owner_store: 1 })
     );
 }
 
 #[test]
 fn revoke_owner_store_matches_exact_generation_only() {
     let mut ledger = CapabilityLedger::new();
-    let cap_gen_1 = ledger.grant_manifest_binding(
-        "driver",
-        "mmio.gen1",
-        &["map"],
-        "store",
-        CapabilityClass::MmioRegion,
-        Some(1),
-        Some(1),
-        None,
-        "test",
-    );
-    let cap_gen_2 = ledger.grant_manifest_binding(
-        "driver",
-        "mmio.gen2",
-        &["map"],
-        "store",
-        CapabilityClass::MmioRegion,
-        Some(1),
-        Some(2),
-        None,
-        "test",
-    );
+    let cap_gen_1 = ledger
+        .grant_manifest_binding(
+            "driver",
+            "mmio.gen1",
+            &["map"],
+            "store",
+            CapabilityClass::MmioRegion,
+            Some(1),
+            Some(1),
+            None,
+            "test",
+        )
+        .expect("test grant");
+    let cap_gen_2 = ledger
+        .grant_manifest_binding(
+            "driver",
+            "mmio.gen2",
+            &["map"],
+            "store",
+            CapabilityClass::MmioRegion,
+            Some(1),
+            Some(2),
+            None,
+            "test",
+        )
+        .expect("test grant");
 
     assert_eq!(ledger.revoke_owner_store(1, 1), {
         let mut revoked = Vec::new();
@@ -238,17 +254,19 @@ fn revoke_owner_store_matches_exact_generation_only() {
 #[test]
 fn capability_authority_rejects_stale_revoked_wrong_subject_and_undeclared_external() {
     let mut ledger = CapabilityLedger::new();
-    let cap = ledger.grant_manifest_binding(
-        "driver",
-        "packet-device.net0",
-        &["rx", "tx"],
-        "store",
-        CapabilityClass::PacketDevice,
-        Some(1),
-        Some(1),
-        None,
-        "manifest",
-    );
+    let cap = ledger
+        .grant_manifest_binding(
+            "driver",
+            "packet-device.net0",
+            &["rx", "tx"],
+            "store",
+            CapabilityClass::PacketDevice,
+            Some(1),
+            Some(1),
+            None,
+            "manifest",
+        )
+        .expect("test grant");
     let record = ledger
         .records()
         .iter()
@@ -286,18 +304,20 @@ fn capability_authority_rejects_stale_revoked_wrong_subject_and_undeclared_exter
         CapabilityClass::Device,
         ContractObjectRef::new(ContractObjectKind::ExternalObject, 7, 0),
     );
-    external.grant_with_authority_ref(
-        "driver",
-        "device.pci0",
-        external_ref,
-        &["probe"],
-        "store",
-        Some(1),
-        Some(1),
-        None,
-        "test",
-        false,
-    );
+    external
+        .grant_with_authority_ref(
+            "driver",
+            "device.pci0",
+            external_ref,
+            &["probe"],
+            "store",
+            Some(1),
+            Some(1),
+            None,
+            "test",
+            false,
+        )
+        .expect("test grant");
     assert_eq!(
         external.check_authority("driver", external_ref, "probe", None),
         Err(CapabilityDenyReason::ManifestDeclarationMissing)
@@ -482,7 +502,7 @@ fn capability_check_records_denial_and_generation_mismatch() {
             .check_capability("linux_syscall", "timer.sleep", "arm")
             .is_ok()
     );
-    graph.revoke_capability_by_subject_object("linux_syscall", "timer.sleep");
+    graph.revoke_current_capability("linux_syscall", "timer.sleep");
     assert_eq!(
         graph.check_capability("linux_syscall", "timer.sleep", "arm"),
         Err(CapabilityDenyReason::Revoked)
@@ -1253,7 +1273,13 @@ fn invariants_reject_bound_authority_without_capability() {
         .bind_authority_resource(irq, "driver_virtio_net", "irq.net0", &["ack"], "store")
         .expect("authority binding");
 
-    graph.revoke_capability_by_subject_object("driver_virtio_net", "irq.net0");
+    let (capability, capability_generation) = graph
+        .authority_bindings()
+        .iter()
+        .find(|binding| binding.id == authority)
+        .map(|binding| (binding.capability, binding.capability_generation))
+        .expect("authority binding");
+    assert!(graph.revoke_capability_generation(capability, capability_generation));
 
     assert_eq!(
         graph.check_invariants(),
