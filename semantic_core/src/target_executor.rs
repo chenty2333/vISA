@@ -4208,6 +4208,8 @@ mod tests {
                 tombstones.push(tombstone);
                 tombstones
             },
+            external_objects: Vec::new(),
+            explicit_edges: Vec::new(),
         };
         let violations = validate_contract_graph(&snapshot);
         assert!(violations.len() >= 4);
@@ -4287,6 +4289,8 @@ mod tests {
                 cleanups
             },
             tombstones: Vec::new(),
+            external_objects: Vec::new(),
+            explicit_edges: Vec::new(),
         };
         let violations = validate_contract_graph(&snapshot);
         assert!(violations.iter().any(|violation| {
@@ -4387,6 +4391,8 @@ mod tests {
                 ));
                 tombstones
             },
+            external_objects: Vec::new(),
+            explicit_edges: Vec::new(),
         };
         let violations = validate_contract_graph(&snapshot);
         assert!(!violations.iter().any(|violation| {
@@ -4396,6 +4402,341 @@ mod tests {
                     ContractViolationKind::GenerationMismatch
                         | ContractViolationKind::TombstoneReferencedByLiveEdge
                 )
+        }));
+    }
+
+    #[test]
+    fn contract_graph_validator_enforces_live_cleanup_and_external_edges() {
+        let (artifact, store, code, capabilities) = running_store_and_code();
+        let mut dead_store = store.store.clone();
+        dead_store.state = StoreState::Dead;
+        let mut activation = ActivationRecord {
+            id: 55,
+            store: dead_store.id,
+            store_generation: dead_store.generation,
+            code_object: code.id,
+            code_generation: code.generation,
+            artifact: code.artifact_id,
+            entry: ActivationEntry::Symbol("_start".to_string()),
+            generation: 1,
+            state: ActivationState::Running,
+            start_event: 1,
+            exit_event: None,
+            active_dmw_leases: 1,
+            blocked_wait: None,
+            trap: None,
+            return_tag: None,
+        };
+        activation.active_dmw_leases = 1;
+        let wait = WaitRecord {
+            id: 77,
+            owner_task: dead_store.id as TaskId,
+            kind: SemanticWaitKind::Futex,
+            generation: 1,
+            state: WaitState::Pending,
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: {
+                let mut artifacts = Vec::new();
+                artifacts.push(artifact);
+                artifacts
+            },
+            code_objects: {
+                let mut objects = Vec::new();
+                objects.push(code.clone());
+                objects
+            },
+            stores: {
+                let mut stores = Vec::new();
+                stores.push(dead_store.clone());
+                stores
+            },
+            activations: {
+                let mut activations = Vec::new();
+                activations.push(activation);
+                activations
+            },
+            traps: Vec::new(),
+            hostcalls: Vec::new(),
+            capabilities: capabilities.records().to_vec(),
+            waits: {
+                let mut waits = Vec::new();
+                waits.push(wait);
+                waits
+            },
+            cleanup_transactions: Vec::new(),
+            tombstones: {
+                let mut tombstones = Vec::new();
+                tombstones.push(TombstoneRecord::new(
+                    ContractObjectKind::CodeObject,
+                    code.id,
+                    code.generation + 1,
+                    99,
+                    "old-code-generation",
+                ));
+                tombstones
+            },
+            external_objects: Vec::new(),
+            explicit_edges: {
+                let mut edges = Vec::new();
+                edges.push(ContractEdgeRecord::new(
+                    dead_store.object_ref(),
+                    ContractObjectRef::new(
+                        ContractObjectKind::CodeObject,
+                        code.id,
+                        code.generation + 1,
+                    ),
+                    ContractEdgeMode::Live,
+                    "store->stale-code-live",
+                    1,
+                ));
+                edges.push(ContractEdgeRecord::new(
+                    dead_store.object_ref(),
+                    ContractObjectRef::new(
+                        ContractObjectKind::CodeObject,
+                        code.id,
+                        code.generation + 2,
+                    ),
+                    ContractEdgeMode::Historical,
+                    "store->missing-code-history",
+                    1,
+                ));
+                edges.push(ContractEdgeRecord::new(
+                    dead_store.object_ref(),
+                    capabilities.records()[0].object_ref(),
+                    ContractEdgeMode::CleanupEffect,
+                    "owns",
+                    1,
+                ));
+                edges.push(
+                    ContractEdgeRecord::new(
+                        dead_store.object_ref(),
+                        ContractObjectRef::new(ContractObjectKind::ExternalObject, 41, 0),
+                        ContractEdgeMode::External,
+                        "store->external-device",
+                        1,
+                    )
+                    .with_external_metadata("pci", "device"),
+                );
+                edges
+            },
+        };
+        let violations = validate_contract_graph(&snapshot);
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+                && violation.edge == "activation->store"
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+                && violation.edge == "activation->dmw-lease"
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+                && violation.edge == "capability->owner-store"
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+                && violation.edge == "wait->owner-task"
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::TombstoneReferencedByLiveEdge
+                && violation.edge == "store->stale-code-live"
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::GenerationMismatch
+                && violation.edge == "store->missing-code-history"
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::CleanupEffectCreatesLiveOwnership
+                && violation.edge == "owns"
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::ExternalEdgeMissingDeclaration
+                && violation.edge == "store->external-device"
+        }));
+    }
+
+    #[test]
+    fn contract_graph_validator_allows_historical_cleanup_and_declared_external_edges() {
+        let (artifact, store, code, capabilities) = running_store_and_code();
+        let mut current_store = store.store.clone();
+        let historical_store_generation = current_store.generation;
+        current_store.generation += 1;
+        let mut revoked_capability = capabilities.records()[0].clone();
+        revoked_capability.revoked = true;
+        let cleanup = FaultCleanupTransaction {
+            id: 17,
+            store: current_store.id,
+            store_generation: current_store.generation,
+            activation: None,
+            activation_generation: None,
+            code_object: None,
+            code_generation: None,
+            generation: 1,
+            state: CleanupTransactionState::Pending,
+            reason: "edge-mode-test".to_string(),
+            steps: Vec::new(),
+            released_dmw_leases: 0,
+            cancelled_waits: 0,
+            revoked_capabilities: Vec::new(),
+            revoked_capability_refs: Vec::new(),
+            dropped_resources: 0,
+            unbound_code_object: false,
+            effect: FailureEffect::CompleteWithErrno(5),
+        };
+        let trap = TargetTrapRecord {
+            id: 23,
+            generation: 1,
+            class: TargetTrapClass::SupervisorStoreTrap,
+            store: Some(current_store.id),
+            activation: None,
+            code_object: None,
+            code_generation: None,
+            artifact: None,
+            artifact_generation: None,
+            offset: None,
+            hostcall: None,
+            fault_policy: "history-only".to_string(),
+            effect: FailureEffect::CompleteWithErrno(5),
+            detail: "store history".to_string(),
+        };
+        let external = ExternalObjectDeclaration::new(
+            ContractObjectRef::new(ContractObjectKind::ExternalObject, 9, 0),
+            "pci",
+            "device",
+            "virtio-net",
+        );
+        let snapshot = ContractGraphSnapshot {
+            artifacts: {
+                let mut artifacts = Vec::new();
+                artifacts.push(artifact);
+                artifacts
+            },
+            code_objects: {
+                let mut objects = Vec::new();
+                objects.push(code.clone());
+                objects
+            },
+            stores: {
+                let mut stores = Vec::new();
+                stores.push(current_store.clone());
+                stores
+            },
+            activations: Vec::new(),
+            traps: {
+                let mut traps = Vec::new();
+                traps.push(trap.clone());
+                traps
+            },
+            hostcalls: {
+                let mut hostcalls = Vec::new();
+                hostcalls.push(HostcallTraceRecord {
+                    id: 31,
+                    generation: 1,
+                    abi_version: HostcallFrame::ABI_VERSION.to_string(),
+                    frame_size: HostcallFrame::FRAME_SIZE,
+                    flags: 0,
+                    activation: 44,
+                    activation_generation: 1,
+                    store: current_store.id,
+                    store_generation: current_store.generation,
+                    code_object: code.id,
+                    code_generation: code.generation,
+                    artifact: code.artifact_id,
+                    hostcall_number: 1,
+                    hostcall_seq: 1,
+                    caller_offset: 0,
+                    name: "hostcall.history".to_string(),
+                    category: HostcallCategory::Mmio,
+                    subject: code.package.clone(),
+                    object: "mmio.virtio-net".to_string(),
+                    operation: "map".to_string(),
+                    args: [0; 6],
+                    cap_args: Vec::new(),
+                    record_mode: RecordMode::Deterministic,
+                    allowed: true,
+                    result: "ok".to_string(),
+                    ret_tag: HostcallReturnTag::Ok,
+                    ret0: 0,
+                    ret1: 0,
+                    trap_out: None,
+                    wait_token_out: None,
+                });
+                hostcalls
+            },
+            capabilities: {
+                let mut caps = Vec::new();
+                caps.push(revoked_capability.clone());
+                caps
+            },
+            waits: Vec::new(),
+            cleanup_transactions: {
+                let mut cleanups = Vec::new();
+                cleanups.push(cleanup.clone());
+                cleanups
+            },
+            tombstones: {
+                let mut tombstones = Vec::new();
+                tombstones.push(TombstoneRecord::new(
+                    ContractObjectKind::Store,
+                    current_store.id,
+                    historical_store_generation,
+                    70,
+                    "store-rebound",
+                ));
+                tombstones.push(TombstoneRecord::new(
+                    ContractObjectKind::Activation,
+                    44,
+                    1,
+                    71,
+                    "activation-finished",
+                ));
+                tombstones
+            },
+            external_objects: {
+                let mut external_objects = Vec::new();
+                external_objects.push(external.clone());
+                external_objects
+            },
+            explicit_edges: {
+                let mut edges = Vec::new();
+                edges.push(ContractEdgeRecord::new(
+                    trap.object_ref(),
+                    ContractObjectRef::new(
+                        ContractObjectKind::Store,
+                        current_store.id,
+                        historical_store_generation,
+                    ),
+                    ContractEdgeMode::Historical,
+                    "trap->store-history",
+                    72,
+                ));
+                edges.push(ContractEdgeRecord::new(
+                    cleanup.object_ref(),
+                    revoked_capability.object_ref(),
+                    ContractEdgeMode::CleanupEffect,
+                    "cleanup->capability-revoked",
+                    73,
+                ));
+                edges.push(
+                    ContractEdgeRecord::new(
+                        current_store.object_ref(),
+                        external.object,
+                        ContractEdgeMode::External,
+                        "store->declared-external",
+                        74,
+                    )
+                    .with_external_metadata("pci", "device"),
+                );
+                edges
+            },
+        };
+        let violations = validate_contract_graph(&snapshot);
+        assert!(!violations.iter().any(|violation| {
+            violation.edge == "trap->store-history"
+                || violation.edge == "cleanup->capability-revoked"
+                || violation.edge == "store->declared-external"
+                || violation.edge == "hostcall->activation"
         }));
     }
 

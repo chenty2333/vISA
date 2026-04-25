@@ -9,7 +9,12 @@ pub enum ContractViolationKind {
     DanglingEdge,
     GenerationMismatch,
     LiveObjectReferencesDeadObject,
+    LiveEdgeReferencesInactiveObject,
     TombstoneReferencedByLiveEdge,
+    HistoricalEdgeMissingGeneration,
+    CleanupEffectCreatesLiveOwnership,
+    ExternalEdgeMissingDeclaration,
+    ExternalEdgeMetadataMismatch,
 }
 
 impl ContractViolationKind {
@@ -18,7 +23,12 @@ impl ContractViolationKind {
             Self::DanglingEdge => "dangling-edge",
             Self::GenerationMismatch => "generation-mismatch",
             Self::LiveObjectReferencesDeadObject => "live-object-references-dead-object",
+            Self::LiveEdgeReferencesInactiveObject => "live-edge-references-inactive-object",
             Self::TombstoneReferencedByLiveEdge => "tombstone-referenced-by-live-edge",
+            Self::HistoricalEdgeMissingGeneration => "historical-edge-missing-generation",
+            Self::CleanupEffectCreatesLiveOwnership => "cleanup-effect-creates-live-ownership",
+            Self::ExternalEdgeMissingDeclaration => "external-edge-missing-declaration",
+            Self::ExternalEdgeMetadataMismatch => "external-edge-metadata-mismatch",
         }
     }
 }
@@ -77,6 +87,8 @@ pub struct ContractGraphSnapshot {
     pub waits: Vec<WaitRecord>,
     pub cleanup_transactions: Vec<FaultCleanupTransaction>,
     pub tombstones: Vec<TombstoneRecord>,
+    pub external_objects: Vec<ExternalObjectDeclaration>,
+    pub explicit_edges: Vec<ContractEdgeRecord>,
 }
 
 pub fn validate_contract_graph(snapshot: &ContractGraphSnapshot) -> Vec<ContractViolation> {
@@ -86,9 +98,78 @@ pub fn validate_contract_graph(snapshot: &ContractGraphSnapshot) -> Vec<Contract
 pub struct ContractGraphValidator;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum EdgeSemantics {
+pub enum ContractEdgeMode {
     Live,
     Historical,
+    CleanupEffect,
+    External,
+}
+
+impl ContractEdgeMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Historical => "historical",
+            Self::CleanupEffect => "cleanup-effect",
+            Self::External => "external",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalObjectDeclaration {
+    pub object: ContractObjectRef,
+    pub provider: String,
+    pub class: String,
+    pub debug_label: String,
+}
+
+impl ExternalObjectDeclaration {
+    pub fn new(object: ContractObjectRef, provider: &str, class: &str, debug_label: &str) -> Self {
+        Self {
+            object,
+            provider: provider.to_string(),
+            class: class.to_string(),
+            debug_label: debug_label.to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContractEdgeRecord {
+    pub from: ContractObjectRef,
+    pub to: ContractObjectRef,
+    pub mode: ContractEdgeMode,
+    pub label: String,
+    pub epoch: EventId,
+    pub provider: Option<String>,
+    pub class: Option<String>,
+}
+
+impl ContractEdgeRecord {
+    pub fn new(
+        from: ContractObjectRef,
+        to: ContractObjectRef,
+        mode: ContractEdgeMode,
+        label: &str,
+        epoch: EventId,
+    ) -> Self {
+        Self {
+            from,
+            to,
+            mode,
+            label: label.to_string(),
+            epoch,
+            provider: None,
+            class: None,
+        }
+    }
+
+    pub fn with_external_metadata(mut self, provider: &str, class: &str) -> Self {
+        self.provider = Some(provider.to_string());
+        self.class = Some(class.to_string());
+        self
+    }
 }
 
 impl ContractGraphValidator {
@@ -101,6 +182,7 @@ impl ContractGraphValidator {
         Self::validate_capabilities(snapshot, &mut violations);
         Self::validate_waits(snapshot, &mut violations);
         Self::validate_cleanups(snapshot, &mut violations);
+        Self::validate_explicit_edges(snapshot, &mut violations);
         violations
     }
 
@@ -183,6 +265,15 @@ impl ContractGraphValidator {
                             from,
                             Some(store.object_ref()),
                             "live activation references a dead store",
+                        ));
+                    }
+                    if store.state == StoreState::Dead && activation.active_dmw_leases != 0 {
+                        violations.push(ContractViolation::new(
+                            ContractViolationKind::LiveObjectReferencesDeadObject,
+                            "activation->dmw-lease",
+                            from,
+                            Some(store.object_ref()),
+                            "dead store still has active DMW lease through activation",
                         ));
                     }
                     Self::check_tombstone_live_edge(
@@ -384,7 +475,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::Activation,
                 hostcall.activation,
                 hostcall.activation_generation,
-                EdgeSemantics::Historical,
+                ContractEdgeMode::Historical,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -394,7 +485,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::Store,
                 hostcall.store,
                 hostcall.store_generation,
-                EdgeSemantics::Historical,
+                ContractEdgeMode::Historical,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -404,7 +495,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::CodeObject,
                 hostcall.code_object,
                 hostcall.code_generation,
-                EdgeSemantics::Historical,
+                ContractEdgeMode::Historical,
             );
         }
     }
@@ -445,9 +536,11 @@ impl ContractGraphValidator {
 
     fn validate_waits(snapshot: &ContractGraphSnapshot, violations: &mut Vec<ContractViolation>) {
         for wait in &snapshot.waits {
-            if snapshot.stores.iter().any(|store| {
-                store.id == u64::from(wait.owner_task) && store.state == StoreState::Dead
-            }) {
+            if wait.state == WaitState::Pending
+                && snapshot.stores.iter().any(|store| {
+                    store.id == u64::from(wait.owner_task) && store.state == StoreState::Dead
+                })
+            {
                 violations.push(ContractViolation::new(
                     ContractViolationKind::LiveObjectReferencesDeadObject,
                     "wait->owner-task",
@@ -473,7 +566,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::Store,
                 cleanup.store,
                 cleanup.store_generation,
-                EdgeSemantics::Historical,
+                ContractEdgeMode::Historical,
             );
             match snapshot
                 .stores
@@ -515,7 +608,7 @@ impl ContractGraphValidator {
                         ContractObjectKind::Activation,
                         activation_id,
                         generation,
-                        EdgeSemantics::Historical,
+                        ContractEdgeMode::Historical,
                     ),
                     None => {
                         if snapshot
@@ -548,7 +641,7 @@ impl ContractGraphValidator {
                         ContractObjectKind::CodeObject,
                         code_id,
                         generation,
-                        EdgeSemantics::Historical,
+                        ContractEdgeMode::Historical,
                     );
                 }
                 match snapshot.code_objects.iter().find(|code| code.id == code_id) {
@@ -667,6 +760,123 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_explicit_edges(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for edge in &snapshot.explicit_edges {
+            if edge.mode == ContractEdgeMode::External {
+                Self::validate_external_edge(snapshot, violations, edge);
+                continue;
+            }
+
+            if let Some(source) = Self::current_object_ref(snapshot, edge.from.kind, edge.from.id) {
+                if source.generation != edge.from.generation {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        &edge.label,
+                        edge.from,
+                        Some(source),
+                        "edge source generation does not match source object",
+                    ));
+                }
+                if edge.mode == ContractEdgeMode::Live {
+                    if let Some(reason) = Self::inactive_reason(snapshot, edge.from) {
+                        violations.push(ContractViolation::new(
+                            ContractViolationKind::LiveEdgeReferencesInactiveObject,
+                            &edge.label,
+                            edge.from,
+                            Some(source),
+                            reason,
+                        ));
+                    }
+                }
+            } else if !Self::has_tombstone(snapshot, edge.from) {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::DanglingEdge,
+                    &edge.label,
+                    edge.from,
+                    None,
+                    "edge source is missing",
+                ));
+            }
+
+            if edge.mode == ContractEdgeMode::CleanupEffect
+                && Self::cleanup_effect_label_creates_live_ownership(&edge.label)
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::CleanupEffectCreatesLiveOwnership,
+                    &edge.label,
+                    edge.from,
+                    Some(edge.to),
+                    "cleanup effect edge uses a live-ownership relation",
+                ));
+            }
+
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                edge.from,
+                &edge.label,
+                edge.to.kind,
+                edge.to.id,
+                edge.to.generation,
+                edge.mode,
+            );
+        }
+    }
+
+    fn validate_external_edge(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+        edge: &ContractEdgeRecord,
+    ) {
+        if edge.to.kind != ContractObjectKind::ExternalObject {
+            violations.push(ContractViolation::new(
+                ContractViolationKind::DanglingEdge,
+                &edge.label,
+                edge.from,
+                Some(edge.to),
+                "external edge target is not an external object",
+            ));
+            return;
+        }
+
+        let declaration = snapshot
+            .external_objects
+            .iter()
+            .find(|declaration| declaration.object == edge.to);
+        let Some(declaration) = declaration else {
+            violations.push(ContractViolation::new(
+                ContractViolationKind::ExternalEdgeMissingDeclaration,
+                &edge.label,
+                edge.from,
+                Some(edge.to),
+                "external edge target has no declaration",
+            ));
+            return;
+        };
+
+        match (&edge.provider, &edge.class) {
+            (Some(provider), Some(class))
+                if *provider == declaration.provider && *class == declaration.class => {}
+            (Some(_), Some(_)) => violations.push(ContractViolation::new(
+                ContractViolationKind::ExternalEdgeMetadataMismatch,
+                &edge.label,
+                edge.from,
+                Some(edge.to),
+                "external edge provider/class metadata does not match declaration",
+            )),
+            _ => violations.push(ContractViolation::new(
+                ContractViolationKind::ExternalEdgeMetadataMismatch,
+                &edge.label,
+                edge.from,
+                Some(edge.to),
+                "external edge is missing provider/class metadata",
+            )),
+        }
+    }
+
     fn check_generation_edge(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -675,8 +885,21 @@ impl ContractGraphValidator {
         kind: ContractObjectKind,
         id: u64,
         generation: Generation,
-        semantics: EdgeSemantics,
+        semantics: ContractEdgeMode,
     ) {
+        if semantics != ContractEdgeMode::Live
+            && kind != ContractObjectKind::ExternalObject
+            && generation == 0
+        {
+            violations.push(ContractViolation::new(
+                ContractViolationKind::HistoricalEdgeMissingGeneration,
+                edge,
+                from,
+                Some(ContractObjectRef::new(kind, id, generation)),
+                "historical/cleanup edge is missing exact target generation",
+            ));
+            return;
+        }
         let target = match kind {
             ContractObjectKind::Activation => snapshot
                 .activations
@@ -693,17 +916,61 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|code| code.id == id)
                 .map(CodeObject::object_ref),
+            ContractObjectKind::Artifact => snapshot
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.artifact_id == id)
+                .map(VerifiedArtifact::object_ref),
+            ContractObjectKind::Trap => snapshot
+                .traps
+                .iter()
+                .find(|trap| trap.id == id)
+                .map(TargetTrapRecord::object_ref),
+            ContractObjectKind::Hostcall => snapshot
+                .hostcalls
+                .iter()
+                .find(|hostcall| hostcall.id == id)
+                .map(HostcallTraceRecord::object_ref),
+            ContractObjectKind::Capability => snapshot
+                .capabilities
+                .iter()
+                .find(|capability| capability.id == id)
+                .map(CapabilityRecord::object_ref),
+            ContractObjectKind::WaitToken => snapshot
+                .waits
+                .iter()
+                .find(|wait| wait.id == id)
+                .map(WaitRecord::object_ref),
+            ContractObjectKind::CleanupTransaction => snapshot
+                .cleanup_transactions
+                .iter()
+                .find(|cleanup| cleanup.id == id)
+                .map(FaultCleanupTransaction::object_ref),
+            ContractObjectKind::ExternalObject => snapshot
+                .external_objects
+                .iter()
+                .find(|external| external.object.id == id)
+                .map(|external| external.object),
             _ => None,
         };
         match target {
             Some(target) if target.generation != generation => {
-                let has_historical_tombstone = semantics == EdgeSemantics::Historical
-                    && snapshot.tombstones.iter().any(|tombstone| {
-                        tombstone.kind == kind
-                            && tombstone.id == id
-                            && tombstone.generation == generation
-                    });
-                if !has_historical_tombstone {
+                let has_exact_tombstone =
+                    Self::has_tombstone(snapshot, ContractObjectRef::new(kind, id, generation));
+                if semantics == ContractEdgeMode::Live && has_exact_tombstone {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::TombstoneReferencedByLiveEdge,
+                        edge,
+                        from,
+                        Some(ContractObjectRef::new(kind, id, generation)),
+                        "live edge references a tombstoned generation",
+                    ));
+                } else if !has_exact_tombstone
+                    || !matches!(
+                        semantics,
+                        ContractEdgeMode::Historical | ContractEdgeMode::CleanupEffect
+                    )
+                {
                     violations.push(ContractViolation::new(
                         ContractViolationKind::GenerationMismatch,
                         edge,
@@ -713,27 +980,49 @@ impl ContractGraphValidator {
                     ));
                 }
             }
-            Some(target) => Self::check_tombstone_live_edge(
-                snapshot,
-                violations,
-                from,
-                edge,
-                target,
-                semantics == EdgeSemantics::Live,
-            ),
+            Some(target) => {
+                Self::check_tombstone_live_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    edge,
+                    target,
+                    semantics == ContractEdgeMode::Live,
+                );
+                if semantics == ContractEdgeMode::Live
+                    && let Some(reason) = Self::inactive_reason(snapshot, target)
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::LiveEdgeReferencesInactiveObject,
+                        edge,
+                        from,
+                        Some(target),
+                        reason,
+                    ));
+                }
+            }
             None => {
-                let has_historical_tombstone = semantics == EdgeSemantics::Historical
-                    && snapshot.tombstones.iter().any(|tombstone| {
-                        tombstone.kind == kind
-                            && tombstone.id == id
-                            && tombstone.generation == generation
-                    });
-                if !has_historical_tombstone {
+                let target_ref = ContractObjectRef::new(kind, id, generation);
+                let has_exact_tombstone = Self::has_tombstone(snapshot, target_ref);
+                if semantics == ContractEdgeMode::Live && has_exact_tombstone {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::TombstoneReferencedByLiveEdge,
+                        edge,
+                        from,
+                        Some(target_ref),
+                        "live edge references a tombstoned generation",
+                    ));
+                } else if !has_exact_tombstone
+                    || !matches!(
+                        semantics,
+                        ContractEdgeMode::Historical | ContractEdgeMode::CleanupEffect
+                    )
+                {
                     violations.push(ContractViolation::new(
                         ContractViolationKind::DanglingEdge,
                         edge,
                         from,
-                        Some(ContractObjectRef::new(kind, id, generation)),
+                        Some(target_ref),
                         "edge references missing target",
                     ));
                 }
@@ -772,6 +1061,145 @@ impl ContractGraphValidator {
             activation.state,
             ActivationState::Running | ActivationState::Pending
         )
+    }
+
+    fn current_object_ref(
+        snapshot: &ContractGraphSnapshot,
+        kind: ContractObjectKind,
+        id: u64,
+    ) -> Option<ContractObjectRef> {
+        match kind {
+            ContractObjectKind::Artifact => snapshot
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.artifact_id == id)
+                .map(VerifiedArtifact::object_ref),
+            ContractObjectKind::CodeObject => snapshot
+                .code_objects
+                .iter()
+                .find(|code| code.id == id)
+                .map(CodeObject::object_ref),
+            ContractObjectKind::Store => snapshot
+                .stores
+                .iter()
+                .find(|store| store.id == id)
+                .map(StoreRecord::object_ref),
+            ContractObjectKind::Activation => snapshot
+                .activations
+                .iter()
+                .find(|activation| activation.id == id)
+                .map(ActivationRecord::object_ref),
+            ContractObjectKind::Trap => snapshot
+                .traps
+                .iter()
+                .find(|trap| trap.id == id)
+                .map(TargetTrapRecord::object_ref),
+            ContractObjectKind::Hostcall => snapshot
+                .hostcalls
+                .iter()
+                .find(|hostcall| hostcall.id == id)
+                .map(HostcallTraceRecord::object_ref),
+            ContractObjectKind::Capability => snapshot
+                .capabilities
+                .iter()
+                .find(|capability| capability.id == id)
+                .map(CapabilityRecord::object_ref),
+            ContractObjectKind::WaitToken => snapshot
+                .waits
+                .iter()
+                .find(|wait| wait.id == id)
+                .map(WaitRecord::object_ref),
+            ContractObjectKind::CleanupTransaction => snapshot
+                .cleanup_transactions
+                .iter()
+                .find(|cleanup| cleanup.id == id)
+                .map(FaultCleanupTransaction::object_ref),
+            ContractObjectKind::ExternalObject => snapshot
+                .external_objects
+                .iter()
+                .find(|external| external.object.id == id)
+                .map(|external| external.object),
+            ContractObjectKind::MemoryObject | ContractObjectKind::Tombstone => None,
+        }
+    }
+
+    fn has_tombstone(snapshot: &ContractGraphSnapshot, object: ContractObjectRef) -> bool {
+        snapshot
+            .tombstones
+            .iter()
+            .any(|tombstone| tombstone.object_ref() == object)
+    }
+
+    fn inactive_reason(
+        snapshot: &ContractGraphSnapshot,
+        object: ContractObjectRef,
+    ) -> Option<&'static str> {
+        match object.kind {
+            ContractObjectKind::Store => snapshot
+                .stores
+                .iter()
+                .find(|store| store.id == object.id && store.generation == object.generation)
+                .and_then(|store| {
+                    (store.state == StoreState::Dead).then_some("live edge references dead store")
+                }),
+            ContractObjectKind::CodeObject => snapshot
+                .code_objects
+                .iter()
+                .find(|code| code.id == object.id && code.generation == object.generation)
+                .and_then(|code| {
+                    matches!(
+                        code.state,
+                        CodeObjectState::Faulted
+                            | CodeObjectState::Retired
+                            | CodeObjectState::Unpublished
+                    )
+                    .then_some("live edge references inactive code object")
+                }),
+            ContractObjectKind::Activation => snapshot
+                .activations
+                .iter()
+                .find(|activation| {
+                    activation.id == object.id && activation.generation == object.generation
+                })
+                .and_then(|activation| {
+                    (!Self::is_live_activation(activation))
+                        .then_some("live edge references inactive activation")
+                }),
+            ContractObjectKind::Capability => snapshot
+                .capabilities
+                .iter()
+                .find(|capability| {
+                    capability.id == object.id && capability.generation == object.generation
+                })
+                .and_then(|capability| {
+                    capability
+                        .revoked
+                        .then_some("live edge references revoked capability")
+                }),
+            ContractObjectKind::WaitToken => snapshot
+                .waits
+                .iter()
+                .find(|wait| wait.id == object.id && wait.generation == object.generation)
+                .and_then(|wait| {
+                    (wait.state != WaitState::Pending)
+                        .then_some("live edge references inactive wait token")
+                }),
+            _ => None,
+        }
+    }
+
+    fn cleanup_effect_label_creates_live_ownership(label: &str) -> bool {
+        matches!(
+            label,
+            "owns"
+                | "owner"
+                | "owner-store"
+                | "bound-to"
+                | "blocks-on"
+                | "authorizes"
+                | "live"
+                | "live-owner"
+        ) || label.starts_with("live:")
     }
 }
 

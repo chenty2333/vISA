@@ -456,6 +456,8 @@ fn build_target_executor_v1(
             .chain(store_manager.tombstones().iter())
             .cloned()
             .collect(),
+        external_objects: Vec::new(),
+        explicit_edges: Vec::new(),
     };
     report.contract_violations = validate_contract_graph(&contract_snapshot)
         .iter()
