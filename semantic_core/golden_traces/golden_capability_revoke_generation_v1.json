@@ -1,0 +1,113 @@
+{
+  "schema": "vmos-golden-trace-v1",
+  "name": "golden_capability_revoke_generation_v1",
+  "commands": [
+    {
+      "op": "GrantCapability",
+      "cap": 4,
+      "subject": "driver_virtio_net",
+      "object_ref": {
+        "scope": "internal",
+        "class": "packet-device",
+        "object": {
+          "kind": "resource",
+          "id": 99,
+          "generation": 1
+        }
+      },
+      "rights": [
+        "rx",
+        "tx"
+      ],
+      "generation": 1
+    },
+    {
+      "op": "CreateWait",
+      "wait": 22,
+      "owner_store": 1,
+      "blocker": {
+        "kind": "capability",
+        "id": 4,
+        "generation": 1
+      }
+    },
+    {
+      "op": "RevokeCapability",
+      "cap": 4,
+      "generation": 2
+    },
+    {
+      "op": "CancelWait",
+      "wait": 22,
+      "reason": "capability-revoked"
+    }
+  ],
+  "events": [
+    {
+      "kind": "CapabilityGranted",
+      "cap": 4,
+      "generation": 1
+    },
+    {
+      "kind": "WaitPending",
+      "wait": 22,
+      "generation": 1
+    },
+    {
+      "kind": "CapabilityRevoked",
+      "cap": 4,
+      "generation": 2
+    },
+    {
+      "kind": "WaitCancelled",
+      "wait": 22,
+      "reason": "capability-revoked"
+    },
+    {
+      "kind": "CapabilityDenied",
+      "cap": 4,
+      "code": "revoked"
+    }
+  ],
+  "final_views": {
+    "capability": {
+      "schema": 1,
+      "kind": "capability",
+      "id": 4,
+      "generation": 2,
+      "state": "revoked",
+      "subject": "driver_virtio_net",
+      "references": {
+        "object_ref": {
+          "scope": "internal",
+          "class": "packet-device",
+          "object": {
+            "kind": "resource",
+            "id": 99,
+            "generation": 1
+          }
+        }
+      },
+      "rights": [
+        "rx",
+        "tx"
+      ]
+    },
+    "wait": {
+      "schema": 1,
+      "kind": "wait",
+      "id": 22,
+      "generation": 1,
+      "state": "cancelled",
+      "cancel_reason": "capability-revoked",
+      "restart_policy": "restart-if-allowed"
+    }
+  },
+  "expected_violation_codes": [
+    "revoked"
+  ],
+  "validation": {
+    "ok": true,
+    "violation_codes": []
+  }
+}

@@ -2301,4 +2301,48 @@ mod tests {
         assert_eq!(view["effects"][0]["kind"], "mark-store-dead");
         assert_eq!(view["references"]["revoked_capabilities"][0]["id"], 4);
     }
+
+    #[test]
+    fn golden_traces_parse_and_capture_expected_final_views() {
+        let wait = parse_golden(include_str!(
+            "../../semantic_core/golden_traces/golden_wait_pending_resume_v1.json"
+        ));
+        assert_eq!(wait["schema"], "vmos-golden-trace-v1");
+        assert_eq!(wait["validation"]["ok"], true);
+        assert_eq!(wait["final_views"]["wait"]["state"], "consumed");
+        assert!(wait["commands"].as_array().expect("commands").len() >= 3);
+
+        let capability = parse_golden(include_str!(
+            "../../semantic_core/golden_traces/golden_capability_revoke_generation_v1.json"
+        ));
+        assert_eq!(capability["final_views"]["capability"]["state"], "revoked");
+        assert_eq!(
+            capability["final_views"]["wait"]["cancel_reason"],
+            "capability-revoked"
+        );
+        assert_eq!(capability["expected_violation_codes"][0], "revoked");
+
+        let cleanup = parse_golden(include_str!(
+            "../../semantic_core/golden_traces/golden_driver_fault_cleanup_generation_safe_v1.json"
+        ));
+        assert_eq!(cleanup["validation"]["ok"], true);
+        assert_eq!(cleanup["final_views"]["store"]["generation"], 2);
+        assert_eq!(
+            cleanup["final_views"]["cleanup"]["state"],
+            "skipped-stale-generation"
+        );
+        assert_eq!(
+            cleanup["state_digest"]["cleanup_once"],
+            cleanup["state_digest"]["cleanup_twice"]
+        );
+    }
+
+    fn parse_golden(source: &str) -> serde_json::Value {
+        let value: serde_json::Value = serde_json::from_str(source).expect("golden trace JSON");
+        assert_eq!(value["schema"], "vmos-golden-trace-v1");
+        assert!(value["commands"].as_array().expect("commands").len() > 0);
+        assert!(value["events"].as_array().expect("events").len() > 0);
+        assert!(value["validation"]["ok"].as_bool().expect("validation ok"));
+        value
+    }
 }
