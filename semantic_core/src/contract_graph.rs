@@ -616,16 +616,33 @@ impl ContractGraphValidator {
                 .find(|store| store.id == cleanup.store)
             {
                 Some(store) => {
-                    if cleanup.state == CleanupTransactionState::Completed
-                        && store.state != StoreState::Dead
-                    {
-                        violations.push(ContractViolation::new(
-                            ContractViolationKind::LiveObjectReferencesDeadObject,
-                            "cleanup->store",
-                            from,
-                            Some(store.object_ref()),
-                            "completed cleanup did not leave store dead",
-                        ));
+                    if cleanup.state == CleanupTransactionState::Completed {
+                        match cleanup.result_store_generation {
+                            Some(generation) if generation == store.generation => {}
+                            Some(_) => violations.push(ContractViolation::new(
+                                ContractViolationKind::GenerationMismatch,
+                                "cleanup->result-store",
+                                from,
+                                Some(store.object_ref()),
+                                "completed cleanup result store generation does not match current store",
+                            )),
+                            None => violations.push(ContractViolation::new(
+                                ContractViolationKind::HistoricalEdgeMissingGeneration,
+                                "cleanup->result-store",
+                                from,
+                                Some(store.object_ref()),
+                                "completed cleanup is missing result store generation",
+                            )),
+                        }
+                        if store.state != StoreState::Dead {
+                            violations.push(ContractViolation::new(
+                                ContractViolationKind::LiveObjectReferencesDeadObject,
+                                "cleanup->store",
+                                from,
+                                Some(store.object_ref()),
+                                "completed cleanup did not leave store dead",
+                            ));
+                        }
                     }
                 }
                 None => violations.push(ContractViolation::new(

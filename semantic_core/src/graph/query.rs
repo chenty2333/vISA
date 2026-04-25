@@ -109,20 +109,32 @@ impl SemanticGraph {
                     resource: authority.resource,
                 });
             }
-            let authority_object = AuthorityObjectRef::internal(
-                CapabilityClass::from_object(&authority.object),
-                ContractObjectRef::new(
+            if authority.object_ref.object()
+                != ContractObjectRef::new(
                     ContractObjectKind::Resource,
                     resource.id,
                     resource.generation,
-                ),
-            );
+                )
+            {
+                return Err(SemanticInvariantError::AuthorityCapabilityMissing {
+                    authority: authority.id,
+                });
+            }
+            let Some(capability) = self.capabilities.active(authority.capability) else {
+                return Err(SemanticInvariantError::AuthorityCapabilityMissing {
+                    authority: authority.id,
+                });
+            };
+            if capability.generation != authority.capability_generation
+                || capability.subject != authority.subject
+                || capability.object_ref != Some(authority.object_ref)
+            {
+                return Err(SemanticInvariantError::AuthorityCapabilityMissing {
+                    authority: authority.id,
+                });
+            }
             for operation in authority.operations.as_slice() {
-                if self
-                    .capabilities
-                    .check_authority(&authority.subject, authority_object, operation, None)
-                    .is_err()
-                {
+                if !capability.operations.contains(operation) {
                     return Err(SemanticInvariantError::AuthorityCapabilityMissing {
                         authority: authority.id,
                     });

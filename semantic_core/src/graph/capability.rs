@@ -125,13 +125,35 @@ impl SemanticGraph {
         }
         report
     }
+    fn active_authority_object_ref(
+        &self,
+        subject: &str,
+        object: &str,
+    ) -> Option<AuthorityObjectRef> {
+        self.authority_bindings
+            .iter()
+            .rev()
+            .find(|authority| {
+                authority.state == AuthorityState::Bound
+                    && authority.subject == subject
+                    && authority.object == object
+            })
+            .map(|authority| authority.object_ref)
+    }
     pub fn check_capability(
         &mut self,
         subject: &str,
         object: &str,
         operation: &str,
     ) -> Result<CapabilityId, CapabilityDenyReason> {
-        match self.capabilities.check(subject, object, operation) {
+        let authority_object = self.active_authority_object_ref(subject, object);
+        let result = match authority_object {
+            Some(object_ref) => self
+                .capabilities
+                .check_authority(subject, object_ref, operation, None),
+            None => self.capabilities.check(subject, object, operation),
+        };
+        match result {
             Ok(record) => {
                 let cap = record.id;
                 let generation = record.generation;
@@ -168,8 +190,20 @@ impl SemanticGraph {
         operation: &str,
         expected_generation: Generation,
     ) -> Result<CapabilityId, CapabilityDenyReason> {
-        let actual_generation = self.capabilities.generation_of(subject, object);
-        let record = match self.capabilities.check(subject, object, operation) {
+        let authority_object = self.active_authority_object_ref(subject, object);
+        let actual_generation = match authority_object {
+            Some(object_ref) => self
+                .capabilities
+                .generation_of_authority(subject, object_ref),
+            None => self.capabilities.generation_of(subject, object),
+        };
+        let result = match authority_object {
+            Some(object_ref) => self
+                .capabilities
+                .check_authority(subject, object_ref, operation, None),
+            None => self.capabilities.check(subject, object, operation),
+        };
+        let record = match result {
             Ok(record) => record,
             Err(reason) => {
                 self.event_log.push(
@@ -212,7 +246,12 @@ impl SemanticGraph {
         Ok(cap)
     }
     pub fn capability_generation(&self, subject: &str, object: &str) -> Option<Generation> {
-        self.capabilities.generation_of(subject, object)
+        match self.active_authority_object_ref(subject, object) {
+            Some(object_ref) => self
+                .capabilities
+                .generation_of_authority(subject, object_ref),
+            None => self.capabilities.generation_of(subject, object),
+        }
     }
     pub fn capability_owner_summary(&self, subject: &str) -> CapabilityOwnerSummary {
         self.capabilities.owner_summary(subject)

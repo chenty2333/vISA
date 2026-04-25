@@ -1397,10 +1397,14 @@ fn semantic_roots(
             .iter()
             .map(|cleanup| {
                 format!(
-                    "cleanup id={} store={}@{} activation={} code={} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
+                    "cleanup id={} target_store={}@{} result_store_generation={} activation={} code={} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
                     cleanup.id,
                     cleanup.store,
                     cleanup.store_generation,
+                    cleanup
+                        .result_store_generation
+                        .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
                     cleanup
                         .activation
                         .zip(cleanup.activation_generation)
@@ -1702,6 +1706,8 @@ fn cleanup_transaction_manifest(
         id: cleanup.id,
         store: cleanup.store,
         store_generation: cleanup.store_generation,
+        target_store_generation: cleanup.store_generation,
+        result_store_generation: cleanup.result_store_generation,
         activation: cleanup.activation,
         activation_generation: cleanup.activation_generation,
         code_object: cleanup.code_object,

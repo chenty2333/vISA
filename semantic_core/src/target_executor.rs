@@ -2316,6 +2316,7 @@ pub struct FaultCleanupTransaction {
     pub id: CleanupTransactionId,
     pub store: StoreId,
     pub store_generation: Generation,
+    pub result_store_generation: Option<Generation>,
     pub activation: Option<ActivationId>,
     pub activation_generation: Option<Generation>,
     pub code_object: Option<CodeObjectId>,
@@ -2339,10 +2340,13 @@ pub struct FaultCleanupTransaction {
 impl FaultCleanupTransaction {
     pub fn summary(&self) -> String {
         format!(
-            "cleanup id={} store={}@{} activation={} code={} generation={} started={} finished={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={} effects={}",
+            "cleanup id={} target_store={}@{} result_store_generation={} activation={} code={} generation={} started={} finished={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={} effects={}",
             self.id,
             self.store,
             self.store_generation,
+            self.result_store_generation
+                .map(|generation| generation.to_string())
+                .unwrap_or_else(|| "none".to_string()),
             self.activation
                 .zip(self.activation_generation)
                 .map(|(activation, generation)| format!("{activation}@{generation}"))
@@ -3207,6 +3211,7 @@ impl TargetExecutor {
         if let Some(existing) = self.cleanup_transactions.iter().find(|cleanup| {
             cleanup.store == store.id
                 && cleanup.store_generation == store.generation
+                && cleanup.result_store_generation.is_none()
                 && cleanup.activation == activation
                 && cleanup.activation_generation == activation_generation
                 && cleanup.code_object == code_object
@@ -3223,6 +3228,7 @@ impl TargetExecutor {
             id,
             store: store.id,
             store_generation: store.generation,
+            result_store_generation: None,
             activation,
             activation_generation,
             code_object,
@@ -3275,7 +3281,7 @@ impl TargetExecutor {
         let code_generation = code.as_deref().map(|code| code.generation);
         if let Some(existing) = self.cleanup_transactions.iter().find(|cleanup| {
             cleanup.store == store.id
-                && cleanup.store_generation == store.generation
+                && cleanup.result_store_generation == Some(store.generation)
                 && cleanup.activation == activation
                 && cleanup.activation_generation == activation_generation
                 && cleanup.code_object == code_object
@@ -3324,6 +3330,7 @@ impl TargetExecutor {
             let cleanup = &mut self.cleanup_transactions[cleanup_index];
             cleanup.state = CleanupTransactionState::SkippedStaleGeneration;
             cleanup.generation += 1;
+            cleanup.result_store_generation = Some(store.generation);
             cleanup.finished_at = Some(event);
             cleanup.steps = Self::cleanup_step_order()
                 .iter()
@@ -3472,7 +3479,7 @@ impl TargetExecutor {
             .expect("cleanup transaction must exist");
         cleanup.state = CleanupTransactionState::Completed;
         cleanup.generation += 1;
-        cleanup.store_generation = store.generation;
+        cleanup.result_store_generation = Some(store.generation);
         cleanup.finished_at = Some(finished_at);
         cleanup.activation_generation =
             final_activation_generation.or(cleanup.activation_generation);
@@ -4916,6 +4923,7 @@ mod tests {
             id: 7,
             store: store.store.id,
             store_generation: store.store.generation,
+            result_store_generation: Some(store.store.generation + 1),
             activation: None,
             activation_generation: None,
             code_object: Some(code.id),
@@ -4985,6 +4993,78 @@ mod tests {
         assert!(violations.iter().any(|violation| {
             violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
                 && violation.edge == "cleanup->capability"
+        }));
+    }
+
+    #[test]
+    fn completed_cleanup_detects_code_still_bound_to_target_generation() {
+        let (artifact, store, code, _capabilities) = running_store_and_code();
+        let target_generation = store.store.generation;
+        let mut dead_store = store.store.clone();
+        dead_store.state = StoreState::Dead;
+        dead_store.generation += 1;
+        let cleanup = FaultCleanupTransaction {
+            id: 19,
+            store: dead_store.id,
+            store_generation: target_generation,
+            result_store_generation: Some(dead_store.generation),
+            activation: None,
+            activation_generation: None,
+            code_object: Some(code.id),
+            code_generation: Some(code.generation),
+            generation: 1,
+            started_at: 1,
+            finished_at: Some(2),
+            state: CleanupTransactionState::Completed,
+            reason: "code-still-bound".to_string(),
+            steps: Vec::new(),
+            effects: Vec::new(),
+            released_dmw_leases: 0,
+            cancelled_waits: 0,
+            revoked_capabilities: Vec::new(),
+            revoked_capability_refs: Vec::new(),
+            dropped_resources: 0,
+            unbound_code_object: false,
+            effect: FailureEffect::CompleteWithErrno(5),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: {
+                let mut artifacts = Vec::new();
+                artifacts.push(artifact);
+                artifacts
+            },
+            code_objects: {
+                let mut code_objects = Vec::new();
+                code_objects.push(code);
+                code_objects
+            },
+            stores: {
+                let mut stores = Vec::new();
+                stores.push(dead_store);
+                stores
+            },
+            cleanup_transactions: {
+                let mut cleanups = Vec::new();
+                cleanups.push(cleanup);
+                cleanups
+            },
+            tombstones: {
+                let mut tombstones = Vec::new();
+                tombstones.push(TombstoneRecord::new(
+                    ContractObjectKind::Store,
+                    store.store.id,
+                    target_generation,
+                    2,
+                    "fault-cleanup-store-target-retired",
+                ));
+                tombstones
+            },
+            ..ContractGraphSnapshot::default()
+        };
+        let violations = validate_contract_graph(&snapshot);
+        assert!(violations.iter().any(|violation| {
+            violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+                && violation.edge == "cleanup->code"
         }));
     }
 
@@ -5261,6 +5341,7 @@ mod tests {
             id: 17,
             store: current_store.id,
             store_generation: current_store.generation,
+            result_store_generation: None,
             activation: None,
             activation_generation: None,
             code_object: None,
@@ -5517,6 +5598,16 @@ mod tests {
         );
         let digest_after_once = executor.cleanup_state_digest(&store, Some(&code), &capabilities);
         assert_eq!(executor.snapshot_barrier(), Ok(()));
+        let completed_cleanup = &executor.cleanup_transactions()[0];
+        assert_eq!(
+            completed_cleanup.result_store_generation,
+            Some(store.generation)
+        );
+        assert_eq!(
+            completed_cleanup.activation_generation,
+            Some(activation_record.generation)
+        );
+        assert_eq!(completed_cleanup.code_generation, Some(code.generation));
 
         let cleanup_id_again = executor
             .run_fault_cleanup(

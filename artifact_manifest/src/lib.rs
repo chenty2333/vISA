@@ -647,6 +647,10 @@ pub struct CleanupTransactionManifest {
     pub store: u64,
     #[serde(default)]
     pub store_generation: u64,
+    #[serde(default)]
+    pub target_store_generation: u64,
+    #[serde(default)]
+    pub result_store_generation: Option<u64>,
     pub activation: Option<u64>,
     #[serde(default)]
     pub activation_generation: Option<u64>,

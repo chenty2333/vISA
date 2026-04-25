@@ -130,8 +130,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.pump_async_sources();
 
             if let Some(resolution) = self.waits.take_resolution(token) {
-                self.validate_wait_token(token)
-                    .map_err(|_| "wait token generation check failed before resume")?;
+                if !matches!(resolution.outcome, WaitOutcome::Restart(_)) {
+                    self.validate_wait_token(token)
+                        .map_err(|_| "wait token generation check failed before resume")?;
+                }
                 self.semantic
                     .set_task_state(token.owner_task, TaskState::Running);
                 return match resolution.outcome {

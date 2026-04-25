@@ -141,6 +141,101 @@ fn manifest_binding_does_not_overwrite_explicit_authority_ref_by_label() {
 }
 
 #[test]
+fn authority_binding_release_revokes_exact_granted_capability_not_same_label() {
+    let mut graph = SemanticGraph::new();
+    let manifest_ref = AuthorityObjectRef::internal(
+        CapabilityClass::MmioRegion,
+        ContractObjectRef::new(ContractObjectKind::Resource, 999, 1),
+    );
+    let manifest_cap = graph.grant_capability_with_authority_ref(
+        "driver_virtio_net",
+        "mmio.virtio-net0",
+        manifest_ref,
+        &["read"],
+        "store",
+        "manifest-test",
+        true,
+    );
+    let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");
+    let authority = graph
+        .bind_authority_resource(
+            mmio,
+            "driver_virtio_net",
+            "mmio.virtio-net0",
+            &["read"],
+            "store",
+        )
+        .expect("authority binding");
+    let binding_cap = graph.authority_bindings()[0].capability;
+    assert_ne!(manifest_cap, binding_cap);
+
+    assert!(graph.release_authority_binding(authority, "test release"));
+
+    let manifest_record = graph
+        .capabilities()
+        .record(manifest_cap)
+        .expect("manifest cap");
+    let binding_record = graph
+        .capabilities()
+        .record(binding_cap)
+        .expect("binding cap");
+    assert!(!manifest_record.revoked);
+    assert!(binding_record.revoked);
+}
+
+#[test]
+#[should_panic(expected = "owner_store_generation is required")]
+fn capability_grant_rejects_owner_store_without_generation() {
+    let mut ledger = CapabilityLedger::new();
+    ledger.grant_manifest_binding(
+        "driver",
+        "mmio.virtio-net",
+        &["map"],
+        "store",
+        CapabilityClass::MmioRegion,
+        Some(1),
+        None,
+        None,
+        "bad-test",
+    );
+}
+
+#[test]
+fn revoke_owner_store_matches_exact_generation_only() {
+    let mut ledger = CapabilityLedger::new();
+    let cap_gen_1 = ledger.grant_manifest_binding(
+        "driver",
+        "mmio.gen1",
+        &["map"],
+        "store",
+        CapabilityClass::MmioRegion,
+        Some(1),
+        Some(1),
+        None,
+        "test",
+    );
+    let cap_gen_2 = ledger.grant_manifest_binding(
+        "driver",
+        "mmio.gen2",
+        &["map"],
+        "store",
+        CapabilityClass::MmioRegion,
+        Some(1),
+        Some(2),
+        None,
+        "test",
+    );
+
+    assert_eq!(ledger.revoke_owner_store(1, 1), {
+        let mut revoked = Vec::new();
+        revoked.push(cap_gen_1);
+        revoked
+    });
+    assert!(ledger.record(cap_gen_1).expect("gen1").revoked);
+    assert!(!ledger.record(cap_gen_2).expect("gen2").revoked);
+}
+
+#[test]
 fn capability_authority_rejects_stale_revoked_wrong_subject_and_undeclared_external() {
     let mut ledger = CapabilityLedger::new();
     let cap = ledger.grant_manifest_binding(
@@ -1054,6 +1149,9 @@ fn authority_bindings_drive_resource_and_capability_lifecycle() {
             .check_authority("driver_virtio_net", cap_object_ref, "write", None)
             .is_ok()
     );
+    let old_generation = graph
+        .capability_generation("driver_virtio_net", "mmio.virtio-net0")
+        .expect("authority generation");
     assert_eq!(graph.check_invariants(), Ok(()));
 
     assert!(graph.release_authority_binding(authority, "driver micro-reboot"));
@@ -1079,6 +1177,35 @@ fn authority_bindings_drive_resource_and_capability_lifecycle() {
             ..
         } if recorded == authority && recorded_resource == mmio
     )));
+
+    let rebound_mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");
+    graph
+        .bind_authority_resource(
+            rebound_mmio,
+            "driver_virtio_net",
+            "mmio.virtio-net0",
+            &["read", "write"],
+            "store",
+        )
+        .expect("rebound authority");
+    let rebound_generation = graph
+        .capability_generation("driver_virtio_net", "mmio.virtio-net0")
+        .expect("rebound authority generation");
+    assert!(rebound_generation > old_generation);
+    assert_eq!(
+        graph.check_capability_generation(
+            "driver_virtio_net",
+            "mmio.virtio-net0",
+            "write",
+            old_generation,
+        ),
+        Err(CapabilityDenyReason::GenerationMismatch)
+    );
+    assert!(
+        graph
+            .check_capability("driver_virtio_net", "mmio.virtio-net0", "write")
+            .is_ok()
+    );
     assert_eq!(graph.check_invariants(), Ok(()));
 }
 

@@ -422,6 +422,11 @@ fn wait_view_v1(wait: &WaitRecordManifest) -> serde_json::Value {
 }
 
 fn cleanup_view_v1(cleanup: &CleanupTransactionManifest) -> serde_json::Value {
+    let target_generation = if cleanup.target_store_generation == 0 {
+        cleanup.store_generation
+    } else {
+        cleanup.target_store_generation
+    };
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
         "kind": "cleanup",
@@ -434,7 +439,11 @@ fn cleanup_view_v1(cleanup: &CleanupTransactionManifest) -> serde_json::Value {
         "references": {
             "target_store": {
                 "id": cleanup.store,
-                "generation": cleanup.store_generation,
+                "generation": target_generation,
+            },
+            "result_store": {
+                "id": cleanup.store,
+                "generation": cleanup.result_store_generation,
             },
             "activation": cleanup.activation.map(|id| serde_json::json!({
                 "id": id,
@@ -1280,6 +1289,12 @@ fn inspect_package_object(
                 let code = display_option_u64(cleanup.code_object);
                 let activation_generation = display_option_u64(cleanup.activation_generation);
                 let code_generation = display_option_u64(cleanup.code_generation);
+                let target_store_generation = if cleanup.target_store_generation == 0 {
+                    cleanup.store_generation
+                } else {
+                    cleanup.target_store_generation
+                };
+                let result_store_generation = display_option_u64(cleanup.result_store_generation);
                 let steps = cleanup
                     .steps
                     .iter()
@@ -1287,10 +1302,12 @@ fn inspect_package_object(
                     .collect::<Vec<_>>()
                     .join("|");
                 let line = format!(
-                    "cleanup id={} store={}@{} activation={}@{} code={}@{} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
+                    "cleanup id={} target_store={}@{} result_store={}@{} activation={}@{} code={}@{} generation={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={}",
                     cleanup.id,
                     cleanup.store,
-                    cleanup.store_generation,
+                    target_store_generation,
+                    cleanup.store,
+                    result_store_generation,
                     activation,
                     activation_generation,
                     code,
@@ -2287,6 +2304,8 @@ mod tests {
             id: 5,
             store: 1,
             store_generation: 2,
+            target_store_generation: 1,
+            result_store_generation: Some(2),
             activation: None,
             activation_generation: None,
             code_object: None,
@@ -2328,6 +2347,8 @@ mod tests {
         assert_eq!(view["kind"], "cleanup");
         assert_eq!(view["steps"][0]["state"], "done");
         assert_eq!(view["effects"][0]["kind"], "mark-store-dead");
+        assert_eq!(view["references"]["target_store"]["generation"], 1);
+        assert_eq!(view["references"]["result_store"]["generation"], 2);
         assert_eq!(view["references"]["revoked_capabilities"][0]["id"], 4);
     }
 

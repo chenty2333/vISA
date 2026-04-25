@@ -365,6 +365,10 @@ impl CapabilityLedger {
         owner_task: Option<TaskId>,
         source: &str,
     ) -> CapabilityId {
+        assert!(
+            owner_store.is_none() || owner_store_generation.is_some(),
+            "owner_store_generation is required when owner_store is set"
+        );
         let object_ref = Some(AuthorityObjectRef::from_label(class, object));
         if let Some(record) = self.records.iter_mut().find(|record| {
             record.subject == subject
@@ -422,6 +426,10 @@ impl CapabilityLedger {
         source: &str,
         manifest_decl: bool,
     ) -> CapabilityId {
+        assert!(
+            owner_store.is_none() || owner_store_generation.is_some(),
+            "owner_store_generation is required when owner_store is set"
+        );
         if let Some(record) = self
             .records
             .iter_mut()
@@ -443,6 +451,16 @@ impl CapabilityLedger {
         }
         let id = self.next_id;
         self.next_id += 1;
+        let generation = self
+            .records
+            .iter()
+            .filter(|record| {
+                record.subject == subject && record.debug_object_label == debug_object_label
+            })
+            .map(|record| record.generation)
+            .max()
+            .unwrap_or(0)
+            + 1;
         self.records.push(CapabilityRecord {
             id,
             subject: subject.to_string(),
@@ -455,7 +473,7 @@ impl CapabilityLedger {
             owner_store_generation,
             owner_task,
             source: source.to_string(),
-            generation: 1,
+            generation,
             parent: None,
             manifest_decl,
             debug_object_label: debug_object_label.to_string(),
@@ -577,6 +595,22 @@ impl CapabilityLedger {
         true
     }
 
+    pub fn revoke_generation(&mut self, id: CapabilityId, generation: Generation) -> bool {
+        let Some(record) = self
+            .records
+            .iter_mut()
+            .find(|record| record.id == id && record.generation == generation)
+        else {
+            return false;
+        };
+        if record.revoked {
+            return false;
+        }
+        record.revoked = true;
+        record.generation += 1;
+        true
+    }
+
     pub fn revoke_by_subject_object(
         &mut self,
         subject: &str,
@@ -603,9 +637,7 @@ impl CapabilityLedger {
         let mut revoked = Vec::new();
         for record in &mut self.records {
             if record.owner_store == Some(owner_store)
-                && record
-                    .owner_store_generation
-                    .is_none_or(|generation| generation == owner_store_generation)
+                && record.owner_store_generation == Some(owner_store_generation)
                 && !record.revoked
             {
                 record.revoked = true;
@@ -659,6 +691,10 @@ impl CapabilityLedger {
         self.records
             .iter()
             .find(|record| record.id == id && !record.revoked)
+    }
+
+    pub fn record(&self, id: CapabilityId) -> Option<&CapabilityRecord> {
+        self.records.iter().find(|record| record.id == id)
     }
 
     pub fn check(

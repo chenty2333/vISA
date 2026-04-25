@@ -235,3 +235,42 @@ fn ms_to_ticks(delay_ms: u32, timer_hz: u32) -> u64 {
     let scaled = delay_ms as u64 * timer_hz as u64;
     scaled.div_ceil(1_000).max(1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restart_resolution_is_consumed_by_original_wait_token() {
+        let mut registry = WaitRegistry::new();
+        let token = registry.register(
+            7,
+            WaitRegistration::Epoll {
+                epoll_id: 3,
+                max_events: 4,
+                timeout_ms: None,
+                resume_cookie: 99,
+            },
+            0,
+            100,
+        );
+
+        registry.apply_event(Event::WaitRestart(
+            token.id,
+            WaitRestartClass::DriverRestart,
+        ));
+
+        assert_eq!(
+            registry.take_resolution(token),
+            Some(WaitResolution {
+                outcome: WaitOutcome::Restart(WaitRestartClass::DriverRestart),
+                resume_cookie: 99,
+                source: WaitSource::Epoll {
+                    epoll_id: 3,
+                    max_events: 4,
+                },
+            })
+        );
+        assert_eq!(registry.take_resolution(token), None);
+    }
+}

@@ -98,7 +98,6 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn inject_wait_restart(&mut self, token: WaitToken, class: WaitRestartClass) {
         self.scheduler
             .push_event(Event::WaitRestart(token.id, class));
-        self.drain_event_queue();
     }
     pub(crate) fn fd_path(&mut self, fd: u32) -> Result<Vec<u8>, i32> {
         self.validate_fd_handle(fd).map_err(|_| ERR_EBADF)?;
