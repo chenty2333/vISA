@@ -35,6 +35,7 @@ mod authority;
 mod boundary;
 mod capability;
 mod command;
+mod interface;
 mod network;
 mod query;
 mod resource;

@@ -11,13 +11,14 @@ use artifact_manifest::{
     CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
     CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
     CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
-    GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, RequiredArtifactProfileManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
-    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
-    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
-    TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest, WaitRecordManifest,
+    GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    RequiredArtifactProfileManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    StoreRecordManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
+    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
+    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -63,6 +64,7 @@ struct TargetExecutorV1Report {
     target_event_tail: Vec<String>,
     substrate_events: Vec<SubstrateEventManifest>,
     command_results: Vec<CommandResultManifest>,
+    interface_events: Vec<InterfaceEventManifest>,
 }
 
 fn main() {
@@ -96,6 +98,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
+    record_interface_boundary_evidence(&mut semantic);
     let target_v1 = build_target_executor_v1(&plan, &semantic)?;
 
     println!(
@@ -285,6 +288,17 @@ fn record_command_surface_evidence(semantic: &mut SemanticGraph) {
         },
     );
     let _ = semantic.apply_envelope(command);
+}
+
+fn record_interface_boundary_evidence(semantic: &mut SemanticGraph) {
+    semantic.record_interface_unsupported(
+        "standard-wasi",
+        "wasi:clocks/monotonic-clock",
+        "subscribe",
+        Some("target-executor-interface-probe".to_owned()),
+        None,
+        None,
+    );
 }
 
 fn record_substrate_event(semantic: &mut SemanticGraph, event: SubstrateEvent) {
@@ -568,6 +582,7 @@ fn build_target_executor_v1(
         .iter()
         .map(command_result_manifest)
         .collect();
+    report.interface_events = interface_event_manifests(semantic.event_log().tail(usize::MAX));
     Ok(report)
 }
 
@@ -1169,6 +1184,7 @@ fn demo_migration_package(
             replay_validation_violation_count: target_v1.replay_validation.violation_count,
             substrate_event_count: target_v1.substrate_events.len(),
             command_result_count: target_v1.command_results.len(),
+            interface_event_count: target_v1.interface_events.len(),
             target_artifacts: target_v1.target_artifacts.clone(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
@@ -1186,6 +1202,7 @@ fn demo_migration_package(
             replay_validation: target_v1.replay_validation.clone(),
             substrate_events: target_v1.substrate_events.clone(),
             command_results: target_v1.command_results.clone(),
+            interface_events: target_v1.interface_events.clone(),
             network_socket_count: 1,
             network_rx_queue_bytes: 0,
         },
@@ -1572,6 +1589,19 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        interface_event_roots: target_v1
+            .interface_events
+            .iter()
+            .map(|event| {
+                format!(
+                    "interface-event:{}:{}:{} requester={}",
+                    event.interface_kind,
+                    event.interface,
+                    event.operation,
+                    event.requester.as_deref().unwrap_or("none")
+                )
+            })
+            .collect(),
         event_log_tail: semantic
             .event_log_tail(16)
             .iter()
@@ -1847,6 +1877,39 @@ fn command_result_manifest(result: &CommandResult) -> CommandResultManifest {
             })
             .collect(),
         violations: result.violations.clone(),
+    }
+}
+
+fn interface_event_manifests(events: &[EventRecord]) -> Vec<InterfaceEventManifest> {
+    events.iter().filter_map(interface_event_manifest).collect()
+}
+
+fn interface_event_manifest(event: &EventRecord) -> Option<InterfaceEventManifest> {
+    match &event.kind {
+        EventKind::InterfaceUnsupported {
+            interface_kind,
+            interface,
+            operation,
+            requester,
+            artifact,
+            store,
+        } => {
+            let requester_label = requester.as_deref().unwrap_or("unknown");
+            Some(InterfaceEventManifest {
+                id: event.id,
+                epoch: event.epoch,
+                interface_kind: interface_kind.clone(),
+                interface: interface.clone(),
+                operation: operation.clone(),
+                requester: requester.clone(),
+                artifact: *artifact,
+                store: *store,
+                explanation: format!(
+                    "{requester_label} observed {interface_kind} {interface}::{operation} as unsupported"
+                ),
+            })
+        }
+        _ => None,
     }
 }
 

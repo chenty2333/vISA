@@ -9,7 +9,7 @@ use artifact_manifest::{
     ActivationRecordManifest, ArtifactBundleManifest, BoundaryValidationReportManifest,
     CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
     CommandResultManifest, ContractObjectRefManifest, HostcallTraceManifest,
-    MigrationPackageManifest, StoreRecordManifest, SubstrateEventManifest,
+    InterfaceEventManifest, MigrationPackageManifest, StoreRecordManifest, SubstrateEventManifest,
     TargetArtifactImageManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
@@ -118,30 +118,50 @@ fn run() -> Result<(), Box<dyn Error>> {
             let Some(subcommand) = args.next() else {
                 return Err("interface requires a subcommand".into());
             };
-            if subcommand != "check" {
-                return Err(
-                    "interface syntax is: osctl interface check [--json] [--profile <name>] <manifest.json>"
-                        .into(),
-                );
-            }
-            let mut json = false;
-            let mut profile = "host-validation".to_owned();
-            let mut path = None;
-            while let Some(arg) = args.next() {
-                if arg == "--json" {
-                    json = true;
-                } else if arg == "--profile" {
-                    profile = args
-                        .next()
-                        .ok_or("interface check --profile requires a value")?;
-                } else if path.is_none() {
-                    path = Some(arg);
-                } else {
-                    return Err("interface check received too many positional paths".into());
+            match subcommand.as_str() {
+                "check" => {
+                    let mut json = false;
+                    let mut profile = "host-validation".to_owned();
+                    let mut path = None;
+                    while let Some(arg) = args.next() {
+                        if arg == "--json" {
+                            json = true;
+                        } else if arg == "--profile" {
+                            profile = args
+                                .next()
+                                .ok_or("interface check --profile requires a value")?;
+                        } else if path.is_none() {
+                            path = Some(arg);
+                        } else {
+                            return Err("interface check received too many positional paths".into());
+                        }
+                    }
+                    let path = path.ok_or("interface check requires a manifest JSON path")?;
+                    check_interface_compatibility(Path::new(&path), &profile, json)
                 }
+                "events" => {
+                    let mut json = false;
+                    let mut path = None;
+                    for arg in args {
+                        if arg == "--json" {
+                            json = true;
+                        } else if path.is_none() {
+                            path = Some(arg);
+                        } else {
+                            return Err(
+                                "interface events received too many positional paths".into()
+                            );
+                        }
+                    }
+                    let path =
+                        path.ok_or("interface events requires a migration package JSON path")?;
+                    print_interface_events(Path::new(&path), json)
+                }
+                _ => Err(
+                    "interface syntax is: osctl interface check [--json] [--profile <name>] <manifest.json> | osctl interface events [--json] <migration.json>"
+                        .into(),
+                ),
             }
-            let path = path.ok_or("interface check requires a manifest JSON path")?;
-            check_interface_compatibility(Path::new(&path), &profile, json)
         }
         "modes" => print_modes(),
         "caps" => {
@@ -313,6 +333,7 @@ fn print_usage() {
     eprintln!("  osctl substrate check [--json] [--profile <name>] <manifest.json>");
     eprintln!("  osctl substrate events [--json] <migration.json>");
     eprintln!("  osctl interface check [--json] [--profile <name>] <manifest.json>");
+    eprintln!("  osctl interface events [--json] <migration.json>");
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!("  osctl store|cap|wait|cleanup|command list --json <migration.json>");
@@ -1161,6 +1182,70 @@ fn print_interface_compatibility_json(
     });
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
+}
+
+fn print_interface_events(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
+    let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
+    if json {
+        let value = serde_json::json!({
+            "schema": VIEW_SCHEMA_V1,
+            "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+            "kind": "interface-events",
+            "command": "interface.events",
+            "package": &package.package_id,
+            "event_count": package.semantic.interface_events.len(),
+            "events": package.semantic.interface_events.iter().map(interface_event_view_v1).collect::<Vec<_>>(),
+            "references": {
+                "event_log_cursor": package.semantic.event_log_cursor,
+                "root_count": package.semantic.roots.interface_event_roots.len()
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
+
+    println!(
+        "interface events package={} events={} roots={}",
+        package.package_id,
+        package.semantic.interface_events.len(),
+        package.semantic.roots.interface_event_roots.len()
+    );
+    for event in &package.semantic.interface_events {
+        println!(
+            "{} interface={} operation={} requester={} explanation={}",
+            event.interface_kind,
+            event.interface,
+            event.operation,
+            event.requester.as_deref().unwrap_or("none"),
+            event.explanation
+        );
+    }
+    Ok(())
+}
+
+fn interface_event_view_v1(event: &InterfaceEventManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "interface-event",
+        "id": event.id,
+        "generation": 1,
+        "state": "unsupported",
+        "interface_kind": &event.interface_kind,
+        "interface": &event.interface,
+        "operation": &event.operation,
+        "requester": &event.requester,
+        "references": {
+            "artifact": event.artifact,
+            "store": event.store,
+            "event_epoch": event.epoch
+        },
+        "last_transition": {
+            "interface_kind": &event.interface_kind,
+            "interface": &event.interface,
+            "operation": &event.operation
+        },
+        "last_error": &event.explanation
+    })
 }
 
 fn print_substrate_events(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
@@ -2860,7 +2945,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} substrate_events={} command_results={} event_tail={}",
+        "replay roots: tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
         package.semantic.roots.authority_roots.len(),
@@ -2880,6 +2965,7 @@ fn replay_until(
         package.semantic.roots.migration_object_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
+        package.semantic.roots.interface_event_roots.len(),
         package.semantic.roots.event_log_tail.len()
     );
     for boundary in &package.semantic.roots.boundary_roots {
@@ -2977,6 +3063,7 @@ fn print_replay_json(
             "replay_validation": package.semantic.roots.replay_validation_roots.len(),
             "substrate_events": package.semantic.roots.substrate_event_roots.len(),
             "command_results": package.semantic.roots.command_result_roots.len(),
+            "interface_events": package.semantic.roots.interface_event_roots.len(),
             "event_tail": package.semantic.roots.event_log_tail.len(),
             "boundary_roots": &package.semantic.roots.boundary_roots,
             "artifact_verification_roots": &package.semantic.roots.artifact_verification_roots,
@@ -2997,7 +3084,8 @@ fn print_replay_json(
             "snapshot_validation_roots": &package.semantic.roots.snapshot_validation_roots,
             "replay_validation_roots": &package.semantic.roots.replay_validation_roots,
             "substrate_event_roots": &package.semantic.roots.substrate_event_roots,
-            "command_result_roots": &package.semantic.roots.command_result_roots
+            "command_result_roots": &package.semantic.roots.command_result_roots,
+            "interface_event_roots": &package.semantic.roots.interface_event_roots
         }
     });
     println!("{}", serde_json::to_string_pretty(&value)?);
@@ -3015,7 +3103,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} substrate_events={} command_results={}",
+        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} substrate_events={} command_results={} interface_events={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.active_authority_count,
@@ -3036,7 +3124,8 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.hostcall_trace_count,
         package.semantic.migration_object_count,
         package.semantic.substrate_event_count,
-        package.semantic.command_result_count
+        package.semantic.command_result_count,
+        package.semantic.interface_event_count
     );
     println!(
         "substrate boundary: irq={} dma={} net_inputs={} dmw={} active_mmio={} active_dma={} active_irq={} active_packet_device={} active_virtqueue={} cow_epoch={} background_pages={}",
@@ -3091,6 +3180,10 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
     print_roots(
         "command-result",
         &package.semantic.roots.command_result_roots,
+    );
+    print_roots(
+        "interface-event",
+        &package.semantic.roots.interface_event_roots,
     );
 }
 
@@ -3548,6 +3641,34 @@ mod tests {
         assert_eq!(
             view["last_error"],
             "create-wait requires owner task or owner store"
+        );
+    }
+
+    #[test]
+    fn interface_event_view_v1_explains_unsupported_interface() {
+        let view = interface_event_view_v1(&InterfaceEventManifest {
+            id: 8,
+            epoch: 13,
+            interface_kind: "standard-wasi".to_owned(),
+            interface: "wasi:clocks/monotonic-clock".to_owned(),
+            operation: "subscribe".to_owned(),
+            requester: Some("target-executor-interface-probe".to_owned()),
+            artifact: None,
+            store: None,
+            explanation:
+                "target-executor-interface-probe observed standard-wasi wasi:clocks/monotonic-clock::subscribe as unsupported"
+                    .to_owned(),
+        });
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "interface-event");
+        assert_eq!(view["state"], "unsupported");
+        assert_eq!(view["interface_kind"], "standard-wasi");
+        assert_eq!(view["interface"], "wasi:clocks/monotonic-clock");
+        assert_eq!(view["operation"], "subscribe");
+        assert_eq!(view["references"]["event_epoch"], 13);
+        assert_eq!(
+            view["last_error"],
+            "target-executor-interface-probe observed standard-wasi wasi:clocks/monotonic-clock::subscribe as unsupported"
         );
     }
 

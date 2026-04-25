@@ -161,6 +161,14 @@ pub enum EventKind {
         capability: Option<CapabilityId>,
         capability_generation: Option<Generation>,
     },
+    InterfaceUnsupported {
+        interface_kind: String,
+        interface: String,
+        operation: String,
+        requester: Option<String>,
+        artifact: Option<ArtifactId>,
+        store: Option<StoreId>,
+    },
     FaultDomainRegistered {
         domain: FaultDomainId,
     },
@@ -567,6 +575,25 @@ impl EventKind {
                     .unwrap_or_else(|| "none".to_string());
                 format!(
                     "SubstrateCapabilityDenied authority={authority} op={operation} requester={requester} artifact={artifact} store={store} capability={capability} generation={generation}"
+                )
+            }
+            Self::InterfaceUnsupported {
+                interface_kind,
+                interface,
+                operation,
+                requester,
+                artifact,
+                store,
+            } => {
+                let requester = requester.as_deref().unwrap_or("none");
+                let artifact = artifact
+                    .map(|artifact| artifact.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                let store = store
+                    .map(|store| store.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                format!(
+                    "InterfaceUnsupported kind={interface_kind} interface={interface} op={operation} requester={requester} artifact={artifact} store={store}"
                 )
             }
             Self::FaultDomainRegistered { domain } => {

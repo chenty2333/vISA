@@ -275,6 +275,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub command_result_count: usize,
     #[serde(default)]
+    pub interface_event_count: usize,
+    #[serde(default)]
     pub target_artifacts: Vec<TargetArtifactImageManifest>,
     #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
@@ -308,6 +310,8 @@ pub struct SemanticSnapshotManifest {
     pub substrate_events: Vec<SubstrateEventManifest>,
     #[serde(default)]
     pub command_results: Vec<CommandResultManifest>,
+    #[serde(default)]
+    pub interface_events: Vec<InterfaceEventManifest>,
     #[serde(default)]
     pub network_socket_count: u32,
     #[serde(default)]
@@ -371,6 +375,8 @@ pub struct SemanticRootSetManifest {
     #[serde(default)]
     pub command_result_roots: Vec<String>,
     #[serde(default)]
+    pub interface_event_roots: Vec<String>,
+    #[serde(default)]
     pub event_log_tail: Vec<String>,
 }
 
@@ -407,6 +413,19 @@ pub struct CommandEffectManifest {
     pub kind: String,
     #[serde(default)]
     pub target: Option<ContractObjectRefManifest>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct InterfaceEventManifest {
+    pub id: u64,
+    pub epoch: u64,
+    pub interface_kind: String,
+    pub interface: String,
+    pub operation: String,
+    pub requester: Option<String>,
+    pub artifact: Option<u64>,
+    pub store: Option<u64>,
+    pub explanation: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
