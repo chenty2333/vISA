@@ -7,6 +7,7 @@
       "wait": 21,
       "owner_task": 7,
       "owner_store": 3,
+      "owner_store_generation": 1,
       "kind": "timer",
       "generation": 1,
       "deadline": 100,
@@ -52,7 +53,8 @@
       "state": "consumed",
       "owner": {
         "task": 7,
-        "store": 3
+        "store": 3,
+        "store_generation": 1
       },
       "references": {
         "blockers": []

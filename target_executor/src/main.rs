@@ -278,7 +278,6 @@ fn build_target_executor_v1(
         store_manager
             .set_running(store_id)
             .map_err(|error| error.message())?;
-        grant_verified_capabilities(&mut ledger, &verified, store_id);
 
         let code_id = publisher
             .allocate(&verified)
@@ -291,6 +290,7 @@ fn build_target_executor_v1(
         let store = store_manager
             .record(store_id)
             .ok_or("store manager lost store after register")?;
+        grant_verified_capabilities(&mut ledger, &verified, store_id, store.store.generation);
         publisher
             .bind_to_store(code_id, &store.store)
             .map_err(|error| error.message())?;
@@ -330,6 +330,7 @@ fn build_target_executor_v1(
             &["kill"],
             "store",
             Some(cleanup_store_id),
+            Some(cleanup_store_snapshot.generation),
             None,
             "cleanup-harness",
             true,
@@ -914,6 +915,7 @@ fn grant_verified_capabilities(
     ledger: &mut CapabilityLedger,
     verified: &VerifiedArtifact,
     store_id: u64,
+    store_generation: u64,
 ) {
     for capability in &verified.capabilities {
         let operations = capability
@@ -928,6 +930,7 @@ fn grant_verified_capabilities(
             &capability.lifetime,
             capability.class,
             Some(store_id),
+            Some(store_generation),
             None,
             "target-executor-v1",
         );
@@ -995,6 +998,7 @@ fn demo_migration_package(
             class: capability.class.as_str().to_owned(),
             source: capability.source.clone(),
             owner_store: capability.owner_store,
+            owner_store_generation: capability.owner_store_generation,
             owner_task: capability.owner_task.map(u64::from),
             generation: capability.generation,
             revoked: capability.revoked,
@@ -1189,13 +1193,21 @@ fn semantic_roots(
             .iter()
             .map(|capability| {
                 format!(
-                    "target-capability id={} subject={} object={} class={} rights={} generation={} revoked={} source={}",
+                    "target-capability id={} subject={} object={} class={} rights={} generation={} owner_store={}@{} revoked={} source={}",
                     capability.id,
                     capability.subject,
                     capability.object,
                     capability.class,
                     capability.rights.join("+"),
                     capability.generation,
+                    capability
+                        .owner_store
+                        .map(|store| store.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                    capability
+                        .owner_store_generation
+                        .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
                     capability.revoked,
                     capability.source
                 )
@@ -1533,6 +1545,7 @@ fn capability_record_manifest(capability: &CapabilityRecord) -> CapabilityRecord
         lifetime: capability.lifetime.clone(),
         class: capability.class.as_str().to_owned(),
         owner_store: capability.owner_store,
+        owner_store_generation: capability.owner_store_generation,
         owner_task: capability.owner_task.map(u64::from),
         source: capability.source.clone(),
         generation: capability.generation,

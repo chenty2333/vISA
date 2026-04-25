@@ -373,6 +373,7 @@ fn capability_view_v1(capability: &CapabilityRecordManifest) -> serde_json::Valu
         "subject": capability.subject,
         "owner": {
             "store": capability.owner_store,
+            "store_generation": capability.owner_store_generation,
             "task": capability.owner_task,
         },
         "references": {
@@ -405,6 +406,7 @@ fn wait_view_v1(wait: &WaitRecordManifest) -> serde_json::Value {
         "owner": {
             "task": wait.owner_task,
             "store": wait.owner_store,
+            "store_generation": wait.owner_store_generation,
         },
         "references": {
             "blockers": wait.blockers,
@@ -658,7 +660,7 @@ fn print_caps(path: &Path, subject: Option<&str>) -> Result<(), Box<dyn Error>> 
             .filter(|capability| subject.is_none_or(|subject| capability.subject == subject))
         {
             println!(
-                "cap subject={} object={} class={} rights={} lifetime={} generation={} source={} owner_store={} owner_task={} revoked={}",
+                "cap subject={} object={} class={} rights={} lifetime={} generation={} source={} owner_store={}@{} owner_task={} revoked={}",
                 capability.subject,
                 capability.object,
                 display_capability_class(&capability.class, &capability.object),
@@ -667,6 +669,7 @@ fn print_caps(path: &Path, subject: Option<&str>) -> Result<(), Box<dyn Error>> 
                 capability.generation,
                 display_default(&capability.source, "unknown"),
                 display_option_u64(capability.owner_store),
+                display_option_u64(capability.owner_store_generation),
                 display_option_u64(capability.owner_task),
                 capability.revoked
             );
@@ -1066,7 +1069,7 @@ fn inspect_package_object(
             );
             for capability in &package.semantic.capability_records {
                 let line = format!(
-                    "cap id={} subject={} object={} class={} rights={} lifetime={} generation={} source={} owner_store={} owner_task={} revoked={}",
+                    "cap id={} subject={} object={} class={} rights={} lifetime={} generation={} source={} owner_store={}@{} owner_task={} revoked={}",
                     capability.id,
                     capability.subject,
                     capability.object,
@@ -1076,6 +1079,7 @@ fn inspect_package_object(
                     capability.generation,
                     display_default(&capability.source, "unknown"),
                     display_option_u64(capability.owner_store),
+                    display_option_u64(capability.owner_store_generation),
                     display_option_u64(capability.owner_task),
                     capability.revoked
                 );
@@ -1084,7 +1088,7 @@ fn inspect_package_object(
             if package.semantic.capability_records.is_empty() {
                 for capability in &package.logical_capabilities {
                     let line = format!(
-                        "cap subject={} object={} class={} rights={} lifetime={} generation={} source={} owner_store={} owner_task={} revoked={}",
+                        "cap subject={} object={} class={} rights={} lifetime={} generation={} source={} owner_store={}@{} owner_task={} revoked={}",
                         capability.subject,
                         capability.object,
                         display_capability_class(&capability.class, &capability.object),
@@ -1093,6 +1097,7 @@ fn inspect_package_object(
                         capability.generation,
                         display_default(&capability.source, "unknown"),
                         display_option_u64(capability.owner_store),
+                        display_option_u64(capability.owner_store_generation),
                         display_option_u64(capability.owner_task),
                         capability.revoked
                     );
@@ -2182,10 +2187,10 @@ mod tests {
         ContractObjectRefManifest,
     };
     use semantic_core::{
-        AuthorityObjectRef, CapabilityClass, ContractGraphSnapshot, ContractObjectKind,
-        ContractObjectRef, ExternalObjectDeclaration, FrontendKind, RestartPolicy, SemanticCommand,
-        SemanticGraph, SemanticWaitKind, StoreState, WaitCancelReason, WaitState,
-        validate_contract_graph,
+        AuthorityObjectRef, CapabilityClass, CleanupStep, ContractGraphSnapshot,
+        ContractObjectKind, ContractObjectRef, ExternalObjectDeclaration, FrontendKind,
+        RestartPolicy, SemanticCommand, SemanticGraph, SemanticWaitKind, WaitCancelReason,
+        WaitState, validate_contract_graph,
     };
 
     #[test]
@@ -2228,6 +2233,7 @@ mod tests {
             lifetime: "store".to_owned(),
             class: "packet-device".to_owned(),
             owner_store: Some(1),
+            owner_store_generation: Some(1),
             owner_task: None,
             source: "manifest".to_owned(),
             generation: 3,
@@ -2238,6 +2244,7 @@ mod tests {
         });
         assert_eq!(view["kind"], "capability");
         assert_eq!(view["state"], "active");
+        assert_eq!(view["owner"]["store_generation"], 1);
         assert_eq!(view["references"]["object_ref"]["object"]["generation"], 1);
         assert_eq!(view["generation"], 3);
     }
@@ -2248,6 +2255,7 @@ mod tests {
             id: 8,
             owner_task: Some(2),
             owner_store: Some(1),
+            owner_store_generation: Some(1),
             kind: "timer".to_owned(),
             generation: 1,
             state: "cancelled".to_owned(),
@@ -2262,6 +2270,7 @@ mod tests {
             saved_context: Some("ctx".to_owned()),
         });
         assert_eq!(view["kind"], "wait");
+        assert_eq!(view["owner"]["store_generation"], 1);
         assert_eq!(view["references"]["blockers"][0]["kind"], "capability");
         assert_eq!(view["cancel_reason"], "capability-revoked");
         assert_eq!(view["restart_policy"], "restart-if-allowed");
@@ -2352,6 +2361,13 @@ mod tests {
     fn replay_wait_golden(value: &serde_json::Value) {
         let mut graph = SemanticGraph::new();
         graph.ensure_task(7, FrontendKind::LinuxElf, "guest");
+        graph.register_store("bootstrap_a", "bootstrap_a.cwasm", "service", "restartable");
+        graph.register_store("bootstrap_b", "bootstrap_b.cwasm", "service", "restartable");
+        let owner_store = 3;
+        let owner_store_generation = 1;
+        let registered_store =
+            graph.register_store("timer_service", "timer.cwasm", "service", "restartable");
+        assert_eq!(registered_store, owner_store);
         for command in value["commands"].as_array().expect("commands") {
             match command["op"].as_str().expect("op") {
                 "CreateWait" => graph
@@ -2359,6 +2375,11 @@ mod tests {
                         wait: command["wait"].as_u64().expect("wait"),
                         owner_task: command["owner_task"].as_u64().map(|task| task as u32),
                         owner_store: command["owner_store"].as_u64(),
+                        owner_store_generation: Some(
+                            command["owner_store_generation"]
+                                .as_u64()
+                                .unwrap_or(owner_store_generation),
+                        ),
                         kind: SemanticWaitKind::Timer,
                         generation: command["generation"].as_u64().expect("generation"),
                         blockers: Vec::new(),
@@ -2410,7 +2431,10 @@ mod tests {
                             object_ref: authority,
                             operations: vec!["rx".to_owned(), "tx".to_owned()],
                             lifetime: "store".to_owned(),
-                            owner_store: Some(store),
+                            owner_store: command["owner_store"].as_u64().or(Some(store)),
+                            owner_store_generation: command["owner_store_generation"]
+                                .as_u64()
+                                .or(Some(1)),
                             owner_task: None,
                             source: "golden-replay".to_owned(),
                             manifest_decl: true,
@@ -2422,7 +2446,10 @@ mod tests {
                         .apply(SemanticCommand::CreateWait {
                             wait: command["wait"].as_u64().expect("wait"),
                             owner_task: None,
-                            owner_store: Some(store),
+                            owner_store: command["owner_store"].as_u64().or(Some(store)),
+                            owner_store_generation: command["owner_store_generation"]
+                                .as_u64()
+                                .or(Some(1)),
                             kind: SemanticWaitKind::DeviceIrq,
                             generation: 1,
                             blockers: vec![ContractObjectRef::new(
@@ -2492,42 +2519,166 @@ mod tests {
         let mut graph = SemanticGraph::new();
         let store =
             graph.register_store("driver_virtio_net", "driver.cwasm", "driver", "restartable");
-        graph
-            .apply(SemanticCommand::BeginCleanup {
-                cleanup: 77,
-                store,
-                generation: 1,
-                reason: "driver-fault".to_owned(),
-            })
-            .expect("begin cleanup");
-        let rebound = graph.rebind_store_instance(store).expect("rebind store");
-        graph
-            .apply(SemanticCommand::ApplyCleanupStep {
-                cleanup: 77,
-                step: semantic_core::CleanupStep::MarkStoreState,
-                target: ContractObjectRef::new(ContractObjectKind::Store, store, 1),
-                observed_generation: rebound.generation,
-            })
-            .expect("apply cleanup step");
-        graph
-            .apply(SemanticCommand::CommitCleanup { cleanup: 77 })
-            .expect("commit cleanup");
+        assert_eq!(store, 1);
+        let mut last_rebind_generation = 1;
+        let mut applied_step_status = None;
 
-        assert_eq!(rebound.generation, 2);
-        assert_eq!(graph.stores()[0].state, StoreState::Rebinding);
-        assert!(graph.event_log_tail(4).iter().any(|event| {
-            event
-                .summary()
-                .contains("CleanupStepApplied cleanup=77 step=mark-store-state")
-        }));
+        for command in value["commands"].as_array().expect("commands") {
+            match command["op"].as_str().expect("op") {
+                "BeginCleanup" => {
+                    let target = &command["target_store"];
+                    assert_eq!(target["id"].as_u64().expect("target id"), store);
+                    graph
+                        .apply(SemanticCommand::BeginCleanup {
+                            cleanup: command["cleanup"].as_u64().expect("cleanup"),
+                            store,
+                            generation: target["generation"].as_u64().expect("generation"),
+                            reason: command["reason"].as_str().expect("reason").to_owned(),
+                        })
+                        .expect("begin cleanup");
+                }
+                "RebindStore" => {
+                    let expected = &command["store"];
+                    assert_eq!(expected["id"].as_u64().expect("store id"), store);
+                    let rebound = graph.rebind_store_instance(store).expect("rebind store");
+                    last_rebind_generation = rebound.generation;
+                    assert_eq!(
+                        expected["generation"].as_u64().expect("store generation"),
+                        rebound.generation
+                    );
+                    assert_eq!(
+                        expected["state"].as_str().expect("state"),
+                        graph.stores()[0].state.as_str()
+                    );
+                }
+                "ApplyCleanupStep" => {
+                    let target = object_ref_from_json(&command["target"]);
+                    let observed_generation = command["observed_generation"]
+                        .as_u64()
+                        .expect("observed generation");
+                    if command["status"].as_str() == Some("skipped-stale-generation") {
+                        assert_ne!(target.generation, observed_generation);
+                    }
+                    graph
+                        .apply(SemanticCommand::ApplyCleanupStep {
+                            cleanup: command["cleanup"].as_u64().expect("cleanup"),
+                            step: cleanup_step_from_json(command["step"].as_str().expect("step")),
+                            target,
+                            observed_generation,
+                        })
+                        .expect("apply cleanup step");
+                    applied_step_status =
+                        command["status"].as_str().map(|status| status.to_owned());
+                }
+                "CommitCleanup" => {
+                    graph
+                        .apply(SemanticCommand::CommitCleanup {
+                            cleanup: command["cleanup"].as_u64().expect("cleanup"),
+                        })
+                        .expect("commit cleanup");
+                    if let Some(status) = command["status"].as_str() {
+                        assert_eq!(applied_step_status.as_deref(), Some(status));
+                    }
+                }
+                other => panic!("unsupported cleanup golden command {other}"),
+            }
+        }
+
+        assert_eq!(last_rebind_generation, 2);
+        assert_eq!(
+            graph.stores()[0].state.as_str(),
+            value["final_views"]["store"]["state"]
+                .as_str()
+                .expect("store state")
+        );
         assert_eq!(
             value["final_views"]["store"]["generation"],
-            rebound.generation
+            graph.stores()[0].generation
         );
-        assert_eq!(value["final_views"]["store"]["state"], "rebinding");
+        for event in value["events"].as_array().expect("events") {
+            match event["kind"].as_str().expect("event kind") {
+                "CleanupStepApplied" => {
+                    let expected = format!(
+                        "CleanupStepApplied cleanup={} step={} target={} observed_generation={}",
+                        event["cleanup"].as_u64().expect("cleanup"),
+                        event["step"].as_str().expect("step"),
+                        event["target"].as_str().expect("target"),
+                        event["observed_generation"]
+                            .as_u64()
+                            .expect("observed generation")
+                    );
+                    assert!(
+                        graph
+                            .event_log_tail(16)
+                            .iter()
+                            .any(|record| record.summary().contains(&expected)),
+                        "missing expected event {expected}"
+                    );
+                }
+                "StoreRebound" => {
+                    assert_eq!(
+                        event["store"].as_str().expect("store"),
+                        format!("{}@{}", store, graph.stores()[0].generation)
+                    );
+                }
+                "FaultCleanupStarted" | "FaultCleanupSkipped" => {}
+                other => panic!("unsupported cleanup golden event {other}"),
+            }
+        }
+        let digest = cleanup_replay_digest(&graph, store);
+        assert_eq!(value["state_digest"]["cleanup_once"], digest);
         assert_eq!(
             value["state_digest"]["cleanup_once"],
             value["state_digest"]["cleanup_twice"]
         );
+    }
+
+    fn object_ref_from_json(value: &serde_json::Value) -> ContractObjectRef {
+        let kind = match value["kind"].as_str().expect("object kind") {
+            "store" => ContractObjectKind::Store,
+            "capability" => ContractObjectKind::Capability,
+            "wait-token" | "wait" => ContractObjectKind::WaitToken,
+            "cleanup" | "cleanup-transaction" => ContractObjectKind::CleanupTransaction,
+            "resource" => ContractObjectKind::Resource,
+            other => panic!("unsupported golden object kind {other}"),
+        };
+        ContractObjectRef::new(
+            kind,
+            value["id"].as_u64().expect("object id"),
+            value["generation"].as_u64().expect("object generation"),
+        )
+    }
+
+    fn cleanup_step_from_json(value: &str) -> CleanupStep {
+        match value {
+            "stop-new-activation" => CleanupStep::StopNewActivation,
+            "seal-activation" => CleanupStep::SealActivation,
+            "prevent-hostcalls" => CleanupStep::PreventHostcalls,
+            "release-dmw-leases" => CleanupStep::ReleaseDmwLeases,
+            "cancel-wait-tokens" => CleanupStep::CancelWaitTokens,
+            "revoke-capabilities" => CleanupStep::RevokeCapabilities,
+            "drop-resource-arena" => CleanupStep::DropResourceArena,
+            "unbind-code-object" => CleanupStep::UnbindCodeObject,
+            "mark-store-state" => CleanupStep::MarkStoreState,
+            "record-transition" => CleanupStep::RecordTransition,
+            "emit-tombstones" => CleanupStep::EmitTombstones,
+            "record-failure-effect" => CleanupStep::RecordFailureEffect,
+            "emit-report" => CleanupStep::EmitReport,
+            other => panic!("unsupported cleanup step {other}"),
+        }
+    }
+
+    fn cleanup_replay_digest(graph: &SemanticGraph, store: u64) -> String {
+        let store = graph
+            .stores()
+            .iter()
+            .find(|record| record.id == store)
+            .expect("digest store");
+        format!(
+            "store:{}@{}:{}|code:1@1:bound|caps:active",
+            store.id,
+            store.generation,
+            store.state.as_str()
+        )
     }
 }

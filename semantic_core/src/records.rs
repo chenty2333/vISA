@@ -45,6 +45,7 @@ pub struct WaitRecord {
     pub id: WaitId,
     pub owner_task: Option<TaskId>,
     pub owner_store: Option<StoreId>,
+    pub owner_store_generation: Option<Generation>,
     pub kind: SemanticWaitKind,
     pub generation: Generation,
     pub state: WaitState,
@@ -59,7 +60,7 @@ pub struct WaitRecord {
 pub struct WaitIndex {
     pub by_resource: Vec<(ContractObjectRef, WaitId)>,
     pub by_task: Vec<(TaskId, WaitId)>,
-    pub by_store: Vec<(StoreId, WaitId)>,
+    pub by_store: Vec<(StoreId, Generation, WaitId)>,
     pub by_deadline: Vec<(u64, WaitId)>,
 }
 

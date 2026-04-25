@@ -43,6 +43,12 @@ impl SemanticGraph {
         source: &str,
     ) -> CapabilityId {
         let owner_store = self.store_id(subject);
+        let owner_store_generation = owner_store.and_then(|store_id| {
+            self.stores
+                .iter()
+                .find(|store| store.id == store_id)
+                .map(|store| store.generation)
+        });
         let cap = self.capabilities.grant_manifest_binding(
             subject,
             object,
@@ -50,6 +56,7 @@ impl SemanticGraph {
             lifetime,
             class,
             owner_store,
+            owner_store_generation,
             None,
             source,
         );
@@ -68,6 +75,12 @@ impl SemanticGraph {
         manifest_decl: bool,
     ) -> CapabilityId {
         let owner_store = self.store_id(subject);
+        let owner_store_generation = owner_store.and_then(|store_id| {
+            self.stores
+                .iter()
+                .find(|store| store.id == store_id)
+                .map(|store| store.generation)
+        });
         let cap = self.capabilities.grant_with_authority_ref(
             subject,
             debug_object_label,
@@ -75,6 +88,7 @@ impl SemanticGraph {
             operations,
             lifetime,
             owner_store,
+            owner_store_generation,
             None,
             source,
             manifest_decl,

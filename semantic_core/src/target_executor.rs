@@ -2942,6 +2942,14 @@ impl TargetExecutor {
             None,
             None,
         );
+        let transition_event = self.next_event("activation-hostcall-complete");
+        let old_generation = self.activations[activation_index].generation;
+        self.retire_activation_generation(
+            activation.id,
+            old_generation,
+            transition_event,
+            "activation-hostcall-previous-generation",
+        );
         let activation = &mut self.activations[activation_index];
         activation.return_tag = Some(HostcallReturnTag::Ok);
         activation.generation += 1;
@@ -3022,14 +3030,19 @@ impl TargetExecutor {
         }
         let exit_event = self.next_event("activation-pending");
         let activation_id = activation;
+        let old_generation = self.activations[activation_index].generation;
+        self.retire_activation_generation(
+            activation_id,
+            old_generation,
+            exit_event,
+            "activation-pending-previous-generation",
+        );
         let record = &mut self.activations[activation_index];
         record.state = ActivationState::Pending;
         record.blocked_wait = Some(wait);
         record.return_tag = Some(HostcallReturnTag::Pending);
         record.exit_event = Some(exit_event);
         record.generation += 1;
-        let generation = record.generation;
-        self.refresh_hostcall_activation_generation(activation_id, generation);
         Ok(())
     }
 
@@ -3049,13 +3062,18 @@ impl TargetExecutor {
         }
         let activation_id = activation;
         let exit_event = self.next_event("activation-returned");
+        let old_generation = self.activations[activation_index].generation;
+        self.retire_activation_generation(
+            activation_id,
+            old_generation,
+            exit_event,
+            "activation-returned-previous-generation",
+        );
         let record = &mut self.activations[activation_index];
         record.state = ActivationState::Returned;
         record.return_tag = Some(HostcallReturnTag::Ok);
         record.exit_event = Some(exit_event);
         record.generation += 1;
-        let generation = record.generation;
-        self.refresh_hostcall_activation_generation(activation_id, generation);
         Ok(())
     }
 
@@ -3344,6 +3362,13 @@ impl TargetExecutor {
                 .position(|record| record.id == activation)
             {
                 let exit_event = self.next_event("activation-cleanup-dropped");
+                let old_generation = self.activations[index].generation;
+                self.retire_activation_generation(
+                    activation,
+                    old_generation,
+                    exit_event,
+                    "fault-cleanup-activation-previous-generation",
+                );
                 let (activation_generation, cancelled) = {
                     let record = &mut self.activations[index];
                     record.state = ActivationState::Dropped;
@@ -3360,10 +3385,9 @@ impl TargetExecutor {
                 };
                 cancelled_waits += cancelled;
                 final_activation_generation = Some(activation_generation);
-                self.refresh_hostcall_activation_generation(activation, activation_generation);
             }
         }
-        let revoked = capabilities.revoke_owner_store(store.id);
+        let revoked = capabilities.revoke_owner_store(store.id, expected_store_generation);
         let revoked_refs = revoked
             .iter()
             .filter_map(|capability_id| {
@@ -3943,12 +3967,7 @@ impl TargetExecutor {
             frame_size: frame.frame_size,
             flags: frame.flags,
             activation: frame.activation,
-            activation_generation: self
-                .activations
-                .iter()
-                .find(|activation| activation.id == frame.activation)
-                .map(|activation| activation.generation)
-                .unwrap_or(frame.activation_generation),
+            activation_generation: frame.activation_generation,
             store: frame.store,
             store_generation: frame.store_generation,
             code_object: frame.code_object,
@@ -3988,10 +4007,17 @@ impl TargetExecutor {
         let activation_id = self.activations[activation_index].id;
         let store = self.activations[activation_index].store;
         let store_generation = self.activations[activation_index].store_generation;
+        let old_activation_generation = self.activations[activation_index].generation;
         self.release_all_leases_for_activation_id(activation_id, "trap-quarantine");
         let id = self.next_trap_id;
         self.next_trap_id += 1;
         let exit_event = self.next_event("activation-trapped");
+        self.retire_activation_generation(
+            activation_id,
+            old_activation_generation,
+            exit_event,
+            "activation-trapped-previous-generation",
+        );
         let activation = &mut self.activations[activation_index];
         activation.state = ActivationState::Trapped;
         activation.trap = Some(id);
@@ -4017,20 +4043,35 @@ impl TargetExecutor {
             effect,
             detail: detail.to_string(),
         });
-        self.refresh_hostcall_activation_generation(activation_id, activation_generation);
         id
     }
 
-    fn refresh_hostcall_activation_generation(
+    fn retire_activation_generation(
         &mut self,
         activation: ActivationId,
         generation: Generation,
+        event: EventId,
+        reason: &str,
     ) {
-        for trace in &mut self.hostcall_trace {
-            if trace.activation == activation {
-                trace.activation_generation = generation;
-            }
+        if generation == 0
+            || self.tombstones.iter().any(|tombstone| {
+                tombstone.object_ref()
+                    == ContractObjectRef::new(
+                        ContractObjectKind::Activation,
+                        activation,
+                        generation,
+                    )
+            })
+        {
+            return;
         }
+        self.tombstones.push(TombstoneRecord::new(
+            ContractObjectKind::Activation,
+            activation,
+            generation,
+            event,
+            reason,
+        ));
     }
 
     fn release_all_leases_for_activation_id(
@@ -4277,6 +4318,7 @@ mod tests {
             "store",
             CapabilityClass::MmioRegion,
             Some(store_id),
+            Some(store_record.generation),
             None,
             "target-executor-test",
         );
@@ -4987,7 +5029,8 @@ mod tests {
         let mut activation_record = executor.activations()[0].clone();
         activation_record.code_generation = current_code.generation;
         let mut trace = executor.hostcall_trace()[0].clone();
-        trace.activation_generation = activation_record.generation;
+        assert_eq!(trace.activation_generation, 1);
+        assert_eq!(activation_record.generation, 2);
         trace.code_generation = historical_generation;
         let snapshot = ContractGraphSnapshot {
             artifacts: {
@@ -5020,7 +5063,7 @@ mod tests {
             waits: Vec::new(),
             cleanup_transactions: Vec::new(),
             tombstones: {
-                let mut tombstones = Vec::new();
+                let mut tombstones = executor.tombstones().to_vec();
                 tombstones.push(TombstoneRecord::new(
                     ContractObjectKind::CodeObject,
                     code.id,
@@ -5071,6 +5114,7 @@ mod tests {
             id: 77,
             owner_task: None,
             owner_store: Some(dead_store.id),
+            owner_store_generation: Some(dead_store.generation),
             kind: SemanticWaitKind::Futex,
             generation: 1,
             state: WaitState::Pending,
@@ -5180,11 +5224,11 @@ mod tests {
                 && violation.edge == "activation->dmw-lease"
         }));
         assert!(violations.iter().any(|violation| {
-            violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+            violation.kind == ContractViolationKind::LiveEdgeReferencesInactiveObject
                 && violation.edge == "capability->owner-store"
         }));
         assert!(violations.iter().any(|violation| {
-            violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+            violation.kind == ContractViolationKind::LiveEdgeReferencesInactiveObject
                 && violation.edge == "wait->owner-store"
         }));
         assert!(violations.iter().any(|violation| {

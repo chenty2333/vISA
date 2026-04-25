@@ -12,6 +12,7 @@ impl SemanticGraph {
             wait,
             Some(owner_task),
             None,
+            None,
             kind,
             generation,
             Vec::new(),
@@ -26,6 +27,7 @@ impl SemanticGraph {
         wait: WaitId,
         owner_task: Option<TaskId>,
         owner_store: Option<StoreId>,
+        owner_store_generation: Option<Generation>,
         kind: SemanticWaitKind,
         generation: Generation,
         blockers: Vec<ContractObjectRef>,
@@ -38,6 +40,7 @@ impl SemanticGraph {
             record.generation = generation;
             record.owner_task = owner_task;
             record.owner_store = owner_store;
+            record.owner_store_generation = owner_store_generation;
             record.blockers = blockers;
             record.deadline = deadline;
             record.cancel_reason = None;
@@ -48,6 +51,7 @@ impl SemanticGraph {
                 id: wait,
                 owner_task,
                 owner_store,
+                owner_store_generation,
                 kind,
                 generation,
                 state: WaitState::Pending,
@@ -153,7 +157,9 @@ impl SemanticGraph {
                 index.by_task.push((task, wait.id));
             }
             if let Some(store) = wait.owner_store {
-                index.by_store.push((store, wait.id));
+                index
+                    .by_store
+                    .push((store, wait.owner_store_generation.unwrap_or(0), wait.id));
             }
             if let Some(deadline) = wait.deadline {
                 index.by_deadline.push((deadline, wait.id));

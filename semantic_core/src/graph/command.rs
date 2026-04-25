@@ -9,6 +9,7 @@ pub enum SemanticCommand {
         operations: Vec<String>,
         lifetime: String,
         owner_store: Option<StoreId>,
+        owner_store_generation: Option<Generation>,
         owner_task: Option<TaskId>,
         source: String,
         manifest_decl: bool,
@@ -20,6 +21,7 @@ pub enum SemanticCommand {
         wait: WaitId,
         owner_task: Option<TaskId>,
         owner_store: Option<StoreId>,
+        owner_store_generation: Option<Generation>,
         kind: SemanticWaitKind,
         generation: Generation,
         blockers: Vec<ContractObjectRef>,
@@ -113,6 +115,29 @@ impl SemanticGraph {
             SemanticCommand::GrantCapability { operations, .. } if operations.is_empty() => Err(
                 CommandError::precondition("grant-capability requires at least one operation"),
             ),
+            SemanticCommand::GrantCapability {
+                owner_store: Some(store),
+                owner_store_generation,
+                ..
+            } => {
+                if let Some(generation) = owner_store_generation {
+                    if self
+                        .stores
+                        .iter()
+                        .any(|record| record.id == *store && record.generation == *generation)
+                    {
+                        Ok(())
+                    } else {
+                        Err(CommandError::precondition(
+                            "owner store generation is missing",
+                        ))
+                    }
+                } else {
+                    Err(CommandError::precondition(
+                        "owner store generation is required",
+                    ))
+                }
+            }
             SemanticCommand::RevokeCapability { cap } => {
                 if self
                     .capabilities
@@ -128,6 +153,7 @@ impl SemanticGraph {
             SemanticCommand::CreateWait {
                 owner_task,
                 owner_store,
+                owner_store_generation,
                 blockers,
                 deadline,
                 ..
@@ -140,6 +166,24 @@ impl SemanticGraph {
                     Err(CommandError::precondition(
                         "create-wait requires blocker or deadline",
                     ))
+                } else if let Some(store) = owner_store {
+                    if let Some(generation) = owner_store_generation {
+                        if self
+                            .stores
+                            .iter()
+                            .any(|record| record.id == *store && record.generation == *generation)
+                        {
+                            Ok(())
+                        } else {
+                            Err(CommandError::precondition(
+                                "owner store generation is missing",
+                            ))
+                        }
+                    } else {
+                        Err(CommandError::precondition(
+                            "owner store generation is required",
+                        ))
+                    }
                 } else {
                     Ok(())
                 }
@@ -205,6 +249,7 @@ impl SemanticGraph {
                 operations,
                 lifetime,
                 owner_store,
+                owner_store_generation,
                 owner_task,
                 source,
                 manifest_decl,
@@ -217,6 +262,7 @@ impl SemanticGraph {
                     &operations,
                     &lifetime,
                     owner_store,
+                    owner_store_generation,
                     owner_task,
                     &source,
                     manifest_decl,
@@ -237,6 +283,7 @@ impl SemanticGraph {
                 wait,
                 owner_task,
                 owner_store,
+                owner_store_generation,
                 kind,
                 generation,
                 blockers,
@@ -248,6 +295,7 @@ impl SemanticGraph {
                     wait,
                     owner_task,
                     owner_store,
+                    owner_store_generation,
                     kind,
                     generation,
                     blockers,

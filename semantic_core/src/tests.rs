@@ -33,6 +33,7 @@ fn capability_authority_uses_object_ref_not_debug_label() {
         "store",
         CapabilityClass::MmioRegion,
         Some(1),
+        Some(1),
         None,
         "manifest",
     );
@@ -70,6 +71,7 @@ fn capability_authority_uses_object_ref_not_debug_label() {
         &["map"],
         "store",
         Some(1),
+        Some(1),
         None,
         "manifest",
         true,
@@ -98,6 +100,47 @@ fn capability_authority_uses_object_ref_not_debug_label() {
 }
 
 #[test]
+fn manifest_binding_does_not_overwrite_explicit_authority_ref_by_label() {
+    let mut ledger = CapabilityLedger::new();
+    let explicit_ref = AuthorityObjectRef::internal(
+        CapabilityClass::MmioRegion,
+        ContractObjectRef::new(ContractObjectKind::Resource, 999, 1),
+    );
+    let explicit_cap = ledger.grant_with_authority_ref(
+        "driver",
+        "mmio.virtio-net",
+        explicit_ref,
+        &["map"],
+        "store",
+        Some(1),
+        Some(1),
+        None,
+        "explicit",
+        true,
+    );
+    let manifest_cap = ledger.grant_manifest_binding(
+        "driver",
+        "mmio.virtio-net",
+        &["map"],
+        "store",
+        CapabilityClass::MmioRegion,
+        Some(1),
+        Some(1),
+        None,
+        "manifest",
+    );
+
+    assert_ne!(explicit_cap, manifest_cap);
+    let explicit_record = ledger
+        .records()
+        .iter()
+        .find(|record| record.id == explicit_cap)
+        .expect("explicit capability");
+    assert_eq!(explicit_record.object_ref, Some(explicit_ref));
+    assert_eq!(explicit_record.source, "explicit");
+}
+
+#[test]
 fn capability_authority_rejects_stale_revoked_wrong_subject_and_undeclared_external() {
     let mut ledger = CapabilityLedger::new();
     let cap = ledger.grant_manifest_binding(
@@ -106,6 +149,7 @@ fn capability_authority_rejects_stale_revoked_wrong_subject_and_undeclared_exter
         &["rx", "tx"],
         "store",
         CapabilityClass::PacketDevice,
+        Some(1),
         Some(1),
         None,
         "manifest",
@@ -153,6 +197,7 @@ fn capability_authority_rejects_stale_revoked_wrong_subject_and_undeclared_exter
         external_ref,
         &["probe"],
         "store",
+        Some(1),
         Some(1),
         None,
         "test",
@@ -379,6 +424,7 @@ fn wait_token_event_bridge_indexes_resolves_cancels_and_restarts() {
         21,
         Some(7),
         Some(3),
+        Some(1),
         SemanticWaitKind::Timer,
         1,
         {
@@ -398,7 +444,7 @@ fn wait_token_event_bridge_indexes_resolves_cancels_and_restarts() {
     });
     assert_eq!(index.by_store, {
         let mut expected = Vec::new();
-        expected.push((3, 21));
+        expected.push((3, 1, 21));
         expected
     });
     assert!(graph.fake_timer_event_resolve_wait(21, 100));
@@ -410,6 +456,7 @@ fn wait_token_event_bridge_indexes_resolves_cancels_and_restarts() {
         22,
         Some(7),
         Some(3),
+        Some(1),
         SemanticWaitKind::DeviceIrq,
         1,
         {
@@ -468,6 +515,7 @@ fn wait_contract_graph_rejects_hidden_or_stale_live_waits() {
         id: 31,
         owner_task: None,
         owner_store: None,
+        owner_store_generation: None,
         kind: SemanticWaitKind::Futex,
         generation: 1,
         state: WaitState::Pending,
@@ -481,6 +529,7 @@ fn wait_contract_graph_rejects_hidden_or_stale_live_waits() {
         id: 32,
         owner_task: None,
         owner_store: Some(dead_store.id),
+        owner_store_generation: Some(dead_store.generation),
         kind: SemanticWaitKind::DeviceIrq,
         generation: 1,
         state: WaitState::Pending,
@@ -498,6 +547,7 @@ fn wait_contract_graph_rejects_hidden_or_stale_live_waits() {
         id: 33,
         owner_task: None,
         owner_store: Some(running_store.id),
+        owner_store_generation: Some(running_store.generation),
         kind: SemanticWaitKind::Timer,
         generation: 1,
         state: WaitState::Resolved,
@@ -546,12 +596,118 @@ fn wait_contract_graph_rejects_hidden_or_stale_live_waits() {
         violation.kind == ContractViolationKind::DanglingEdge && violation.edge == "wait->blocker"
     }));
     assert!(violations.iter().any(|violation| {
-        violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+        violation.kind == ContractViolationKind::LiveEdgeReferencesInactiveObject
             && violation.edge == "wait->owner-store"
     }));
     assert!(violations.iter().any(|violation| {
         violation.kind == ContractViolationKind::LiveEdgeReferencesInactiveObject
             && violation.edge == "store->wait-live"
+    }));
+}
+
+#[test]
+fn contract_graph_rejects_active_capability_and_wait_owned_by_old_store_generation() {
+    let mut store = StoreRecord {
+        id: 9,
+        package: "driver".to_string(),
+        artifact: "driver.cwasm".to_string(),
+        role: "driver".to_string(),
+        fault_policy: "restartable".to_string(),
+        fault_domain: 1,
+        resource: Some(1),
+        state: StoreState::Running,
+        generation: 2,
+        restart_count: 1,
+    };
+    let old_store = ContractObjectRef::new(ContractObjectKind::Store, store.id, 1);
+    let object = ContractObjectRef::new(ContractObjectKind::Resource, 77, 1);
+    let capability = CapabilityRecord {
+        id: 4,
+        subject: "driver".to_string(),
+        object: "packet-device.net0".to_string(),
+        object_ref: Some(AuthorityObjectRef::internal(
+            CapabilityClass::PacketDevice,
+            object,
+        )),
+        operations: OperationSet::from_static(&["rx"]),
+        lifetime: "store".to_string(),
+        class: CapabilityClass::PacketDevice,
+        owner_store: Some(store.id),
+        owner_store_generation: Some(1),
+        owner_task: None,
+        source: "test".to_string(),
+        generation: 1,
+        parent: None,
+        manifest_decl: true,
+        debug_object_label: "packet-device.net0".to_string(),
+        revoked: false,
+    };
+    let wait = WaitRecord {
+        id: 8,
+        owner_task: None,
+        owner_store: Some(store.id),
+        owner_store_generation: Some(1),
+        kind: SemanticWaitKind::DeviceIrq,
+        generation: 1,
+        state: WaitState::Pending,
+        blockers: {
+            let mut blockers = Vec::new();
+            blockers.push(capability.object_ref());
+            blockers
+        },
+        deadline: None,
+        cancel_reason: None,
+        restart_policy: RestartPolicy::RestartIfAllowed,
+        saved_context: None,
+    };
+    store.state = StoreState::Running;
+    let snapshot = ContractGraphSnapshot {
+        stores: {
+            let mut stores = Vec::new();
+            stores.push(store);
+            stores
+        },
+        capabilities: {
+            let mut capabilities = Vec::new();
+            capabilities.push(capability);
+            capabilities
+        },
+        waits: {
+            let mut waits = Vec::new();
+            waits.push(wait);
+            waits
+        },
+        tombstones: {
+            let mut tombstones = Vec::new();
+            tombstones.push(TombstoneRecord::new(
+                ContractObjectKind::Store,
+                old_store.id,
+                old_store.generation,
+                1,
+                "store-rebound",
+            ));
+            tombstones
+        },
+        external_objects: {
+            let mut declarations = Vec::new();
+            declarations.push(ExternalObjectDeclaration::new(
+                object,
+                "test",
+                CapabilityClass::PacketDevice.as_str(),
+                "packet-device.net0",
+            ));
+            declarations
+        },
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+    assert!(violations.iter().any(|violation| {
+        violation.kind == ContractViolationKind::TombstoneReferencedByLiveEdge
+            && violation.edge == "capability->owner-store"
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.kind == ContractViolationKind::TombstoneReferencedByLiveEdge
+            && violation.edge == "wait->owner-store"
     }));
 }
 
@@ -572,7 +728,8 @@ fn command_surface_grants_capability_and_precondition_failures_are_atomic() {
                 operations
             },
             lifetime: "store".to_string(),
-            owner_store: Some(1),
+            owner_store: None,
+            owner_store_generation: None,
             owner_task: None,
             source: "command-test".to_string(),
             manifest_decl: true,
@@ -593,6 +750,7 @@ fn command_surface_grants_capability_and_precondition_failures_are_atomic() {
             wait: 99,
             owner_task: None,
             owner_store: None,
+            owner_store_generation: None,
             kind: SemanticWaitKind::Futex,
             generation: 1,
             blockers: Vec::new(),
@@ -617,6 +775,7 @@ fn command_surface_wait_and_cleanup_transactions_are_canonical_and_idempotent() 
             wait: 41,
             owner_task: Some(7),
             owner_store: None,
+            owner_store_generation: None,
             kind: SemanticWaitKind::Timer,
             generation: 1,
             blockers: Vec::new(),

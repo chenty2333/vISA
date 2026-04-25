@@ -289,6 +289,7 @@ pub struct CapabilityRecord {
     pub lifetime: String,
     pub class: CapabilityClass,
     pub owner_store: Option<StoreId>,
+    pub owner_store_generation: Option<Generation>,
     pub owner_task: Option<TaskId>,
     pub source: String,
     pub generation: Generation,
@@ -347,6 +348,7 @@ impl CapabilityLedger {
             CapabilityClass::from_object(object),
             None,
             None,
+            None,
             "runtime-grant",
         )
     }
@@ -359,19 +361,22 @@ impl CapabilityLedger {
         lifetime: &str,
         class: CapabilityClass,
         owner_store: Option<StoreId>,
+        owner_store_generation: Option<Generation>,
         owner_task: Option<TaskId>,
         source: &str,
     ) -> CapabilityId {
         let object_ref = Some(AuthorityObjectRef::from_label(class, object));
         if let Some(record) = self.records.iter_mut().find(|record| {
             record.subject == subject
-                && (record.object_ref == object_ref || record.object == object)
+                && (record.object_ref == object_ref
+                    || (record.object_ref.is_none() && record.object == object))
         }) {
             record.operations = OperationSet::from_static(operations);
             record.lifetime = lifetime.to_string();
             record.class = class;
             record.object_ref = object_ref;
             record.owner_store = owner_store;
+            record.owner_store_generation = owner_store_generation;
             record.owner_task = owner_task;
             record.source = source.to_string();
             record.manifest_decl = true;
@@ -392,6 +397,7 @@ impl CapabilityLedger {
             lifetime: lifetime.to_string(),
             class,
             owner_store,
+            owner_store_generation,
             owner_task,
             source: source.to_string(),
             generation: 1,
@@ -411,6 +417,7 @@ impl CapabilityLedger {
         operations: &[&str],
         lifetime: &str,
         owner_store: Option<StoreId>,
+        owner_store_generation: Option<Generation>,
         owner_task: Option<TaskId>,
         source: &str,
         manifest_decl: bool,
@@ -426,6 +433,7 @@ impl CapabilityLedger {
             record.lifetime = lifetime.to_string();
             record.class = object_ref.class();
             record.owner_store = owner_store;
+            record.owner_store_generation = owner_store_generation;
             record.owner_task = owner_task;
             record.source = source.to_string();
             record.manifest_decl = manifest_decl;
@@ -444,6 +452,7 @@ impl CapabilityLedger {
             lifetime: lifetime.to_string(),
             class: object_ref.class(),
             owner_store,
+            owner_store_generation,
             owner_task,
             source: source.to_string(),
             generation: 1,
@@ -473,6 +482,7 @@ impl CapabilityLedger {
             lifetime: lifetime.to_string(),
             class: CapabilityClass::from_object(object),
             owner_store: None,
+            owner_store_generation: None,
             owner_task: None,
             source: "debug-label-only-test".to_string(),
             generation: 1,
@@ -505,6 +515,7 @@ impl CapabilityLedger {
             &operations,
             lifetime,
             parent.owner_store,
+            parent.owner_store_generation,
             parent.owner_task,
             "delegated",
             parent.manifest_decl,
@@ -540,6 +551,7 @@ impl CapabilityLedger {
             operations,
             lifetime,
             parent.owner_store,
+            parent.owner_store_generation,
             parent.owner_task,
             "attenuated",
             parent.manifest_decl,
@@ -583,10 +595,19 @@ impl CapabilityLedger {
         self.revoke_subject_report(subject).count()
     }
 
-    pub fn revoke_owner_store(&mut self, owner_store: StoreId) -> Vec<CapabilityId> {
+    pub fn revoke_owner_store(
+        &mut self,
+        owner_store: StoreId,
+        owner_store_generation: Generation,
+    ) -> Vec<CapabilityId> {
         let mut revoked = Vec::new();
         for record in &mut self.records {
-            if record.owner_store == Some(owner_store) && !record.revoked {
+            if record.owner_store == Some(owner_store)
+                && record
+                    .owner_store_generation
+                    .is_none_or(|generation| generation == owner_store_generation)
+                && !record.revoked
+            {
                 record.revoked = true;
                 record.generation += 1;
                 revoked.push(record.id);

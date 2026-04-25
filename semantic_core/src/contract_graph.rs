@@ -499,29 +499,20 @@ impl ContractGraphValidator {
         for capability in &snapshot.capabilities {
             let from = capability.object_ref();
             if let Some(store_id) = capability.owner_store {
-                match snapshot.stores.iter().find(|store| store.id == store_id) {
-                    Some(store) if store.state == StoreState::Dead && !capability.revoked => {
-                        violations.push(ContractViolation::new(
-                            ContractViolationKind::LiveObjectReferencesDeadObject,
-                            "capability->owner-store",
-                            from,
-                            Some(store.object_ref()),
-                            "active capability is owned by a dead store",
-                        ));
-                    }
-                    Some(_) => {}
-                    None => violations.push(ContractViolation::new(
-                        ContractViolationKind::DanglingEdge,
-                        "capability->owner-store",
-                        from,
-                        Some(ContractObjectRef::new(
-                            ContractObjectKind::Store,
-                            store_id,
-                            0,
-                        )),
-                        "capability references missing owner store",
-                    )),
-                }
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "capability->owner-store",
+                    ContractObjectKind::Store,
+                    store_id,
+                    capability.owner_store_generation.unwrap_or(0),
+                    if capability.revoked {
+                        ContractEdgeMode::Historical
+                    } else {
+                        ContractEdgeMode::Live
+                    },
+                );
             }
             match capability.object_ref {
                 Some(object_ref) => Self::check_authority_object_edge(
@@ -577,38 +568,16 @@ impl ContractGraphValidator {
             }
             if wait.state == WaitState::Pending {
                 if let Some(owner_store) = wait.owner_store {
-                    match snapshot.stores.iter().find(|store| store.id == owner_store) {
-                        Some(store) if store.state == StoreState::Dead => {
-                            violations.push(ContractViolation::new(
-                                ContractViolationKind::LiveObjectReferencesDeadObject,
-                                "wait->owner-store",
-                                from,
-                                Some(store.object_ref()),
-                                "pending wait is owned by a dead store",
-                            ));
-                        }
-                        Some(store) => Self::check_generation_edge(
-                            snapshot,
-                            violations,
-                            from,
-                            "wait->owner-store",
-                            ContractObjectKind::Store,
-                            store.id,
-                            store.generation,
-                            ContractEdgeMode::Live,
-                        ),
-                        None => violations.push(ContractViolation::new(
-                            ContractViolationKind::DanglingEdge,
-                            "wait->owner-store",
-                            from,
-                            Some(ContractObjectRef::new(
-                                ContractObjectKind::Store,
-                                owner_store,
-                                0,
-                            )),
-                            "pending wait references missing owner store",
-                        )),
-                    }
+                    Self::check_generation_edge(
+                        snapshot,
+                        violations,
+                        from,
+                        "wait->owner-store",
+                        ContractObjectKind::Store,
+                        owner_store,
+                        wait.owner_store_generation.unwrap_or(0),
+                        ContractEdgeMode::Live,
+                    );
                 }
                 for blocker in &wait.blockers {
                     Self::check_contract_ref_edge(

@@ -433,6 +433,8 @@ pub struct CapabilityRecordManifest {
     pub lifetime: String,
     pub class: String,
     pub owner_store: Option<u64>,
+    #[serde(default)]
+    pub owner_store_generation: Option<u64>,
     pub owner_task: Option<u64>,
     pub source: String,
     pub generation: u64,
@@ -457,6 +459,8 @@ pub struct WaitRecordManifest {
     pub id: u64,
     pub owner_task: Option<u64>,
     pub owner_store: Option<u64>,
+    #[serde(default)]
+    pub owner_store_generation: Option<u64>,
     pub kind: String,
     pub generation: u64,
     pub state: String,
@@ -739,6 +743,8 @@ pub struct MigrationCapabilityManifest {
     pub source: String,
     #[serde(default)]
     pub owner_store: Option<u64>,
+    #[serde(default)]
+    pub owner_store_generation: Option<u64>,
     #[serde(default)]
     pub owner_task: Option<u64>,
     pub generation: u64,

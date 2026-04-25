@@ -19,12 +19,15 @@
         "rx",
         "tx"
       ],
-      "generation": 1
+      "generation": 1,
+      "owner_store": 1,
+      "owner_store_generation": 1
     },
     {
       "op": "CreateWait",
       "wait": 22,
       "owner_store": 1,
+      "owner_store_generation": 1,
       "blocker": {
         "kind": "capability",
         "id": 1,
@@ -77,6 +80,10 @@
       "generation": 2,
       "state": "revoked",
       "subject": "driver_virtio_net",
+      "owner": {
+        "store": 1,
+        "store_generation": 1
+      },
       "references": {
         "object_ref": {
           "scope": "internal",
@@ -99,6 +106,10 @@
       "id": 22,
       "generation": 1,
       "state": "cancelled",
+      "owner": {
+        "store": 1,
+        "store_generation": 1
+      },
       "cancel_reason": "capability-revoked",
       "restart_policy": "restart-if-allowed"
     }
