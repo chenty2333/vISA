@@ -6,7 +6,8 @@ use std::process::Command;
 
 use artifact_manifest::{
     ArtifactBundleManifest, CapabilityManifest, CompilerManifest, ExternManifest, ImportManifest,
-    ModuleArtifactManifest, ResourceLimitsManifest, SignatureManifest, TargetManifest,
+    InterfaceRequirementManifest, ModuleArtifactManifest, ResourceLimitsManifest,
+    SignatureManifest, SubstrateAuthorityRequirementManifest, TargetManifest,
 };
 use contract_core::{
     RUNTIME_MODE_RESEARCH, ValidatedArtifactEntry, build_validated_artifact_plan,
@@ -21,7 +22,7 @@ use supervisor_catalog::{
     ARTIFACT_SIGNATURE_PROFILE, DMW_LAYOUT, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
     RUNTIME_ONLY_EXECUTOR_ABI, SUPERVISOR_ABI_VERSION, SUPERVISOR_ARTIFACT_FORMAT,
     SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_EXECUTION_MODE, SUPERVISOR_WASM_MODULES,
-    WASM_FEATURE_PROFILE, module_dependencies,
+    WASM_FEATURE_PROFILE, module_dependencies, module_interface_spec,
 };
 use wasmtime::{Config, Engine, ExternType, Instance, Module, Precompiled, Store, Strategy};
 
@@ -245,6 +246,7 @@ fn compile_artifacts(
                 max_table_elements: 0,
                 max_hostcalls_per_activation: 64,
             },
+            interfaces: interface_manifest(module),
             signature: SignatureManifest {
                 scheme: "prototype-self-signed-sha256".to_owned(),
                 artifact_hash: cwasm_sha256,
@@ -291,6 +293,55 @@ fn compile_artifacts(
     );
 
     Ok(())
+}
+
+fn interface_manifest(module: &supervisor_catalog::WasmModuleSpec) -> InterfaceRequirementManifest {
+    let spec = module_interface_spec(module);
+    InterfaceRequirementManifest {
+        required_wasi_worlds: spec
+            .required_wasi_worlds
+            .iter()
+            .map(|entry| (*entry).to_owned())
+            .collect(),
+        optional_wasi_worlds: spec
+            .optional_wasi_worlds
+            .iter()
+            .map(|entry| (*entry).to_owned())
+            .collect(),
+        custom_wit_worlds: spec
+            .custom_wit_worlds
+            .iter()
+            .map(|entry| (*entry).to_owned())
+            .collect(),
+        wit_package_versions: spec
+            .wit_package_versions
+            .iter()
+            .map(|entry| (*entry).to_owned())
+            .collect(),
+        component_model_version: spec.component_model_version.to_owned(),
+        wasi_profile: spec.wasi_profile.to_owned(),
+        hostcall_abi_version: spec.hostcall_abi_version.to_owned(),
+        capability_abi_version: spec.capability_abi_version.to_owned(),
+        semantic_contract_version: spec.semantic_contract_version.to_owned(),
+        substrate_profile_required: spec.substrate_profile_required.to_owned(),
+        substrate_authorities: SubstrateAuthorityRequirementManifest {
+            required: spec
+                .substrate_required
+                .iter()
+                .map(|entry| (*entry).to_owned())
+                .collect(),
+            optional: spec
+                .substrate_optional
+                .iter()
+                .map(|entry| (*entry).to_owned())
+                .collect(),
+            forbidden: spec
+                .substrate_forbidden
+                .iter()
+                .map(|entry| (*entry).to_owned())
+                .collect(),
+        },
+    }
 }
 
 fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {

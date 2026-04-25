@@ -12,6 +12,12 @@ pub const SUPERVISOR_COMPILER_ENGINE: &str = "wasmtime";
 pub const SUPERVISOR_EXECUTION_MODE: &str = "precompiled-core-module";
 pub const SUPERVISOR_ARTIFACT_FORMAT: &str = "cwasm";
 pub const RUNTIME_ONLY_EXECUTOR_ABI: &str = "vmos-runtime-only-executor-v0";
+pub const SEMANTIC_CONTRACT_SCHEMA_VERSION: &str = "semantic-contract-v0.1";
+pub const COMPONENT_MODEL_VERSION: &str = "wasm-core-module-v0";
+pub const WASI_PROFILE_NONE: &str = "none";
+pub const HOSTCALL_ABI_VERSION: &str = "vmos-target-hostcall-frame-v1";
+pub const CAPABILITY_ABI_VERSION: &str = "vmos-capability-handle-v1";
+pub const WIT_PACKAGE_VERSION: &str = "semantic:vmos@0.1";
 
 pub struct WasmModuleSpec {
     pub package: &'static str,
@@ -71,6 +77,129 @@ pub struct CapabilitySpec {
     pub name: &'static str,
     pub rights: &'static [&'static str],
     pub lifetime: &'static str,
+}
+
+#[derive(Clone, Copy)]
+pub struct ModuleInterfaceSpec {
+    pub required_wasi_worlds: &'static [&'static str],
+    pub optional_wasi_worlds: &'static [&'static str],
+    pub custom_wit_worlds: &'static [&'static str],
+    pub wit_package_versions: &'static [&'static str],
+    pub component_model_version: &'static str,
+    pub wasi_profile: &'static str,
+    pub hostcall_abi_version: &'static str,
+    pub capability_abi_version: &'static str,
+    pub semantic_contract_version: &'static str,
+    pub substrate_profile_required: &'static str,
+    pub substrate_required: &'static [&'static str],
+    pub substrate_optional: &'static [&'static str],
+    pub substrate_forbidden: &'static [&'static str],
+}
+
+const NO_INTERFACES: &[&str] = &[];
+const VMOS_WIT_PACKAGE: &[&str] = &[WIT_PACKAGE_VERSION];
+const SUPERVISOR_WIT: &[&str] = &["semantic:supervisor"];
+const DRIVER_WIT: &[&str] = &["semantic:driverkit", "semantic:machine"];
+const MACHINE_WIT: &[&str] = &["semantic:machine"];
+const SNAPSHOT_WIT: &[&str] = &["semantic:snapshot", "semantic:debug"];
+const DEBUG_WIT: &[&str] = &["semantic:debug"];
+
+const SEMANTIC_HARNESS_AUTHORITIES: &[&str] = &["console", "timer", "event-queue", "guest-memory"];
+const GUEST_FRONTEND_AUTHORITIES: &[&str] = &[
+    "console",
+    "timer",
+    "event-queue",
+    "guest-memory",
+    "artifact-loading",
+    "dmw:logical-or-better",
+    "code-publish:metadata-only",
+];
+const DEVICE_AUTHORITIES: &[&str] = &[
+    "console",
+    "timer",
+    "event-queue",
+    "guest-memory",
+    "artifact-loading",
+    "dmw:logical-or-better",
+    "mmio",
+    "irq",
+    "dma:mediated-or-better",
+    "code-publish:metadata-only",
+];
+const SNAPSHOT_AUTHORITIES: &[&str] = &[
+    "console",
+    "timer",
+    "event-queue",
+    "guest-memory",
+    "artifact-loading",
+    "dmw:logical-or-better",
+    "snapshot:deterministic-replay",
+    "code-publish:metadata-only",
+];
+const DIRECT_DEVICE_FORBIDDEN: &[&str] = &["direct-dma", "raw-mmio", "raw-irq"];
+
+const fn interface_spec(
+    custom_wit_worlds: &'static [&'static str],
+    substrate_profile_required: &'static str,
+    substrate_required: &'static [&'static str],
+    substrate_optional: &'static [&'static str],
+    substrate_forbidden: &'static [&'static str],
+) -> ModuleInterfaceSpec {
+    ModuleInterfaceSpec {
+        required_wasi_worlds: NO_INTERFACES,
+        optional_wasi_worlds: NO_INTERFACES,
+        custom_wit_worlds,
+        wit_package_versions: VMOS_WIT_PACKAGE,
+        component_model_version: COMPONENT_MODEL_VERSION,
+        wasi_profile: WASI_PROFILE_NONE,
+        hostcall_abi_version: HOSTCALL_ABI_VERSION,
+        capability_abi_version: CAPABILITY_ABI_VERSION,
+        semantic_contract_version: SEMANTIC_CONTRACT_SCHEMA_VERSION,
+        substrate_profile_required,
+        substrate_required,
+        substrate_optional,
+        substrate_forbidden,
+    }
+}
+
+pub fn module_interface_spec(module: &WasmModuleSpec) -> ModuleInterfaceSpec {
+    match module.package {
+        "driver_virtio_net" => interface_spec(
+            DRIVER_WIT,
+            "device-capable",
+            DEVICE_AUTHORITIES,
+            NO_INTERFACES,
+            NO_INTERFACES,
+        ),
+        "linux_syscall" => interface_spec(
+            MACHINE_WIT,
+            "guest-frontend",
+            GUEST_FRONTEND_AUTHORITIES,
+            NO_INTERFACES,
+            DIRECT_DEVICE_FORBIDDEN,
+        ),
+        "replay_snapshot" => interface_spec(
+            SNAPSHOT_WIT,
+            "snapshot-replay-capable",
+            SNAPSHOT_AUTHORITIES,
+            NO_INTERFACES,
+            DIRECT_DEVICE_FORBIDDEN,
+        ),
+        "wasm_app" => interface_spec(
+            DEBUG_WIT,
+            "semantic-harness",
+            SEMANTIC_HARNESS_AUTHORITIES,
+            NO_INTERFACES,
+            DIRECT_DEVICE_FORBIDDEN,
+        ),
+        _ => interface_spec(
+            SUPERVISOR_WIT,
+            "semantic-harness",
+            SEMANTIC_HARNESS_AUTHORITIES,
+            NO_INTERFACES,
+            DIRECT_DEVICE_FORBIDDEN,
+        ),
+    }
 }
 
 const CONSOLE_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
@@ -564,6 +693,47 @@ fn hash_module_contract(hash: &mut ContractHasher, module: &WasmModuleSpec) {
             hash.write_str("right");
             hash.write_str(right);
         }
+    }
+    let interfaces = module_interface_spec(module);
+    hash.write_str("component-model");
+    hash.write_str(interfaces.component_model_version);
+    hash.write_str("wasi-profile");
+    hash.write_str(interfaces.wasi_profile);
+    hash.write_str("hostcall-abi");
+    hash.write_str(interfaces.hostcall_abi_version);
+    hash.write_str("capability-abi");
+    hash.write_str(interfaces.capability_abi_version);
+    hash.write_str("semantic-contract");
+    hash.write_str(interfaces.semantic_contract_version);
+    hash.write_str("substrate-profile");
+    hash.write_str(interfaces.substrate_profile_required);
+    for entry in interfaces.required_wasi_worlds {
+        hash.write_str("required-wasi");
+        hash.write_str(entry);
+    }
+    for entry in interfaces.optional_wasi_worlds {
+        hash.write_str("optional-wasi");
+        hash.write_str(entry);
+    }
+    for entry in interfaces.custom_wit_worlds {
+        hash.write_str("custom-wit");
+        hash.write_str(entry);
+    }
+    for entry in interfaces.wit_package_versions {
+        hash.write_str("wit-package");
+        hash.write_str(entry);
+    }
+    for entry in interfaces.substrate_required {
+        hash.write_str("substrate-required");
+        hash.write_str(entry);
+    }
+    for entry in interfaces.substrate_optional {
+        hash.write_str("substrate-optional");
+        hash.write_str(entry);
+    }
+    for entry in interfaces.substrate_forbidden {
+        hash.write_str("substrate-forbidden");
+        hash.write_str(entry);
     }
 }
 

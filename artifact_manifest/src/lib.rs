@@ -70,6 +70,8 @@ pub struct ModuleArtifactManifest {
     pub service_dependencies: Vec<String>,
     #[serde(default)]
     pub resource_limits: ResourceLimitsManifest,
+    #[serde(default)]
+    pub interfaces: InterfaceRequirementManifest,
     pub signature: SignatureManifest,
 }
 
@@ -98,6 +100,42 @@ pub struct CapabilityManifest {
     pub name: String,
     pub rights: Vec<String>,
     pub lifetime: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct InterfaceRequirementManifest {
+    #[serde(default)]
+    pub required_wasi_worlds: Vec<String>,
+    #[serde(default)]
+    pub optional_wasi_worlds: Vec<String>,
+    #[serde(default)]
+    pub custom_wit_worlds: Vec<String>,
+    #[serde(default)]
+    pub wit_package_versions: Vec<String>,
+    #[serde(default)]
+    pub component_model_version: String,
+    #[serde(default)]
+    pub wasi_profile: String,
+    #[serde(default)]
+    pub hostcall_abi_version: String,
+    #[serde(default)]
+    pub capability_abi_version: String,
+    #[serde(default)]
+    pub semantic_contract_version: String,
+    #[serde(default)]
+    pub substrate_profile_required: String,
+    #[serde(default)]
+    pub substrate_authorities: SubstrateAuthorityRequirementManifest,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct SubstrateAuthorityRequirementManifest {
+    #[serde(default)]
+    pub required: Vec<String>,
+    #[serde(default)]
+    pub optional: Vec<String>,
+    #[serde(default)]
+    pub forbidden: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

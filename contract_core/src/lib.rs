@@ -2,17 +2,20 @@ use std::error::Error;
 use std::fmt;
 
 use artifact_manifest::{
-    ArtifactBundleManifest, CapabilityManifest, MigrationPackageManifest, ModuleArtifactManifest,
-    ResourceLimitsManifest, SupervisorContractManifest,
+    ArtifactBundleManifest, CapabilityManifest, InterfaceRequirementManifest,
+    MigrationPackageManifest, ModuleArtifactManifest, ResourceLimitsManifest,
+    SupervisorContractManifest,
 };
 use service_core::net_contract::NETWORK_CONTRACT_VERSION;
 use sha2::{Digest, Sha256};
 use supervisor_catalog::{
-    ARTIFACT_SIGNATURE_PROFILE, CapabilitySpec, DMW_LAYOUT, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
-    RUNTIME_ONLY_EXECUTOR_ABI, SUPERVISOR_ABI_VERSION, SUPERVISOR_ARTIFACT_FORMAT,
-    SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_CONTRACT_VERSION, SUPERVISOR_EXECUTION_MODE,
-    SUPERVISOR_WASM_MODULES, SUPERVISOR_WORLD, WASM_FEATURE_PROFILE, WasmModuleSpec,
-    catalog_contract_fingerprint, module_dependencies, package_set_fingerprint,
+    ARTIFACT_SIGNATURE_PROFILE, CAPABILITY_ABI_VERSION, COMPONENT_MODEL_VERSION, CapabilitySpec,
+    DMW_LAYOUT, HOSTCALL_ABI_VERSION, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
+    RUNTIME_ONLY_EXECUTOR_ABI, SEMANTIC_CONTRACT_SCHEMA_VERSION, SUPERVISOR_ABI_VERSION,
+    SUPERVISOR_ARTIFACT_FORMAT, SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_CONTRACT_VERSION,
+    SUPERVISOR_EXECUTION_MODE, SUPERVISOR_WASM_MODULES, SUPERVISOR_WORLD, WASI_PROFILE_NONE,
+    WASM_FEATURE_PROFILE, WIT_PACKAGE_VERSION, WasmModuleSpec, catalog_contract_fingerprint,
+    module_dependencies, module_interface_spec, package_set_fingerprint,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -397,6 +400,7 @@ pub struct ValidatedArtifactEntry {
     pub abi_fingerprint: String,
     pub service_dependencies: Vec<String>,
     pub resource_limits: ResourceLimitsManifest,
+    pub interfaces: InterfaceRequirementManifest,
     pub signature_scheme: String,
     pub signer: String,
     pub manifest_binding_hash: String,
@@ -490,6 +494,7 @@ pub fn build_validated_artifact_plan(
                 abi_fingerprint: entry.abi_fingerprint.clone(),
                 service_dependencies: entry.service_dependencies.clone(),
                 resource_limits: entry.resource_limits.clone(),
+                interfaces: entry.interfaces.clone(),
                 signature_scheme: entry.signature.scheme.clone(),
                 signer: entry.signature.signer.clone(),
                 manifest_binding_hash: entry.signature.manifest_binding_hash.clone(),
@@ -689,7 +694,145 @@ pub fn validate_manifest_entry(
         )));
     }
     validate_capabilities(spec, entry)?;
+    validate_interface_requirements(spec, entry)?;
     Ok(())
+}
+
+fn validate_interface_requirements(
+    spec: &WasmModuleSpec,
+    entry: &ModuleArtifactManifest,
+) -> ContractResult<()> {
+    let expected = module_interface_spec(spec);
+    let interfaces = &entry.interfaces;
+    validate_string_list(
+        spec,
+        "required WASI worlds",
+        &interfaces.required_wasi_worlds,
+        expected.required_wasi_worlds,
+    )?;
+    validate_string_list(
+        spec,
+        "optional WASI worlds",
+        &interfaces.optional_wasi_worlds,
+        expected.optional_wasi_worlds,
+    )?;
+    validate_string_list(
+        spec,
+        "custom WIT worlds",
+        &interfaces.custom_wit_worlds,
+        expected.custom_wit_worlds,
+    )?;
+    validate_string_list(
+        spec,
+        "WIT package versions",
+        &interfaces.wit_package_versions,
+        expected.wit_package_versions,
+    )?;
+    validate_string_list(
+        spec,
+        "required substrate authorities",
+        &interfaces.substrate_authorities.required,
+        expected.substrate_required,
+    )?;
+    validate_string_list(
+        spec,
+        "optional substrate authorities",
+        &interfaces.substrate_authorities.optional,
+        expected.substrate_optional,
+    )?;
+    validate_string_list(
+        spec,
+        "forbidden substrate authorities",
+        &interfaces.substrate_authorities.forbidden,
+        expected.substrate_forbidden,
+    )?;
+    validate_interface_field(
+        spec,
+        "component model version",
+        &interfaces.component_model_version,
+        expected.component_model_version,
+    )?;
+    validate_interface_field(
+        spec,
+        "WASI profile",
+        &interfaces.wasi_profile,
+        expected.wasi_profile,
+    )?;
+    validate_interface_field(
+        spec,
+        "hostcall ABI version",
+        &interfaces.hostcall_abi_version,
+        expected.hostcall_abi_version,
+    )?;
+    validate_interface_field(
+        spec,
+        "capability ABI version",
+        &interfaces.capability_abi_version,
+        expected.capability_abi_version,
+    )?;
+    validate_interface_field(
+        spec,
+        "semantic contract version",
+        &interfaces.semantic_contract_version,
+        expected.semantic_contract_version,
+    )?;
+    validate_interface_field(
+        spec,
+        "substrate profile",
+        &interfaces.substrate_profile_required,
+        expected.substrate_profile_required,
+    )?;
+    if interfaces.component_model_version != COMPONENT_MODEL_VERSION
+        || interfaces.wasi_profile != WASI_PROFILE_NONE
+        || interfaces.hostcall_abi_version != HOSTCALL_ABI_VERSION
+        || interfaces.capability_abi_version != CAPABILITY_ABI_VERSION
+        || interfaces.semantic_contract_version != SEMANTIC_CONTRACT_SCHEMA_VERSION
+        || !interfaces
+            .wit_package_versions
+            .iter()
+            .any(|entry| entry == WIT_PACKAGE_VERSION)
+    {
+        return Err(ContractError::new(format!(
+            "{} interface ABI boundary mismatch",
+            spec.package
+        )));
+    }
+    Ok(())
+}
+
+fn validate_interface_field(
+    spec: &WasmModuleSpec,
+    label: &str,
+    actual: &str,
+    expected: &str,
+) -> ContractResult<()> {
+    if actual == expected {
+        return Ok(());
+    }
+    Err(ContractError::new(format!(
+        "{} {label} mismatch",
+        spec.package
+    )))
+}
+
+fn validate_string_list(
+    spec: &WasmModuleSpec,
+    label: &str,
+    actual: &[String],
+    expected: &[&str],
+) -> ContractResult<()> {
+    if actual.len() == expected.len()
+        && expected
+            .iter()
+            .zip(actual.iter())
+            .all(|(expected, actual)| actual == expected)
+    {
+        return Ok(());
+    }
+    Err(ContractError::new(format!(
+        "{} {label} mismatch",
+        spec.package
+    )))
 }
 
 pub fn validate_migration_package(package: &MigrationPackageManifest) -> ContractResult<()> {
@@ -984,6 +1127,47 @@ pub fn module_abi_fingerprint(spec: &WasmModuleSpec) -> String {
             hasher.update(right.as_bytes());
         }
     }
+    let interfaces = module_interface_spec(spec);
+    hasher.update(b"\0component-model:");
+    hasher.update(interfaces.component_model_version.as_bytes());
+    hasher.update(b"\0wasi-profile:");
+    hasher.update(interfaces.wasi_profile.as_bytes());
+    hasher.update(b"\0hostcall-abi:");
+    hasher.update(interfaces.hostcall_abi_version.as_bytes());
+    hasher.update(b"\0capability-abi:");
+    hasher.update(interfaces.capability_abi_version.as_bytes());
+    hasher.update(b"\0semantic-contract:");
+    hasher.update(interfaces.semantic_contract_version.as_bytes());
+    hasher.update(b"\0substrate-profile:");
+    hasher.update(interfaces.substrate_profile_required.as_bytes());
+    for entry in interfaces.required_wasi_worlds {
+        hasher.update(b"\0required-wasi:");
+        hasher.update(entry.as_bytes());
+    }
+    for entry in interfaces.optional_wasi_worlds {
+        hasher.update(b"\0optional-wasi:");
+        hasher.update(entry.as_bytes());
+    }
+    for entry in interfaces.custom_wit_worlds {
+        hasher.update(b"\0custom-wit:");
+        hasher.update(entry.as_bytes());
+    }
+    for entry in interfaces.wit_package_versions {
+        hasher.update(b"\0wit-package:");
+        hasher.update(entry.as_bytes());
+    }
+    for entry in interfaces.substrate_required {
+        hasher.update(b"\0substrate-required:");
+        hasher.update(entry.as_bytes());
+    }
+    for entry in interfaces.substrate_optional {
+        hasher.update(b"\0substrate-optional:");
+        hasher.update(entry.as_bytes());
+    }
+    for entry in interfaces.substrate_forbidden {
+        hasher.update(b"\0substrate-forbidden:");
+        hasher.update(entry.as_bytes());
+    }
     hex::encode(hasher.finalize())
 }
 
@@ -1035,7 +1219,10 @@ fn rights_vec(capability: &CapabilitySpec) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use artifact_manifest::{CompilerManifest, ExternManifest, SignatureManifest, TargetManifest};
+    use artifact_manifest::{
+        CompilerManifest, ExternManifest, SignatureManifest, SubstrateAuthorityRequirementManifest,
+        TargetManifest,
+    };
 
     fn valid_manifest() -> ArtifactBundleManifest {
         let modules = SUPERVISOR_WASM_MODULES
@@ -1097,6 +1284,7 @@ mod tests {
                         max_table_elements: 0,
                         max_hostcalls_per_activation: 64,
                     },
+                    interfaces: interface_manifest(spec),
                     signature: SignatureManifest {
                         scheme: ARTIFACT_SIGNATURE_PROFILE.to_owned(),
                         artifact_hash: cwasm_sha256,
@@ -1137,6 +1325,55 @@ mod tests {
         }
     }
 
+    fn interface_manifest(spec: &WasmModuleSpec) -> InterfaceRequirementManifest {
+        let interfaces = module_interface_spec(spec);
+        InterfaceRequirementManifest {
+            required_wasi_worlds: interfaces
+                .required_wasi_worlds
+                .iter()
+                .map(|entry| (*entry).to_owned())
+                .collect(),
+            optional_wasi_worlds: interfaces
+                .optional_wasi_worlds
+                .iter()
+                .map(|entry| (*entry).to_owned())
+                .collect(),
+            custom_wit_worlds: interfaces
+                .custom_wit_worlds
+                .iter()
+                .map(|entry| (*entry).to_owned())
+                .collect(),
+            wit_package_versions: interfaces
+                .wit_package_versions
+                .iter()
+                .map(|entry| (*entry).to_owned())
+                .collect(),
+            component_model_version: interfaces.component_model_version.to_owned(),
+            wasi_profile: interfaces.wasi_profile.to_owned(),
+            hostcall_abi_version: interfaces.hostcall_abi_version.to_owned(),
+            capability_abi_version: interfaces.capability_abi_version.to_owned(),
+            semantic_contract_version: interfaces.semantic_contract_version.to_owned(),
+            substrate_profile_required: interfaces.substrate_profile_required.to_owned(),
+            substrate_authorities: SubstrateAuthorityRequirementManifest {
+                required: interfaces
+                    .substrate_required
+                    .iter()
+                    .map(|entry| (*entry).to_owned())
+                    .collect(),
+                optional: interfaces
+                    .substrate_optional
+                    .iter()
+                    .map(|entry| (*entry).to_owned())
+                    .collect(),
+                forbidden: interfaces
+                    .substrate_forbidden
+                    .iter()
+                    .map(|entry| (*entry).to_owned())
+                    .collect(),
+            },
+        }
+    }
+
     #[test]
     fn validated_plan_preserves_manifest_order_and_totals() {
         let manifest = valid_manifest();
@@ -1145,6 +1382,14 @@ mod tests {
         assert_eq!(plan.module_count(), SUPERVISOR_WASM_MODULES.len());
         assert_eq!(plan.runtime_mode, RUNTIME_MODE_RESEARCH);
         assert_eq!(plan.modules[0].package, SUPERVISOR_WASM_MODULES[0].package);
+        assert_eq!(
+            plan.modules[0].interfaces.semantic_contract_version,
+            SEMANTIC_CONTRACT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            plan.modules[0].interfaces.hostcall_abi_version,
+            HOSTCALL_ABI_VERSION
+        );
         assert_eq!(
             plan.capability_count(),
             SUPERVISOR_WASM_MODULES
@@ -1161,6 +1406,20 @@ mod tests {
 
         let err = validate_artifact_manifest(&manifest).expect_err("bad binding must fail");
         assert!(err.to_string().contains("manifest binding hash mismatch"));
+    }
+
+    #[test]
+    fn manifest_validation_rejects_interface_boundary_mismatch() {
+        let mut manifest = valid_manifest();
+        let linux = manifest
+            .modules
+            .iter_mut()
+            .find(|entry| entry.package == "linux_syscall")
+            .expect("linux syscall entry exists");
+        linux.interfaces.substrate_profile_required = "device-capable".to_owned();
+
+        let err = validate_artifact_manifest(&manifest).expect_err("bad interface must fail");
+        assert!(err.to_string().contains("substrate profile mismatch"));
     }
 
     #[test]

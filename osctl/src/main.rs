@@ -2102,12 +2102,15 @@ fn print_artifact_summary(manifest: &ArtifactBundleManifest) -> Result<(), Box<d
     );
     for module in &plan.modules {
         println!(
-            "module {} role={} exports={} caps={} deps={} abi={} binding={} signer={}",
+            "module {} role={} exports={} caps={} deps={} wasi_req={} wit={} substrate_profile={} abi={} binding={} signer={}",
             module.package,
             module.role,
             module.expected_exports.len(),
             module.capabilities.len(),
             module.service_dependencies.len(),
+            module.interfaces.required_wasi_worlds.len(),
+            module.interfaces.custom_wit_worlds.len(),
+            module.interfaces.substrate_profile_required,
             short_hash(&module.abi_fingerprint),
             short_hash(&module.manifest_binding_hash),
             module.signer
