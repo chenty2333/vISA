@@ -1,7 +1,18 @@
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use super::*;
+
+fn stable_authority_id(label: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in label.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let id = hash & 0x7fff_ffff_ffff_ffff;
+    if id == 0 { 1 } else { id }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OperationSet {
@@ -27,6 +38,10 @@ impl OperationSet {
 
     pub fn as_slice(&self) -> &[String] {
         &self.operations
+    }
+
+    pub fn from_owned(operations: Vec<String>) -> Self {
+        Self { operations }
     }
 }
 
@@ -156,6 +171,112 @@ impl CapabilityClass {
             _ => None,
         }
     }
+
+    pub const fn default_object_kind(self) -> ContractObjectKind {
+        match self {
+            Self::CodePublish => ContractObjectKind::CodeObject,
+            Self::Snapshot | Self::GuestMemoryAccess | Self::DmwWindow => {
+                ContractObjectKind::MemoryObject
+            }
+            Self::FaultDomain => ContractObjectKind::FaultDomain,
+            Self::EventLog => ContractObjectKind::EventLog,
+            Self::StoreControl => ContractObjectKind::Store,
+            Self::ServiceImport
+            | Self::Device
+            | Self::PacketDevice
+            | Self::MmioRegion
+            | Self::DmaBuffer
+            | Self::IrqLine
+            | Self::VirtioQueue
+            | Self::Timer
+            | Self::NetInterface
+            | Self::NetSocket => ContractObjectKind::Resource,
+        }
+    }
+
+    pub const fn requires_manifest_declaration(self) -> bool {
+        !matches!(self, Self::ServiceImport)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthorityObjectRef {
+    Internal {
+        class: CapabilityClass,
+        object: ContractObjectRef,
+    },
+    External {
+        class: CapabilityClass,
+        object: ContractObjectRef,
+    },
+}
+
+impl AuthorityObjectRef {
+    pub const fn internal(class: CapabilityClass, object: ContractObjectRef) -> Self {
+        Self::Internal { class, object }
+    }
+
+    pub const fn external(class: CapabilityClass, object: ContractObjectRef) -> Self {
+        Self::External { class, object }
+    }
+
+    pub fn from_label(class: CapabilityClass, label: &str) -> Self {
+        Self::Internal {
+            class,
+            object: ContractObjectRef::new(
+                class.default_object_kind(),
+                stable_authority_id(label),
+                1,
+            ),
+        }
+    }
+
+    pub const fn class(self) -> CapabilityClass {
+        match self {
+            Self::Internal { class, .. } | Self::External { class, .. } => class,
+        }
+    }
+
+    pub const fn object(self) -> ContractObjectRef {
+        match self {
+            Self::Internal { object, .. } | Self::External { object, .. } => object,
+        }
+    }
+
+    pub fn summary(self) -> String {
+        match self {
+            Self::Internal { class, object } => {
+                format!("internal:{}:{}", class.as_str(), object.summary())
+            }
+            Self::External { class, object } => {
+                format!("external:{}:{}", class.as_str(), object.summary())
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityHandle {
+    pub cap: CapabilityId,
+    pub generation: Generation,
+    pub rights_hint: OperationSet,
+    pub class_hint: CapabilityClass,
+}
+
+impl CapabilityHandle {
+    pub fn new(
+        cap: CapabilityId,
+        generation: Generation,
+        rights_hint: Vec<String>,
+        class_hint: CapabilityClass,
+    ) -> Self {
+        Self {
+            cap,
+            generation,
+            rights_hint: OperationSet::from_owned(rights_hint),
+            class_hint,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -163,6 +284,7 @@ pub struct CapabilityRecord {
     pub id: CapabilityId,
     pub subject: String,
     pub object: String,
+    pub object_ref: Option<AuthorityObjectRef>,
     pub operations: OperationSet,
     pub lifetime: String,
     pub class: CapabilityClass,
@@ -170,6 +292,9 @@ pub struct CapabilityRecord {
     pub owner_task: Option<TaskId>,
     pub source: String,
     pub generation: Generation,
+    pub parent: Option<CapabilityId>,
+    pub manifest_decl: bool,
+    pub debug_object_label: String,
     pub revoked: bool,
 }
 
@@ -237,17 +362,20 @@ impl CapabilityLedger {
         owner_task: Option<TaskId>,
         source: &str,
     ) -> CapabilityId {
-        if let Some(record) = self
-            .records
-            .iter_mut()
-            .find(|record| record.subject == subject && record.object == object)
-        {
+        let object_ref = Some(AuthorityObjectRef::from_label(class, object));
+        if let Some(record) = self.records.iter_mut().find(|record| {
+            record.subject == subject
+                && (record.object_ref == object_ref || record.object == object)
+        }) {
             record.operations = OperationSet::from_static(operations);
             record.lifetime = lifetime.to_string();
             record.class = class;
+            record.object_ref = object_ref;
             record.owner_store = owner_store;
             record.owner_task = owner_task;
             record.source = source.to_string();
+            record.manifest_decl = true;
+            record.debug_object_label = object.to_string();
             record.generation += 1;
             record.revoked = false;
             return record.id;
@@ -259,6 +387,7 @@ impl CapabilityLedger {
             id,
             subject: subject.to_string(),
             object: object.to_string(),
+            object_ref,
             operations: OperationSet::from_static(operations),
             lifetime: lifetime.to_string(),
             class,
@@ -266,6 +395,90 @@ impl CapabilityLedger {
             owner_task,
             source: source.to_string(),
             generation: 1,
+            parent: None,
+            manifest_decl: true,
+            debug_object_label: object.to_string(),
+            revoked: false,
+        });
+        id
+    }
+
+    pub fn grant_with_authority_ref(
+        &mut self,
+        subject: &str,
+        debug_object_label: &str,
+        object_ref: AuthorityObjectRef,
+        operations: &[&str],
+        lifetime: &str,
+        owner_store: Option<StoreId>,
+        owner_task: Option<TaskId>,
+        source: &str,
+        manifest_decl: bool,
+    ) -> CapabilityId {
+        if let Some(record) = self
+            .records
+            .iter_mut()
+            .find(|record| record.subject == subject && record.object_ref == Some(object_ref))
+        {
+            record.object = debug_object_label.to_string();
+            record.debug_object_label = debug_object_label.to_string();
+            record.operations = OperationSet::from_static(operations);
+            record.lifetime = lifetime.to_string();
+            record.class = object_ref.class();
+            record.owner_store = owner_store;
+            record.owner_task = owner_task;
+            record.source = source.to_string();
+            record.manifest_decl = manifest_decl;
+            record.generation += 1;
+            record.revoked = false;
+            return record.id;
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        self.records.push(CapabilityRecord {
+            id,
+            subject: subject.to_string(),
+            object: debug_object_label.to_string(),
+            object_ref: Some(object_ref),
+            operations: OperationSet::from_static(operations),
+            lifetime: lifetime.to_string(),
+            class: object_ref.class(),
+            owner_store,
+            owner_task,
+            source: source.to_string(),
+            generation: 1,
+            parent: None,
+            manifest_decl,
+            debug_object_label: debug_object_label.to_string(),
+            revoked: false,
+        });
+        id
+    }
+
+    pub fn grant_debug_label_only_for_test(
+        &mut self,
+        subject: &str,
+        object: &str,
+        operations: &[&str],
+        lifetime: &str,
+    ) -> CapabilityId {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.records.push(CapabilityRecord {
+            id,
+            subject: subject.to_string(),
+            object: object.to_string(),
+            object_ref: None,
+            operations: OperationSet::from_static(operations),
+            lifetime: lifetime.to_string(),
+            class: CapabilityClass::from_object(object),
+            owner_store: None,
+            owner_task: None,
+            source: "debug-label-only-test".to_string(),
+            generation: 1,
+            parent: None,
+            manifest_decl: true,
+            debug_object_label: object.to_string(),
             revoked: false,
         });
         id
@@ -284,7 +497,7 @@ impl CapabilityLedger {
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        Some(self.grant_with_metadata(
+        let delegated = self.grant_with_metadata(
             subject,
             &parent.object,
             &operations,
@@ -293,7 +506,17 @@ impl CapabilityLedger {
             parent.owner_store,
             parent.owner_task,
             "delegated",
-        ))
+        );
+        if let Some(record) = self
+            .records
+            .iter_mut()
+            .find(|record| record.id == delegated)
+        {
+            record.object_ref = parent.object_ref;
+            record.manifest_decl = parent.manifest_decl;
+            record.parent = Some(parent_id);
+        }
+        Some(delegated)
     }
 
     pub fn attenuate(
@@ -307,7 +530,7 @@ impl CapabilityLedger {
         if !parent.operations.contains_all(operations) {
             return None;
         }
-        Some(self.grant_with_metadata(
+        let attenuated = self.grant_with_metadata(
             subject,
             &parent.object,
             operations,
@@ -316,7 +539,17 @@ impl CapabilityLedger {
             parent.owner_store,
             parent.owner_task,
             "attenuated",
-        ))
+        );
+        if let Some(record) = self
+            .records
+            .iter_mut()
+            .find(|record| record.id == attenuated)
+        {
+            record.object_ref = parent.object_ref;
+            record.manifest_decl = parent.manifest_decl;
+            record.parent = Some(parent_id);
+        }
+        Some(attenuated)
     }
 
     pub fn revoke(&mut self, id: CapabilityId) -> bool {
@@ -409,13 +642,60 @@ impl CapabilityLedger {
         object: &str,
         operation: &str,
     ) -> Result<&CapabilityRecord, CapabilityDenyReason> {
+        self.check_authority(
+            subject,
+            AuthorityObjectRef::from_label(CapabilityClass::from_object(object), object),
+            operation,
+            None,
+        )
+    }
+
+    pub fn check_authority(
+        &self,
+        subject: &str,
+        object_ref: AuthorityObjectRef,
+        operation: &str,
+        handle: Option<&CapabilityHandle>,
+    ) -> Result<&CapabilityRecord, CapabilityDenyReason> {
+        if let Some(handle) = handle {
+            let Some(record) = self.records.iter().find(|record| record.id == handle.cap) else {
+                return Err(CapabilityDenyReason::Missing);
+            };
+            if record.subject != subject {
+                return Err(CapabilityDenyReason::SubjectMismatch);
+            }
+            if record.generation != handle.generation {
+                return Err(CapabilityDenyReason::GenerationMismatch);
+            }
+            if record.class != handle.class_hint {
+                return Err(CapabilityDenyReason::ClassMismatch);
+            }
+            if record.object_ref != Some(object_ref) {
+                return Err(CapabilityDenyReason::ObjectMismatch);
+            }
+            return Self::validate_record_authorizes(record, operation);
+        }
+
         let Some(record) = self
             .records
             .iter()
-            .find(|record| record.subject == subject && record.object == object)
+            .find(|record| record.subject == subject && record.object_ref == Some(object_ref))
         else {
             return Err(CapabilityDenyReason::Missing);
         };
+        Self::validate_record_authorizes(record, operation)
+    }
+
+    fn validate_record_authorizes<'a>(
+        record: &'a CapabilityRecord,
+        operation: &str,
+    ) -> Result<&'a CapabilityRecord, CapabilityDenyReason> {
+        if record.object_ref.is_none() {
+            return Err(CapabilityDenyReason::ObjectMismatch);
+        }
+        if record.class.requires_manifest_declaration() && !record.manifest_decl {
+            return Err(CapabilityDenyReason::ManifestDeclarationMissing);
+        }
         if record.revoked {
             return Err(CapabilityDenyReason::Revoked);
         }
@@ -426,9 +706,20 @@ impl CapabilityLedger {
     }
 
     pub fn generation_of(&self, subject: &str, object: &str) -> Option<Generation> {
+        self.generation_of_authority(
+            subject,
+            AuthorityObjectRef::from_label(CapabilityClass::from_object(object), object),
+        )
+    }
+
+    pub fn generation_of_authority(
+        &self,
+        subject: &str,
+        object_ref: AuthorityObjectRef,
+    ) -> Option<Generation> {
         self.records
             .iter()
-            .find(|record| record.subject == subject && record.object == object)
+            .find(|record| record.subject == subject && record.object_ref == Some(object_ref))
             .map(|record| record.generation)
     }
 
@@ -453,6 +744,10 @@ pub enum CapabilityDenyReason {
     Revoked,
     OperationDenied,
     GenerationMismatch,
+    SubjectMismatch,
+    ObjectMismatch,
+    ClassMismatch,
+    ManifestDeclarationMissing,
 }
 
 impl CapabilityDenyReason {
@@ -462,6 +757,10 @@ impl CapabilityDenyReason {
             Self::Revoked => "revoked",
             Self::OperationDenied => "operation-denied",
             Self::GenerationMismatch => "generation-mismatch",
+            Self::SubjectMismatch => "subject-mismatch",
+            Self::ObjectMismatch => "object-mismatch",
+            Self::ClassMismatch => "class-mismatch",
+            Self::ManifestDeclarationMissing => "manifest-declaration-missing",
         }
     }
 }

@@ -6,9 +6,12 @@ use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContractObjectKind {
+    Task,
+    Resource,
     Artifact,
     CodeObject,
     Store,
+    FaultDomain,
     Activation,
     Trap,
     Hostcall,
@@ -16,6 +19,7 @@ pub enum ContractObjectKind {
     WaitToken,
     CleanupTransaction,
     MemoryObject,
+    EventLog,
     Tombstone,
     ExternalObject,
 }
@@ -23,9 +27,12 @@ pub enum ContractObjectKind {
 impl ContractObjectKind {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Task => "task",
+            Self::Resource => "resource",
             Self::Artifact => "artifact",
             Self::CodeObject => "code-object",
             Self::Store => "store",
+            Self::FaultDomain => "fault-domain",
             Self::Activation => "activation",
             Self::Trap => "trap",
             Self::Hostcall => "hostcall",
@@ -33,6 +40,7 @@ impl ContractObjectKind {
             Self::WaitToken => "wait-token",
             Self::CleanupTransaction => "cleanup-transaction",
             Self::MemoryObject => "memory-object",
+            Self::EventLog => "event-log",
             Self::Tombstone => "tombstone",
             Self::ExternalObject => "external-object",
         }
@@ -1676,7 +1684,9 @@ impl TargetTrapRecord {
 pub struct CapabilityHandleArg {
     pub id: CapabilityId,
     pub object: String,
+    pub object_ref: Option<AuthorityObjectRef>,
     pub generation: Generation,
+    pub class_hint: Option<CapabilityClass>,
     pub rights_mask: u64,
     pub rights: Vec<String>,
 }
@@ -1689,13 +1699,25 @@ impl CapabilityHandleArg {
         rights_mask: u64,
         rights: &[&str],
     ) -> Self {
+        let class = CapabilityClass::from_object(object);
         Self {
             id,
             object: object.to_string(),
+            object_ref: Some(AuthorityObjectRef::from_label(class, object)),
             generation,
+            class_hint: Some(class),
             rights_mask,
             rights: rights.iter().map(|right| (*right).to_string()).collect(),
         }
+    }
+
+    pub fn capability_handle(&self) -> Option<CapabilityHandle> {
+        Some(CapabilityHandle::new(
+            self.id,
+            self.generation,
+            self.rights.clone(),
+            self.class_hint?,
+        ))
     }
 }
 
@@ -2460,11 +2482,15 @@ impl TargetExecutor {
         capabilities: &CapabilityLedger,
     ) -> (HostcallFrame, Option<&'static str>) {
         let (cap_args, cap_arg_decode_error) = Self::decode_capability_handles(wire, capabilities);
+        let authority_object = AuthorityObjectRef::from_label(
+            CapabilityClass::from_object(&spec.object),
+            &spec.object,
+        );
         let generation = cap_args
             .iter()
-            .find(|arg| arg.object == spec.object)
+            .find(|arg| arg.object_ref == Some(authority_object))
             .map(|arg| arg.generation)
-            .or_else(|| capabilities.generation_of(&code.package, &spec.object))
+            .or_else(|| capabilities.generation_of_authority(&code.package, authority_object))
             .unwrap_or(0);
         (
             HostcallFrame {
@@ -2517,7 +2543,9 @@ impl TargetExecutor {
                 args.push(CapabilityHandleArg {
                     id: capability_id,
                     object: "<missing-capability>".to_string(),
+                    object_ref: None,
                     generation: capability_generation,
+                    class_hint: CapabilityClass::from_u16(handle.object_class),
                     rights_mask: handle.rights_mask,
                     rights: Vec::new(),
                 });
@@ -2542,7 +2570,9 @@ impl TargetExecutor {
             args.push(CapabilityHandleArg {
                 id: capability_id,
                 object: record.object.clone(),
+                object_ref: record.object_ref,
                 generation: capability_generation,
+                class_hint: CapabilityClass::from_u16(handle.object_class),
                 rights_mask: handle.rights_mask,
                 rights,
             });
@@ -2682,8 +2712,12 @@ impl TargetExecutor {
             frame.object,
             frame.operation
         ));
+        let initial_authority_object = AuthorityObjectRef::from_label(
+            CapabilityClass::from_object(&frame.object),
+            &frame.object,
+        );
         let declared_capability = capabilities
-            .generation_of(derived_subject, &frame.object)
+            .generation_of_authority(derived_subject, initial_authority_object)
             .is_some();
         let authority =
             match AuthorityMatrix::check(&frame.object, &frame.operation, declared_capability) {
@@ -2722,9 +2756,16 @@ impl TargetExecutor {
             .required_right
             .as_deref()
             .unwrap_or(&frame.operation);
+        let authority_object = AuthorityObjectRef::from_label(authority.class, &frame.object);
         if authority.requires_capability {
             if let Some(reason) = cap_arg_decode_error.or_else(|| {
-                Self::cap_arg_denial_reason(&frame, derived_subject, required_right, capabilities)
+                Self::cap_arg_denial_reason(
+                    &frame,
+                    derived_subject,
+                    authority_object,
+                    required_right,
+                    capabilities,
+                )
             }) {
                 self.event_log.push(format!(
                     "CapabilityDenied activation={} subject={} object={} op={} required_right={} reason={reason}",
@@ -2758,7 +2799,17 @@ impl TargetExecutor {
                 self.record_trace(&frame, spec, false, reason, ret_tag, Some(trap), None);
                 return Err(TargetExecutorError::CapabilityDenied);
             }
-            match capabilities.check(derived_subject, &frame.object, required_right) {
+            let handle = frame
+                .cap_args
+                .iter()
+                .find(|arg| arg.object_ref == Some(authority_object))
+                .and_then(CapabilityHandleArg::capability_handle);
+            match capabilities.check_authority(
+                derived_subject,
+                authority_object,
+                required_right,
+                handle.as_ref(),
+            ) {
                 Ok(capability) => {
                     if capability.generation != frame.generation {
                         self.event_log.push(format!(
@@ -3695,6 +3746,7 @@ impl TargetExecutor {
     fn cap_arg_denial_reason(
         frame: &HostcallFrame,
         subject: &str,
+        object_ref: AuthorityObjectRef,
         required_right: &str,
         capabilities: &CapabilityLedger,
     ) -> Option<&'static str> {
@@ -3709,8 +3761,11 @@ impl TargetExecutor {
             if record.subject != subject {
                 return Some("cap-arg-subject");
             }
-            if record.object != handle.object {
+            if record.object_ref != handle.object_ref || handle.object_ref != Some(object_ref) {
                 return Some("cap-arg-object");
+            }
+            if handle.class_hint != Some(record.class) || record.class != object_ref.class() {
+                return Some("cap-arg-object-class");
             }
             if record.generation != handle.generation {
                 return Some("cap-arg-generation");
@@ -3732,7 +3787,7 @@ impl TargetExecutor {
             if rights_mask != handle.rights_mask {
                 return Some("cap-arg-rights-mask");
             }
-            if handle.object == frame.object
+            if handle.object_ref == Some(object_ref)
                 && handle.rights.iter().any(|right| right == required_right)
             {
                 matched_frame_object = true;

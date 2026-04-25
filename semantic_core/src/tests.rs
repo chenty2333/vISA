@@ -1,5 +1,6 @@
 use super::*;
 use alloc::string::ToString;
+use alloc::vec::Vec;
 
 #[test]
 fn capability_attenuation_cannot_expand_rights() {
@@ -19,6 +20,147 @@ fn capability_attenuation_cannot_expand_rights() {
         ledger
             .attenuate(parent, "helper", &["write"], "activation")
             .is_none()
+    );
+}
+
+#[test]
+fn capability_authority_uses_object_ref_not_debug_label() {
+    let mut ledger = CapabilityLedger::new();
+    let cap = ledger.grant_with_metadata(
+        "driver",
+        "mmio.virtio-net",
+        &["map"],
+        "store",
+        CapabilityClass::MmioRegion,
+        Some(1),
+        None,
+        "manifest",
+    );
+    let record = ledger
+        .records()
+        .iter()
+        .find(|record| record.id == cap)
+        .expect("capability record");
+    let object_ref = record.object_ref.expect("authority object ref");
+    let mut rights = Vec::new();
+    rights.push("map".to_string());
+    let handle = CapabilityHandle::new(cap, record.generation, rights, record.class);
+    assert!(
+        ledger
+            .check_authority("driver", object_ref, "map", Some(&handle))
+            .is_ok()
+    );
+
+    let mut debug_only = CapabilityLedger::new();
+    debug_only.grant_debug_label_only_for_test("driver", "mmio.virtio-net", &["map"], "store");
+    assert_eq!(
+        debug_only.check("driver", "mmio.virtio-net", "map"),
+        Err(CapabilityDenyReason::Missing)
+    );
+
+    let mut wrong_object = CapabilityLedger::new();
+    let different_ref = AuthorityObjectRef::internal(
+        CapabilityClass::MmioRegion,
+        ContractObjectRef::new(ContractObjectKind::Resource, 999, 1),
+    );
+    let wrong_cap = wrong_object.grant_with_authority_ref(
+        "driver",
+        "mmio.virtio-net",
+        different_ref,
+        &["map"],
+        "store",
+        Some(1),
+        None,
+        "manifest",
+        true,
+    );
+    let wrong_record = wrong_object
+        .records()
+        .iter()
+        .find(|record| record.id == wrong_cap)
+        .expect("wrong capability record");
+    let mut wrong_rights = Vec::new();
+    wrong_rights.push("map".to_string());
+    let wrong_handle = CapabilityHandle::new(
+        wrong_cap,
+        wrong_record.generation,
+        wrong_rights,
+        wrong_record.class,
+    );
+    assert_eq!(
+        wrong_object.check_authority("driver", object_ref, "map", Some(&wrong_handle)),
+        Err(CapabilityDenyReason::ObjectMismatch)
+    );
+    assert_eq!(
+        wrong_object.check_authority("driver", object_ref, "map", None),
+        Err(CapabilityDenyReason::Missing)
+    );
+}
+
+#[test]
+fn capability_authority_rejects_stale_revoked_wrong_subject_and_undeclared_external() {
+    let mut ledger = CapabilityLedger::new();
+    let cap = ledger.grant_with_metadata(
+        "driver",
+        "packet-device.net0",
+        &["rx", "tx"],
+        "store",
+        CapabilityClass::PacketDevice,
+        Some(1),
+        None,
+        "manifest",
+    );
+    let record = ledger
+        .records()
+        .iter()
+        .find(|record| record.id == cap)
+        .expect("capability record")
+        .clone();
+    let object_ref = record.object_ref.expect("authority object ref");
+    let mut rights = Vec::new();
+    rights.push("rx".to_string());
+    let stale_handle = CapabilityHandle::new(cap, record.generation + 1, rights, record.class);
+    assert_eq!(
+        ledger.check_authority("driver", object_ref, "rx", Some(&stale_handle)),
+        Err(CapabilityDenyReason::GenerationMismatch)
+    );
+    let mut rights = Vec::new();
+    rights.push("rx".to_string());
+    let wrong_subject_handle = CapabilityHandle::new(cap, record.generation, rights, record.class);
+    assert_eq!(
+        ledger.check_authority(
+            "other-driver",
+            object_ref,
+            "rx",
+            Some(&wrong_subject_handle)
+        ),
+        Err(CapabilityDenyReason::SubjectMismatch)
+    );
+    assert!(ledger.revoke(cap));
+    assert_eq!(
+        ledger.check_authority("driver", object_ref, "rx", None),
+        Err(CapabilityDenyReason::Revoked)
+    );
+
+    let mut external = CapabilityLedger::new();
+    let external_ref = AuthorityObjectRef::external(
+        CapabilityClass::Device,
+        ContractObjectRef::new(ContractObjectKind::ExternalObject, 7, 0),
+    );
+    external.grant_with_authority_ref(
+        "driver",
+        "device.pci0",
+        external_ref,
+        &["probe"],
+        "store",
+        Some(1),
+        None,
+        "test",
+        false,
+    );
+    assert_eq!(
+        external.check_authority("driver", external_ref, "probe", None),
+        Err(CapabilityDenyReason::ManifestDeclarationMissing)
     );
 }
 

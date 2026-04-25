@@ -1216,7 +1216,12 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|external| external.object.id == id)
                 .map(|external| external.object),
-            ContractObjectKind::MemoryObject | ContractObjectKind::Tombstone => None,
+            ContractObjectKind::Task
+            | ContractObjectKind::Resource
+            | ContractObjectKind::FaultDomain
+            | ContractObjectKind::MemoryObject
+            | ContractObjectKind::EventLog
+            | ContractObjectKind::Tombstone => None,
         }
     }
 
