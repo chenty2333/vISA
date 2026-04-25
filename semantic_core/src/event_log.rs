@@ -78,13 +78,25 @@ pub enum EventKind {
         kind: SemanticWaitKind,
         generation: Generation,
     },
+    WaitPending {
+        wait: WaitId,
+        generation: Generation,
+    },
     WaitResolved {
         wait: WaitId,
         reason: String,
     },
+    WaitConsumed {
+        wait: WaitId,
+    },
     WaitCancelled {
         wait: WaitId,
         errno: i32,
+        reason: WaitCancelReason,
+    },
+    WaitInterrupted {
+        wait: WaitId,
+        reason: WaitCancelReason,
     },
     WaitRestarted {
         wait: WaitId,
@@ -404,11 +416,27 @@ impl EventKind {
                 "WaitCreated wait={wait} task={task} kind={} generation={generation}",
                 kind.as_str()
             ),
+            Self::WaitPending { wait, generation } => {
+                format!("WaitPending wait={wait} generation={generation}")
+            }
             Self::WaitResolved { wait, reason } => {
                 format!("WaitResolved wait={wait} reason={reason}")
             }
-            Self::WaitCancelled { wait, errno } => {
-                format!("WaitCancelled wait={wait} errno={errno}")
+            Self::WaitConsumed { wait } => {
+                format!("WaitConsumed wait={wait}")
+            }
+            Self::WaitCancelled {
+                wait,
+                errno,
+                reason,
+            } => {
+                format!(
+                    "WaitCancelled wait={wait} errno={errno} reason={}",
+                    reason.as_str()
+                )
+            }
+            Self::WaitInterrupted { wait, reason } => {
+                format!("WaitInterrupted wait={wait} reason={}", reason.as_str())
             }
             Self::WaitRestarted { wait, class } => {
                 format!("WaitRestarted wait={wait} class={class}")

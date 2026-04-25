@@ -192,19 +192,75 @@ impl SemanticWaitKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WaitState {
+    Created,
     Pending,
+    Resolved,
     Ready,
+    Consumed,
     Cancelled,
+    Interrupted,
     Restarted,
 }
 
 impl WaitState {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Created => "created",
             Self::Pending => "pending",
+            Self::Resolved => "resolved",
             Self::Ready => "ready",
+            Self::Consumed => "consumed",
             Self::Cancelled => "cancelled",
+            Self::Interrupted => "interrupted",
             Self::Restarted => "restarted",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaitCancelReason {
+    Timeout,
+    Signal,
+    CloseFd,
+    StoreFault,
+    CapabilityRevoked,
+    DeviceFault,
+    SnapshotBarrier,
+    ResourceDropped,
+    GenerationMismatch,
+}
+
+impl WaitCancelReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Signal => "signal",
+            Self::CloseFd => "close-fd",
+            Self::StoreFault => "store-fault",
+            Self::CapabilityRevoked => "capability-revoked",
+            Self::DeviceFault => "device-fault",
+            Self::SnapshotBarrier => "snapshot-barrier",
+            Self::ResourceDropped => "resource-dropped",
+            Self::GenerationMismatch => "generation-mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestartPolicy {
+    Never,
+    RestartIfAllowed,
+    RestartWithAdjustedTimeout,
+    InternalOnly,
+}
+
+impl RestartPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::RestartIfAllowed => "restart-if-allowed",
+            Self::RestartWithAdjustedTimeout => "restart-with-adjusted-timeout",
+            Self::InternalOnly => "internal-only",
         }
     }
 }

@@ -537,16 +537,43 @@ impl ContractGraphValidator {
     fn validate_waits(snapshot: &ContractGraphSnapshot, violations: &mut Vec<ContractViolation>) {
         for wait in &snapshot.waits {
             if wait.state == WaitState::Pending
-                && snapshot.stores.iter().any(|store| {
-                    store.id == u64::from(wait.owner_task) && store.state == StoreState::Dead
+                && wait.owner_task.is_none()
+                && wait.owner_store.is_none()
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::DanglingEdge,
+                    "wait->owner",
+                    wait.object_ref(),
+                    None,
+                    "pending wait has no owner task or owner store",
+                ));
+            }
+            if wait.state == WaitState::Pending
+                && wait.blockers.is_empty()
+                && wait.deadline.is_none()
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::DanglingEdge,
+                    "wait->blocker",
+                    wait.object_ref(),
+                    None,
+                    "pending wait has no blocker or deadline",
+                ));
+            }
+            if wait.state == WaitState::Pending
+                && wait.owner_store.is_some_and(|owner_store| {
+                    snapshot
+                        .stores
+                        .iter()
+                        .any(|store| store.id == owner_store && store.state == StoreState::Dead)
                 })
             {
                 violations.push(ContractViolation::new(
                     ContractViolationKind::LiveObjectReferencesDeadObject,
-                    "wait->owner-task",
+                    "wait->owner-store",
                     wait.object_ref(),
                     None,
-                    "wait token owner task maps to a dead store id in this harness",
+                    "pending wait is owned by a dead store",
                 ));
             }
         }

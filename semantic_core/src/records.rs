@@ -43,10 +43,24 @@ pub struct AuthorityBindingRecord {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WaitRecord {
     pub id: WaitId,
-    pub owner_task: TaskId,
+    pub owner_task: Option<TaskId>,
+    pub owner_store: Option<StoreId>,
     pub kind: SemanticWaitKind,
     pub generation: Generation,
     pub state: WaitState,
+    pub blockers: Vec<ContractObjectRef>,
+    pub deadline: Option<u64>,
+    pub cancel_reason: Option<WaitCancelReason>,
+    pub restart_policy: RestartPolicy,
+    pub saved_context: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WaitIndex {
+    pub by_resource: Vec<(ContractObjectRef, WaitId)>,
+    pub by_task: Vec<(TaskId, WaitId)>,
+    pub by_store: Vec<(StoreId, WaitId)>,
+    pub by_deadline: Vec<(u64, WaitId)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

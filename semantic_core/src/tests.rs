@@ -371,6 +371,191 @@ fn wait_flow_is_recorded_in_event_log() {
 }
 
 #[test]
+fn wait_token_event_bridge_indexes_resolves_cancels_and_restarts() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "guest");
+    let blocker = ContractObjectRef::new(ContractObjectKind::Capability, 5, 1);
+    graph.record_wait_created_with_details(
+        21,
+        Some(7),
+        Some(3),
+        SemanticWaitKind::Timer,
+        1,
+        {
+            let mut blockers = Vec::new();
+            blockers.push(blocker);
+            blockers
+        },
+        Some(100),
+        RestartPolicy::RestartWithAdjustedTimeout,
+        Some("timer-context".to_string()),
+    );
+    let index = graph.wait_index();
+    assert_eq!(index.by_task, {
+        let mut expected = Vec::new();
+        expected.push((7, 21));
+        expected
+    });
+    assert_eq!(index.by_store, {
+        let mut expected = Vec::new();
+        expected.push((3, 21));
+        expected
+    });
+    assert!(graph.fake_timer_event_resolve_wait(21, 100));
+    assert_eq!(graph.wait_records()[0].state, WaitState::Resolved);
+    graph.record_wait_consumed(21);
+    assert_eq!(graph.wait_records()[0].state, WaitState::Consumed);
+
+    graph.record_wait_created_with_details(
+        22,
+        Some(7),
+        Some(3),
+        SemanticWaitKind::DeviceIrq,
+        1,
+        {
+            let mut blockers = Vec::new();
+            blockers.push(blocker);
+            blockers
+        },
+        None,
+        RestartPolicy::RestartIfAllowed,
+        Some("irq-context".to_string()),
+    );
+    assert_eq!(graph.fake_capability_revoke_cancel_wait(5), 1);
+    let cancelled = graph
+        .wait_records()
+        .iter()
+        .find(|wait| wait.id == 22)
+        .expect("cancelled wait");
+    assert_eq!(cancelled.state, WaitState::Cancelled);
+    assert_eq!(
+        cancelled.cancel_reason,
+        Some(WaitCancelReason::CapabilityRevoked)
+    );
+
+    graph.record_wait_created(23, 7, SemanticWaitKind::Futex, 1);
+    let old_handle = graph.wait_handle(23).expect("wait handle");
+    graph.record_wait_interrupted(23, WaitCancelReason::Signal);
+    graph.record_wait_restarted(23, "restart-if-allowed");
+    assert_eq!(
+        graph.validate_wait_handle(old_handle),
+        Err(GenerationCheckError::GenerationMismatch {
+            expected: 1,
+            actual: Some(2),
+        })
+    );
+}
+
+#[test]
+fn wait_contract_graph_rejects_hidden_or_stale_live_waits() {
+    let running_store = StoreRecord {
+        id: 6,
+        package: "svc".to_string(),
+        artifact: "svc.cwasm".to_string(),
+        role: "service".to_string(),
+        fault_policy: "restartable".to_string(),
+        fault_domain: 1,
+        resource: Some(1),
+        state: StoreState::Running,
+        generation: 1,
+        restart_count: 0,
+    };
+    let mut dead_store = running_store.clone();
+    dead_store.id = 5;
+    dead_store.state = StoreState::Dead;
+    let blocker = ContractObjectRef::new(ContractObjectKind::Resource, 9, 1);
+    let missing_owner = WaitRecord {
+        id: 31,
+        owner_task: None,
+        owner_store: None,
+        kind: SemanticWaitKind::Futex,
+        generation: 1,
+        state: WaitState::Pending,
+        blockers: Vec::new(),
+        deadline: None,
+        cancel_reason: None,
+        restart_policy: RestartPolicy::Never,
+        saved_context: None,
+    };
+    let dead_store_wait = WaitRecord {
+        id: 32,
+        owner_task: None,
+        owner_store: Some(dead_store.id),
+        kind: SemanticWaitKind::DeviceIrq,
+        generation: 1,
+        state: WaitState::Pending,
+        blockers: {
+            let mut blockers = Vec::new();
+            blockers.push(blocker);
+            blockers
+        },
+        deadline: None,
+        cancel_reason: None,
+        restart_policy: RestartPolicy::InternalOnly,
+        saved_context: None,
+    };
+    let resolved_wait = WaitRecord {
+        id: 33,
+        owner_task: None,
+        owner_store: Some(running_store.id),
+        kind: SemanticWaitKind::Timer,
+        generation: 1,
+        state: WaitState::Resolved,
+        blockers: {
+            let mut blockers = Vec::new();
+            blockers.push(blocker);
+            blockers
+        },
+        deadline: Some(200),
+        cancel_reason: None,
+        restart_policy: RestartPolicy::Never,
+        saved_context: None,
+    };
+    let snapshot = ContractGraphSnapshot {
+        stores: {
+            let mut stores = Vec::new();
+            stores.push(dead_store.clone());
+            stores.push(running_store.clone());
+            stores
+        },
+        waits: {
+            let mut waits = Vec::new();
+            waits.push(missing_owner);
+            waits.push(dead_store_wait);
+            waits.push(resolved_wait.clone());
+            waits
+        },
+        explicit_edges: {
+            let mut edges = Vec::new();
+            edges.push(ContractEdgeRecord::new(
+                running_store.object_ref(),
+                resolved_wait.object_ref(),
+                ContractEdgeMode::Live,
+                "store->wait-live",
+                1,
+            ));
+            edges
+        },
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+    assert!(violations.iter().any(|violation| {
+        violation.kind == ContractViolationKind::DanglingEdge && violation.edge == "wait->owner"
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.kind == ContractViolationKind::DanglingEdge && violation.edge == "wait->blocker"
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
+            && violation.edge == "wait->owner-store"
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.kind == ContractViolationKind::LiveEdgeReferencesInactiveObject
+            && violation.edge == "store->wait-live"
+    }));
+}
+
+#[test]
 fn stale_resource_handles_are_rejected() {
     let mut graph = SemanticGraph::new();
     let resource = graph.register_resource(ResourceKind::Fd, None, "fd:/sandbox/hello.txt");

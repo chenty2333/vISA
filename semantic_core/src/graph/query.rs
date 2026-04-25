@@ -42,10 +42,21 @@ impl SemanticGraph {
         }
 
         for wait in &self.waits {
-            if !self.tasks.iter().any(|entry| entry.id == wait.owner_task) {
+            if wait.state == WaitState::Pending
+                && wait.owner_task.is_none()
+                && wait.owner_store.is_none()
+            {
                 return Err(SemanticInvariantError::WaitReferencesMissingTask {
                     wait: wait.id,
-                    task: wait.owner_task,
+                    task: 0,
+                });
+            }
+            if let Some(owner_task) = wait.owner_task
+                && !self.tasks.iter().any(|entry| entry.id == owner_task)
+            {
+                return Err(SemanticInvariantError::WaitReferencesMissingTask {
+                    wait: wait.id,
+                    task: owner_task,
                 });
             }
         }

@@ -4999,10 +4999,20 @@ mod tests {
         activation.active_dmw_leases = 1;
         let wait = WaitRecord {
             id: 77,
-            owner_task: dead_store.id as TaskId,
+            owner_task: None,
+            owner_store: Some(dead_store.id),
             kind: SemanticWaitKind::Futex,
             generation: 1,
             state: WaitState::Pending,
+            blockers: {
+                let mut blockers = Vec::new();
+                blockers.push(ContractObjectRef::new(ContractObjectKind::Resource, 1, 1));
+                blockers
+            },
+            deadline: None,
+            cancel_reason: None,
+            restart_policy: RestartPolicy::RestartIfAllowed,
+            saved_context: None,
         };
         let snapshot = ContractGraphSnapshot {
             artifacts: {
@@ -5105,7 +5115,7 @@ mod tests {
         }));
         assert!(violations.iter().any(|violation| {
             violation.kind == ContractViolationKind::LiveObjectReferencesDeadObject
-                && violation.edge == "wait->owner-task"
+                && violation.edge == "wait->owner-store"
         }));
         assert!(violations.iter().any(|violation| {
             violation.kind == ContractViolationKind::TombstoneReferencedByLiveEdge
