@@ -300,6 +300,12 @@ pub enum EventKind {
         reason: String,
         generation: Generation,
     },
+    CleanupStepApplied {
+        cleanup: TransactionId,
+        step: String,
+        target: String,
+        observed_generation: Generation,
+    },
     FailureEffect {
         effect: FailureEffect,
     },
@@ -741,6 +747,16 @@ impl EventKind {
             } => {
                 format!(
                     "TransactionRolledBack transaction={transaction} reason={reason} generation={generation}"
+                )
+            }
+            Self::CleanupStepApplied {
+                cleanup,
+                step,
+                target,
+                observed_generation,
+            } => {
+                format!(
+                    "CleanupStepApplied cleanup={cleanup} step={step} target={target} observed_generation={observed_generation}"
                 )
             }
             Self::FailureEffect { effect } => {

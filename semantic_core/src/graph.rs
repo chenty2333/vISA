@@ -33,6 +33,7 @@ pub struct SemanticGraph {
 mod authority;
 mod boundary;
 mod capability;
+mod command;
 mod network;
 mod query;
 mod resource;
@@ -41,6 +42,8 @@ mod store;
 mod task;
 mod transaction;
 mod wait;
+
+pub use command::*;
 
 impl SemanticGraph {
     pub fn new() -> Self {

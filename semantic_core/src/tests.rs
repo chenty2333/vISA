@@ -556,6 +556,130 @@ fn wait_contract_graph_rejects_hidden_or_stale_live_waits() {
 }
 
 #[test]
+fn command_surface_grants_capability_and_precondition_failures_are_atomic() {
+    let mut graph = SemanticGraph::new();
+    let before = graph.event_count();
+    let object_ref =
+        AuthorityObjectRef::from_label(CapabilityClass::PacketDevice, "packet-device.net0");
+    let outcome = graph
+        .apply(SemanticCommand::GrantCapability {
+            subject: "driver".to_string(),
+            debug_object_label: "packet-device.net0".to_string(),
+            object_ref,
+            operations: {
+                let mut operations = Vec::new();
+                operations.push("rx".to_string());
+                operations
+            },
+            lifetime: "store".to_string(),
+            owner_store: Some(1),
+            owner_task: None,
+            source: "command-test".to_string(),
+            manifest_decl: true,
+        })
+        .expect("grant command");
+    assert!(outcome.changed);
+    assert!(outcome.event_count_after > before);
+    assert!(
+        graph
+            .check_capability("driver", "packet-device.net0", "rx")
+            .is_ok()
+    );
+
+    let wait_count = graph.wait_count();
+    let events = graph.event_count();
+    assert_eq!(
+        graph.apply(SemanticCommand::CreateWait {
+            wait: 99,
+            owner_task: None,
+            owner_store: None,
+            kind: SemanticWaitKind::Futex,
+            generation: 1,
+            blockers: Vec::new(),
+            deadline: None,
+            restart_policy: RestartPolicy::Never,
+            saved_context: None,
+        }),
+        Err(CommandError::PreconditionFailed(
+            "create-wait requires owner task or owner store".to_string()
+        ))
+    );
+    assert_eq!(graph.wait_count(), wait_count);
+    assert_eq!(graph.event_count(), events);
+}
+
+#[test]
+fn command_surface_wait_and_cleanup_transactions_are_canonical_and_idempotent() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "guest");
+    graph
+        .apply(SemanticCommand::CreateWait {
+            wait: 41,
+            owner_task: Some(7),
+            owner_store: None,
+            kind: SemanticWaitKind::Timer,
+            generation: 1,
+            blockers: Vec::new(),
+            deadline: Some(10),
+            restart_policy: RestartPolicy::RestartIfAllowed,
+            saved_context: Some("ctx".to_string()),
+        })
+        .expect("create wait");
+    graph
+        .apply(SemanticCommand::ResolveWait {
+            wait: 41,
+            reason: "timer".to_string(),
+        })
+        .expect("resolve wait");
+    assert_eq!(graph.wait_records()[0].state, WaitState::Resolved);
+    assert_eq!(
+        graph.apply(SemanticCommand::CancelWait {
+            wait: 41,
+            errno: 125,
+            reason: WaitCancelReason::Signal,
+        }),
+        Err(CommandError::PreconditionFailed(
+            "wait is not pending".to_string()
+        ))
+    );
+
+    let store = graph.register_store(
+        "driver_virtio_net",
+        "driver_virtio_net.cwasm",
+        "driver",
+        "restartable",
+    );
+    graph
+        .apply(SemanticCommand::BeginCleanup {
+            cleanup: 77,
+            store,
+            generation: 1,
+            reason: "driver-fault".to_string(),
+        })
+        .expect("begin cleanup");
+    assert_eq!(graph.active_transaction_count(), 1);
+    graph
+        .apply(SemanticCommand::ApplyCleanupStep {
+            cleanup: 77,
+            step: CleanupStep::ReleaseDmwLeases,
+            target: ContractObjectRef::new(ContractObjectKind::Store, store, 1),
+            observed_generation: 1,
+        })
+        .expect("apply cleanup step");
+    let first_commit = graph
+        .apply(SemanticCommand::CommitCleanup { cleanup: 77 })
+        .expect("commit cleanup");
+    assert!(first_commit.changed);
+    assert_eq!(graph.active_transaction_count(), 0);
+    assert_eq!(
+        graph.apply(SemanticCommand::CommitCleanup { cleanup: 77 }),
+        Err(CommandError::PreconditionFailed(
+            "cleanup transaction is not active".to_string()
+        ))
+    );
+}
+
+#[test]
 fn stale_resource_handles_are_rejected() {
     let mut graph = SemanticGraph::new();
     let resource = graph.register_resource(ResourceKind::Fd, None, "fd:/sandbox/hello.txt");
