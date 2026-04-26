@@ -6,12 +6,13 @@ use std::fs;
 use std::path::Path;
 
 use artifact_manifest::{
-    ActivationRecordManifest, ArtifactBundleManifest, BoundaryValidationReportManifest,
-    CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandResultManifest, ContractObjectRefManifest, HostcallTraceManifest,
+    ActivationContextManifest, ActivationRecordManifest, ArtifactBundleManifest,
+    BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
+    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest, HostcallTraceManifest,
     InterfaceEventManifest, MigrationPackageManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, StoreRecordManifest, SubstrateEventManifest,
-    TargetArtifactImageManifest, TaskRecordManifest, TrapRecordManifest, WaitRecordManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, StoreRecordManifest,
+    SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -206,7 +207,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             print_caps(Path::new(&path), subject.as_deref())
         }
         "task" | "store" | "cap" | "capability" | "wait" | "cleanup" | "command" | "scheduler"
-        | "runtime-activation" | "runnable-queue" => handle_view_command(&command, args.collect()),
+        | "runtime-activation" | "runnable-queue" | "activation-context" | "saved-context"
+        | "context" => handle_view_command(&command, args.collect()),
         "state" => {
             let Some(path) = args.next() else {
                 return Err("state requires a manifest/package JSON path".into());
@@ -370,7 +372,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl task|activation|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl task|activation|activation-context|saved-context|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -565,6 +567,8 @@ fn canonical_view_kind(kind: &str) -> &'static str {
     match kind {
         "task" => "task",
         "activation" | "runtime-activation" => "activation",
+        "activation-context" | "context" => "activation-context",
+        "saved-context" => "saved-context",
         "scheduler" => "scheduler",
         "runnable-queue" => "runnable-queue",
         "cap" | "capability" => "capability",
@@ -662,6 +666,72 @@ fn runnable_queue_view_v1(queue: &RunnableQueueManifest) -> serde_json::Value {
     })
 }
 
+fn activation_context_view_v1(context: &ActivationContextManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "activation-context",
+        "id": context.id,
+        "generation": context.generation,
+        "state": context.state,
+        "owner": {
+            "task": context.owner_task,
+            "task_generation": context.owner_task_generation,
+            "store": context.owner_store,
+            "store_generation": context.owner_store_generation,
+        },
+        "references": {
+            "activation": {
+                "id": context.activation,
+                "generation": context.activation_generation,
+            },
+            "current_saved_context": context.current_saved_context.map(|id| serde_json::json!({
+                "id": id,
+                "generation": context.current_saved_context_generation,
+            })),
+        },
+        "last_transition": {
+            "last_event": context.last_event,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn saved_context_view_v1(saved: &SavedContextManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "saved-context",
+        "id": saved.id,
+        "generation": saved.generation,
+        "state": saved.state,
+        "owner": {
+            "task": saved.owner_task,
+            "task_generation": saved.owner_task_generation,
+        },
+        "references": {
+            "activation_context": {
+                "id": saved.context,
+                "generation": saved.context_generation,
+            },
+            "activation": {
+                "id": saved.activation,
+                "generation": saved.activation_generation,
+            },
+        },
+        "machine_frame": {
+            "pc": saved.pc,
+            "sp": saved.sp,
+            "flags": saved.flags,
+            "integer_registers": saved.integer_registers,
+        },
+        "reason": saved.reason,
+        "note": saved.note,
+        "last_transition": {
+            "saved_at_event": saved.saved_at_event,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -687,12 +757,26 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "generation": queue.generation,
                 "entries": queue.entries.len(),
             })).collect::<Vec<_>>(),
+            "activation_contexts": package.semantic.activation_contexts.iter().map(|context| serde_json::json!({
+                "id": context.id,
+                "generation": context.generation,
+                "activation": context.activation,
+                "activation_generation": context.activation_generation,
+            })).collect::<Vec<_>>(),
+            "saved_contexts": package.semantic.saved_contexts.iter().map(|saved| serde_json::json!({
+                "id": saved.id,
+                "generation": saved.generation,
+                "context": saved.context,
+                "context_generation": saved.context_generation,
+            })).collect::<Vec<_>>(),
         },
         "last_transition": {
             "scheduler_decision_cursor": package.substrate_boundary.scheduler_decision_cursor,
             "task_count": package.semantic.task_record_count,
             "activation_count": package.semantic.runtime_activation_count,
             "queue_count": package.semantic.runnable_queue_count,
+            "activation_context_count": package.semantic.activation_context_count,
+            "saved_context_count": package.semantic.saved_context_count,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -1069,6 +1153,18 @@ fn stable_views_for_kind(
             .runnable_queues
             .iter()
             .map(runnable_queue_view_v1)
+            .collect()),
+        "activation-context" | "context" => Ok(package
+            .semantic
+            .activation_contexts
+            .iter()
+            .map(activation_context_view_v1)
+            .collect()),
+        "saved-context" => Ok(package
+            .semantic
+            .saved_contexts
+            .iter()
+            .map(saved_context_view_v1)
             .collect()),
         "store" => Ok(package
             .semantic
@@ -1686,12 +1782,14 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.task_count,
             package.semantic.runtime_activation_count,
             package.semantic.runnable_queue_count,
+            package.semantic.activation_context_count,
+            package.semantic.saved_context_count,
             package.semantic.resource_count,
             package.semantic.store_count,
             package.semantic.capability_count,
@@ -1844,6 +1942,11 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.contract_violation_roots.len()
     );
     print_roots("task", &package.semantic.roots.task_roots);
+    print_roots(
+        "activation-context",
+        &package.semantic.roots.activation_context_roots,
+    );
+    print_roots("saved-context", &package.semantic.roots.saved_context_roots);
     print_roots("resource", &package.semantic.roots.resource_roots);
     print_roots("authority", &package.semantic.roots.authority_roots);
     print_roots("store", &package.semantic.roots.store_roots);
@@ -1956,6 +2059,50 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
                 Some(entry.enqueued_at),
             ));
         }
+    }
+    for context in &package.semantic.activation_contexts {
+        if context.state == "dropped" {
+            continue;
+        }
+        edges.push(graph_edge(
+            object_ref_json(
+                "activation",
+                context.activation,
+                context.activation_generation,
+            ),
+            object_ref_json("activation-context", context.id, context.generation),
+            "has-context",
+            "live",
+            context.last_event,
+        ));
+        if let (Some(saved), Some(saved_generation)) = (
+            context.current_saved_context,
+            context.current_saved_context_generation,
+        ) {
+            edges.push(graph_edge(
+                object_ref_json("activation-context", context.id, context.generation),
+                object_ref_json("saved-context", saved, saved_generation),
+                "current-saved-context",
+                "live",
+                context.last_event,
+            ));
+        }
+    }
+    for saved in &package.semantic.saved_contexts {
+        if saved.state == "dropped" {
+            continue;
+        }
+        edges.push(graph_edge(
+            object_ref_json(
+                "activation-context",
+                saved.context,
+                saved.context_generation,
+            ),
+            object_ref_json("saved-context", saved.id, saved.generation),
+            "captures",
+            "live",
+            Some(saved.saved_at_event),
+        ));
     }
     for activation in &package.semantic.activation_records {
         if activation.state == "running" {
@@ -3800,6 +3947,8 @@ mod tests {
         package.semantic.task_record_count = 1;
         package.semantic.runtime_activation_count = 1;
         package.semantic.runnable_queue_count = 1;
+        package.semantic.activation_context_count = 1;
+        package.semantic.saved_context_count = 1;
         package.semantic.task_records.push(TaskRecordManifest {
             id: 7,
             label: "linux-thread-7".to_owned(),
@@ -3840,9 +3989,57 @@ mod tests {
                     enqueued_at: 9,
                 }],
             });
+        package
+            .semantic
+            .activation_contexts
+            .push(ActivationContextManifest {
+                id: 12,
+                activation: 11,
+                activation_generation: 2,
+                owner_task: 7,
+                owner_task_generation: 1,
+                owner_store: None,
+                owner_store_generation: None,
+                generation: 2,
+                state: "saved".to_owned(),
+                current_saved_context: Some(13),
+                current_saved_context_generation: Some(1),
+                last_event: Some(10),
+            });
+        package.semantic.saved_contexts.push(SavedContextManifest {
+            id: 13,
+            context: 12,
+            context_generation: 2,
+            activation: 11,
+            activation_generation: 2,
+            owner_task: 7,
+            owner_task_generation: 1,
+            generation: 1,
+            state: "captured".to_owned(),
+            reason: "initial".to_owned(),
+            pc: 0x1000,
+            sp: 0x8000,
+            flags: 0,
+            integer_registers: 33,
+            saved_at_event: 10,
+            note: "initial frame".to_owned(),
+        });
+        let context = activation_context_view_v1(&package.semantic.activation_contexts[0]);
+        assert_eq!(context["kind"], "activation-context");
+        assert_eq!(context["references"]["activation"]["generation"], 2);
+        assert_eq!(
+            context["references"]["current_saved_context"]["generation"],
+            1
+        );
+        let saved = saved_context_view_v1(&package.semantic.saved_contexts[0]);
+        assert_eq!(saved["kind"], "saved-context");
+        assert_eq!(saved["machine_frame"]["integer_registers"], 33);
+        assert_eq!(saved["references"]["activation_context"]["generation"], 2);
         let scheduler = scheduler_view_v1(&package);
         assert_eq!(scheduler["kind"], "scheduler");
         assert_eq!(scheduler["references"]["queues"][0]["entries"], 1);
+        assert_eq!(scheduler["last_transition"]["activation_context_count"], 1);
+        assert_eq!(scheduler["last_transition"]["saved_context_count"], 1);
         assert_eq!(
             scheduler["last_transition"]["scheduler_decision_cursor"],
             12
@@ -3856,6 +4053,16 @@ mod tests {
         assert!(edges.iter().any(|edge| edge["from"]["kind"] == "activation"
             && edge["to"]["kind"] == "runnable-queue"
             && edge["to"]["generation"] == 1));
+        assert!(edges.iter().any(|edge| edge["from"]["kind"] == "activation"
+            && edge["to"]["kind"] == "activation-context"
+            && edge["to"]["generation"] == 2));
+        assert!(
+            edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "activation-context"
+                    && edge["to"]["kind"] == "saved-context"
+                    && edge["to"]["generation"] == 1)
+        );
     }
 
     #[test]

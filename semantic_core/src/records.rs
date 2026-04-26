@@ -66,6 +66,58 @@ impl RunnableQueueRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivationContextRecord {
+    pub id: ActivationContextId,
+    pub activation: ActivationId,
+    pub activation_generation: Generation,
+    pub owner_task: TaskId,
+    pub owner_task_generation: Generation,
+    pub owner_store: Option<StoreId>,
+    pub owner_store_generation: Option<Generation>,
+    pub generation: Generation,
+    pub state: ActivationContextState,
+    pub current_saved_context: Option<SavedContextId>,
+    pub current_saved_context_generation: Option<Generation>,
+    pub last_event: Option<EventId>,
+}
+
+impl ActivationContextRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::ActivationContext,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SavedContextRecord {
+    pub id: SavedContextId,
+    pub context: ActivationContextId,
+    pub context_generation: Generation,
+    pub activation: ActivationId,
+    pub activation_generation: Generation,
+    pub owner_task: TaskId,
+    pub owner_task_generation: Generation,
+    pub generation: Generation,
+    pub state: SavedContextState,
+    pub reason: SavedContextReason,
+    pub pc: u64,
+    pub sp: u64,
+    pub flags: u64,
+    pub integer_registers: u16,
+    pub saved_at_event: EventId,
+    pub note: String,
+}
+
+impl SavedContextRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::SavedContext, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceRecord {
     pub id: ResourceId,
     pub label: String,

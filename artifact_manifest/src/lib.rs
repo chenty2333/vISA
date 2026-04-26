@@ -228,6 +228,10 @@ pub struct SemanticSnapshotManifest {
     pub runtime_activation_count: usize,
     #[serde(default)]
     pub runnable_queue_count: usize,
+    #[serde(default)]
+    pub activation_context_count: usize,
+    #[serde(default)]
+    pub saved_context_count: usize,
     pub resource_count: usize,
     #[serde(default)]
     pub authority_count: usize,
@@ -299,6 +303,10 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub runnable_queues: Vec<RunnableQueueManifest>,
     #[serde(default)]
+    pub activation_contexts: Vec<ActivationContextManifest>,
+    #[serde(default)]
+    pub saved_contexts: Vec<SavedContextManifest>,
+    #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
     #[serde(default)]
     pub store_records: Vec<StoreRecordManifest>,
@@ -348,6 +356,10 @@ pub struct SemanticRootSetManifest {
     pub runtime_activation_roots: Vec<String>,
     #[serde(default)]
     pub runnable_queue_roots: Vec<String>,
+    #[serde(default)]
+    pub activation_context_roots: Vec<String>,
+    #[serde(default)]
+    pub saved_context_roots: Vec<String>,
     #[serde(default)]
     pub resource_roots: Vec<String>,
     #[serde(default)]
@@ -501,6 +513,44 @@ pub struct RunnableQueueManifest {
     pub state: String,
     #[serde(default)]
     pub entries: Vec<RunnableQueueEntryManifest>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ActivationContextManifest {
+    pub id: u64,
+    pub activation: u64,
+    pub activation_generation: u64,
+    pub owner_task: u64,
+    pub owner_task_generation: u64,
+    pub owner_store: Option<u64>,
+    #[serde(default)]
+    pub owner_store_generation: Option<u64>,
+    pub generation: u64,
+    pub state: String,
+    pub current_saved_context: Option<u64>,
+    #[serde(default)]
+    pub current_saved_context_generation: Option<u64>,
+    pub last_event: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SavedContextManifest {
+    pub id: u64,
+    pub context: u64,
+    pub context_generation: u64,
+    pub activation: u64,
+    pub activation_generation: u64,
+    pub owner_task: u64,
+    pub owner_task_generation: u64,
+    pub generation: u64,
+    pub state: String,
+    pub reason: String,
+    pub pc: u64,
+    pub sp: u64,
+    pub flags: u64,
+    pub integer_registers: u16,
+    pub saved_at_event: u64,
+    pub note: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

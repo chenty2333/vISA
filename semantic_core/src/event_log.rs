@@ -41,6 +41,21 @@ pub enum EventKind {
         activation: ActivationId,
         activation_generation: Generation,
     },
+    ActivationContextCreated {
+        context: ActivationContextId,
+        activation: ActivationId,
+        activation_generation: Generation,
+        generation: Generation,
+    },
+    SavedContextCaptured {
+        saved_context: SavedContextId,
+        context: ActivationContextId,
+        context_generation: Generation,
+        activation: ActivationId,
+        activation_generation: Generation,
+        reason: SavedContextReason,
+        generation: Generation,
+    },
     ResourceCreated {
         resource: ResourceId,
         kind: ResourceKind,
@@ -411,6 +426,26 @@ impl EventKind {
                 activation_generation,
             } => format!(
                 "RunnableDequeued queue={queue} activation={activation}@{activation_generation}"
+            ),
+            Self::ActivationContextCreated {
+                context,
+                activation,
+                activation_generation,
+                generation,
+            } => format!(
+                "ActivationContextCreated context={context} activation={activation}@{activation_generation} generation={generation}"
+            ),
+            Self::SavedContextCaptured {
+                saved_context,
+                context,
+                context_generation,
+                activation,
+                activation_generation,
+                reason,
+                generation,
+            } => format!(
+                "SavedContextCaptured saved_context={saved_context} context={context}@{context_generation} activation={activation}@{activation_generation} reason={} generation={generation}",
+                reason.as_str()
             ),
             Self::ResourceCreated {
                 resource,

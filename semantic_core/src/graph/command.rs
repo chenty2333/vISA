@@ -23,6 +23,21 @@ pub enum SemanticCommand {
         queue: RunnableQueueId,
         activation: ActivationId,
     },
+    CreateActivationContext {
+        context: ActivationContextId,
+        activation: ActivationId,
+        activation_generation: Generation,
+    },
+    CaptureSavedContext {
+        saved_context: SavedContextId,
+        context: ActivationContextId,
+        context_generation: Generation,
+        reason: SavedContextReason,
+        pc: u64,
+        sp: u64,
+        flags: u64,
+        note: String,
+    },
     GrantCapability {
         subject: String,
         debug_object_label: String,
@@ -175,6 +190,8 @@ impl SemanticCommand {
             Self::CreateRunnableQueue { .. } => "create-runnable-queue",
             Self::EnqueueRunnable { .. } => "enqueue-runnable",
             Self::DequeueRunnable { .. } => "dequeue-runnable",
+            Self::CreateActivationContext { .. } => "create-activation-context",
+            Self::CaptureSavedContext { .. } => "capture-saved-context",
             Self::GrantCapability { .. } => "grant-capability",
             Self::RevokeCapability { .. } => "revoke-capability",
             Self::CreateWait { .. } => "create-wait",
@@ -427,6 +444,84 @@ impl SemanticGraph {
                 }
                 Ok(())
             }
+            SemanticCommand::CreateActivationContext {
+                context,
+                activation,
+                activation_generation,
+            } => {
+                if *context == 0 {
+                    Err(CommandError::precondition(
+                        "activation context id=0 is invalid",
+                    ))
+                } else if self
+                    .activation_contexts
+                    .iter()
+                    .any(|record| record.id == *context)
+                {
+                    Err(CommandError::precondition(
+                        "activation context already exists",
+                    ))
+                } else if self.activation_contexts.iter().any(|record| {
+                    record.activation == *activation
+                        && record.state != ActivationContextState::Dropped
+                }) {
+                    Err(CommandError::precondition(
+                        "activation already has a live context",
+                    ))
+                } else if self.runtime_activations.iter().any(|record| {
+                    record.id == *activation
+                        && record.generation == *activation_generation
+                        && !matches!(
+                            record.state,
+                            RuntimeActivationState::Dead | RuntimeActivationState::Exited
+                        )
+                }) {
+                    Ok(())
+                } else {
+                    Err(CommandError::precondition(
+                        "activation generation is missing or inactive",
+                    ))
+                }
+            }
+            SemanticCommand::CaptureSavedContext {
+                saved_context,
+                context,
+                context_generation,
+                pc,
+                sp,
+                ..
+            } => {
+                if *saved_context == 0 {
+                    Err(CommandError::precondition("saved context id=0 is invalid"))
+                } else if *pc == 0 || *sp == 0 {
+                    Err(CommandError::precondition(
+                        "saved context requires nonzero pc and sp",
+                    ))
+                } else if self
+                    .saved_contexts
+                    .iter()
+                    .any(|record| record.id == *saved_context)
+                {
+                    Err(CommandError::precondition("saved context already exists"))
+                } else {
+                    let Some(context_record) = self.activation_contexts.iter().find(|record| {
+                        record.id == *context
+                            && record.generation == *context_generation
+                            && record.state != ActivationContextState::Dropped
+                    }) else {
+                        return Err(CommandError::precondition(
+                            "activation context generation is missing or dropped",
+                        ));
+                    };
+                    if context_record.current_saved_context.is_some() {
+                        Err(CommandError::precondition(
+                            "activation context already has saved context",
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                }
+            }
             SemanticCommand::GrantCapability { operations, .. } if operations.is_empty() => Err(
                 CommandError::precondition("grant-capability requires at least one operation"),
             ),
@@ -583,6 +678,30 @@ impl SemanticGraph {
             SemanticCommand::DequeueRunnable { queue, activation } => {
                 self.dequeue_runnable_activation(queue, activation)
             }
+            SemanticCommand::CreateActivationContext {
+                context,
+                activation,
+                activation_generation,
+            } => self.create_activation_context_with_id(context, activation, activation_generation),
+            SemanticCommand::CaptureSavedContext {
+                saved_context,
+                context,
+                context_generation,
+                reason,
+                pc,
+                sp,
+                flags,
+                note,
+            } => self.capture_saved_context_with_id(
+                saved_context,
+                context,
+                context_generation,
+                reason,
+                pc,
+                sp,
+                flags,
+                &note,
+            ),
             SemanticCommand::GrantCapability {
                 subject,
                 debug_object_label,

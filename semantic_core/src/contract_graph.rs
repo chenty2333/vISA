@@ -1374,6 +1374,8 @@ impl ContractGraphValidator {
                 .map(|external| external.object),
             ContractObjectKind::Task
             | ContractObjectKind::RunnableQueue
+            | ContractObjectKind::ActivationContext
+            | ContractObjectKind::SavedContext
             | ContractObjectKind::Resource
             | ContractObjectKind::FaultDomain
             | ContractObjectKind::MemoryObject

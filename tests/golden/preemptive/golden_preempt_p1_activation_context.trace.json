@@ -1,0 +1,98 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "P1-saved-context-activation-context",
+  "name": "golden_preempt_p1_activation_context",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "timer interrupt preemption",
+    "PreemptActivation command",
+    "real register save path",
+    "ResumeActivation command",
+    "SMP scheduler"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "create-runtime-activation",
+        "activation": "activation:11@1",
+        "owner_task": "task:7@1"
+      },
+      {
+        "id": 2,
+        "command": "enqueue-runnable",
+        "activation": "activation:11@1"
+      },
+      {
+        "id": 3,
+        "command": "create-activation-context",
+        "context": "activation-context:12@1",
+        "activation": "activation:11@2"
+      },
+      {
+        "id": 4,
+        "command": "capture-saved-context",
+        "saved_context": "saved-context:13@1",
+        "context": "activation-context:12@1",
+        "pc": "0x1000",
+        "sp": "0x8000"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "ActivationContextCreated",
+      "context": "activation-context:12@1",
+      "activation": "activation:11@2"
+    },
+    {
+      "kind": "SavedContextCaptured",
+      "saved_context": "saved-context:13@1",
+      "context": "activation-context:12@2",
+      "activation": "activation:11@2",
+      "reason": "initial"
+    }
+  ],
+  "expected": {
+    "views": {
+      "activation_context": {
+        "kind": "activation-context",
+        "id": 12,
+        "generation": 2,
+        "state": "saved",
+        "activation": "activation:11@2",
+        "current_saved_context": "saved-context:13@1"
+      },
+      "saved_context": {
+        "kind": "saved-context",
+        "id": 13,
+        "generation": 1,
+        "state": "captured",
+        "context": "activation-context:12@2",
+        "pc": 4096,
+        "sp": 32768,
+        "integer_registers": 33
+      }
+    },
+    "invariants": [
+      "activation context references exact activation generation",
+      "saved context references exact activation-context generation",
+      "saved context machine frame has nonzero pc and sp",
+      "one live activation context per activation",
+      "P1 rejects duplicate saved-context capture for one activation context"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "preemptive_runtime_p1_context_commands_emit_events_and_pass_invariants",
+      "preemptive_runtime_p1_rejects_stale_context_generation_and_empty_frame",
+      "preemptive_runtime_p1_invariants_reject_context_saved_generation_leak",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state"
+    ]
+  }
+}

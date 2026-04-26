@@ -14,6 +14,8 @@ pub const TARGET_ARTIFACT_GENERATION_V1: Generation = 1;
 pub enum ContractObjectKind {
     Task,
     RunnableQueue,
+    ActivationContext,
+    SavedContext,
     Resource,
     Artifact,
     CodeObject,
@@ -39,6 +41,8 @@ impl ContractObjectKind {
         match self {
             Self::Task => "task",
             Self::RunnableQueue => "runnable-queue",
+            Self::ActivationContext => "activation-context",
+            Self::SavedContext => "saved-context",
             Self::Resource => "resource",
             Self::Artifact => "artifact",
             Self::CodeObject => "code-object",

@@ -289,6 +289,53 @@ pub enum SemanticInvariantError {
     RunningActivationStillQueued {
         activation: ActivationId,
     },
+    ActivationContextMissingActivation {
+        context: ActivationContextId,
+        activation: ActivationId,
+    },
+    ActivationContextMissingTask {
+        context: ActivationContextId,
+        task: TaskId,
+    },
+    ActivationContextMissingStore {
+        context: ActivationContextId,
+        store: StoreId,
+    },
+    DeadActivationOwnsLiveContext {
+        activation: ActivationId,
+        context: ActivationContextId,
+    },
+    ActivationContextSavedGenerationMissing {
+        context: ActivationContextId,
+        saved_context: SavedContextId,
+    },
+    ActivationContextMissingSavedContext {
+        context: ActivationContextId,
+        saved_context: SavedContextId,
+    },
+    ActivationContextSavedContextMismatch {
+        context: ActivationContextId,
+        saved_context: SavedContextId,
+    },
+    ActivationHasMultipleLiveContexts {
+        activation: ActivationId,
+        contexts: usize,
+    },
+    SavedContextMachineFrameMissing {
+        saved_context: SavedContextId,
+    },
+    SavedContextMissingContext {
+        saved_context: SavedContextId,
+        context: ActivationContextId,
+    },
+    SavedContextMissingActivation {
+        saved_context: SavedContextId,
+        activation: ActivationId,
+    },
+    SavedContextMissingTask {
+        saved_context: SavedContextId,
+        task: TaskId,
+    },
     StoreReferencesMissingFaultDomain {
         store: StoreId,
         fault_domain: FaultDomainId,

@@ -6,20 +6,21 @@ use std::path::{Path, PathBuf};
 mod runtime;
 
 use artifact_manifest::{
-    ActivationRecordManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
-    BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
-    CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
-    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
-    CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
-    GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    StoreRecordManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
-    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
-    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TaskRecordManifest, TombstoneManifest,
-    TrapRecordManifest, WaitRecordManifest,
+    ActivationContextManifest, ActivationRecordManifest, ArtifactBundleManifest,
+    AuthorityObjectRefManifest, BoundaryValidationReportManifest,
+    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
+    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
+    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
+    ContractViolationManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
+    InterfaceEventManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
+    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
+    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
+    TargetTrapMetadataManifest, TaskRecordManifest, TombstoneManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -35,11 +36,12 @@ use semantic_core::{
     ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HostcallCategory,
     HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, ManagedStoreRecord,
     MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord, PackageReplayValidator,
-    ReplayPackageValidationState, RestartPolicy, RuntimeMode, SemanticCommand, SemanticGraph,
-    SemanticWaitKind, SnapshotBarrierValidator, StoreRecord, StoreState, TargetAddressMapEntry,
-    TargetArtifactImage, TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan,
-    TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState, TombstoneRecord,
-    TrapSurfaceState, VerifiedArtifact, memory_class_policies, validate_contract_graph,
+    ReplayPackageValidationState, RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand,
+    SemanticGraph, SemanticWaitKind, SnapshotBarrierValidator, StoreRecord, StoreState,
+    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
+    TombstoneRecord, TrapSurfaceState, VerifiedArtifact, memory_class_policies,
+    validate_contract_graph,
 };
 use substrate_api::{SubstrateEvent, SubstrateRequester};
 use target_abi::{
@@ -95,7 +97,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     semantic.ensure_task(1, FrontendKind::Supervisor, "target-executor-bootstrap");
     semantic.set_task_state(1, TaskState::Running);
-    record_preemptive_runtime_p0_evidence(&mut semantic);
+    record_preemptive_runtime_context_evidence(&mut semantic);
     publish_host_boundary_status(&mut semantic, &manifest);
 
     for entry in &plan.modules {
@@ -327,7 +329,7 @@ fn record_command_surface_evidence(semantic: &mut SemanticGraph) {
     let _ = semantic.apply_envelope(command);
 }
 
-fn record_preemptive_runtime_p0_evidence(semantic: &mut SemanticGraph) {
+fn record_preemptive_runtime_context_evidence(semantic: &mut SemanticGraph) {
     semantic.ensure_task(9001, FrontendKind::LinuxElf, "p0-preemptive-demo-task");
     let commands = [
         CommandEnvelope::new(
@@ -357,6 +359,29 @@ fn record_preemptive_runtime_p0_evidence(semantic: &mut SemanticGraph) {
                 queue: 9001,
                 activation: 9001,
                 activation_generation: 1,
+            },
+        ),
+        CommandEnvelope::new(
+            13,
+            "target-executor-p1",
+            SemanticCommand::CreateActivationContext {
+                context: 9001,
+                activation: 9001,
+                activation_generation: 2,
+            },
+        ),
+        CommandEnvelope::new(
+            14,
+            "target-executor-p1",
+            SemanticCommand::CaptureSavedContext {
+                saved_context: 9001,
+                context: 9001,
+                context_generation: 1,
+                reason: SavedContextReason::Initial,
+                pc: 0x1000,
+                sp: 0x8000,
+                flags: 0,
+                note: "p1-initial-context-harness".to_owned(),
             },
         ),
     ];
@@ -1356,6 +1381,8 @@ fn demo_migration_package(
             task_record_count: semantic.tasks().len(),
             runtime_activation_count: semantic.runtime_activation_count(),
             runnable_queue_count: semantic.runnable_queue_count(),
+            activation_context_count: semantic.activation_context_count(),
+            saved_context_count: semantic.saved_context_count(),
             resource_count: semantic.resource_count(),
             authority_count: semantic.authority_count(),
             active_authority_count: semantic.active_authority_count(),
@@ -1400,6 +1427,16 @@ fn demo_migration_package(
                 .runnable_queues()
                 .iter()
                 .map(runnable_queue_manifest)
+                .collect(),
+            activation_contexts: semantic
+                .activation_contexts()
+                .iter()
+                .map(activation_context_manifest)
+                .collect(),
+            saved_contexts: semantic
+                .saved_contexts()
+                .iter()
+                .map(saved_context_manifest)
                 .collect(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
@@ -1512,6 +1549,47 @@ fn semantic_roots(
                     queue.state.as_str(),
                     queue.generation,
                     queue.entries.len()
+                )
+            })
+            .collect(),
+        activation_context_roots: semantic
+            .activation_contexts()
+            .iter()
+            .map(|context| {
+                format!(
+                    "activation-context id={} activation={}@{} state={} generation={} saved={}@{}",
+                    context.id,
+                    context.activation,
+                    context.activation_generation,
+                    context.state.as_str(),
+                    context.generation,
+                    context
+                        .current_saved_context
+                        .map(|saved| saved.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    context
+                        .current_saved_context_generation
+                        .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "none".to_owned())
+                )
+            })
+            .collect(),
+        saved_context_roots: semantic
+            .saved_contexts()
+            .iter()
+            .map(|saved| {
+                format!(
+                    "saved-context id={} context={}@{} activation={}@{} state={} reason={} pc={:#x} sp={:#x} generation={}",
+                    saved.id,
+                    saved.context,
+                    saved.context_generation,
+                    saved.activation,
+                    saved.activation_generation,
+                    saved.state.as_str(),
+                    saved.reason.as_str(),
+                    saved.pc,
+                    saved.sp,
+                    saved.generation
                 )
             })
             .collect(),
@@ -2006,6 +2084,46 @@ fn runnable_queue_manifest(queue: &semantic_core::RunnableQueueRecord) -> Runnab
                 enqueued_at: entry.enqueued_at,
             })
             .collect(),
+    }
+}
+
+fn activation_context_manifest(
+    context: &semantic_core::ActivationContextRecord,
+) -> ActivationContextManifest {
+    ActivationContextManifest {
+        id: context.id,
+        activation: context.activation,
+        activation_generation: context.activation_generation,
+        owner_task: u64::from(context.owner_task),
+        owner_task_generation: context.owner_task_generation,
+        owner_store: context.owner_store,
+        owner_store_generation: context.owner_store_generation,
+        generation: context.generation,
+        state: context.state.as_str().to_owned(),
+        current_saved_context: context.current_saved_context,
+        current_saved_context_generation: context.current_saved_context_generation,
+        last_event: context.last_event,
+    }
+}
+
+fn saved_context_manifest(saved: &semantic_core::SavedContextRecord) -> SavedContextManifest {
+    SavedContextManifest {
+        id: saved.id,
+        context: saved.context,
+        context_generation: saved.context_generation,
+        activation: saved.activation,
+        activation_generation: saved.activation_generation,
+        owner_task: u64::from(saved.owner_task),
+        owner_task_generation: saved.owner_task_generation,
+        generation: saved.generation,
+        state: saved.state.as_str().to_owned(),
+        reason: saved.reason.as_str().to_owned(),
+        pc: saved.pc,
+        sp: saved.sp,
+        flags: saved.flags,
+        integer_registers: saved.integer_registers,
+        saved_at_event: saved.saved_at_event,
+        note: saved.note.clone(),
     }
 }
 

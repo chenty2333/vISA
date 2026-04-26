@@ -1770,6 +1770,162 @@ fn preemptive_runtime_p0_invariants_reject_bad_queue_ownership() {
     );
 }
 
+#[test]
+fn preemptive_runtime_p1_context_commands_emit_events_and_pass_invariants() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+
+    let context = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p1-test",
+        SemanticCommand::CreateActivationContext {
+            context: 12,
+            activation: 11,
+            activation_generation: 2,
+        },
+    ));
+    assert_eq!(context.status, CommandStatus::Applied);
+    assert_eq!(graph.activation_contexts()[0].generation, 1);
+    assert_eq!(
+        graph.activation_contexts()[0].state,
+        ActivationContextState::Created
+    );
+
+    let saved = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p1-test",
+        SemanticCommand::CaptureSavedContext {
+            saved_context: 13,
+            context: 12,
+            context_generation: 1,
+            reason: SavedContextReason::Initial,
+            pc: 0x1000,
+            sp: 0x8000,
+            flags: 0,
+            note: "initial frame".to_string(),
+        },
+    ));
+    assert_eq!(saved.status, CommandStatus::Applied);
+    assert_eq!(graph.activation_contexts()[0].generation, 2);
+    assert_eq!(
+        graph.activation_contexts()[0].state,
+        ActivationContextState::Saved
+    );
+    assert_eq!(graph.saved_contexts()[0].context_generation, 2);
+    assert_eq!(graph.saved_contexts()[0].pc, 0x1000);
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "SavedContextCaptured saved_context=13 context=12@2 activation=11@2 reason=initial generation=1"
+    );
+}
+
+#[test]
+fn preemptive_runtime_p1_rejects_stale_context_generation_and_empty_frame() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.create_activation_context_with_id(12, 11, 1));
+
+    let empty_frame = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p1-test",
+        SemanticCommand::CaptureSavedContext {
+            saved_context: 13,
+            context: 12,
+            context_generation: 1,
+            reason: SavedContextReason::Initial,
+            pc: 0,
+            sp: 0x8000,
+            flags: 0,
+            note: "bad frame".to_string(),
+        },
+    ));
+    assert_eq!(empty_frame.status, CommandStatus::Rejected);
+    assert!(graph.saved_contexts().is_empty());
+
+    assert!(graph.capture_saved_context_with_id(
+        13,
+        12,
+        1,
+        SavedContextReason::Initial,
+        0x1000,
+        0x8000,
+        0,
+        "initial frame",
+    ));
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p1-test",
+        SemanticCommand::CaptureSavedContext {
+            saved_context: 14,
+            context: 12,
+            context_generation: 1,
+            reason: SavedContextReason::CooperativeYield,
+            pc: 0x1004,
+            sp: 0x7ff0,
+            flags: 0,
+            note: "stale frame".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("activation context generation is missing or dropped".to_string());
+    assert_eq!(stale.violations, expected);
+
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "p1-test",
+        SemanticCommand::CaptureSavedContext {
+            saved_context: 14,
+            context: 12,
+            context_generation: 2,
+            reason: SavedContextReason::CooperativeYield,
+            pc: 0x1004,
+            sp: 0x7ff0,
+            flags: 0,
+            note: "duplicate frame".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("activation context already has saved context".to_string());
+    assert_eq!(duplicate.violations, expected);
+    assert_eq!(graph.saved_contexts().len(), 1);
+}
+
+#[test]
+fn preemptive_runtime_p1_invariants_reject_context_saved_generation_leak() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.create_activation_context_with_id(12, 11, 1));
+    assert!(graph.capture_saved_context_with_id(
+        13,
+        12,
+        1,
+        SavedContextReason::Initial,
+        0x1000,
+        0x8000,
+        0,
+        "initial frame",
+    ));
+    graph.clear_activation_context_saved_ref_for_test(12);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::ActivationContextSavedGenerationMissing {
+                context: 12,
+                saved_context: 13,
+            }
+        )
+    );
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

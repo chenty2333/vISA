@@ -72,6 +72,67 @@ impl RunnableQueueState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivationContextState {
+    Created,
+    Current,
+    Saved,
+    Restoring,
+    Dropped,
+}
+
+impl ActivationContextState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Current => "current",
+            Self::Saved => "saved",
+            Self::Restoring => "restoring",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SavedContextState {
+    Captured,
+    Superseded,
+    Restored,
+    Dropped,
+}
+
+impl SavedContextState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Captured => "captured",
+            Self::Superseded => "superseded",
+            Self::Restored => "restored",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SavedContextReason {
+    Initial,
+    CooperativeYield,
+    TimerPreempt,
+    WaitPark,
+    FaultSnapshot,
+}
+
+impl SavedContextReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Initial => "initial",
+            Self::CooperativeYield => "cooperative-yield",
+            Self::TimerPreempt => "timer-preempt",
+            Self::WaitPark => "wait-park",
+            Self::FaultSnapshot => "fault-snapshot",
+        }
+    }
+}
+
 impl TaskState {
     pub const fn as_str(self) -> &'static str {
         match self {

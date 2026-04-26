@@ -68,6 +68,8 @@ impl SchemaVersion {
 pub enum ObjectKind {
     Task,
     RunnableQueue,
+    ActivationContext,
+    SavedContext,
     Resource,
     Capability,
     WaitToken,
@@ -96,6 +98,8 @@ impl ObjectKind {
         match self {
             Self::Task => "task",
             Self::RunnableQueue => "runnable-queue",
+            Self::ActivationContext => "activation-context",
+            Self::SavedContext => "saved-context",
             Self::Resource => "resource",
             Self::Capability => "capability",
             Self::WaitToken => "wait-token",
@@ -278,6 +282,8 @@ typed_ref!(WaitTokenRef, ObjectKind::WaitToken);
 typed_ref!(CleanupRef, ObjectKind::Cleanup);
 typed_ref!(TaskRef, ObjectKind::Task);
 typed_ref!(RunnableQueueRef, ObjectKind::RunnableQueue);
+typed_ref!(ActivationContextRef, ObjectKind::ActivationContext);
+typed_ref!(SavedContextRef, ObjectKind::SavedContext);
 typed_ref!(FaultDomainRef, ObjectKind::FaultDomain);
 typed_ref!(ArtifactRef, ObjectKind::Artifact);
 typed_ref!(CodeObjectRef, ObjectKind::CodeObject);
@@ -1415,6 +1421,16 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("runnable queue root/count mismatch"));
     }
+    if roots.activation_context_roots.len() != package.semantic.activation_context_count
+        || package.semantic.activation_contexts.len() != package.semantic.activation_context_count
+    {
+        return Err(ContractError::new("activation context root/count mismatch"));
+    }
+    if roots.saved_context_roots.len() != package.semantic.saved_context_count
+        || package.semantic.saved_contexts.len() != package.semantic.saved_context_count
+    {
+        return Err(ContractError::new("saved context root/count mismatch"));
+    }
     if roots.resource_roots.len() != package.semantic.resource_count {
         return Err(ContractError::new("resource root/count mismatch"));
     }
@@ -1910,6 +1926,8 @@ mod tests {
                 task_record_count: 0,
                 runtime_activation_count: 0,
                 runnable_queue_count: 0,
+                activation_context_count: 0,
+                saved_context_count: 0,
                 resource_count: 0,
                 authority_count: 0,
                 active_authority_count: 0,
@@ -1947,6 +1965,8 @@ mod tests {
                 task_records: Vec::new(),
                 runtime_activation_records: Vec::new(),
                 runnable_queues: Vec::new(),
+                activation_contexts: Vec::new(),
+                saved_contexts: Vec::new(),
                 code_objects: Vec::new(),
                 store_records: Vec::new(),
                 capability_records: Vec::new(),
@@ -2074,6 +2094,32 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "runtime activation root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_activation_context_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.activation_context_count = 1;
+        package
+            .semantic
+            .activation_contexts
+            .push(artifact_manifest::ActivationContextManifest {
+                id: 12,
+                activation: 11,
+                activation_generation: 2,
+                owner_task: 7,
+                owner_task_generation: 1,
+                owner_store: None,
+                owner_store_generation: None,
+                generation: 1,
+                state: "created".to_owned(),
+                current_saved_context: None,
+                current_saved_context_generation: None,
+                last_event: Some(4),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "activation context root/count mismatch");
     }
 
     #[test]
@@ -2324,6 +2370,15 @@ mod tests {
             })
         ));
         assert!(CapabilityRef::try_from_ref(cap).is_ok());
+        let saved = ObjectRef::new(ObjectKind::SavedContext, 4, 1).unwrap();
+        assert!(SavedContextRef::try_from_ref(saved).is_ok());
+        assert!(matches!(
+            ActivationContextRef::try_from_ref(saved),
+            Err(TypedRefError::KindMismatch {
+                expected: ObjectKind::ActivationContext,
+                actual: ObjectKind::SavedContext,
+            })
+        ));
     }
 
     #[test]
