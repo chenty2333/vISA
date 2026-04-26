@@ -15,9 +15,10 @@ use artifact_manifest::{
     MigrationPackageManifest, PreemptionLatencySampleManifest, PreemptionManifest,
     RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SmpCodePublishBarrierManifest, SmpSafePointManifest, StopTheWorldRendezvousManifest,
-    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
-    TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
+    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
+    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
+    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -241,6 +242,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "smp-code-publish-barrier"
         | "code-publish-barrier"
         | "publish-barrier"
+        | "smp-cleanup-quiescence"
+        | "cleanup-quiescence"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -411,7 +414,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -622,6 +625,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "smp-code-publish-barrier" | "code-publish-barrier" | "publish-barrier" => {
             "smp-code-publish-barrier"
         }
+        "smp-cleanup-quiescence" | "cleanup-quiescence" => "smp-cleanup-quiescence",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -1338,6 +1342,82 @@ fn smp_code_publish_barrier_view_v1(barrier: &SmpCodePublishBarrierManifest) -> 
     })
 }
 
+fn smp_cleanup_quiescence_view_v1(quiescence: &SmpCleanupQuiescenceManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "smp-cleanup-quiescence",
+        "id": quiescence.id,
+        "generation": quiescence.generation,
+        "state": quiescence.state,
+        "owner": {
+            "store": {
+                "id": quiescence.store,
+                "target_generation": quiescence.target_store_generation,
+                "result_generation": quiescence.result_store_generation,
+            },
+            "cleanup": {
+                "id": quiescence.cleanup,
+                "generation": quiescence.cleanup_generation,
+            },
+        },
+        "references": {
+            "cleanup": {
+                "kind": "activation-cleanup",
+                "id": quiescence.cleanup,
+                "generation": quiescence.cleanup_generation,
+            },
+            "store": {
+                "kind": "store",
+                "id": quiescence.store,
+                "target_generation": quiescence.target_store_generation,
+                "result_generation": quiescence.result_store_generation,
+            },
+            "activation": {
+                "kind": "activation",
+                "id": quiescence.activation,
+                "generation_after": quiescence.activation_generation_after,
+            },
+            "rendezvous": {
+                "kind": "stop-the-world-rendezvous",
+                "id": quiescence.rendezvous,
+                "generation": quiescence.rendezvous_generation,
+                "epoch": quiescence.rendezvous_epoch,
+            },
+            "participants": quiescence.participants.iter().map(|participant| serde_json::json!({
+                "hart": {
+                    "kind": "hart",
+                    "id": participant.hart,
+                    "generation": participant.hart_generation,
+                },
+                "hardware_hart": participant.hardware_hart,
+                "hart_state": participant.hart_state,
+                "current_activation": participant.current_activation,
+                "current_activation_generation": participant.current_activation_generation,
+                "current_store": participant.current_store,
+                "current_store_generation": participant.current_store_generation,
+                "quiesced": participant.quiesced,
+            })).collect::<Vec<_>>(),
+            "event": {
+                "id": quiescence.validated_at_event,
+            },
+        },
+        "postconditions": {
+            "no_running_activation": quiescence.no_running_activation,
+            "no_pending_wait": quiescence.no_pending_wait,
+            "no_live_capability": quiescence.no_live_capability,
+            "no_live_resource": quiescence.no_live_resource,
+        },
+        "reason": quiescence.reason,
+        "note": quiescence.note,
+        "last_transition": {
+            "validated_at_event": quiescence.validated_at_event,
+            "participant_count": quiescence.participants.len(),
+            "rendezvous_epoch": quiescence.rendezvous_epoch,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -1719,6 +1799,19 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "code_publish_executed": barrier.code_publish_executed,
                 "state": barrier.state,
             })).collect::<Vec<_>>(),
+            "smp_cleanup_quiescence": package.semantic.smp_cleanup_quiescence.iter().map(|quiescence| serde_json::json!({
+                "id": quiescence.id,
+                "generation": quiescence.generation,
+                "cleanup": quiescence.cleanup,
+                "cleanup_generation": quiescence.cleanup_generation,
+                "store": quiescence.store,
+                "target_store_generation": quiescence.target_store_generation,
+                "result_store_generation": quiescence.result_store_generation,
+                "rendezvous": quiescence.rendezvous,
+                "rendezvous_generation": quiescence.rendezvous_generation,
+                "participant_count": quiescence.participants.len(),
+                "state": quiescence.state,
+            })).collect::<Vec<_>>(),
             "activation_resumes": package.semantic.activation_resumes.iter().map(|resume| serde_json::json!({
                 "id": resume.id,
                 "generation": resume.generation,
@@ -1776,6 +1869,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "smp_safe_point_count": package.semantic.smp_safe_point_count,
             "stop_the_world_rendezvous_count": package.semantic.stop_the_world_rendezvous_count,
             "smp_code_publish_barrier_count": package.semantic.smp_code_publish_barrier_count,
+            "smp_cleanup_quiescence_count": package.semantic.smp_cleanup_quiescence_count,
             "activation_resume_count": package.semantic.activation_resume_count,
             "activation_wait_count": package.semantic.activation_wait_count,
             "activation_cleanup_count": package.semantic.activation_cleanup_count,
@@ -2241,6 +2335,12 @@ fn stable_views_for_kind(
             .smp_code_publish_barriers
             .iter()
             .map(smp_code_publish_barrier_view_v1)
+            .collect()),
+        "smp-cleanup-quiescence" | "cleanup-quiescence" => Ok(package
+            .semantic
+            .smp_cleanup_quiescence
+            .iter()
+            .map(smp_cleanup_quiescence_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -2888,7 +2988,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -2908,6 +3008,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.smp_safe_point_count,
             package.semantic.stop_the_world_rendezvous_count,
             package.semantic.smp_code_publish_barrier_count,
+            package.semantic.smp_cleanup_quiescence_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -3040,7 +3141,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -3077,6 +3178,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.smp_safe_point_roots.len(),
         package.semantic.roots.stop_the_world_rendezvous_roots.len(),
         package.semantic.roots.smp_code_publish_barrier_roots.len(),
+        package.semantic.roots.smp_cleanup_quiescence_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -3120,6 +3222,14 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "stop-the-world-rendezvous",
         &package.semantic.roots.stop_the_world_rendezvous_roots,
+    );
+    print_roots(
+        "smp-code-publish-barrier",
+        &package.semantic.roots.smp_code_publish_barrier_roots,
+    );
+    print_roots(
+        "smp-cleanup-quiescence",
+        &package.semantic.roots.smp_cleanup_quiescence_roots,
     );
     print_roots(
         "activation-resume",
@@ -3946,6 +4056,55 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "participant-hart",
                 "historical",
                 Some(barrier.validated_at_event),
+            ));
+        }
+    }
+    for quiescence in &package.semantic.smp_cleanup_quiescence {
+        let from = object_ref_json(
+            "smp-cleanup-quiescence",
+            quiescence.id,
+            quiescence.generation,
+        );
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "activation-cleanup",
+                quiescence.cleanup,
+                quiescence.cleanup_generation,
+            ),
+            "cleanup",
+            "historical",
+            Some(quiescence.validated_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "store",
+                quiescence.store,
+                quiescence.result_store_generation,
+            ),
+            "dead-store",
+            "historical",
+            Some(quiescence.validated_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "stop-the-world-rendezvous",
+                quiescence.rendezvous,
+                quiescence.rendezvous_generation,
+            ),
+            "cleanup-rendezvous",
+            "historical",
+            Some(quiescence.validated_at_event),
+        ));
+        for participant in &quiescence.participants {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("hart", participant.hart, participant.hart_generation),
+                "participant-hart",
+                "historical",
+                Some(quiescence.validated_at_event),
             ));
         }
     }
@@ -5375,7 +5534,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -5394,6 +5553,7 @@ fn replay_until(
         package.semantic.roots.trap_roots.len(),
         package.semantic.roots.hostcall_trace_roots.len(),
         package.semantic.roots.migration_object_roots.len(),
+        package.semantic.roots.smp_cleanup_quiescence_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -5434,6 +5594,9 @@ fn replay_until(
     }
     for object in &package.semantic.roots.migration_object_roots {
         println!("replay migration-object {object}");
+    }
+    for quiescence in &package.semantic.roots.smp_cleanup_quiescence_roots {
+        println!("replay smp-cleanup-quiescence {quiescence}");
     }
     Ok(())
 }
@@ -5479,6 +5642,7 @@ fn print_replay_json(
             "smp_safe_points": package.semantic.roots.smp_safe_point_roots.len(),
             "stop_the_world_rendezvous": package.semantic.roots.stop_the_world_rendezvous_roots.len(),
             "smp_code_publish_barriers": package.semantic.roots.smp_code_publish_barrier_roots.len(),
+            "smp_cleanup_quiescence": package.semantic.roots.smp_cleanup_quiescence_roots.len(),
             "resources": package.semantic.roots.resource_roots.len(),
             "authorities": package.semantic.roots.authority_roots.len(),
             "stores": package.semantic.roots.store_roots.len(),
@@ -5531,6 +5695,7 @@ fn print_replay_json(
             "smp_safe_point_roots": &package.semantic.roots.smp_safe_point_roots,
             "stop_the_world_rendezvous_roots": &package.semantic.roots.stop_the_world_rendezvous_roots,
             "smp_code_publish_barrier_roots": &package.semantic.roots.smp_code_publish_barrier_roots,
+            "smp_cleanup_quiescence_roots": &package.semantic.roots.smp_cleanup_quiescence_roots,
             "cleanup_roots": &package.semantic.roots.cleanup_roots,
             "activation_cleanup_roots": &package.semantic.roots.activation_cleanup_roots,
             "preemption_latency_roots": &package.semantic.roots.preemption_latency_roots,
@@ -5558,7 +5723,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -5588,6 +5753,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.smp_safe_point_count,
         package.semantic.stop_the_world_rendezvous_count,
         package.semantic.smp_code_publish_barrier_count,
+        package.semantic.smp_cleanup_quiescence_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -5949,6 +6115,7 @@ mod tests {
         package.semantic.smp_safe_point_count = 1;
         package.semantic.stop_the_world_rendezvous_count = 1;
         package.semantic.smp_code_publish_barrier_count = 1;
+        package.semantic.smp_cleanup_quiescence_count = 1;
         package.semantic.activation_resume_count = 1;
         package.semantic.activation_wait_count = 1;
         package.semantic.activation_cleanup_count = 1;
@@ -6335,6 +6502,55 @@ mod tests {
             });
         package
             .semantic
+            .smp_cleanup_quiescence
+            .push(SmpCleanupQuiescenceManifest {
+                id: 31,
+                cleanup: 20,
+                cleanup_generation: 1,
+                store: 5,
+                target_store_generation: 2,
+                result_store_generation: 4,
+                activation: 11,
+                activation_generation_after: 6,
+                rendezvous: 29,
+                rendezvous_generation: 1,
+                rendezvous_epoch: 1,
+                participants: vec![
+                    artifact_manifest::SmpCleanupQuiescenceParticipantManifest {
+                        hart: 1,
+                        hart_generation: 2,
+                        hardware_hart: 0,
+                        hart_state: "idle".to_owned(),
+                        current_activation: None,
+                        current_activation_generation: None,
+                        current_store: None,
+                        current_store_generation: None,
+                        quiesced: true,
+                    },
+                    artifact_manifest::SmpCleanupQuiescenceParticipantManifest {
+                        hart: 2,
+                        hart_generation: 2,
+                        hardware_hart: 1,
+                        hart_state: "parked".to_owned(),
+                        current_activation: None,
+                        current_activation_generation: None,
+                        current_store: None,
+                        current_store_generation: None,
+                        quiesced: true,
+                    },
+                ],
+                no_running_activation: true,
+                no_pending_wait: true,
+                no_live_capability: true,
+                no_live_resource: true,
+                generation: 1,
+                state: "validated".to_owned(),
+                validated_at_event: 25,
+                reason: "smp-cleanup-quiescence".to_owned(),
+                note: "cleanup quiesced".to_owned(),
+            });
+        package
+            .semantic
             .activation_resumes
             .push(ActivationResumeManifest {
                 id: 17,
@@ -6588,6 +6804,18 @@ mod tests {
         );
         assert_eq!(barrier["last_transition"]["code_publish_epoch_after"], 1);
         assert_eq!(barrier["code_publish_executed"], false);
+        let quiescence =
+            smp_cleanup_quiescence_view_v1(&package.semantic.smp_cleanup_quiescence[0]);
+        assert_eq!(quiescence["kind"], "smp-cleanup-quiescence");
+        assert_eq!(quiescence["references"]["cleanup"]["id"], 20);
+        assert_eq!(quiescence["references"]["store"]["target_generation"], 2);
+        assert_eq!(quiescence["references"]["store"]["result_generation"], 4);
+        assert_eq!(quiescence["references"]["rendezvous"]["id"], 29);
+        assert_eq!(quiescence["postconditions"]["no_running_activation"], true);
+        assert_eq!(
+            quiescence["references"]["participants"][1]["quiesced"],
+            true
+        );
         let resume = activation_resume_view_v1(&package.semantic.activation_resumes[0]);
         assert_eq!(resume["kind"], "activation-resume");
         assert_eq!(resume["references"]["activation"]["generation_before"], 3);
@@ -6702,6 +6930,14 @@ mod tests {
         assert_eq!(
             scheduler["references"]["smp_code_publish_barriers"][0]["rendezvous"],
             29
+        );
+        assert_eq!(
+            scheduler["last_transition"]["smp_cleanup_quiescence_count"],
+            1
+        );
+        assert_eq!(
+            scheduler["references"]["smp_cleanup_quiescence"][0]["cleanup"],
+            20
         );
         assert_eq!(scheduler["last_transition"]["activation_resume_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_wait_count"], 1);
@@ -6839,6 +7075,24 @@ mod tests {
             && edge["to"]["id"] == 2
             && edge["relation"] == "participant-hart"
             && edge["mode"] == "historical"));
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "smp-cleanup-quiescence"
+                    && edge["to"]["kind"] == "activation-cleanup"
+                    && edge["to"]["id"] == 20
+                    && edge["relation"] == "cleanup"
+                    && edge["mode"] == "historical")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "smp-cleanup-quiescence"
+                    && edge["to"]["kind"] == "stop-the-world-rendezvous"
+                    && edge["to"]["id"] == 29
+                    && edge["relation"] == "cleanup-rendezvous"
+                    && edge["mode"] == "historical")
+        );
         assert!(
             history_edges
                 .iter()

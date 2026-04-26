@@ -702,6 +702,32 @@ pub enum SemanticInvariantError {
         barrier: SmpCodePublishBarrierId,
         event: EventId,
     },
+    SmpCleanupQuiescenceInvalid {
+        quiescence: SmpCleanupQuiescenceId,
+    },
+    SmpCleanupQuiescenceCleanupMissing {
+        quiescence: SmpCleanupQuiescenceId,
+        cleanup: ActivationCleanupId,
+    },
+    SmpCleanupQuiescenceRendezvousMissing {
+        quiescence: SmpCleanupQuiescenceId,
+        rendezvous: StopTheWorldRendezvousId,
+    },
+    SmpCleanupQuiescenceParticipantMismatch {
+        quiescence: SmpCleanupQuiescenceId,
+        hart: HartId,
+    },
+    SmpCleanupQuiescenceStoreLeak {
+        quiescence: SmpCleanupQuiescenceId,
+        store: StoreId,
+    },
+    SmpCleanupQuiescenceMissingEvent {
+        quiescence: SmpCleanupQuiescenceId,
+    },
+    SmpCleanupQuiescenceMissingHartEventAttribution {
+        quiescence: SmpCleanupQuiescenceId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

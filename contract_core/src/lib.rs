@@ -82,6 +82,7 @@ pub enum ObjectKind {
     SmpSafePoint,
     StopTheWorldRendezvous,
     SmpCodePublishBarrier,
+    SmpCleanupQuiescence,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -129,6 +130,7 @@ impl ObjectKind {
             Self::SmpSafePoint => "smp-safe-point",
             Self::StopTheWorldRendezvous => "stop-the-world-rendezvous",
             Self::SmpCodePublishBarrier => "smp-code-publish-barrier",
+            Self::SmpCleanupQuiescence => "smp-cleanup-quiescence",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -336,6 +338,7 @@ typed_ref!(
     ObjectKind::StopTheWorldRendezvous
 );
 typed_ref!(SmpCodePublishBarrierRef, ObjectKind::SmpCodePublishBarrier);
+typed_ref!(SmpCleanupQuiescenceRef, ObjectKind::SmpCleanupQuiescence);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1562,6 +1565,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "smp code publish barrier root/count mismatch",
         ));
     }
+    if roots.smp_cleanup_quiescence_roots.len() != package.semantic.smp_cleanup_quiescence_count
+        || package.semantic.smp_cleanup_quiescence.len()
+            != package.semantic.smp_cleanup_quiescence_count
+    {
+        return Err(ContractError::new(
+            "smp cleanup quiescence root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2100,6 +2111,7 @@ mod tests {
                 smp_safe_point_count: 0,
                 stop_the_world_rendezvous_count: 0,
                 smp_code_publish_barrier_count: 0,
+                smp_cleanup_quiescence_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2156,6 +2168,7 @@ mod tests {
                 smp_safe_points: Vec::new(),
                 stop_the_world_rendezvous: Vec::new(),
                 smp_code_publish_barriers: Vec::new(),
+                smp_cleanup_quiescence: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -2677,6 +2690,66 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_smp_cleanup_quiescence_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.smp_cleanup_quiescence_count = 1;
+        package.semantic.smp_cleanup_quiescence.push(
+            artifact_manifest::SmpCleanupQuiescenceManifest {
+                id: 11,
+                cleanup: 10,
+                cleanup_generation: 1,
+                store: 7,
+                target_store_generation: 2,
+                result_store_generation: 4,
+                activation: 12,
+                activation_generation_after: 5,
+                rendezvous: 9,
+                rendezvous_generation: 1,
+                rendezvous_epoch: 2,
+                participants: vec![
+                    artifact_manifest::SmpCleanupQuiescenceParticipantManifest {
+                        hart: 1,
+                        hart_generation: 4,
+                        hardware_hart: 0,
+                        hart_state: "idle".to_owned(),
+                        current_activation: None,
+                        current_activation_generation: None,
+                        current_store: None,
+                        current_store_generation: None,
+                        quiesced: true,
+                    },
+                    artifact_manifest::SmpCleanupQuiescenceParticipantManifest {
+                        hart: 2,
+                        hart_generation: 5,
+                        hardware_hart: 1,
+                        hart_state: "parked".to_owned(),
+                        current_activation: None,
+                        current_activation_generation: None,
+                        current_store: None,
+                        current_store_generation: None,
+                        quiesced: true,
+                    },
+                ],
+                no_running_activation: true,
+                no_pending_wait: true,
+                no_live_capability: true,
+                no_live_resource: true,
+                generation: 1,
+                state: "validated".to_owned(),
+                validated_at_event: 13,
+                reason: "smp-cleanup-quiescence".to_owned(),
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "smp cleanup quiescence root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3155,6 +3228,8 @@ mod tests {
         let code_publish_barrier =
             ObjectRef::new(ObjectKind::SmpCodePublishBarrier, 12, 1).unwrap();
         assert!(SmpCodePublishBarrierRef::try_from_ref(code_publish_barrier).is_ok());
+        let cleanup_quiescence = ObjectRef::new(ObjectKind::SmpCleanupQuiescence, 13, 1).unwrap();
+        assert!(SmpCleanupQuiescenceRef::try_from_ref(cleanup_quiescence).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

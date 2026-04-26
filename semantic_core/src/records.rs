@@ -489,6 +489,54 @@ impl SmpCodePublishBarrierRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmpCleanupQuiescenceParticipantRecord {
+    pub hart: HartId,
+    pub hart_generation: Generation,
+    pub hardware_hart: u32,
+    pub hart_state: HartState,
+    pub current_activation: Option<ActivationId>,
+    pub current_activation_generation: Option<Generation>,
+    pub current_store: Option<StoreId>,
+    pub current_store_generation: Option<Generation>,
+    pub quiesced: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmpCleanupQuiescenceRecord {
+    pub id: SmpCleanupQuiescenceId,
+    pub cleanup: ActivationCleanupId,
+    pub cleanup_generation: Generation,
+    pub store: StoreId,
+    pub target_store_generation: Generation,
+    pub result_store_generation: Generation,
+    pub activation: ActivationId,
+    pub activation_generation_after: Generation,
+    pub rendezvous: StopTheWorldRendezvousId,
+    pub rendezvous_generation: Generation,
+    pub rendezvous_epoch: u64,
+    pub participants: Vec<SmpCleanupQuiescenceParticipantRecord>,
+    pub no_running_activation: bool,
+    pub no_pending_wait: bool,
+    pub no_live_capability: bool,
+    pub no_live_resource: bool,
+    pub generation: Generation,
+    pub state: SmpCleanupQuiescenceState,
+    pub validated_at_event: EventId,
+    pub reason: String,
+    pub note: String,
+}
+
+impl SmpCleanupQuiescenceRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::SmpCleanupQuiescence,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

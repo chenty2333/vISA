@@ -164,6 +164,15 @@ impl SemanticGraph {
             .push("capability", EventKind::CapabilityRevoked { cap });
         Some(cap)
     }
+    #[cfg(test)]
+    pub(crate) fn corrupt_capability_owner_store_generation_for_test(
+        &mut self,
+        cap: CapabilityId,
+        owner_store_generation: Option<Generation>,
+    ) -> bool {
+        self.capabilities
+            .corrupt_owner_store_generation_for_test(cap, owner_store_generation)
+    }
     pub fn revoke_capabilities_for_subject(&mut self, subject: &str) -> CapabilityRevocationReport {
         let report = self.capabilities.revoke_subject_report(subject);
         for cap in &report.revoked {

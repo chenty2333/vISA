@@ -21,7 +21,8 @@ use artifact_manifest::{
     RemoteParkManifest, RemotePreemptManifest, RequiredArtifactProfileManifest,
     RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
     SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
-    SemanticSnapshotManifest, SmpCodePublishBarrierManifest,
+    SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
+    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
     SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -355,6 +356,9 @@ fn record_preemptive_runtime_context_evidence(
         .store_handle(cleanup_store)
         .map(|handle| handle.generation)
         .ok_or("p8 cleanup store handle is missing")?;
+    // The P8 cleanup command moves the store through Cleaning and Dead, bumping
+    // the semantic generation once for each transition before S13 validates it.
+    let cleanup_result_store_generation = cleanup_store_generation + 2;
     let commands = [
         CommandEnvelope::new(
             1,
@@ -975,6 +979,47 @@ fn record_preemptive_runtime_context_evidence(
                 target_hart_generation: 4,
                 reason: "s7-remote-maintenance".to_owned(),
                 note: "s7-remote-park-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            92,
+            "target-executor-s13",
+            SemanticCommand::RecordSmpSafePoint {
+                safe_point: 9301,
+                coordinator_hart: 1,
+                coordinator_hart_generation: 4,
+                participants: vec![(1, 4), (2, 5)],
+                reason: "s13-cleanup-quiescence-boundary".to_owned(),
+                note: "s13-post-cleanup-safe-point-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            93,
+            "target-executor-s13",
+            SemanticCommand::CompleteStopTheWorldRendezvous {
+                rendezvous: 9301,
+                epoch: 2,
+                safe_point: 9301,
+                safe_point_generation: 1,
+                stop_new_activations: true,
+                reason: "s13-cleanup-quiescence-rendezvous".to_owned(),
+                note: "s13-post-cleanup-rendezvous-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            94,
+            "target-executor-s13",
+            SemanticCommand::ValidateSmpCleanupQuiescence {
+                quiescence: 9301,
+                cleanup: 9001,
+                cleanup_generation: 1,
+                rendezvous: 9301,
+                rendezvous_generation: 1,
+                store: cleanup_store,
+                target_store_generation: cleanup_store_generation,
+                result_store_generation: cleanup_result_store_generation,
+                reason: "s13-smp-cleanup-quiescence".to_owned(),
+                note: "s13-dead-store-cross-hart-quiescence-harness".to_owned(),
             },
         ),
     ];
@@ -2005,6 +2050,7 @@ fn demo_migration_package(
             smp_safe_point_count: semantic.smp_safe_point_count(),
             stop_the_world_rendezvous_count: semantic.stop_the_world_rendezvous_count(),
             smp_code_publish_barrier_count: semantic.smp_code_publish_barrier_count(),
+            smp_cleanup_quiescence_count: semantic.smp_cleanup_quiescence_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2120,6 +2166,11 @@ fn demo_migration_package(
                 .smp_code_publish_barriers()
                 .iter()
                 .map(smp_code_publish_barrier_manifest)
+                .collect(),
+            smp_cleanup_quiescence: semantic
+                .smp_cleanup_quiescence()
+                .iter()
+                .map(smp_cleanup_quiescence_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2529,6 +2580,26 @@ fn semantic_roots(
                     barrier.participants.len(),
                     barrier.state.as_str(),
                     barrier.generation
+                )
+            })
+            .collect(),
+        smp_cleanup_quiescence_roots: semantic
+            .smp_cleanup_quiescence()
+            .iter()
+            .map(|quiescence| {
+                format!(
+                    "smp-cleanup-quiescence id={} cleanup={}@{} store={}@{}->{} rendezvous={}@{} participants={} state={} generation={}",
+                    quiescence.id,
+                    quiescence.cleanup,
+                    quiescence.cleanup_generation,
+                    quiescence.store,
+                    quiescence.target_store_generation,
+                    quiescence.result_store_generation,
+                    quiescence.rendezvous,
+                    quiescence.rendezvous_generation,
+                    quiescence.participants.len(),
+                    quiescence.state.as_str(),
+                    quiescence.generation
                 )
             })
             .collect(),
@@ -3494,6 +3565,48 @@ fn smp_code_publish_barrier_manifest(
         validated_at_event: barrier.validated_at_event,
         reason: barrier.reason.clone(),
         note: barrier.note.clone(),
+    }
+}
+
+fn smp_cleanup_quiescence_manifest(
+    quiescence: &semantic_core::SmpCleanupQuiescenceRecord,
+) -> SmpCleanupQuiescenceManifest {
+    SmpCleanupQuiescenceManifest {
+        id: quiescence.id,
+        cleanup: quiescence.cleanup,
+        cleanup_generation: quiescence.cleanup_generation,
+        store: quiescence.store,
+        target_store_generation: quiescence.target_store_generation,
+        result_store_generation: quiescence.result_store_generation,
+        activation: quiescence.activation,
+        activation_generation_after: quiescence.activation_generation_after,
+        rendezvous: quiescence.rendezvous,
+        rendezvous_generation: quiescence.rendezvous_generation,
+        rendezvous_epoch: quiescence.rendezvous_epoch,
+        participants: quiescence
+            .participants
+            .iter()
+            .map(|participant| SmpCleanupQuiescenceParticipantManifest {
+                hart: u64::from(participant.hart),
+                hart_generation: participant.hart_generation,
+                hardware_hart: participant.hardware_hart,
+                hart_state: participant.hart_state.as_str().to_owned(),
+                current_activation: participant.current_activation,
+                current_activation_generation: participant.current_activation_generation,
+                current_store: participant.current_store,
+                current_store_generation: participant.current_store_generation,
+                quiesced: participant.quiesced,
+            })
+            .collect(),
+        no_running_activation: quiescence.no_running_activation,
+        no_pending_wait: quiescence.no_pending_wait,
+        no_live_capability: quiescence.no_live_capability,
+        no_live_resource: quiescence.no_live_resource,
+        generation: quiescence.generation,
+        state: quiescence.state.as_str().to_owned(),
+        validated_at_event: quiescence.validated_at_event,
+        reason: quiescence.reason.clone(),
+        note: quiescence.note.clone(),
     }
 }
 

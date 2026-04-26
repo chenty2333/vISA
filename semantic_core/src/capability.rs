@@ -746,6 +746,20 @@ impl CapabilityLedger {
         Some(record.id)
     }
 
+    #[cfg(test)]
+    pub fn corrupt_owner_store_generation_for_test(
+        &mut self,
+        cap: CapabilityId,
+        owner_store_generation: Option<Generation>,
+    ) -> bool {
+        let Some(record) = self.records.iter_mut().find(|record| record.id == cap) else {
+            return false;
+        };
+        record.owner_store_generation = owner_store_generation;
+        record.refresh_handle_identity();
+        true
+    }
+
     fn next_handle_slot(
         &self,
         subject: &str,

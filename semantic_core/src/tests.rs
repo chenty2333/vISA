@@ -5174,6 +5174,315 @@ fn preemptive_runtime_p8_invariants_reject_cleanup_generation_leak() {
     );
 }
 
+fn s13_cleanup_quiescence_graph() -> (SemanticGraph, StoreId, Generation, Generation) {
+    let (mut graph, store, target_generation) = p8_pending_store_activation();
+    assert!(graph.cleanup_activation_for_store_fault_with_id(
+        20,
+        store,
+        target_generation,
+        11,
+        4,
+        Some(17),
+        Some(1),
+        "driver-store-fault",
+        "cleanup"
+    ));
+    let result_generation = graph.activation_cleanups()[0].result_store_generation;
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "s13 hart0"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "scheduler-ready", "idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "s13 hart1"));
+    assert!(graph.set_hart_state(2, 1, HartState::Idle, "scheduler-ready", "idle"));
+    assert!(graph.record_smp_safe_point_with_id(
+        71,
+        1,
+        2,
+        vec![(1, 2), (2, 2)],
+        "cleanup-quiescence-boundary",
+        "post-cleanup safe point"
+    ));
+    assert!(graph.complete_stop_the_world_rendezvous_with_id(
+        81,
+        1,
+        71,
+        1,
+        true,
+        "cleanup-quiescence-rendezvous",
+        "all harts parked after cleanup",
+    ));
+    (graph, store, target_generation, result_generation)
+}
+
+#[test]
+fn smp_runtime_s13_cleanup_quiescence_validates_after_cleanup_rendezvous() {
+    let (mut graph, store, target_generation, result_generation) = s13_cleanup_quiescence_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s13-test",
+        SemanticCommand::ValidateSmpCleanupQuiescence {
+            quiescence: 91,
+            cleanup: 20,
+            cleanup_generation: 1,
+            rendezvous: 81,
+            rendezvous_generation: 1,
+            store,
+            target_store_generation: target_generation,
+            result_store_generation: result_generation,
+            reason: "smp-cleanup-quiescence".to_string(),
+            note: "dead store quiesced across harts".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.smp_cleanup_quiescence().len(), 1);
+    let quiescence = &graph.smp_cleanup_quiescence()[0];
+    assert_eq!(quiescence.cleanup, 20);
+    assert_eq!(quiescence.cleanup_generation, 1);
+    assert_eq!(quiescence.store, store);
+    assert_eq!(quiescence.target_store_generation, target_generation);
+    assert_eq!(quiescence.result_store_generation, result_generation);
+    assert_eq!(quiescence.rendezvous, 81);
+    assert_eq!(quiescence.rendezvous_generation, 1);
+    assert_eq!(quiescence.participants.len(), 2);
+    assert!(quiescence.no_running_activation);
+    assert!(quiescence.no_pending_wait);
+    assert!(quiescence.no_live_capability);
+    assert!(quiescence.no_live_resource);
+    assert!(
+        quiescence
+            .participants
+            .iter()
+            .all(|participant| participant.quiesced
+                && participant.current_activation.is_none()
+                && participant.current_store.is_none())
+    );
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == quiescence.validated_at_event
+            && record.hart == 1
+            && record.hart_generation == 2
+            && record.event_kind == "SmpCleanupQuiescenceHartObserved"
+    }));
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "SmpCleanupQuiescenceValidated quiescence=91 cleanup=20@1 store={store}@{target_generation}->{result_generation} rendezvous=81@1 participants=2 generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s13_rejects_stale_or_premature_cleanup_quiescence() {
+    let (mut stale_cleanup, store, target_generation, result_generation) =
+        s13_cleanup_quiescence_graph();
+    let stale = stale_cleanup.apply_envelope(CommandEnvelope::new(
+        1,
+        "s13-test",
+        SemanticCommand::ValidateSmpCleanupQuiescence {
+            quiescence: 91,
+            cleanup: 20,
+            cleanup_generation: 2,
+            rendezvous: 81,
+            rendezvous_generation: 1,
+            store,
+            target_store_generation: target_generation,
+            result_store_generation: result_generation,
+            reason: "stale-cleanup-generation".to_string(),
+            note: "reject stale cleanup generation".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp cleanup quiescence cleanup is missing".to_string());
+    assert_eq!(stale.violations, expected);
+
+    let (mut premature, store, target_generation) = p8_pending_store_activation();
+    assert!(premature.register_hart_with_id(1, 0, "boot-hart0", true, "s13 hart0"));
+    assert!(premature.set_hart_state(1, 1, HartState::Idle, "scheduler-ready", "idle"));
+    assert!(premature.register_hart_with_id(2, 1, "hart1", false, "s13 hart1"));
+    assert!(premature.set_hart_state(2, 1, HartState::Idle, "scheduler-ready", "idle"));
+    assert!(premature.record_smp_safe_point_with_id(
+        71,
+        1,
+        2,
+        vec![(1, 2), (2, 2)],
+        "premature-quiescence-boundary",
+        "safe point before cleanup"
+    ));
+    assert!(premature.complete_stop_the_world_rendezvous_with_id(
+        81,
+        1,
+        71,
+        1,
+        true,
+        "premature-quiescence-rendezvous",
+        "rendezvous before cleanup",
+    ));
+    assert!(premature.cleanup_activation_for_store_fault_with_id(
+        20,
+        store,
+        target_generation,
+        11,
+        4,
+        Some(17),
+        Some(1),
+        "driver-store-fault",
+        "cleanup"
+    ));
+    let result_generation = premature.activation_cleanups()[0].result_store_generation;
+    let premature_result = premature.apply_envelope(CommandEnvelope::new(
+        2,
+        "s13-test",
+        SemanticCommand::ValidateSmpCleanupQuiescence {
+            quiescence: 91,
+            cleanup: 20,
+            cleanup_generation: 1,
+            rendezvous: 81,
+            rendezvous_generation: 1,
+            store,
+            target_store_generation: target_generation,
+            result_store_generation: result_generation,
+            reason: "premature-rendezvous".to_string(),
+            note: "rendezvous must follow cleanup".to_string(),
+        },
+    ));
+    assert_eq!(premature_result.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp cleanup quiescence rendezvous must follow cleanup".to_string());
+    assert_eq!(premature_result.violations, expected);
+}
+
+#[test]
+fn smp_runtime_s13_rejects_live_store_generation_leak() {
+    let (mut graph, store, target_generation) = p8_pending_store_activation();
+    graph.ensure_task(8, FrontendKind::LinuxElf, "leaked-driver-thread");
+    assert!(graph.create_runtime_activation_with_id(
+        21,
+        8,
+        1,
+        Some(store),
+        Some(target_generation),
+        None
+    ));
+    assert!(graph.cleanup_activation_for_store_fault_with_id(
+        20,
+        store,
+        target_generation,
+        11,
+        4,
+        Some(17),
+        Some(1),
+        "driver-store-fault",
+        "cleanup"
+    ));
+    let result_generation = graph.activation_cleanups()[0].result_store_generation;
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "s13 hart0"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "scheduler-ready", "idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "s13 hart1"));
+    assert!(graph.set_hart_state(2, 1, HartState::Idle, "scheduler-ready", "idle"));
+    assert!(graph.record_smp_safe_point_with_id(
+        71,
+        1,
+        2,
+        vec![(1, 2), (2, 2)],
+        "cleanup-quiescence-boundary",
+        "post-cleanup safe point"
+    ));
+    assert!(graph.complete_stop_the_world_rendezvous_with_id(
+        81,
+        1,
+        71,
+        1,
+        true,
+        "cleanup-quiescence-rendezvous",
+        "all harts parked after cleanup",
+    ));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s13-test",
+        SemanticCommand::ValidateSmpCleanupQuiescence {
+            quiescence: 91,
+            cleanup: 20,
+            cleanup_generation: 1,
+            rendezvous: 81,
+            rendezvous_generation: 1,
+            store,
+            target_store_generation: target_generation,
+            result_store_generation: result_generation,
+            reason: "live-activation-leak".to_string(),
+            note: "reject live activation owned by cleanup store generation".to_string(),
+        },
+    ));
+    assert_eq!(result.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp cleanup quiescence found live activation for dead store".to_string());
+    assert_eq!(result.violations, expected);
+}
+
+#[test]
+fn smp_runtime_s13_rejects_generationless_live_capability_leak() {
+    let (mut graph, store, target_generation, result_generation) = s13_cleanup_quiescence_graph();
+    let cap = graph.grant_capability("driver.p8", "packet-device.net0", &["tx"], "store");
+    assert!(graph.corrupt_capability_owner_store_generation_for_test(cap, None));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s13-test",
+        SemanticCommand::ValidateSmpCleanupQuiescence {
+            quiescence: 91,
+            cleanup: 20,
+            cleanup_generation: 1,
+            rendezvous: 81,
+            rendezvous_generation: 1,
+            store,
+            target_store_generation: target_generation,
+            result_store_generation: result_generation,
+            reason: "generationless-capability-leak".to_string(),
+            note: "reject live capability missing owner store generation".to_string(),
+        },
+    ));
+    assert_eq!(result.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp cleanup quiescence found live capability for dead store".to_string());
+    assert_eq!(result.violations, expected);
+}
+
+#[test]
+fn smp_runtime_s13_history_survives_store_rebind_and_hart_transition() {
+    let (mut graph, store, target_generation, result_generation) = s13_cleanup_quiescence_graph();
+    assert!(graph.validate_smp_cleanup_quiescence_with_id(
+        91,
+        20,
+        1,
+        81,
+        1,
+        store,
+        target_generation,
+        result_generation,
+        "smp-cleanup-quiescence",
+        "dead store quiesced across harts",
+    ));
+
+    let rebind = graph.rebind_store_instance(store).expect("store rebind");
+    assert!(rebind.generation > result_generation);
+    graph.set_store_state(store, StoreState::Running);
+    assert!(graph.set_hart_state(
+        1,
+        2,
+        HartState::Booting,
+        "advance after cleanup quiescence",
+        "later"
+    ));
+    assert!(graph.check_invariants().is_ok());
+
+    graph.corrupt_smp_cleanup_quiescence_event_for_test(91, 999);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::SmpCleanupQuiescenceMissingEvent { quiescence: 91 })
+    );
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,
