@@ -22,6 +22,7 @@ pub type DeviceObjectId = u64;
 pub type QueueObjectId = u64;
 pub type DescriptorObjectId = u64;
 pub type DmaBufferObjectId = u64;
+pub type MmioRegionObjectId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

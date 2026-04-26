@@ -13,14 +13,14 @@ use artifact_manifest::{
     ContractObjectRefManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
     DeviceObjectManifest, DmaBufferObjectManifest, HartEventAttributionManifest,
     HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IpiEventManifest,
-    MigrationPackageManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
-    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
-    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
-    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
-    WaitRecordManifest,
+    MigrationPackageManifest, MmioRegionObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
+    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
+    SmpStressRunManifest, StopTheWorldRendezvousManifest, StoreRecordManifest,
+    SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
+    TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -260,6 +260,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "descriptor-object"
         | "dma-buffer"
         | "dma-buffer-object"
+        | "mmio-region"
+        | "mmio-region-object"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -430,7 +432,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -649,6 +651,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "queue" | "queue-object" => "queue",
         "descriptor" | "descriptor-object" => "descriptor",
         "dma-buffer" | "dma-buffer-object" => "dma-buffer",
+        "mmio-region" | "mmio-region-object" => "mmio-region",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -1743,6 +1746,53 @@ fn dma_buffer_object_view_v1(dma_buffer: &DmaBufferObjectManifest) -> serde_json
     })
 }
 
+fn mmio_region_object_view_v1(mmio_region: &MmioRegionObjectManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "mmio-region",
+        "id": mmio_region.id,
+        "generation": mmio_region.generation,
+        "state": mmio_region.state,
+        "owner": {
+            "device": object_ref_json(
+                "device",
+                mmio_region.device,
+                mmio_region.device_generation
+            ),
+        },
+        "references": {
+            "device": object_ref_json(
+                "device",
+                mmio_region.device,
+                mmio_region.device_generation
+            ),
+            "resource": object_ref_json(
+                "resource",
+                mmio_region.resource,
+                mmio_region.resource_generation
+            ),
+            "event": {
+                "id": mmio_region.recorded_at_event,
+            },
+        },
+        "identity": {
+            "region_index": mmio_region.region_index,
+            "offset": mmio_region.offset,
+            "access": mmio_region.access,
+        },
+        "capacity": {
+            "length": mmio_region.length,
+        },
+        "note": mmio_region.note,
+        "last_transition": {
+            "recorded_at_event": mmio_region.recorded_at_event,
+            "device_generation": mmio_region.device_generation,
+            "resource_generation": mmio_region.resource_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -2746,6 +2796,12 @@ fn stable_views_for_kind(
             .iter()
             .map(dma_buffer_object_view_v1)
             .collect()),
+        "mmio-region" | "mmio-region-object" => Ok(package
+            .semantic
+            .mmio_region_objects
+            .iter()
+            .map(mmio_region_object_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -3392,7 +3448,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -3420,6 +3476,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.queue_object_count,
             package.semantic.descriptor_object_count,
             package.semantic.dma_buffer_object_count,
+            package.semantic.mmio_region_object_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -3552,7 +3609,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} descriptor_roots={} dma_buffer_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} descriptor_roots={} dma_buffer_roots={} mmio_region_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -3597,6 +3654,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.queue_object_roots.len(),
         package.semantic.roots.descriptor_object_roots.len(),
         package.semantic.roots.dma_buffer_object_roots.len(),
+        package.semantic.roots.mmio_region_object_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -3670,6 +3728,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "dma-buffer",
         &package.semantic.roots.dma_buffer_object_roots,
+    );
+    print_roots(
+        "mmio-region",
+        &package.semantic.roots.mmio_region_object_roots,
     );
     print_roots(
         "activation-resume",
@@ -3984,6 +4046,29 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "dma-buffer-resource",
             "live",
             Some(dma_buffer.recorded_at_event),
+        ));
+    }
+    for mmio_region in &package.semantic.mmio_region_objects {
+        if mmio_region.state != "registered" {
+            continue;
+        }
+        edges.push(graph_edge(
+            object_ref_json("mmio-region", mmio_region.id, mmio_region.generation),
+            object_ref_json("device", mmio_region.device, mmio_region.device_generation),
+            "mmio-region-device",
+            "live",
+            Some(mmio_region.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            object_ref_json("mmio-region", mmio_region.id, mmio_region.generation),
+            object_ref_json(
+                "resource",
+                mmio_region.resource,
+                mmio_region.resource_generation,
+            ),
+            "mmio-region-resource",
+            "live",
+            Some(mmio_region.recorded_at_event),
         ));
     }
     for wait in &package.semantic.wait_records {
@@ -4758,6 +4843,26 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "dma-buffer-resource",
             "live",
             Some(dma_buffer.recorded_at_event),
+        ));
+    }
+    for mmio_region in &package.semantic.mmio_region_objects {
+        edges.push(graph_edge(
+            object_ref_json("mmio-region", mmio_region.id, mmio_region.generation),
+            object_ref_json("device", mmio_region.device, mmio_region.device_generation),
+            "mmio-region-device",
+            "live",
+            Some(mmio_region.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            object_ref_json("mmio-region", mmio_region.id, mmio_region.generation),
+            object_ref_json(
+                "resource",
+                mmio_region.resource,
+                mmio_region.resource_generation,
+            ),
+            "mmio-region-resource",
+            "live",
+            Some(mmio_region.recorded_at_event),
         ));
     }
     for resume in &package.semantic.activation_resumes {
@@ -6186,7 +6291,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -6213,6 +6318,7 @@ fn replay_until(
         package.semantic.roots.queue_object_roots.len(),
         package.semantic.roots.descriptor_object_roots.len(),
         package.semantic.roots.dma_buffer_object_roots.len(),
+        package.semantic.roots.mmio_region_object_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -6277,6 +6383,9 @@ fn replay_until(
     }
     for dma_buffer in &package.semantic.roots.dma_buffer_object_roots {
         println!("replay dma-buffer {dma_buffer}");
+    }
+    for mmio_region in &package.semantic.roots.mmio_region_object_roots {
+        println!("replay mmio-region {mmio_region}");
     }
     Ok(())
 }
@@ -6363,6 +6472,10 @@ fn print_replay_json(
     roots.insert(
         "dma_buffers".to_owned(),
         serde_json::json!(package.semantic.roots.dma_buffer_object_roots.len()),
+    );
+    roots.insert(
+        "mmio_regions".to_owned(),
+        serde_json::json!(package.semantic.roots.mmio_region_object_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -6605,6 +6718,10 @@ fn print_replay_json(
         serde_json::json!(&package.semantic.roots.dma_buffer_object_roots),
     );
     roots.insert(
+        "mmio_region_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.mmio_region_object_roots),
+    );
+    roots.insert(
         "cleanup_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.cleanup_roots),
     );
@@ -6688,7 +6805,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -6726,6 +6843,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.queue_object_count,
         package.semantic.descriptor_object_count,
         package.semantic.dma_buffer_object_count,
+        package.semantic.mmio_region_object_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -7095,6 +7213,7 @@ mod tests {
         package.semantic.queue_object_count = 1;
         package.semantic.descriptor_object_count = 1;
         package.semantic.dma_buffer_object_count = 1;
+        package.semantic.mmio_region_object_count = 1;
         package.semantic.activation_resume_count = 1;
         package.semantic.activation_wait_count = 1;
         package.semantic.activation_cleanup_count = 1;
@@ -7696,6 +7815,24 @@ mod tests {
             });
         package
             .semantic
+            .mmio_region_objects
+            .push(MmioRegionObjectManifest {
+                id: 39,
+                device: 35,
+                device_generation: 1,
+                resource: 101,
+                resource_generation: 1,
+                region_index: 0,
+                offset: 0x1000,
+                length: 0x100,
+                access: "read-write".to_owned(),
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 33,
+                note: "mmio region object".to_owned(),
+            });
+        package
+            .semantic
             .activation_resumes
             .push(ActivationResumeManifest {
                 id: 17,
@@ -8020,6 +8157,16 @@ mod tests {
         assert_eq!(dma_buffer["references"]["resource"]["generation"], 1);
         assert_eq!(dma_buffer["identity"]["access"], "read-write");
         assert_eq!(dma_buffer["capacity"]["length"], 2048);
+        let mmio_region = mmio_region_object_view_v1(&package.semantic.mmio_region_objects[0]);
+        assert_eq!(mmio_region["kind"], "mmio-region");
+        assert_eq!(mmio_region["owner"]["device"]["id"], 35);
+        assert_eq!(mmio_region["owner"]["device"]["generation"], 1);
+        assert_eq!(mmio_region["references"]["resource"]["id"], 101);
+        assert_eq!(mmio_region["references"]["resource"]["generation"], 1);
+        assert_eq!(mmio_region["identity"]["region_index"], 0);
+        assert_eq!(mmio_region["identity"]["offset"], 0x1000);
+        assert_eq!(mmio_region["identity"]["access"], "read-write");
+        assert_eq!(mmio_region["capacity"]["length"], 0x100);
         let resume = activation_resume_view_v1(&package.semantic.activation_resumes[0]);
         assert_eq!(resume["kind"], "activation-resume");
         assert_eq!(resume["references"]["activation"]["generation_before"], 3);
@@ -8230,6 +8377,26 @@ mod tests {
         assert!(
             live_edges
                 .iter()
+                .any(|edge| edge["from"]["kind"] == "mmio-region"
+                    && edge["to"]["kind"] == "device"
+                    && edge["to"]["id"] == 35
+                    && edge["to"]["generation"] == 1
+                    && edge["relation"] == "mmio-region-device"
+                    && edge["mode"] == "live")
+        );
+        assert!(
+            live_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "mmio-region"
+                    && edge["to"]["kind"] == "resource"
+                    && edge["to"]["id"] == 101
+                    && edge["to"]["generation"] == 1
+                    && edge["relation"] == "mmio-region-resource"
+                    && edge["mode"] == "live")
+        );
+        assert!(
+            live_edges
+                .iter()
                 .any(|edge| edge["from"]["kind"] == "activation"
                     && edge["to"]["kind"] == "runnable-queue"
                     && edge["to"]["generation"] == 1)
@@ -8433,6 +8600,24 @@ mod tests {
                     && edge["to"]["kind"] == "resource"
                     && edge["to"]["id"] == 100
                     && edge["relation"] == "dma-buffer-resource"
+                    && edge["mode"] == "live")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "mmio-region"
+                    && edge["to"]["kind"] == "device"
+                    && edge["to"]["id"] == 35
+                    && edge["relation"] == "mmio-region-device"
+                    && edge["mode"] == "live")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "mmio-region"
+                    && edge["to"]["kind"] == "resource"
+                    && edge["to"]["id"] == 101
+                    && edge["relation"] == "mmio-region-resource"
                     && edge["mode"] == "live")
         );
         assert!(

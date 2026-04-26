@@ -1405,6 +1405,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::QueueObject
             | ContractObjectKind::DescriptorObject
             | ContractObjectKind::DmaBufferObject
+            | ContractObjectKind::MmioRegionObject
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

@@ -503,6 +503,38 @@ impl DmaBufferObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MmioRegionObjectAccess {
+    ReadOnly,
+    WriteOnly,
+    ReadWrite,
+}
+
+impl MmioRegionObjectAccess {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::WriteOnly => "write-only",
+            Self::ReadWrite => "read-write",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MmioRegionObjectState {
+    Registered,
+    Released,
+}
+
+impl MmioRegionObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Registered => "registered",
+            Self::Released => "released",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

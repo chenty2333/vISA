@@ -290,6 +290,18 @@ pub enum EventKind {
         length: u32,
         generation: Generation,
     },
+    MmioRegionObjectRecorded {
+        mmio_region: MmioRegionObjectId,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        resource: ResourceId,
+        resource_generation: Generation,
+        region_index: u16,
+        offset: u64,
+        length: u64,
+        access: MmioRegionObjectAccess,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1036,6 +1048,21 @@ impl EventKind {
                 generation,
             } => format!(
                 "DmaBufferObjectRecorded dma_buffer={dma_buffer} descriptor={descriptor}@{descriptor_generation} resource={resource}@{resource_generation} access={} length={length} generation={generation}",
+                access.as_str()
+            ),
+            Self::MmioRegionObjectRecorded {
+                mmio_region,
+                device,
+                device_generation,
+                resource,
+                resource_generation,
+                region_index,
+                offset,
+                length,
+                access,
+                generation,
+            } => format!(
+                "MmioRegionObjectRecorded mmio_region={mmio_region} device={device}@{device_generation} resource={resource}@{resource_generation} index={region_index} offset={offset} length={length} access={} generation={generation}",
                 access.as_str()
             ),
             Self::RuntimeActivationResumed {

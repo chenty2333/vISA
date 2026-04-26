@@ -18,12 +18,13 @@ use artifact_manifest::{
     HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IpiEventManifest,
     MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
     MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
-    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    MmioRegionObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
+    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
+    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -46,11 +47,11 @@ use semantic_core::{
     DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact,
     ExternalObjectDeclaration, FrontendKind, HartState, HostcallCategory, HostcallFrame,
     HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind, ManagedStoreRecord,
-    MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord, PackageReplayValidator,
-    QueueObjectRole, ReplayPackageValidationState, ResourceKind, RestartPolicy, RuntimeMode,
-    SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind,
-    SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState,
-    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord, MmioRegionObjectAccess,
+    PackageReplayValidator, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
+    RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
+    SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
+    StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
     TombstoneRecord, TrapSurfaceState, VerifiedArtifact, memory_class_policies,
     validate_contract_graph,
@@ -371,6 +372,12 @@ fn record_preemptive_runtime_context_evidence(
         .resource_handle(io_dma_buffer_resource)
         .map(|handle| handle.generation)
         .ok_or("i3 dma buffer resource handle is missing")?;
+    let io_mmio_region_resource =
+        semantic.register_resource(ResourceKind::MmioRegion, None, "mmio:fake-io0-regs");
+    let io_mmio_region_resource_generation = semantic
+        .resource_handle(io_mmio_region_resource)
+        .map(|handle| handle.generation)
+        .ok_or("i4 mmio region resource handle is missing")?;
     // The P8 cleanup command moves the store through Cleaning and Dead, bumping
     // the semantic generation once for each transition before S13 validates it.
     let cleanup_result_store_generation = cleanup_store_generation + 2;
@@ -1156,6 +1163,22 @@ fn record_preemptive_runtime_context_evidence(
                 access: DmaBufferObjectAccess::ReadWrite,
                 length: 2048,
                 note: "i3-record-dma-buffer-object-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            104,
+            "target-executor-i4",
+            SemanticCommand::RecordMmioRegionObject {
+                mmio_region: 9921,
+                device: 9701,
+                device_generation: 1,
+                resource: io_mmio_region_resource,
+                resource_generation: io_mmio_region_resource_generation,
+                region_index: 0,
+                offset: 0x1000,
+                length: 0x100,
+                access: MmioRegionObjectAccess::ReadWrite,
+                note: "i4-record-mmio-region-object-harness".to_owned(),
             },
         ),
     ];
@@ -2194,6 +2217,7 @@ fn demo_migration_package(
             queue_object_count: semantic.queue_object_count(),
             descriptor_object_count: semantic.descriptor_object_count(),
             dma_buffer_object_count: semantic.dma_buffer_object_count(),
+            mmio_region_object_count: semantic.mmio_region_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2349,6 +2373,11 @@ fn demo_migration_package(
                 .dma_buffer_objects()
                 .iter()
                 .map(dma_buffer_object_manifest)
+                .collect(),
+            mmio_region_objects: semantic
+                .mmio_region_objects()
+                .iter()
+                .map(mmio_region_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2899,6 +2928,26 @@ fn semantic_roots(
                     dma_buffer.length,
                     dma_buffer.state.as_str(),
                     dma_buffer.generation
+                )
+            })
+            .collect(),
+        mmio_region_object_roots: semantic
+            .mmio_region_objects()
+            .iter()
+            .map(|mmio_region| {
+                format!(
+                    "mmio-region-object id={} device={}@{} resource={}@{} index={} offset={} length={} access={} state={} generation={}",
+                    mmio_region.id,
+                    mmio_region.device,
+                    mmio_region.device_generation,
+                    mmio_region.resource,
+                    mmio_region.resource_generation,
+                    mmio_region.region_index,
+                    mmio_region.offset,
+                    mmio_region.length,
+                    mmio_region.access.as_str(),
+                    mmio_region.state.as_str(),
+                    mmio_region.generation
                 )
             })
             .collect(),
@@ -4083,6 +4132,26 @@ fn dma_buffer_object_manifest(
         state: dma_buffer.state.as_str().to_owned(),
         recorded_at_event: dma_buffer.recorded_at_event,
         note: dma_buffer.note.clone(),
+    }
+}
+
+fn mmio_region_object_manifest(
+    mmio_region: &semantic_core::MmioRegionObjectRecord,
+) -> MmioRegionObjectManifest {
+    MmioRegionObjectManifest {
+        id: mmio_region.id,
+        device: mmio_region.device,
+        device_generation: mmio_region.device_generation,
+        resource: mmio_region.resource,
+        resource_generation: mmio_region.resource_generation,
+        region_index: mmio_region.region_index,
+        offset: mmio_region.offset,
+        length: mmio_region.length,
+        access: mmio_region.access.as_str().to_owned(),
+        generation: mmio_region.generation,
+        state: mmio_region.state.as_str().to_owned(),
+        recorded_at_event: mmio_region.recorded_at_event,
+        note: mmio_region.note.clone(),
     }
 }
 

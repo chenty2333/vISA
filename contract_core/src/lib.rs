@@ -90,6 +90,7 @@ pub enum ObjectKind {
     QueueObject,
     DescriptorObject,
     DmaBufferObject,
+    MmioRegionObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -145,6 +146,7 @@ impl ObjectKind {
             Self::QueueObject => "queue-object",
             Self::DescriptorObject => "descriptor-object",
             Self::DmaBufferObject => "dma-buffer-object",
+            Self::MmioRegionObject => "mmio-region-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -360,6 +362,7 @@ typed_ref!(DeviceObjectRef, ObjectKind::DeviceObject);
 typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
 typed_ref!(DescriptorObjectRef, ObjectKind::DescriptorObject);
 typed_ref!(DmaBufferObjectRef, ObjectKind::DmaBufferObject);
+typed_ref!(MmioRegionObjectRef, ObjectKind::MmioRegionObject);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1635,6 +1638,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("dma buffer object root/count mismatch"));
     }
+    if roots.mmio_region_object_roots.len() != package.semantic.mmio_region_object_count
+        || package.semantic.mmio_region_objects.len() != package.semantic.mmio_region_object_count
+    {
+        return Err(ContractError::new("mmio region object root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2181,6 +2189,7 @@ mod tests {
                 queue_object_count: 0,
                 descriptor_object_count: 0,
                 dma_buffer_object_count: 0,
+                mmio_region_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2245,6 +2254,7 @@ mod tests {
                 queue_objects: Vec::new(),
                 descriptor_objects: Vec::new(),
                 dma_buffer_objects: Vec::new(),
+                mmio_region_objects: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3062,6 +3072,33 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_mmio_region_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.mmio_region_object_count = 1;
+        package
+            .semantic
+            .mmio_region_objects
+            .push(artifact_manifest::MmioRegionObjectManifest {
+                id: 21,
+                device: 17,
+                device_generation: 1,
+                resource: 22,
+                resource_generation: 1,
+                region_index: 0,
+                offset: 0x1000,
+                length: 0x100,
+                access: "read-write".to_owned(),
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 57,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "mmio region object root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3556,6 +3593,8 @@ mod tests {
         assert!(DescriptorObjectRef::try_from_ref(descriptor_object).is_ok());
         let dma_buffer_object = ObjectRef::new(ObjectKind::DmaBufferObject, 20, 1).unwrap();
         assert!(DmaBufferObjectRef::try_from_ref(dma_buffer_object).is_ok());
+        let mmio_region_object = ObjectRef::new(ObjectKind::MmioRegionObject, 21, 1).unwrap();
+        assert!(MmioRegionObjectRef::try_from_ref(mmio_region_object).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

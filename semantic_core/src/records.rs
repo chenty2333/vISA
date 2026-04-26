@@ -756,6 +756,33 @@ impl DmaBufferObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MmioRegionObjectRecord {
+    pub id: MmioRegionObjectId,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub resource: ResourceId,
+    pub resource_generation: Generation,
+    pub region_index: u16,
+    pub offset: u64,
+    pub length: u64,
+    pub access: MmioRegionObjectAccess,
+    pub generation: Generation,
+    pub state: MmioRegionObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl MmioRegionObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::MmioRegionObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

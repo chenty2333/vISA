@@ -1936,6 +1936,221 @@ fn io_runtime_i3_rejects_stale_wrong_resource_or_duplicate_dma_buffer() {
 }
 
 #[test]
+fn io_runtime_i4_mmio_region_object_records_device_and_resource_identity() {
+    let mut graph = SemanticGraph::new();
+    let device_resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let device_resource_generation = graph.resource_handle(device_resource).unwrap().generation;
+    let mmio_resource =
+        graph.register_resource(ResourceKind::MmioRegion, None, "mmio:fake-io0-regs");
+    let mmio_resource_generation = graph.resource_handle(mmio_resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        device_resource,
+        device_resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "device object harness",
+    ));
+    let cursor_before = graph.event_log().cursor();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i4-test",
+        SemanticCommand::RecordMmioRegionObject {
+            mmio_region: 801,
+            device: 401,
+            device_generation: 1,
+            resource: mmio_resource,
+            resource_generation: mmio_resource_generation,
+            region_index: 0,
+            offset: 0x1000,
+            length: 0x100,
+            access: MmioRegionObjectAccess::ReadWrite,
+            note: "mmio region object harness".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.mmio_region_objects().len(), 1);
+    let mmio_region = &graph.mmio_region_objects()[0];
+    assert_eq!(mmio_region.id, 801);
+    assert_eq!(mmio_region.device, 401);
+    assert_eq!(mmio_region.device_generation, 1);
+    assert_eq!(mmio_region.resource, mmio_resource);
+    assert_eq!(mmio_region.resource_generation, mmio_resource_generation);
+    assert_eq!(mmio_region.region_index, 0);
+    assert_eq!(mmio_region.offset, 0x1000);
+    assert_eq!(mmio_region.length, 0x100);
+    assert_eq!(mmio_region.access, MmioRegionObjectAccess::ReadWrite);
+    assert_eq!(mmio_region.state, MmioRegionObjectState::Registered);
+    assert!(mmio_region.recorded_at_event > cursor_before);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "MmioRegionObjectRecorded mmio_region=801 device=401@1 resource={mmio_resource}@{mmio_resource_generation} index=0 offset=4096 length=256 access=read-write generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn io_runtime_i4_rejects_stale_wrong_resource_or_duplicate_mmio_region() {
+    let mut graph = SemanticGraph::new();
+    let device_resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let device_resource_generation = graph.resource_handle(device_resource).unwrap().generation;
+    let mmio_resource =
+        graph.register_resource(ResourceKind::MmioRegion, None, "mmio:fake-io0-regs");
+    let mmio_resource_generation = graph.resource_handle(mmio_resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        device_resource,
+        device_resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "device object harness",
+    ));
+
+    let stale_device = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i4-test",
+        SemanticCommand::RecordMmioRegionObject {
+            mmio_region: 801,
+            device: 401,
+            device_generation: 2,
+            resource: mmio_resource,
+            resource_generation: mmio_resource_generation,
+            region_index: 0,
+            offset: 0x1000,
+            length: 0x100,
+            access: MmioRegionObjectAccess::ReadWrite,
+            note: "stale device generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_device.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_device.violations,
+        vec!["mmio region object device generation is missing or inactive".to_string()]
+    );
+
+    let wrong_resource = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i4-test",
+        SemanticCommand::RecordMmioRegionObject {
+            mmio_region: 801,
+            device: 401,
+            device_generation: 1,
+            resource: device_resource,
+            resource_generation: device_resource_generation,
+            region_index: 0,
+            offset: 0x1000,
+            length: 0x100,
+            access: MmioRegionObjectAccess::ReadWrite,
+            note: "non-mmio resource must reject".to_string(),
+        },
+    ));
+    assert_eq!(wrong_resource.status, CommandStatus::Rejected);
+    assert_eq!(
+        wrong_resource.violations,
+        vec!["mmio region object resource kind is not mmio-region".to_string()]
+    );
+
+    let stale_resource = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "i4-test",
+        SemanticCommand::RecordMmioRegionObject {
+            mmio_region: 801,
+            device: 401,
+            device_generation: 1,
+            resource: mmio_resource,
+            resource_generation: mmio_resource_generation + 1,
+            region_index: 0,
+            offset: 0x1000,
+            length: 0x100,
+            access: MmioRegionObjectAccess::ReadWrite,
+            note: "stale resource generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_resource.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_resource.violations,
+        vec!["mmio region object resource generation mismatch".to_string()]
+    );
+
+    let range_overflows = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "i4-test",
+        SemanticCommand::RecordMmioRegionObject {
+            mmio_region: 801,
+            device: 401,
+            device_generation: 1,
+            resource: mmio_resource,
+            resource_generation: mmio_resource_generation,
+            region_index: 0,
+            offset: u64::MAX,
+            length: 1,
+            access: MmioRegionObjectAccess::ReadWrite,
+            note: "overflowing range must reject".to_string(),
+        },
+    ));
+    assert_eq!(range_overflows.status, CommandStatus::Rejected);
+    assert_eq!(
+        range_overflows.violations,
+        vec!["mmio region object range overflows".to_string()]
+    );
+
+    assert!(graph.record_mmio_region_object_with_id(
+        801,
+        401,
+        1,
+        mmio_resource,
+        mmio_resource_generation,
+        0,
+        0x1000,
+        0x100,
+        MmioRegionObjectAccess::ReadWrite,
+        "mmio region object harness",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "i4-test",
+        SemanticCommand::RecordMmioRegionObject {
+            mmio_region: 802,
+            device: 401,
+            device_generation: 1,
+            resource: mmio_resource,
+            resource_generation: mmio_resource_generation,
+            region_index: 0,
+            offset: 0x2000,
+            length: 0x100,
+            access: MmioRegionObjectAccess::ReadOnly,
+            note: "duplicate region index must reject".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["mmio region object index already exists for device generation".to_string()]
+    );
+
+    graph.corrupt_mmio_region_object_device_generation_for_test(801, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::MmioRegionObjectMissingDevice {
+            mmio_region: 801,
+            device: 401,
+        })
+    );
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

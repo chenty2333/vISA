@@ -827,6 +827,25 @@ pub enum SemanticInvariantError {
     DmaBufferObjectMissingEvent {
         dma_buffer: DmaBufferObjectId,
     },
+    MmioRegionObjectInvalid {
+        mmio_region: MmioRegionObjectId,
+    },
+    MmioRegionObjectMissingDevice {
+        mmio_region: MmioRegionObjectId,
+        device: DeviceObjectId,
+    },
+    MmioRegionObjectMissingResource {
+        mmio_region: MmioRegionObjectId,
+        resource: ResourceId,
+    },
+    MmioRegionObjectDuplicateIndex {
+        mmio_region: MmioRegionObjectId,
+        device: DeviceObjectId,
+        region_index: u16,
+    },
+    MmioRegionObjectMissingEvent {
+        mmio_region: MmioRegionObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
