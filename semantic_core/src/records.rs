@@ -139,6 +139,28 @@ impl TimerInterruptRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreemptionRecord {
+    pub id: PreemptionId,
+    pub activation: ActivationId,
+    pub activation_generation_before: Generation,
+    pub activation_generation_after: Generation,
+    pub timer_interrupt: TimerInterruptId,
+    pub timer_interrupt_generation: Generation,
+    pub queue: RunnableQueueId,
+    pub queue_generation: Generation,
+    pub generation: Generation,
+    pub state: PreemptionState,
+    pub preempted_at_event: EventId,
+    pub note: String,
+}
+
+impl PreemptionRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::Preemption, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceRecord {
     pub id: ResourceId,
     pub label: String,

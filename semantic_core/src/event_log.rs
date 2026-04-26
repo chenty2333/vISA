@@ -64,6 +64,17 @@ pub enum EventKind {
         target_activation_generation: Option<Generation>,
         generation: Generation,
     },
+    RuntimeActivationPreempted {
+        preemption: PreemptionId,
+        activation: ActivationId,
+        from_generation: Generation,
+        to_generation: Generation,
+        timer_interrupt: TimerInterruptId,
+        timer_interrupt_generation: Generation,
+        queue: RunnableQueueId,
+        queue_generation: Generation,
+        generation: Generation,
+    },
     ResourceCreated {
         resource: ResourceId,
         kind: ResourceKind,
@@ -470,6 +481,19 @@ impl EventKind {
                 target_activation_generation
                     .map(|generation| generation.to_string())
                     .unwrap_or_else(|| "none".to_string())
+            ),
+            Self::RuntimeActivationPreempted {
+                preemption,
+                activation,
+                from_generation,
+                to_generation,
+                timer_interrupt,
+                timer_interrupt_generation,
+                queue,
+                queue_generation,
+                generation,
+            } => format!(
+                "RuntimeActivationPreempted preemption={preemption} activation={activation}@{from_generation}->{to_generation} timer={timer_interrupt}@{timer_interrupt_generation} queue={queue}@{queue_generation} generation={generation}",
             ),
             Self::ResourceCreated {
                 resource,

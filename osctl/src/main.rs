@@ -9,7 +9,7 @@ use artifact_manifest::{
     ActivationContextManifest, ActivationRecordManifest, ArtifactBundleManifest,
     BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
     CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest, HostcallTraceManifest,
-    InterfaceEventManifest, MigrationPackageManifest, RunnableQueueManifest,
+    InterfaceEventManifest, MigrationPackageManifest, PreemptionManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, StoreRecordManifest,
     SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
     TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
@@ -208,7 +208,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         "task" | "store" | "cap" | "capability" | "wait" | "cleanup" | "command" | "scheduler"
         | "runtime-activation" | "runnable-queue" | "activation-context" | "saved-context"
-        | "timer-interrupt" | "context" => handle_view_command(&command, args.collect()),
+        | "timer-interrupt" | "preemption" | "context" => {
+            handle_view_command(&command, args.collect())
+        }
         "state" => {
             let Some(path) = args.next() else {
                 return Err("state requires a manifest/package JSON path".into());
@@ -372,7 +374,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl task|activation|activation-context|saved-context|timer-interrupt|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -570,6 +572,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "activation-context" | "context" => "activation-context",
         "saved-context" => "saved-context",
         "timer-interrupt" => "timer-interrupt",
+        "preemption" => "preemption",
         "scheduler" => "scheduler",
         "runnable-queue" => "runnable-queue",
         "cap" | "capability" => "capability",
@@ -762,6 +765,39 @@ fn timer_interrupt_view_v1(interrupt: &TimerInterruptManifest) -> serde_json::Va
     })
 }
 
+fn preemption_view_v1(preemption: &PreemptionManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "preemption",
+        "id": preemption.id,
+        "generation": preemption.generation,
+        "state": preemption.state,
+        "owner": {
+            "scheduler": 1,
+        },
+        "references": {
+            "activation": {
+                "id": preemption.activation,
+                "generation_before": preemption.activation_generation_before,
+                "generation_after": preemption.activation_generation_after,
+            },
+            "timer_interrupt": {
+                "id": preemption.timer_interrupt,
+                "generation": preemption.timer_interrupt_generation,
+            },
+            "queue": {
+                "id": preemption.queue,
+                "generation": preemption.queue_generation,
+            },
+        },
+        "note": preemption.note,
+        "last_transition": {
+            "preempted_at_event": preemption.preempted_at_event,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -806,6 +842,14 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "target_activation": interrupt.target_activation,
                 "target_activation_generation": interrupt.target_activation_generation,
             })).collect::<Vec<_>>(),
+            "preemptions": package.semantic.preemptions.iter().map(|preemption| serde_json::json!({
+                "id": preemption.id,
+                "generation": preemption.generation,
+                "activation": preemption.activation,
+                "activation_generation_after": preemption.activation_generation_after,
+                "queue": preemption.queue,
+                "queue_generation": preemption.queue_generation,
+            })).collect::<Vec<_>>(),
         },
         "last_transition": {
             "scheduler_decision_cursor": package.substrate_boundary.scheduler_decision_cursor,
@@ -816,6 +860,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "activation_context_count": package.semantic.activation_context_count,
             "saved_context_count": package.semantic.saved_context_count,
             "timer_interrupt_count": package.semantic.timer_interrupt_count,
+            "preemption_count": package.semantic.preemption_count,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -1210,6 +1255,12 @@ fn stable_views_for_kind(
             .timer_interrupts
             .iter()
             .map(timer_interrupt_view_v1)
+            .collect()),
+        "preemption" => Ok(package
+            .semantic
+            .preemptions
+            .iter()
+            .map(preemption_view_v1)
             .collect()),
         "store" => Ok(package
             .semantic
@@ -1827,7 +1878,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.task_count,
@@ -1836,6 +1887,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.activation_context_count,
             package.semantic.saved_context_count,
             package.semantic.timer_interrupt_count,
+            package.semantic.preemption_count,
             package.semantic.resource_count,
             package.semantic.store_count,
             package.semantic.capability_count,
@@ -1997,6 +2049,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         "timer-interrupt",
         &package.semantic.roots.timer_interrupt_roots,
     );
+    print_roots("preemption", &package.semantic.roots.preemption_roots);
     print_roots("resource", &package.semantic.roots.resource_roots);
     print_roots("authority", &package.semantic.roots.authority_roots);
     print_roots("store", &package.semantic.roots.store_roots);
@@ -2285,6 +2338,53 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 Some(interrupt.recorded_at_event),
             ));
         }
+    }
+    for preemption in &package.semantic.preemptions {
+        let from = object_ref_json("preemption", preemption.id, preemption.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "activation",
+                preemption.activation,
+                preemption.activation_generation_before,
+            ),
+            "preempted-from",
+            "historical",
+            Some(preemption.preempted_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "activation",
+                preemption.activation,
+                preemption.activation_generation_after,
+            ),
+            "preempted-to",
+            "historical",
+            Some(preemption.preempted_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "timer-interrupt",
+                preemption.timer_interrupt,
+                preemption.timer_interrupt_generation,
+            ),
+            "caused-by",
+            "historical",
+            Some(preemption.preempted_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "runnable-queue",
+                preemption.queue,
+                preemption.queue_generation,
+            ),
+            "queued-into",
+            "historical",
+            Some(preemption.preempted_at_event),
+        ));
     }
     for trap in &package.semantic.trap_records {
         let from = object_ref_json("trap", trap.id, trap.generation);
@@ -4026,6 +4126,7 @@ mod tests {
         package.semantic.activation_context_count = 1;
         package.semantic.saved_context_count = 1;
         package.semantic.timer_interrupt_count = 1;
+        package.semantic.preemption_count = 1;
         package.substrate_boundary.timer_epoch = 3;
         package.semantic.task_records.push(TaskRecordManifest {
             id: 7,
@@ -4118,6 +4219,20 @@ mod tests {
                 recorded_at_event: 11,
                 note: "timer tick".to_owned(),
             });
+        package.semantic.preemptions.push(PreemptionManifest {
+            id: 15,
+            activation: 11,
+            activation_generation_before: 2,
+            activation_generation_after: 3,
+            timer_interrupt: 14,
+            timer_interrupt_generation: 1,
+            queue: 1,
+            queue_generation: 1,
+            generation: 1,
+            state: "applied".to_owned(),
+            preempted_at_event: 12,
+            note: "preempted".to_owned(),
+        });
         let context = activation_context_view_v1(&package.semantic.activation_contexts[0]);
         assert_eq!(context["kind"], "activation-context");
         assert_eq!(context["references"]["activation"]["generation"], 2);
@@ -4133,12 +4248,25 @@ mod tests {
         assert_eq!(timer["kind"], "timer-interrupt");
         assert_eq!(timer["owner"]["timer_epoch"], 3);
         assert_eq!(timer["references"]["activation"]["generation"], 2);
+        let preemption = preemption_view_v1(&package.semantic.preemptions[0]);
+        assert_eq!(preemption["kind"], "preemption");
+        assert_eq!(
+            preemption["references"]["activation"]["generation_before"],
+            2
+        );
+        assert_eq!(
+            preemption["references"]["activation"]["generation_after"],
+            3
+        );
+        assert_eq!(preemption["references"]["timer_interrupt"]["generation"], 1);
         let scheduler = scheduler_view_v1(&package);
         assert_eq!(scheduler["kind"], "scheduler");
         assert_eq!(scheduler["references"]["queues"][0]["entries"], 1);
+        assert_eq!(scheduler["references"]["preemptions"][0]["activation"], 11);
         assert_eq!(scheduler["last_transition"]["activation_context_count"], 1);
         assert_eq!(scheduler["last_transition"]["saved_context_count"], 1);
         assert_eq!(scheduler["last_transition"]["timer_interrupt_count"], 1);
+        assert_eq!(scheduler["last_transition"]["preemption_count"], 1);
         assert_eq!(scheduler["last_transition"]["timer_epoch"], 3);
         assert_eq!(
             scheduler["last_transition"]["scheduler_decision_cursor"],
@@ -4183,6 +4311,14 @@ mod tests {
                 .any(|edge| edge["from"]["kind"] == "timer-interrupt"
                     && edge["to"]["kind"] == "activation"
                     && edge["to"]["generation"] == 2
+                    && edge["mode"] == "historical")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "preemption"
+                    && edge["to"]["kind"] == "activation"
+                    && edge["to"]["generation"] == 3
                     && edge["mode"] == "historical")
         );
     }

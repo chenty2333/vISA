@@ -14,9 +14,9 @@ use artifact_manifest::{
     ContractViolationManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
     InterfaceEventManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
+    MigrationTargetManifest, PreemptionManifest, RequiredArtifactProfileManifest,
+    RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
+    SavedContextManifest, SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
     SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
     TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
     TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
@@ -434,6 +434,19 @@ fn record_preemptive_runtime_context_evidence(
                 target_activation: Some(9002),
                 target_activation_generation: Some(3),
                 note: "p2-timer-interrupt-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            30,
+            "target-executor-p3",
+            SemanticCommand::PreemptActivation {
+                preemption: 9001,
+                activation: 9002,
+                activation_generation: 3,
+                timer_interrupt: 9001,
+                timer_interrupt_generation: 1,
+                queue: 9002,
+                note: "p3-preempt-activation-harness".to_owned(),
             },
         ),
     ];
@@ -1447,6 +1460,7 @@ fn demo_migration_package(
             activation_context_count: semantic.activation_context_count(),
             saved_context_count: semantic.saved_context_count(),
             timer_interrupt_count: semantic.timer_interrupt_count(),
+            preemption_count: semantic.preemption_count(),
             resource_count: semantic.resource_count(),
             authority_count: semantic.authority_count(),
             active_authority_count: semantic.active_authority_count(),
@@ -1506,6 +1520,11 @@ fn demo_migration_package(
                 .timer_interrupts()
                 .iter()
                 .map(timer_interrupt_manifest)
+                .collect(),
+            preemptions: semantic
+                .preemptions()
+                .iter()
+                .map(preemption_manifest)
                 .collect(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
@@ -1681,6 +1700,25 @@ fn semantic_roots(
                         .unwrap_or_else(|| "none".to_owned()),
                     interrupt.state.as_str(),
                     interrupt.generation
+                )
+            })
+            .collect(),
+        preemption_roots: semantic
+            .preemptions()
+            .iter()
+            .map(|preemption| {
+                format!(
+                    "preemption id={} activation={}@{}->{} timer={}@{} queue={}@{} state={} generation={}",
+                    preemption.id,
+                    preemption.activation,
+                    preemption.activation_generation_before,
+                    preemption.activation_generation_after,
+                    preemption.timer_interrupt,
+                    preemption.timer_interrupt_generation,
+                    preemption.queue,
+                    preemption.queue_generation,
+                    preemption.state.as_str(),
+                    preemption.generation
                 )
             })
             .collect(),
@@ -2233,6 +2271,23 @@ fn timer_interrupt_manifest(
         state: interrupt.state.as_str().to_owned(),
         recorded_at_event: interrupt.recorded_at_event,
         note: interrupt.note.clone(),
+    }
+}
+
+fn preemption_manifest(preemption: &semantic_core::PreemptionRecord) -> PreemptionManifest {
+    PreemptionManifest {
+        id: preemption.id,
+        activation: preemption.activation,
+        activation_generation_before: preemption.activation_generation_before,
+        activation_generation_after: preemption.activation_generation_after,
+        timer_interrupt: preemption.timer_interrupt,
+        timer_interrupt_generation: preemption.timer_interrupt_generation,
+        queue: preemption.queue,
+        queue_generation: preemption.queue_generation,
+        generation: preemption.generation,
+        state: preemption.state.as_str().to_owned(),
+        preempted_at_event: preemption.preempted_at_event,
+        note: preemption.note.clone(),
     }
 }
 

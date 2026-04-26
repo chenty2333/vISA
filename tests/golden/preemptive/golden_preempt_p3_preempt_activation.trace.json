@@ -1,0 +1,115 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "P3-preempt-activation-command",
+  "name": "golden_preempt_p3_preempt_activation",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real timer IRQ delivery",
+    "real register save path",
+    "SavedContext capture from preemption",
+    "ResumeActivation command",
+    "SchedulerDecision object",
+    "SMP scheduler"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "create-runtime-activation",
+        "activation": "activation:11@1",
+        "owner_task": "task:7@1"
+      },
+      {
+        "id": 2,
+        "command": "enqueue-runnable",
+        "activation": "activation:11@2",
+        "queue": "runnable-queue:1@1"
+      },
+      {
+        "id": 3,
+        "command": "dequeue-runnable",
+        "activation": "activation:11@3",
+        "queue": "runnable-queue:1@1"
+      },
+      {
+        "id": 4,
+        "command": "record-timer-interrupt",
+        "timer_interrupt": "timer-interrupt:5@1",
+        "target_activation": "activation:11@3"
+      },
+      {
+        "id": 5,
+        "command": "preempt-activation",
+        "preemption": "preemption:6@1",
+        "activation_before": "activation:11@3",
+        "activation_after": "activation:11@4",
+        "timer_interrupt": "timer-interrupt:5@1",
+        "queue": "runnable-queue:1@1"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "RuntimeActivationPreempted",
+      "preemption": "preemption:6@1",
+      "activation_before": "activation:11@3",
+      "activation_after": "activation:11@4",
+      "timer_interrupt": "timer-interrupt:5@1",
+      "queue": "runnable-queue:1@1"
+    },
+    {
+      "kind": "RuntimeActivationStateChanged",
+      "activation": "activation:11@4",
+      "from": "running",
+      "to": "runnable"
+    },
+    {
+      "kind": "RunnableQueued",
+      "activation": "activation:11@4",
+      "queue": "runnable-queue:1@1"
+    }
+  ],
+  "expected": {
+    "views": {
+      "preemption": {
+        "kind": "preemption",
+        "id": 6,
+        "generation": 1,
+        "state": "applied",
+        "activation_before": "activation:11@3",
+        "activation_after": "activation:11@4",
+        "timer_interrupt": "timer-interrupt:5@1",
+        "queue": "runnable-queue:1@1"
+      },
+      "activation": {
+        "kind": "activation",
+        "id": 11,
+        "generation": 4,
+        "state": "runnable",
+        "runnable_queue": "runnable-queue:1@1"
+      }
+    },
+    "invariants": [
+      "only running activation can be preempted",
+      "preemption checks exact activation generation",
+      "preemption checks exact timer interrupt generation",
+      "timer interrupt target attribution is historical after preemption",
+      "preempted activation is requeued with new generation",
+      "preemption history survives later activation generation advance",
+      "P3 does not capture SavedContext or resume activation"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "preemptive_runtime_p3_preempt_activation_requeues_running_activation",
+      "preemptive_runtime_p3_rejects_stale_or_mismatched_preemptions",
+      "preemptive_runtime_p3_invariants_reject_preemption_timer_generation_leak",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state"
+    ]
+  }
+}

@@ -2017,6 +2017,123 @@ fn preemptive_runtime_p2_invariants_reject_timer_epoch_regression() {
     );
 }
 
+fn p3_running_activation_with_timer() -> SemanticGraph {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(graph.dequeue_runnable_activation(1, 11));
+    assert!(graph.record_timer_interrupt_with_id(5, 1, 0, Some(11), Some(3), "timer tick"));
+    graph
+}
+
+#[test]
+fn preemptive_runtime_p3_preempt_activation_requeues_running_activation() {
+    let mut graph = p3_running_activation_with_timer();
+
+    let preempt = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p3-test",
+        SemanticCommand::PreemptActivation {
+            preemption: 6,
+            activation: 11,
+            activation_generation: 3,
+            timer_interrupt: 5,
+            timer_interrupt_generation: 1,
+            queue: 1,
+            note: "timer preempt".to_string(),
+        },
+    ));
+    assert_eq!(preempt.status, CommandStatus::Applied);
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Runnable
+    );
+    assert_eq!(graph.runtime_activations()[0].generation, 4);
+    assert_eq!(graph.runnable_queues()[0].entries[0].activation, 11);
+    assert_eq!(
+        graph.runnable_queues()[0].entries[0].activation_generation,
+        4
+    );
+    assert_eq!(graph.preemptions()[0].activation_generation_before, 3);
+    assert_eq!(graph.preemptions()[0].activation_generation_after, 4);
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(3)[0].kind.summary(),
+        "RuntimeActivationPreempted preemption=6 activation=11@3->4 timer=5@1 queue=1@1 generation=1"
+    );
+    assert!(graph.dequeue_runnable_activation(1, 11));
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Running
+    );
+    assert_eq!(graph.runtime_activations()[0].generation, 5);
+    assert!(
+        graph.check_invariants().is_ok(),
+        "preemption history must survive later activation generation advance"
+    );
+}
+
+#[test]
+fn preemptive_runtime_p3_rejects_stale_or_mismatched_preemptions() {
+    let mut graph = p3_running_activation_with_timer();
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p3-test",
+        SemanticCommand::PreemptActivation {
+            preemption: 6,
+            activation: 11,
+            activation_generation: 2,
+            timer_interrupt: 5,
+            timer_interrupt_generation: 1,
+            queue: 1,
+            note: "stale".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("preemption timer target does not match activation generation".to_string());
+    assert_eq!(stale.violations, expected);
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Running
+    );
+
+    let missing_timer = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p3-test",
+        SemanticCommand::PreemptActivation {
+            preemption: 7,
+            activation: 11,
+            activation_generation: 3,
+            timer_interrupt: 99,
+            timer_interrupt_generation: 1,
+            queue: 1,
+            note: "missing timer".to_string(),
+        },
+    ));
+    assert_eq!(missing_timer.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("preemption timer interrupt generation is missing".to_string());
+    assert_eq!(missing_timer.violations, expected);
+}
+
+#[test]
+fn preemptive_runtime_p3_invariants_reject_preemption_timer_generation_leak() {
+    let mut graph = p3_running_activation_with_timer();
+    assert!(graph.preempt_running_activation_with_id(6, 11, 3, 5, 1, 1, "timer preempt"));
+    graph.corrupt_preemption_timer_generation_for_test(6, 99);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::PreemptionMissingTimerInterrupt {
+            preemption: 6,
+            interrupt: 5,
+        })
+    );
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

@@ -71,6 +71,7 @@ pub enum ObjectKind {
     ActivationContext,
     SavedContext,
     TimerInterrupt,
+    Preemption,
     Resource,
     Capability,
     WaitToken,
@@ -102,6 +103,7 @@ impl ObjectKind {
             Self::ActivationContext => "activation-context",
             Self::SavedContext => "saved-context",
             Self::TimerInterrupt => "timer-interrupt",
+            Self::Preemption => "preemption",
             Self::Resource => "resource",
             Self::Capability => "capability",
             Self::WaitToken => "wait-token",
@@ -287,6 +289,7 @@ typed_ref!(RunnableQueueRef, ObjectKind::RunnableQueue);
 typed_ref!(ActivationContextRef, ObjectKind::ActivationContext);
 typed_ref!(SavedContextRef, ObjectKind::SavedContext);
 typed_ref!(TimerInterruptRef, ObjectKind::TimerInterrupt);
+typed_ref!(PreemptionRef, ObjectKind::Preemption);
 typed_ref!(FaultDomainRef, ObjectKind::FaultDomain);
 typed_ref!(ArtifactRef, ObjectKind::Artifact);
 typed_ref!(CodeObjectRef, ObjectKind::CodeObject);
@@ -1439,6 +1442,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("timer interrupt root/count mismatch"));
     }
+    if roots.preemption_roots.len() != package.semantic.preemption_count
+        || package.semantic.preemptions.len() != package.semantic.preemption_count
+    {
+        return Err(ContractError::new("preemption root/count mismatch"));
+    }
     if roots.resource_roots.len() != package.semantic.resource_count {
         return Err(ContractError::new("resource root/count mismatch"));
     }
@@ -1937,6 +1945,7 @@ mod tests {
                 activation_context_count: 0,
                 saved_context_count: 0,
                 timer_interrupt_count: 0,
+                preemption_count: 0,
                 resource_count: 0,
                 authority_count: 0,
                 active_authority_count: 0,
@@ -1977,6 +1986,7 @@ mod tests {
                 activation_contexts: Vec::new(),
                 saved_contexts: Vec::new(),
                 timer_interrupts: Vec::new(),
+                preemptions: Vec::new(),
                 code_objects: Vec::new(),
                 store_records: Vec::new(),
                 capability_records: Vec::new(),
@@ -2155,6 +2165,32 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "timer interrupt root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_preemption_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.preemption_count = 1;
+        package
+            .semantic
+            .preemptions
+            .push(artifact_manifest::PreemptionManifest {
+                id: 4,
+                activation: 11,
+                activation_generation_before: 3,
+                activation_generation_after: 4,
+                timer_interrupt: 3,
+                timer_interrupt_generation: 1,
+                queue: 1,
+                queue_generation: 1,
+                generation: 1,
+                state: "applied".to_owned(),
+                preempted_at_event: 6,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "preemption root/count mismatch");
     }
 
     #[test]
@@ -2416,6 +2452,8 @@ mod tests {
         ));
         let timer = ObjectRef::new(ObjectKind::TimerInterrupt, 5, 1).unwrap();
         assert!(TimerInterruptRef::try_from_ref(timer).is_ok());
+        let preemption = ObjectRef::new(ObjectKind::Preemption, 6, 1).unwrap();
+        assert!(PreemptionRef::try_from_ref(preemption).is_ok());
     }
 
     #[test]

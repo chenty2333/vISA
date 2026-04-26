@@ -234,6 +234,8 @@ pub struct SemanticSnapshotManifest {
     pub saved_context_count: usize,
     #[serde(default)]
     pub timer_interrupt_count: usize,
+    #[serde(default)]
+    pub preemption_count: usize,
     pub resource_count: usize,
     #[serde(default)]
     pub authority_count: usize,
@@ -311,6 +313,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub timer_interrupts: Vec<TimerInterruptManifest>,
     #[serde(default)]
+    pub preemptions: Vec<PreemptionManifest>,
+    #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
     #[serde(default)]
     pub store_records: Vec<StoreRecordManifest>,
@@ -366,6 +370,8 @@ pub struct SemanticRootSetManifest {
     pub saved_context_roots: Vec<String>,
     #[serde(default)]
     pub timer_interrupt_roots: Vec<String>,
+    #[serde(default)]
+    pub preemption_roots: Vec<String>,
     #[serde(default)]
     pub resource_roots: Vec<String>,
     #[serde(default)]
@@ -573,6 +579,22 @@ pub struct TimerInterruptManifest {
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct PreemptionManifest {
+    pub id: u64,
+    pub activation: u64,
+    pub activation_generation_before: u64,
+    pub activation_generation_after: u64,
+    pub timer_interrupt: u64,
+    pub timer_interrupt_generation: u64,
+    pub queue: u64,
+    pub queue_generation: u64,
+    pub generation: u64,
+    pub state: String,
+    pub preempted_at_event: u64,
     pub note: String,
 }
 

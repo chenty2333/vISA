@@ -152,6 +152,23 @@ impl TimerInterruptState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreemptionState {
+    Applied,
+    Superseded,
+    Dropped,
+}
+
+impl PreemptionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Superseded => "superseded",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
 impl TaskState {
     pub const fn as_str(self) -> &'static str {
         match self {

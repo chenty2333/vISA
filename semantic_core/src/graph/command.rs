@@ -46,6 +46,15 @@ pub enum SemanticCommand {
         target_activation_generation: Option<Generation>,
         note: String,
     },
+    PreemptActivation {
+        preemption: PreemptionId,
+        activation: ActivationId,
+        activation_generation: Generation,
+        timer_interrupt: TimerInterruptId,
+        timer_interrupt_generation: Generation,
+        queue: RunnableQueueId,
+        note: String,
+    },
     GrantCapability {
         subject: String,
         debug_object_label: String,
@@ -201,6 +210,7 @@ impl SemanticCommand {
             Self::CreateActivationContext { .. } => "create-activation-context",
             Self::CaptureSavedContext { .. } => "capture-saved-context",
             Self::RecordTimerInterrupt { .. } => "record-timer-interrupt",
+            Self::PreemptActivation { .. } => "preempt-activation",
             Self::GrantCapability { .. } => "grant-capability",
             Self::RevokeCapability { .. } => "revoke-capability",
             Self::CreateWait { .. } => "create-wait",
@@ -590,6 +600,103 @@ impl SemanticGraph {
                     Ok(())
                 }
             }
+            SemanticCommand::PreemptActivation {
+                preemption,
+                activation,
+                activation_generation,
+                timer_interrupt,
+                timer_interrupt_generation,
+                queue,
+                ..
+            } => {
+                if *preemption == 0 {
+                    Err(CommandError::precondition("preemption id=0 is invalid"))
+                } else if self
+                    .preemptions
+                    .iter()
+                    .any(|record| record.id == *preemption)
+                {
+                    Err(CommandError::precondition("preemption already exists"))
+                } else if !self
+                    .runnable_queues
+                    .iter()
+                    .any(|record| record.id == *queue && record.state == RunnableQueueState::Active)
+                {
+                    Err(CommandError::precondition(
+                        "preemption queue is missing or inactive",
+                    ))
+                } else if self.runnable_queues.iter().any(|record| {
+                    record
+                        .entries
+                        .iter()
+                        .any(|entry| entry.activation == *activation)
+                }) {
+                    Err(CommandError::precondition("activation already queued"))
+                } else {
+                    let Some(timer) = self.timer_interrupts.iter().find(|record| {
+                        record.id == *timer_interrupt
+                            && record.generation == *timer_interrupt_generation
+                    }) else {
+                        return Err(CommandError::precondition(
+                            "preemption timer interrupt generation is missing",
+                        ));
+                    };
+                    if timer.target_activation != Some(*activation)
+                        || timer.target_activation_generation != Some(*activation_generation)
+                    {
+                        return Err(CommandError::precondition(
+                            "preemption timer target does not match activation generation",
+                        ));
+                    }
+                    let Some(record) = self.runtime_activations.iter().find(|record| {
+                        record.id == *activation
+                            && record.generation == *activation_generation
+                            && record.state == RuntimeActivationState::Running
+                            && record.runnable_queue.is_none()
+                            && record.runnable_queue_generation.is_none()
+                    }) else {
+                        return Err(CommandError::precondition(
+                            "preemption target activation generation is not running",
+                        ));
+                    };
+                    let Some(owner_task) = self.tasks.iter().find(|task| {
+                        task.id == record.owner_task
+                            && task.generation == record.owner_task_generation
+                    }) else {
+                        return Err(CommandError::precondition(
+                            "preemption owner task generation is missing",
+                        ));
+                    };
+                    if matches!(
+                        owner_task.state,
+                        TaskState::Pending
+                            | TaskState::Cancelled
+                            | TaskState::Faulted
+                            | TaskState::Exited
+                    ) {
+                        return Err(CommandError::precondition(
+                            "preemption owner task is not runnable",
+                        ));
+                    }
+                    if let Some(store) = record.owner_store {
+                        let Some(generation) = record.owner_store_generation else {
+                            return Err(CommandError::precondition(
+                                "preemption owner store generation is required",
+                            ));
+                        };
+                        if !self.stores.iter().any(|store_record| {
+                            store_record.id == store
+                                && store_record.generation == generation
+                                && store_record.state != StoreState::Dead
+                        }) {
+                            return Err(CommandError::precondition(
+                                "preemption owner store generation is missing or dead",
+                            ));
+                        }
+                    }
+                    Ok(())
+                }
+            }
             SemanticCommand::GrantCapability { operations, .. } if operations.is_empty() => Err(
                 CommandError::precondition("grant-capability requires at least one operation"),
             ),
@@ -783,6 +890,23 @@ impl SemanticGraph {
                 hart,
                 target_activation,
                 target_activation_generation,
+                &note,
+            ),
+            SemanticCommand::PreemptActivation {
+                preemption,
+                activation,
+                activation_generation,
+                timer_interrupt,
+                timer_interrupt_generation,
+                queue,
+                note,
+            } => self.preempt_running_activation_with_id(
+                preemption,
+                activation,
+                activation_generation,
+                timer_interrupt,
+                timer_interrupt_generation,
+                queue,
                 &note,
             ),
             SemanticCommand::GrantCapability {

@@ -355,6 +355,27 @@ pub enum SemanticInvariantError {
         interrupt: TimerInterruptId,
         activation: ActivationId,
     },
+    PreemptionMissingTimerInterrupt {
+        preemption: PreemptionId,
+        interrupt: TimerInterruptId,
+    },
+    PreemptionTimerTargetMismatch {
+        preemption: PreemptionId,
+        interrupt: TimerInterruptId,
+        activation: ActivationId,
+    },
+    PreemptionMissingActivation {
+        preemption: PreemptionId,
+        activation: ActivationId,
+    },
+    PreemptionMissingQueue {
+        preemption: PreemptionId,
+        queue: RunnableQueueId,
+    },
+    PreemptionQueueEntryMismatch {
+        preemption: PreemptionId,
+        activation: ActivationId,
+    },
     StoreReferencesMissingFaultDomain {
         store: StoreId,
         fault_domain: FaultDomainId,

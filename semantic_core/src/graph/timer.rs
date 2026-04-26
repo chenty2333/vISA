@@ -129,6 +129,14 @@ impl SemanticGraph {
                         .iter()
                         .find(|record| record.id == activation && record.generation == generation)
                     else {
+                        if self.preemptions.iter().any(|preemption| {
+                            preemption.activation == activation
+                                && preemption.activation_generation_before == generation
+                                && preemption.timer_interrupt == interrupt.id
+                                && preemption.timer_interrupt_generation == interrupt.generation
+                        }) {
+                            continue;
+                        }
                         return Err(SemanticInvariantError::TimerInterruptMissingActivation {
                             interrupt: interrupt.id,
                             activation,

@@ -1377,6 +1377,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::ActivationContext
             | ContractObjectKind::SavedContext
             | ContractObjectKind::TimerInterrupt
+            | ContractObjectKind::Preemption
             | ContractObjectKind::Resource
             | ContractObjectKind::FaultDomain
             | ContractObjectKind::MemoryObject
