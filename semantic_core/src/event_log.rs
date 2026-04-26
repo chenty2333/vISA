@@ -403,6 +403,20 @@ pub enum EventKind {
         released_irq_lines: usize,
         generation: Generation,
     },
+    IoFaultInjected {
+        fault: IoFaultInjectionId,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        driver_binding: DriverStoreBindingId,
+        driver_binding_generation: Generation,
+        target: ContractObjectRef,
+        cleanup: IoCleanupId,
+        cleanup_generation: Generation,
+        kind: IoFaultInjectionKind,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1290,6 +1304,24 @@ impl EventKind {
                 generation,
             } => format!(
                 "IoCleanupCompleted cleanup={cleanup} driver_store={driver_store}@{driver_store_generation} device={device}@{device_generation} driver_binding={driver_binding}@{driver_binding_generation} cancelled_io_waits={cancelled_io_waits} revoked_device_capabilities={revoked_device_capabilities} released_dma_buffers={released_dma_buffers} released_mmio_regions={released_mmio_regions} released_irq_lines={released_irq_lines} generation={generation}"
+            ),
+            Self::IoFaultInjected {
+                fault,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                driver_binding,
+                driver_binding_generation,
+                target,
+                cleanup,
+                cleanup_generation,
+                kind,
+                generation,
+            } => format!(
+                "IoFaultInjected fault={fault} kind={} driver_store={driver_store}@{driver_store_generation} device={device}@{device_generation} driver_binding={driver_binding}@{driver_binding_generation} target={} cleanup={cleanup}@{cleanup_generation} generation={generation}",
+                kind.as_str(),
+                target.summary()
             ),
             Self::RuntimeActivationResumed {
                 resume,

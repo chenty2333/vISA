@@ -97,6 +97,7 @@ pub enum ObjectKind {
     DriverStoreBinding,
     IoWait,
     IoCleanup,
+    IoFaultInjection,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -159,6 +160,7 @@ impl ObjectKind {
             Self::DriverStoreBinding => "driver-store-binding",
             Self::IoWait => "io-wait",
             Self::IoCleanup => "io-cleanup",
+            Self::IoFaultInjection => "io-fault-injection",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -381,6 +383,7 @@ typed_ref!(DeviceCapabilityRef, ObjectKind::DeviceCapability);
 typed_ref!(DriverStoreBindingRef, ObjectKind::DriverStoreBinding);
 typed_ref!(IoWaitRef, ObjectKind::IoWait);
 typed_ref!(IoCleanupRef, ObjectKind::IoCleanup);
+typed_ref!(IoFaultInjectionRef, ObjectKind::IoFaultInjection);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1694,6 +1697,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("io cleanup root/count mismatch"));
     }
+    if roots.io_fault_injection_roots.len() != package.semantic.io_fault_injection_count
+        || package.semantic.io_fault_injections.len() != package.semantic.io_fault_injection_count
+    {
+        return Err(ContractError::new("io fault injection root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2247,6 +2255,7 @@ mod tests {
                 driver_store_binding_count: 0,
                 io_wait_count: 0,
                 io_cleanup_count: 0,
+                io_fault_injection_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2318,6 +2327,7 @@ mod tests {
                 driver_store_bindings: Vec::new(),
                 io_waits: Vec::new(),
                 io_cleanups: Vec::new(),
+                io_fault_injections: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3344,6 +3354,39 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_io_fault_injection_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.io_fault_injection_count = 1;
+        package
+            .semantic
+            .io_fault_injections
+            .push(artifact_manifest::IoFaultInjectionManifest {
+                id: 29,
+                driver_store: 2,
+                driver_store_generation: 2,
+                device: 17,
+                device_generation: 1,
+                driver_binding: 25,
+                driver_binding_generation: 1,
+                target: artifact_manifest::ContractObjectRefManifest {
+                    kind: "irq-line-object".to_owned(),
+                    id: 22,
+                    generation: 1,
+                },
+                cleanup: 27,
+                cleanup_generation: 1,
+                generation: 1,
+                kind: "device-fault".to_owned(),
+                state: "completed".to_owned(),
+                injected_at_event: 65,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "io fault injection root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3852,6 +3895,8 @@ mod tests {
         assert!(IoWaitRef::try_from_ref(io_wait).is_ok());
         let io_cleanup = ObjectRef::new(ObjectKind::IoCleanup, 27, 1).unwrap();
         assert!(IoCleanupRef::try_from_ref(io_cleanup).is_ok());
+        let io_fault = ObjectRef::new(ObjectKind::IoFaultInjection, 28, 1).unwrap();
+        assert!(IoFaultInjectionRef::try_from_ref(io_fault).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

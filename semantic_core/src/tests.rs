@@ -3894,6 +3894,145 @@ fn io_runtime_i10_rejects_stale_cleanup_and_blocks_post_cleanup_wait_reuse() {
 }
 
 #[test]
+fn io_runtime_i11_fault_injection_triggers_cleanup_with_exact_generations() {
+    let (mut graph, driver_store, driver_store_generation, binding, io_wait) =
+        setup_i10_io_cleanup_graph();
+    let target = ContractObjectRef::new(ContractObjectKind::IrqLineObject, 901, 1);
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i11-test",
+        SemanticCommand::InjectIoFault {
+            fault: 1411,
+            cleanup: 1412,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            target,
+            kind: IoFaultInjectionKind::DeviceFault,
+            note: "i11 injected irq fault".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.io_fault_injection_count(), 1);
+    assert_eq!(graph.io_cleanup_count(), 1);
+    let fault = &graph.io_fault_injections()[0];
+    assert_eq!(fault.state, IoFaultInjectionState::Completed);
+    assert_eq!(fault.kind, IoFaultInjectionKind::DeviceFault);
+    assert_eq!(fault.target, target);
+    assert_eq!(fault.cleanup, 1412);
+    assert_eq!(fault.cleanup_generation, 1);
+    assert_eq!(graph.io_cleanups()[0].cancelled_io_waits[0].id, io_wait);
+    assert_eq!(graph.io_waits()[0].state, IoWaitState::Cancelled);
+    assert_eq!(
+        graph.irq_line_objects()[0].state,
+        IrqLineObjectState::Released
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "IoFaultInjected fault=1411 kind=device-fault driver_store=1@2 device=401@1 driver_binding=1402@1 target=irq-line-object:901@1 cleanup=1412@1 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+
+    let replay = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i11-test",
+        SemanticCommand::InjectIoFault {
+            fault: 1411,
+            cleanup: 1412,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            target,
+            kind: IoFaultInjectionKind::DeviceFault,
+            note: "i11 idempotent replay".to_string(),
+        },
+    ));
+    assert_eq!(replay.status, CommandStatus::Applied);
+    assert_eq!(graph.io_fault_injection_count(), 1);
+    assert_eq!(graph.io_cleanup_count(), 1);
+}
+
+#[test]
+fn io_runtime_i11_rejects_stale_or_post_cleanup_fault_injection() {
+    let (mut graph, driver_store, driver_store_generation, binding, _io_wait) =
+        setup_i10_io_cleanup_graph();
+    let stale_target = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i11-test",
+        SemanticCommand::InjectIoFault {
+            fault: 1413,
+            cleanup: 1414,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            target: ContractObjectRef::new(ContractObjectKind::IrqLineObject, 901, 2),
+            kind: IoFaultInjectionKind::DeviceFault,
+            note: "stale irq generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_target.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_target.violations,
+        vec!["io fault injection target generation is missing or inactive".to_string()]
+    );
+
+    assert!(graph.inject_io_fault_with_id(
+        1413,
+        driver_store,
+        driver_store_generation,
+        401,
+        1,
+        binding,
+        1,
+        ContractObjectRef::new(ContractObjectKind::IrqLineObject, 901, 1),
+        1414,
+        IoFaultInjectionKind::DeviceFault,
+        "cleanup before second fault",
+    ));
+    let post_cleanup = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i11-test",
+        SemanticCommand::InjectIoFault {
+            fault: 1415,
+            cleanup: 1416,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            target: ContractObjectRef::new(ContractObjectKind::IrqLineObject, 901, 1),
+            kind: IoFaultInjectionKind::DeviceFault,
+            note: "released binding must reject second fault".to_string(),
+        },
+    ));
+    assert_eq!(post_cleanup.status, CommandStatus::Rejected);
+    assert_eq!(
+        post_cleanup.violations,
+        vec!["io fault injection driver binding is not bound to target".to_string()]
+    );
+
+    graph.corrupt_io_fault_cleanup_ref_for_test(1413, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::IoFaultInjectionMissingCleanup {
+            fault: 1413,
+            cleanup: 1414,
+        })
+    );
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

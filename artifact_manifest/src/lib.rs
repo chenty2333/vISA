@@ -287,6 +287,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub io_cleanup_count: usize,
     #[serde(default)]
+    pub io_fault_injection_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -425,6 +427,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub io_cleanups: Vec<IoCleanupManifest>,
     #[serde(default)]
+    pub io_fault_injections: Vec<IoFaultInjectionManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -542,6 +546,8 @@ pub struct SemanticRootSetManifest {
     pub io_wait_roots: Vec<String>,
     #[serde(default)]
     pub io_cleanup_roots: Vec<String>,
+    #[serde(default)]
+    pub io_fault_injection_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1384,6 +1390,25 @@ pub struct IoCleanupStepManifest {
     pub status: String,
     #[serde(default)]
     pub event: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IoFaultInjectionManifest {
+    pub id: u64,
+    pub driver_store: u64,
+    pub driver_store_generation: u64,
+    pub device: u64,
+    pub device_generation: u64,
+    pub driver_binding: u64,
+    pub driver_binding_generation: u64,
+    pub target: ContractObjectRefManifest,
+    pub cleanup: u64,
+    pub cleanup_generation: u64,
+    pub generation: u64,
+    pub kind: String,
+    pub state: String,
+    pub injected_at_event: u64,
+    pub note: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

@@ -988,6 +988,32 @@ pub enum SemanticInvariantError {
     IoCleanupMissingEvent {
         cleanup: IoCleanupId,
     },
+    IoFaultInjectionInvalid {
+        fault: IoFaultInjectionId,
+    },
+    IoFaultInjectionMissingStore {
+        fault: IoFaultInjectionId,
+        store: StoreId,
+    },
+    IoFaultInjectionMissingDevice {
+        fault: IoFaultInjectionId,
+        device: DeviceObjectId,
+    },
+    IoFaultInjectionMissingDriverBinding {
+        fault: IoFaultInjectionId,
+        binding: DriverStoreBindingId,
+    },
+    IoFaultInjectionMissingTarget {
+        fault: IoFaultInjectionId,
+        target: ContractObjectRef,
+    },
+    IoFaultInjectionMissingCleanup {
+        fault: IoFaultInjectionId,
+        cleanup: IoCleanupId,
+    },
+    IoFaultInjectionMissingEvent {
+        fault: IoFaultInjectionId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

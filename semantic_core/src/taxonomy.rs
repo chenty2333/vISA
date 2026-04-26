@@ -697,6 +697,32 @@ impl IoCleanupStepStatus {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IoFaultInjectionKind {
+    DeviceFault,
+}
+
+impl IoFaultInjectionKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DeviceFault => "device-fault",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IoFaultInjectionState {
+    Completed,
+}
+
+impl IoFaultInjectionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

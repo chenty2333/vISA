@@ -951,6 +951,35 @@ impl IoCleanupRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IoFaultInjectionRecord {
+    pub id: IoFaultInjectionId,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub driver_binding: DriverStoreBindingId,
+    pub driver_binding_generation: Generation,
+    pub target: ContractObjectRef,
+    pub cleanup: IoCleanupId,
+    pub cleanup_generation: Generation,
+    pub generation: Generation,
+    pub kind: IoFaultInjectionKind,
+    pub state: IoFaultInjectionState,
+    pub injected_at_event: EventId,
+    pub note: String,
+}
+
+impl IoFaultInjectionRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::IoFaultInjection,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

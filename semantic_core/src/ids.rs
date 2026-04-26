@@ -29,6 +29,7 @@ pub type DeviceCapabilityId = u64;
 pub type DriverStoreBindingId = u64;
 pub type IoWaitId = u64;
 pub type IoCleanupId = u64;
+pub type IoFaultInjectionId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

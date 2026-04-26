@@ -1412,6 +1412,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::DriverStoreBinding
             | ContractObjectKind::IoWait
             | ContractObjectKind::IoCleanup
+            | ContractObjectKind::IoFaultInjection
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

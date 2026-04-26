@@ -16,16 +16,17 @@ use artifact_manifest::{
     CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
     DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoWaitManifest,
-    IpiEventManifest, IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
-    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    MmioRegionObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
+    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
+    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -1497,8 +1498,9 @@ fn record_preemptive_runtime_context_evidence(
         ),
         CommandEnvelope::new(
             118,
-            "target-executor-i10",
-            SemanticCommand::CleanupIoDriver {
+            "target-executor-i11",
+            SemanticCommand::InjectIoFault {
+                fault: 9968,
                 cleanup: 9967,
                 driver_store: io_driver_store,
                 driver_store_generation: io_driver_store_generation,
@@ -1506,8 +1508,9 @@ fn record_preemptive_runtime_context_evidence(
                 device_generation: 1,
                 driver_binding: 9961,
                 driver_binding_generation: 1,
-                reason: "device-fault".to_owned(),
-                note: "i10-cleanup-driver-io-harness".to_owned(),
+                target: irq_ref,
+                kind: semantic_core::IoFaultInjectionKind::DeviceFault,
+                note: "i11-injected-device-fault-harness".to_owned(),
             },
         ),
     ];
@@ -2553,6 +2556,7 @@ fn demo_migration_package(
             driver_store_binding_count: semantic.driver_store_binding_count(),
             io_wait_count: semantic.io_wait_count(),
             io_cleanup_count: semantic.io_cleanup_count(),
+            io_fault_injection_count: semantic.io_fault_injection_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2739,6 +2743,11 @@ fn demo_migration_package(
                 .io_cleanups()
                 .iter()
                 .map(io_cleanup_manifest)
+                .collect(),
+            io_fault_injections: semantic
+                .io_fault_injections()
+                .iter()
+                .map(io_fault_injection_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -3431,6 +3440,28 @@ fn semantic_roots(
                     cleanup.released_dma_buffers.len(),
                     cleanup.released_mmio_regions.len(),
                     cleanup.released_irq_lines.len()
+                )
+            })
+            .collect(),
+        io_fault_injection_roots: semantic
+            .io_fault_injections()
+            .iter()
+            .map(|fault| {
+                format!(
+                    "io-fault-injection id={} kind={} driver_store={}@{} device={}@{} binding={}@{} target={} cleanup={}@{} state={} generation={}",
+                    fault.id,
+                    fault.kind.as_str(),
+                    fault.driver_store,
+                    fault.driver_store_generation,
+                    fault.device,
+                    fault.device_generation,
+                    fault.driver_binding,
+                    fault.driver_binding_generation,
+                    fault.target.summary(),
+                    fault.cleanup,
+                    fault.cleanup_generation,
+                    fault.state.as_str(),
+                    fault.generation
                 )
             })
             .collect(),
@@ -4804,6 +4835,28 @@ fn io_cleanup_manifest(cleanup: &semantic_core::IoCleanupRecord) -> IoCleanupMan
             })
             .collect(),
         note: cleanup.note.clone(),
+    }
+}
+
+fn io_fault_injection_manifest(
+    fault: &semantic_core::IoFaultInjectionRecord,
+) -> IoFaultInjectionManifest {
+    IoFaultInjectionManifest {
+        id: fault.id,
+        driver_store: fault.driver_store,
+        driver_store_generation: fault.driver_store_generation,
+        device: fault.device,
+        device_generation: fault.device_generation,
+        driver_binding: fault.driver_binding,
+        driver_binding_generation: fault.driver_binding_generation,
+        target: contract_object_ref_manifest(fault.target),
+        cleanup: fault.cleanup,
+        cleanup_generation: fault.cleanup_generation,
+        generation: fault.generation,
+        kind: fault.kind.as_str().to_owned(),
+        state: fault.state.as_str().to_owned(),
+        injected_at_event: fault.injected_at_event,
+        note: fault.note.clone(),
     }
 }
 
