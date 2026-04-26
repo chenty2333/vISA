@@ -470,6 +470,18 @@ pub enum EventKind {
         length: u32,
         generation: Generation,
     },
+    FakeNetBackendObjectBound {
+        fake_net_backend: FakeNetBackendObjectId,
+        packet_device: PacketDeviceObjectId,
+        packet_device_generation: Generation,
+        mtu: u32,
+        rx_queue_depth: u32,
+        tx_queue_depth: u32,
+        frame_format_version: u32,
+        max_payload_len: u32,
+        deterministic_seed: u64,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1441,6 +1453,20 @@ impl EventKind {
                 generation,
             } => format!(
                 "PacketDescriptorObjectRecorded packet_descriptor={packet_descriptor} packet_queue={packet_queue}@{packet_queue_generation} packet_buffer={packet_buffer}@{packet_buffer_generation} slot={slot} length={length} generation={generation}"
+            ),
+            Self::FakeNetBackendObjectBound {
+                fake_net_backend,
+                packet_device,
+                packet_device_generation,
+                mtu,
+                rx_queue_depth,
+                tx_queue_depth,
+                frame_format_version,
+                max_payload_len,
+                deterministic_seed,
+                generation,
+            } => format!(
+                "FakeNetBackendObjectBound fake_net_backend={fake_net_backend} packet_device={packet_device}@{packet_device_generation} mtu={mtu} rx_queue_depth={rx_queue_depth} tx_queue_depth={tx_queue_depth} frame_format_version={frame_format_version} max_payload_len={max_payload_len} deterministic_seed={deterministic_seed} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

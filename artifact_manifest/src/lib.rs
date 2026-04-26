@@ -299,6 +299,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub packet_descriptor_object_count: usize,
     #[serde(default)]
+    pub fake_net_backend_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -449,6 +451,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub packet_descriptors: Vec<PacketDescriptorObjectManifest>,
     #[serde(default)]
+    pub fake_net_backends: Vec<FakeNetBackendObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -578,6 +582,8 @@ pub struct SemanticRootSetManifest {
     pub packet_queue_object_roots: Vec<String>,
     #[serde(default)]
     pub packet_descriptor_object_roots: Vec<String>,
+    #[serde(default)]
+    pub fake_net_backend_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1531,6 +1537,27 @@ pub struct PacketDescriptorObjectManifest {
     pub packet_buffer_generation: u64,
     pub slot: u16,
     pub length: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct FakeNetBackendObjectManifest {
+    pub id: u64,
+    pub name: String,
+    pub packet_device: u64,
+    pub packet_device_generation: u64,
+    pub provider: String,
+    pub profile: String,
+    pub mtu: u32,
+    pub rx_queue_depth: u32,
+    pub tx_queue_depth: u32,
+    pub mac: [u8; 6],
+    pub frame_format_version: u32,
+    pub max_payload_len: u32,
+    pub deterministic_seed: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

@@ -1125,6 +1125,37 @@ impl PacketDescriptorObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FakeNetBackendObjectRecord {
+    pub id: FakeNetBackendObjectId,
+    pub name: String,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub provider: String,
+    pub profile: String,
+    pub mtu: u32,
+    pub rx_queue_depth: u32,
+    pub tx_queue_depth: u32,
+    pub mac: [u8; 6],
+    pub frame_format_version: u32,
+    pub max_payload_len: u32,
+    pub deterministic_seed: u64,
+    pub generation: Generation,
+    pub state: FakeNetBackendObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl FakeNetBackendObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::FakeNetBackendObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

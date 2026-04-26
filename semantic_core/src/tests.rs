@@ -5090,6 +5090,230 @@ fn network_runtime_n3_invariants_reject_packet_descriptor_generation_leaks() {
 }
 
 #[test]
+fn network_runtime_n4_fake_net_backend_binds_exact_packet_device_contract() {
+    let mut graph = setup_n3_packet_descriptor_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n4-test",
+        SemanticCommand::RecordFakeNetBackendObject {
+            fake_net_backend: 1551,
+            name: "fake-net2".to_string(),
+            packet_device: 1541,
+            packet_device_generation: 1,
+            provider: "service_core".to_string(),
+            profile: "fake-net-v1".to_string(),
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+            frame_format_version: 2,
+            max_payload_len: 512,
+            deterministic_seed: 0x1234,
+            note: "n4 fake backend binding".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.fake_net_backend_object_count(), 1);
+    let backend = &graph.fake_net_backends()[0];
+    assert_eq!(
+        backend.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::FakeNetBackendObject, 1551, 1)
+    );
+    assert_eq!(backend.packet_device, 1541);
+    assert_eq!(backend.packet_device_generation, 1);
+    assert_eq!(backend.provider, "service_core");
+    assert_eq!(backend.profile, "fake-net-v1");
+    assert_eq!(backend.deterministic_seed, 0x1234);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "FakeNetBackendObjectBound fake_net_backend=1551 packet_device=1541@1 mtu=1500 rx_queue_depth=4 tx_queue_depth=4 frame_format_version=2 max_payload_len=512 deterministic_seed=4660 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn network_runtime_n4_rejects_stale_mismatched_unsupported_and_duplicate_backend() {
+    let mut graph = setup_n3_packet_descriptor_graph();
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n4-test",
+        SemanticCommand::RecordFakeNetBackendObject {
+            fake_net_backend: 1551,
+            name: "fake-net2".to_string(),
+            packet_device: 1541,
+            packet_device_generation: 2,
+            provider: "service_core".to_string(),
+            profile: "fake-net-v1".to_string(),
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+            frame_format_version: 2,
+            max_payload_len: 512,
+            deterministic_seed: 1,
+            note: "n4 stale packet device".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale.violations,
+        vec!["fake net backend object packet device generation is missing or inactive".to_string()]
+    );
+
+    let mismatch = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n4-test",
+        SemanticCommand::RecordFakeNetBackendObject {
+            fake_net_backend: 1551,
+            name: "fake-net2".to_string(),
+            packet_device: 1541,
+            packet_device_generation: 1,
+            provider: "service_core".to_string(),
+            profile: "fake-net-v1".to_string(),
+            mtu: 1400,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+            frame_format_version: 2,
+            max_payload_len: 512,
+            deterministic_seed: 1,
+            note: "n4 mismatch".to_string(),
+        },
+    ));
+    assert_eq!(mismatch.status, CommandStatus::Rejected);
+    assert_eq!(
+        mismatch.violations,
+        vec!["fake net backend object contract does not match packet device".to_string()]
+    );
+
+    let unsupported = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "n4-test",
+        SemanticCommand::RecordFakeNetBackendObject {
+            fake_net_backend: 1551,
+            name: "virtio-net2".to_string(),
+            packet_device: 1541,
+            packet_device_generation: 1,
+            provider: "service_core".to_string(),
+            profile: "virtio-net-v1".to_string(),
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+            frame_format_version: 2,
+            max_payload_len: 512,
+            deterministic_seed: 1,
+            note: "n4 unsupported profile".to_string(),
+        },
+    ));
+    assert_eq!(unsupported.status, CommandStatus::Rejected);
+    assert_eq!(
+        unsupported.violations,
+        vec!["fake net backend object profile is unsupported".to_string()]
+    );
+
+    let unsupported_provider = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "n4-test",
+        SemanticCommand::RecordFakeNetBackendObject {
+            fake_net_backend: 1551,
+            name: "fake-net2".to_string(),
+            packet_device: 1541,
+            packet_device_generation: 1,
+            provider: "debug-harness".to_string(),
+            profile: "fake-net-v1".to_string(),
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+            frame_format_version: 2,
+            max_payload_len: 512,
+            deterministic_seed: 1,
+            note: "n4 unsupported provider".to_string(),
+        },
+    ));
+    assert_eq!(unsupported_provider.status, CommandStatus::Rejected);
+    assert_eq!(
+        unsupported_provider.violations,
+        vec!["fake net backend object provider is unsupported".to_string()]
+    );
+
+    assert!(graph.record_fake_net_backend_object_with_id(
+        1551,
+        "fake-net2",
+        1541,
+        1,
+        "service_core",
+        "fake-net-v1",
+        1500,
+        4,
+        4,
+        [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+        2,
+        512,
+        1,
+        "n4 first binding",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "n4-test",
+        SemanticCommand::RecordFakeNetBackendObject {
+            fake_net_backend: 1552,
+            name: "fake-net2-second".to_string(),
+            packet_device: 1541,
+            packet_device_generation: 1,
+            provider: "service_core".to_string(),
+            profile: "fake-net-v1".to_string(),
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+            frame_format_version: 2,
+            max_payload_len: 512,
+            deterministic_seed: 2,
+            note: "n4 duplicate binding".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["fake net backend object already bound to packet device generation".to_string()]
+    );
+}
+
+#[test]
+fn network_runtime_n4_invariants_reject_fake_net_backend_generation_leak() {
+    let mut graph = setup_n3_packet_descriptor_graph();
+    assert!(graph.record_fake_net_backend_object_with_id(
+        1551,
+        "fake-net2",
+        1541,
+        1,
+        "service_core",
+        "fake-net-v1",
+        1500,
+        4,
+        4,
+        [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+        2,
+        512,
+        1,
+        "n4 fake backend binding",
+    ));
+    graph.corrupt_fake_net_backend_packet_device_generation_for_test(1551, 2);
+    assert!(matches!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::FakeNetBackendObjectMissingPacketDevice {
+                fake_net_backend: 1551,
+                packet_device: 1541,
+            }
+        )
+    ));
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

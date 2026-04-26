@@ -35,6 +35,7 @@ pub type PacketDeviceObjectId = u64;
 pub type PacketBufferObjectId = u64;
 pub type PacketQueueObjectId = u64;
 pub type PacketDescriptorObjectId = u64;
+pub type FakeNetBackendObjectId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

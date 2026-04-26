@@ -1079,6 +1079,20 @@ pub enum SemanticInvariantError {
     PacketDescriptorObjectMissingEvent {
         packet_descriptor: PacketDescriptorObjectId,
     },
+    FakeNetBackendObjectInvalid {
+        fake_net_backend: FakeNetBackendObjectId,
+    },
+    FakeNetBackendObjectMissingPacketDevice {
+        fake_net_backend: FakeNetBackendObjectId,
+        packet_device: PacketDeviceObjectId,
+    },
+    FakeNetBackendObjectDuplicateBinding {
+        fake_net_backend: FakeNetBackendObjectId,
+        packet_device: PacketDeviceObjectId,
+    },
+    FakeNetBackendObjectMissingEvent {
+        fake_net_backend: FakeNetBackendObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

@@ -1418,6 +1418,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::PacketBufferObject
             | ContractObjectKind::PacketQueueObject
             | ContractObjectKind::PacketDescriptorObject
+            | ContractObjectKind::FakeNetBackendObject
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

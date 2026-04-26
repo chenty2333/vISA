@@ -660,6 +660,10 @@ impl SemanticGraph {
                 .packet_descriptors
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::FakeNetBackendObject => self
+                .fake_net_backends
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

@@ -867,6 +867,21 @@ impl PacketDescriptorObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FakeNetBackendObjectState {
+    Bound,
+    Retired,
+}
+
+impl FakeNetBackendObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bound => "bound",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

@@ -14,21 +14,21 @@ use artifact_manifest::{
     CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
     CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
     CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
-    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest, GuestStateManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
-    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
-    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    FakeNetBackendObjectManifest, GuestStateManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, PacketBufferObjectManifest,
+    PacketDescriptorObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
+    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -60,6 +60,9 @@ use semantic_core::{
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
     TombstoneRecord, TrapSurfaceState, VerifiedArtifact, memory_class_policies,
     validate_contract_graph,
+};
+use service_core::fake_net::{
+    FAKE_NET_BACKEND_PROFILE, FAKE_NET_BACKEND_PROVIDER, FAKE_NET_BACKEND_SEED,
 };
 use service_core::net_contract::{
     PACKET_FRAME_FORMAT_VERSION, PACKET_MAX_PAYLOAD_LEN, VIRTIO_NET0_CONTRACT,
@@ -1624,6 +1627,26 @@ fn record_preemptive_runtime_context_evidence(
                 note: "n3-record-rx-packet-descriptor-object-harness".to_owned(),
             },
         ),
+        CommandEnvelope::new(
+            126,
+            "target-executor-n4",
+            SemanticCommand::RecordFakeNetBackendObject {
+                fake_net_backend: 10_007,
+                name: "fake-net0".to_owned(),
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                provider: FAKE_NET_BACKEND_PROVIDER.to_owned(),
+                profile: FAKE_NET_BACKEND_PROFILE.to_owned(),
+                mtu: VIRTIO_NET0_CONTRACT.mtu,
+                rx_queue_depth: VIRTIO_NET0_CONTRACT.rx_queue_depth,
+                tx_queue_depth: VIRTIO_NET0_CONTRACT.tx_queue_depth,
+                mac: VIRTIO_NET0_CONTRACT.mac,
+                frame_format_version: PACKET_FRAME_FORMAT_VERSION,
+                max_payload_len: PACKET_MAX_PAYLOAD_LEN,
+                deterministic_seed: FAKE_NET_BACKEND_SEED,
+                note: "n4-bind-fake-net-backend-object-harness".to_owned(),
+            },
+        ),
     ];
     for command in io_evidence_commands {
         let result = semantic.apply_envelope(command);
@@ -2673,6 +2696,7 @@ fn demo_migration_package(
             packet_buffer_object_count: semantic.packet_buffer_object_count(),
             packet_queue_object_count: semantic.packet_queue_object_count(),
             packet_descriptor_object_count: semantic.packet_descriptor_object_count(),
+            fake_net_backend_object_count: semantic.fake_net_backend_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2889,6 +2913,11 @@ fn demo_migration_package(
                 .packet_descriptors()
                 .iter()
                 .map(packet_descriptor_object_manifest)
+                .collect(),
+            fake_net_backends: semantic
+                .fake_net_backends()
+                .iter()
+                .map(fake_net_backend_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -3696,6 +3725,29 @@ fn semantic_roots(
                     packet_descriptor.length,
                     packet_descriptor.state.as_str(),
                     packet_descriptor.generation
+                )
+            })
+            .collect(),
+        fake_net_backend_object_roots: semantic
+            .fake_net_backends()
+            .iter()
+            .map(|backend| {
+                format!(
+                    "fake-net-backend-object id={} name={} packet_device={}@{} provider={} profile={} mtu={} rx_queue_depth={} tx_queue_depth={} frame_format_version={} max_payload_len={} deterministic_seed={} state={} generation={}",
+                    backend.id,
+                    backend.name,
+                    backend.packet_device,
+                    backend.packet_device_generation,
+                    backend.provider,
+                    backend.profile,
+                    backend.mtu,
+                    backend.rx_queue_depth,
+                    backend.tx_queue_depth,
+                    backend.frame_format_version,
+                    backend.max_payload_len,
+                    backend.deterministic_seed,
+                    backend.state.as_str(),
+                    backend.generation
                 )
             })
             .collect(),
@@ -5203,6 +5255,30 @@ fn packet_descriptor_object_manifest(
         state: packet_descriptor.state.as_str().to_owned(),
         recorded_at_event: packet_descriptor.recorded_at_event,
         note: packet_descriptor.note.clone(),
+    }
+}
+
+fn fake_net_backend_object_manifest(
+    backend: &semantic_core::FakeNetBackendObjectRecord,
+) -> FakeNetBackendObjectManifest {
+    FakeNetBackendObjectManifest {
+        id: backend.id,
+        name: backend.name.clone(),
+        packet_device: backend.packet_device,
+        packet_device_generation: backend.packet_device_generation,
+        provider: backend.provider.clone(),
+        profile: backend.profile.clone(),
+        mtu: backend.mtu,
+        rx_queue_depth: backend.rx_queue_depth,
+        tx_queue_depth: backend.tx_queue_depth,
+        mac: backend.mac,
+        frame_format_version: backend.frame_format_version,
+        max_payload_len: backend.max_payload_len,
+        deterministic_seed: backend.deterministic_seed,
+        generation: backend.generation,
+        state: backend.state.as_str().to_owned(),
+        recorded_at_event: backend.recorded_at_event,
+        note: backend.note.clone(),
     }
 }
 

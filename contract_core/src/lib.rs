@@ -103,6 +103,7 @@ pub enum ObjectKind {
     PacketBufferObject,
     PacketQueueObject,
     PacketDescriptorObject,
+    FakeNetBackendObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -171,6 +172,7 @@ impl ObjectKind {
             Self::PacketBufferObject => "packet-buffer-object",
             Self::PacketQueueObject => "packet-queue-object",
             Self::PacketDescriptorObject => "packet-descriptor-object",
+            Self::FakeNetBackendObject => "fake-net-backend-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -402,6 +404,7 @@ typed_ref!(
     PacketDescriptorObjectRef,
     ObjectKind::PacketDescriptorObject
 );
+typed_ref!(FakeNetBackendObjectRef, ObjectKind::FakeNetBackendObject);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1759,6 +1762,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "packet descriptor object root/count mismatch",
         ));
     }
+    if roots.fake_net_backend_object_roots.len() != package.semantic.fake_net_backend_object_count
+        || package.semantic.fake_net_backends.len()
+            != package.semantic.fake_net_backend_object_count
+    {
+        return Err(ContractError::new(
+            "fake net backend object root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2318,6 +2329,7 @@ mod tests {
                 packet_buffer_object_count: 0,
                 packet_queue_object_count: 0,
                 packet_descriptor_object_count: 0,
+                fake_net_backend_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2395,6 +2407,7 @@ mod tests {
                 packet_buffer_objects: Vec::new(),
                 packet_queue_objects: Vec::new(),
                 packet_descriptors: Vec::new(),
+                fake_net_backends: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3591,6 +3604,40 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_fake_net_backend_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.fake_net_backend_object_count = 1;
+        package
+            .semantic
+            .fake_net_backends
+            .push(artifact_manifest::FakeNetBackendObjectManifest {
+                id: 35,
+                name: "fake-net0".to_owned(),
+                packet_device: 31,
+                packet_device_generation: 1,
+                provider: "service_core".to_owned(),
+                profile: "fake-net-v1".to_owned(),
+                mtu: 1500,
+                rx_queue_depth: 4,
+                tx_queue_depth: 4,
+                mac: [2, 0x76, 0x6d, 0x6f, 0x73, 1],
+                frame_format_version: 2,
+                max_payload_len: 512,
+                deterministic_seed: 1,
+                generation: 1,
+                state: "bound".to_owned(),
+                recorded_at_event: 71,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "fake net backend object root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -4088,6 +4135,9 @@ mod tests {
         let packet_descriptor_object =
             ObjectRef::new(ObjectKind::PacketDescriptorObject, 33, 1).unwrap();
         assert!(PacketDescriptorObjectRef::try_from_ref(packet_descriptor_object).is_ok());
+        let fake_net_backend_object =
+            ObjectRef::new(ObjectKind::FakeNetBackendObject, 34, 1).unwrap();
+        assert!(FakeNetBackendObjectRef::try_from_ref(fake_net_backend_object).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();
