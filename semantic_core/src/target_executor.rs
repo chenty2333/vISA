@@ -12,6 +12,7 @@ pub const TARGET_ARTIFACT_GENERATION_V1: Generation = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContractObjectKind {
+    Hart,
     Task,
     RunnableQueue,
     ActivationContext,
@@ -46,6 +47,7 @@ pub enum ContractObjectKind {
 impl ContractObjectKind {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Hart => "hart",
             Self::Task => "task",
             Self::RunnableQueue => "runnable-queue",
             Self::ActivationContext => "activation-context",

@@ -1582,6 +1582,127 @@ fn interface_unsupported_is_event_log_visible() {
 }
 
 #[test]
+fn smp_runtime_s0_registers_hart_and_changes_state() {
+    let mut graph = SemanticGraph::new();
+
+    let registered = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s0-test",
+        SemanticCommand::RegisterHart {
+            hart: 1,
+            hardware_id: 0,
+            label: "boot-hart0".to_string(),
+            boot: true,
+            note: "s0 hart object".to_string(),
+        },
+    ));
+    assert_eq!(registered.status, CommandStatus::Applied);
+    assert_eq!(graph.hart_count(), 1);
+    assert_eq!(graph.harts()[0].object_ref().summary(), "hart:1@1");
+
+    let state = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s0-test",
+        SemanticCommand::SetHartState {
+            hart: 1,
+            hart_generation: 1,
+            state: HartState::Idle,
+            reason: "scheduler-ready".to_string(),
+            note: "hart ready for S1 current activation".to_string(),
+        },
+    ));
+    assert_eq!(state.status, CommandStatus::Applied);
+    assert_eq!(graph.harts()[0].state, HartState::Idle);
+    assert_eq!(graph.harts()[0].generation, 2);
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "HartStateChanged hart=1 from=created to=idle reason=scheduler-ready generation=2"
+    );
+}
+
+#[test]
+fn smp_runtime_s0_rejects_duplicate_hart_and_stale_state_generation() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+
+    let duplicate_object = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s0-test",
+        SemanticCommand::RegisterHart {
+            hart: 1,
+            hardware_id: 1,
+            label: "duplicate-hart-object".to_string(),
+            boot: false,
+            note: "duplicate object".to_string(),
+        },
+    ));
+    assert_eq!(duplicate_object.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("hart already exists".to_string());
+    assert_eq!(duplicate_object.violations, expected);
+
+    let duplicate_hardware = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s0-test",
+        SemanticCommand::RegisterHart {
+            hart: 2,
+            hardware_id: 0,
+            label: "duplicate-hardware-hart0".to_string(),
+            boot: false,
+            note: "duplicate hardware".to_string(),
+        },
+    ));
+    assert_eq!(duplicate_hardware.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("hardware hart already exists".to_string());
+    assert_eq!(duplicate_hardware.violations, expected);
+
+    let stale_state = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "s0-test",
+        SemanticCommand::SetHartState {
+            hart: 1,
+            hart_generation: 99,
+            state: HartState::Running,
+            reason: "stale-generation".to_string(),
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_state.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("hart generation is missing".to_string());
+    assert_eq!(stale_state.violations, expected);
+    assert_eq!(graph.harts()[0].state, HartState::Created);
+}
+
+#[test]
+fn smp_runtime_s0_invariants_reject_invalid_hart_identity() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    graph.corrupt_hart_generation_for_test(1, 0);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::HartInvalidObjectIdentity { hart: 1 })
+    );
+}
+
+#[test]
+fn smp_runtime_s0_invariants_reject_duplicate_hardware_hart() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    let mut duplicate = graph.harts()[0].clone();
+    duplicate.id = 2;
+    graph.duplicate_hart_for_test(duplicate);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::DuplicateHardwareHart { hardware_id: 0 })
+    );
+}
+
+#[test]
 fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let mut graph = SemanticGraph::new();
     graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");

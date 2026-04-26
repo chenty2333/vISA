@@ -72,6 +72,7 @@ impl SemanticGraph {
             }
         }
 
+        self.check_hart_invariants()?;
         self.check_scheduler_invariants()?;
         self.check_context_invariants()?;
         self.check_timer_invariants()?;

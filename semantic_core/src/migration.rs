@@ -96,6 +96,7 @@ pub struct SnapshotBarrierSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SemanticSnapshot {
+    pub harts: Vec<HartRecord>,
     pub barrier: SnapshotBarrierSnapshot,
     pub tasks: Vec<TaskRecord>,
     pub resources: Vec<ResourceRecord>,
@@ -186,7 +187,8 @@ impl MigrationPackage {
             self.substrate_boundary.background_copy_pages
         ));
         lines.push(format!(
-            "semantic roots: tasks={} resources={} authorities={} waits={} capabilities={} fault_domains={} stores={} transactions={} fastpath_plans={} boundaries={} artifacts={} activations={}",
+            "semantic roots: harts={} tasks={} resources={} authorities={} waits={} capabilities={} fault_domains={} stores={} transactions={} fastpath_plans={} boundaries={} artifacts={} activations={}",
+            self.semantic.harts.len(),
             self.semantic.tasks.len(),
             self.semantic.resources.len(),
             self.semantic.authority_bindings.len(),
@@ -228,6 +230,16 @@ pub enum MigrationValidationError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SemanticInvariantError {
+    HartInvalidObjectIdentity {
+        hart: HartId,
+    },
+    DuplicateHart {
+        hart: HartId,
+    },
+    DuplicateHardwareHart {
+        hardware_id: u32,
+    },
+    MultipleBootHarts,
     TaskReferencesMissingResource {
         task: TaskId,
         resource: ResourceId,

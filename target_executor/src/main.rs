@@ -12,17 +12,17 @@ use artifact_manifest::{
     BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
     CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
-    ContractViolationManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
-    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
-    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
-    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
-    TrapRecordManifest, WaitRecordManifest,
+    ContractViolationManifest, GuestStateManifest, HartRecordManifest, HostcallSpecManifest,
+    HostcallTraceManifest, InterfaceEventManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    StoreRecordManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
+    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
+    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TaskRecordManifest,
+    TimerInterruptManifest, TombstoneManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -35,14 +35,14 @@ use semantic_core::{
     CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
     CodePublisher, CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot,
     ContractObjectKind, ContractObjectRef, ContractViolation, EntrypointState, EventKind,
-    EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HostcallCategory,
-    HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, ManagedStoreRecord,
-    MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord, PackageReplayValidator,
-    ReplayPackageValidationState, RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand,
-    SemanticGraph, SemanticWaitKind, SnapshotBarrierValidator, StoreRecord, StoreState,
-    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
-    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
-    TombstoneRecord, TrapSurfaceState, VerifiedArtifact, memory_class_policies,
+    EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HartState,
+    HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
+    ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
+    PackageReplayValidator, ReplayPackageValidationState, RestartPolicy, RuntimeMode,
+    SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind, SnapshotBarrierValidator,
+    StoreRecord, StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec,
+    TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata,
+    TaskState, TombstoneRecord, TrapSurfaceState, VerifiedArtifact, memory_class_policies,
     validate_contract_graph,
 };
 use substrate_api::{SubstrateEvent, SubstrateRequester};
@@ -349,6 +349,28 @@ fn record_preemptive_runtime_context_evidence(
         .map(|handle| handle.generation)
         .ok_or("p8 cleanup store handle is missing")?;
     let commands = [
+        CommandEnvelope::new(
+            1,
+            "target-executor-s0",
+            SemanticCommand::RegisterHart {
+                hart: 1,
+                hardware_id: 0,
+                label: "boot-hart0".to_owned(),
+                boot: true,
+                note: "s0-hart-object-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            2,
+            "target-executor-s0",
+            SemanticCommand::SetHartState {
+                hart: 1,
+                hart_generation: 1,
+                state: HartState::Idle,
+                reason: "scheduler-ready".to_owned(),
+                note: "s0-hart-state-harness".to_owned(),
+            },
+        ),
         CommandEnvelope::new(
             10,
             "target-executor-p0",
@@ -1640,6 +1662,7 @@ fn demo_migration_package(
             event_log_cursor: semantic.event_log().cursor(),
             roots,
             pending_wait_count: semantic.pending_wait_count(),
+            hart_count: semantic.hart_count(),
             task_count: semantic.task_count(),
             task_record_count: semantic.tasks().len(),
             runtime_activation_count: semantic.runtime_activation_count(),
@@ -1687,6 +1710,7 @@ fn demo_migration_package(
             command_result_count: target_v1.command_results.len(),
             interface_event_count: target_v1.interface_events.len(),
             target_artifacts: target_v1.target_artifacts.clone(),
+            hart_records: semantic.harts().iter().map(hart_record_manifest).collect(),
             task_records: semantic.tasks().iter().map(task_record_manifest).collect(),
             runtime_activation_records: semantic
                 .runtime_activations()
@@ -1802,6 +1826,21 @@ fn semantic_roots(
     target_v1: &TargetExecutorV1Report,
 ) -> SemanticRootSetManifest {
     SemanticRootSetManifest {
+        hart_roots: semantic
+            .harts()
+            .iter()
+            .map(|hart| {
+                format!(
+                    "hart id={} hardware_id={} label={} state={} generation={} boot={}",
+                    hart.id,
+                    hart.hardware_id,
+                    hart.label,
+                    hart.state.as_str(),
+                    hart.generation,
+                    hart.boot
+                )
+            })
+            .collect(),
         task_roots: semantic
             .tasks()
             .iter()
@@ -2512,6 +2551,19 @@ fn store_record_manifest(store: &StoreRecord) -> StoreRecordManifest {
         state: store.state.as_str().to_owned(),
         generation: store.generation,
         restart_count: store.restart_count,
+    }
+}
+
+fn hart_record_manifest(hart: &semantic_core::HartRecord) -> HartRecordManifest {
+    HartRecordManifest {
+        id: u64::from(hart.id),
+        hardware_id: hart.hardware_id,
+        label: hart.label.clone(),
+        state: hart.state.as_str().to_owned(),
+        generation: hart.generation,
+        boot: hart.boot,
+        last_event: hart.last_event,
+        note: hart.note.clone(),
     }
 }
 
@@ -3337,7 +3389,8 @@ fn restore_migration_package(
         package.guest.canonical_isa
     );
     println!(
-        "restore plan: import semantic roots tasks={} resources={} authorities={}/{} waits={} pending_waits={} transactions={} active_transactions={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} sockets={} rx_bytes={} event_cursor={}",
+        "restore plan: import semantic roots harts={} tasks={} resources={} authorities={}/{} waits={} pending_waits={} transactions={} active_transactions={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} sockets={} rx_bytes={} event_cursor={}",
+        package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.active_authority_count,

@@ -6,6 +6,20 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventKind {
+    HartRegistered {
+        hart: HartId,
+        hardware_id: u32,
+        label: String,
+        boot: bool,
+        generation: Generation,
+    },
+    HartStateChanged {
+        hart: HartId,
+        from: HartState,
+        to: HartState,
+        reason: String,
+        generation: Generation,
+    },
     TaskCreated {
         task: TaskId,
         frontend: FrontendKind,
@@ -468,6 +482,26 @@ pub enum EventKind {
 impl EventKind {
     pub fn summary(&self) -> String {
         match self {
+            Self::HartRegistered {
+                hart,
+                hardware_id,
+                label,
+                boot,
+                generation,
+            } => format!(
+                "HartRegistered hart={hart} hardware_id={hardware_id} label={label} boot={boot} generation={generation}"
+            ),
+            Self::HartStateChanged {
+                hart,
+                from,
+                to,
+                reason,
+                generation,
+            } => format!(
+                "HartStateChanged hart={hart} from={} to={} reason={reason} generation={generation}",
+                from.as_str(),
+                to.as_str()
+            ),
             Self::TaskCreated { task, frontend } => {
                 format!("TaskCreated task={task} frontend={}", frontend.as_str())
             }

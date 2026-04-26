@@ -66,6 +66,7 @@ impl SchemaVersion {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObjectKind {
+    Hart,
     Task,
     RunnableQueue,
     ActivationContext,
@@ -103,6 +104,7 @@ pub enum ObjectKind {
 impl ObjectKind {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Hart => "hart",
             Self::Task => "task",
             Self::RunnableQueue => "runnable-queue",
             Self::ActivationContext => "activation-context",
@@ -291,6 +293,7 @@ macro_rules! typed_ref {
 }
 
 typed_ref!(StoreRef, ObjectKind::Store);
+typed_ref!(HartRef, ObjectKind::Hart);
 typed_ref!(CapabilityRef, ObjectKind::Capability);
 typed_ref!(WaitTokenRef, ObjectKind::WaitToken);
 typed_ref!(CleanupRef, ObjectKind::Cleanup);
@@ -1422,6 +1425,11 @@ pub fn validate_replay_quiescent(package: &MigrationPackageManifest) -> Contract
 
 pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractResult<()> {
     let roots = &package.semantic.roots;
+    if roots.hart_roots.len() != package.semantic.hart_count
+        || package.semantic.hart_records.len() != package.semantic.hart_count
+    {
+        return Err(ContractError::new("hart root/count mismatch"));
+    }
     if roots.task_roots.len() != package.semantic.task_count {
         return Err(ContractError::new("task root/count mismatch"));
     }
@@ -1979,6 +1987,7 @@ mod tests {
                 event_log_cursor: 0,
                 roots: SemanticRootSetManifest::default(),
                 pending_wait_count: 0,
+                hart_count: 0,
                 task_count: 0,
                 task_record_count: 0,
                 runtime_activation_count: 0,
@@ -2026,6 +2035,7 @@ mod tests {
                 command_result_count: 0,
                 interface_event_count: 0,
                 target_artifacts: Vec::new(),
+                hart_records: Vec::new(),
                 task_records: Vec::new(),
                 runtime_activation_records: Vec::new(),
                 runnable_queues: Vec::new(),
@@ -2406,6 +2416,28 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "preemption latency root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_hart_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.hart_count = 1;
+        package
+            .semantic
+            .hart_records
+            .push(artifact_manifest::HartRecordManifest {
+                id: 1,
+                hardware_id: 0,
+                label: "boot-hart0".to_owned(),
+                state: "idle".to_owned(),
+                generation: 2,
+                boot: true,
+                last_event: Some(2),
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "hart root/count mismatch");
     }
 
     #[test]

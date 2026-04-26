@@ -6,6 +6,7 @@ use super::*;
 
 #[derive(Clone, Debug)]
 pub struct SemanticGraph {
+    harts: Vec<HartRecord>,
     tasks: Vec<TaskRecord>,
     runtime_activations: Vec<RuntimeActivationRecord>,
     runnable_queues: Vec<RunnableQueueRecord>,
@@ -59,6 +60,7 @@ mod capability;
 mod cleanup;
 mod command;
 mod context;
+mod hart;
 mod interface;
 mod latency;
 mod network;
@@ -81,6 +83,7 @@ impl SemanticGraph {
     }
     pub fn with_runtime_mode(runtime_mode: RuntimeMode) -> Self {
         Self {
+            harts: Vec::new(),
             tasks: Vec::new(),
             runtime_activations: Vec::new(),
             runnable_queues: Vec::new(),

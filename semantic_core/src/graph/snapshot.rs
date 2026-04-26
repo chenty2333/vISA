@@ -29,6 +29,7 @@ impl SemanticGraph {
             guest,
             substrate_boundary: substrate_boundary.clone(),
             semantic: SemanticSnapshot {
+                harts: self.harts.clone(),
                 barrier: SnapshotBarrierSnapshot {
                     id: barrier_id,
                     event_log_cursor: self.event_log.cursor(),

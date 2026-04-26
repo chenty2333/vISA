@@ -5,6 +5,24 @@ use alloc::vec::Vec;
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HartRecord {
+    pub id: HartId,
+    pub hardware_id: u32,
+    pub label: String,
+    pub state: HartState,
+    pub generation: Generation,
+    pub boot: bool,
+    pub last_event: Option<EventId>,
+    pub note: String,
+}
+
+impl HartRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::Hart, self.id as u64, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskRecord {
     pub id: TaskId,
     pub label: String,

@@ -2,6 +2,20 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SemanticCommand {
+    RegisterHart {
+        hart: HartId,
+        hardware_id: u32,
+        label: String,
+        boot: bool,
+        note: String,
+    },
+    SetHartState {
+        hart: HartId,
+        hart_generation: Generation,
+        state: HartState,
+        reason: String,
+        note: String,
+    },
     CreateRuntimeActivation {
         activation: ActivationId,
         owner_task: TaskId,
@@ -274,6 +288,8 @@ impl CommandError {
 impl SemanticCommand {
     pub const fn name(&self) -> &'static str {
         match self {
+            Self::RegisterHart { .. } => "register-hart",
+            Self::SetHartState { .. } => "set-hart-state",
             Self::CreateRuntimeActivation { .. } => "create-runtime-activation",
             Self::CreateRunnableQueue { .. } => "create-runnable-queue",
             Self::EnqueueRunnable { .. } => "enqueue-runnable",
@@ -381,6 +397,49 @@ impl SemanticGraph {
 
     fn preflight_command(&self, command: &SemanticCommand) -> Result<(), CommandError> {
         match command {
+            SemanticCommand::RegisterHart {
+                hart,
+                hardware_id,
+                label,
+                boot,
+                ..
+            } => {
+                if *hart == 0 {
+                    Err(CommandError::precondition("hart id=0 is invalid"))
+                } else if label.is_empty() {
+                    Err(CommandError::precondition("hart label is empty"))
+                } else if self.harts.iter().any(|record| record.id == *hart) {
+                    Err(CommandError::precondition("hart already exists"))
+                } else if self
+                    .harts
+                    .iter()
+                    .any(|record| record.hardware_id == *hardware_id)
+                {
+                    Err(CommandError::precondition("hardware hart already exists"))
+                } else if *boot && self.harts.iter().any(|record| record.boot) {
+                    Err(CommandError::precondition("boot hart already exists"))
+                } else {
+                    Ok(())
+                }
+            }
+            SemanticCommand::SetHartState {
+                hart,
+                hart_generation,
+                reason,
+                ..
+            } => {
+                if reason.is_empty() {
+                    Err(CommandError::precondition("hart state reason is empty"))
+                } else if self
+                    .harts
+                    .iter()
+                    .any(|record| record.id == *hart && record.generation == *hart_generation)
+                {
+                    Ok(())
+                } else {
+                    Err(CommandError::precondition("hart generation is missing"))
+                }
+            }
             SemanticCommand::CreateRuntimeActivation {
                 activation,
                 owner_task,
@@ -1397,6 +1456,20 @@ impl SemanticGraph {
 
     fn apply_prechecked_command(&mut self, command: SemanticCommand) -> bool {
         match command {
+            SemanticCommand::RegisterHart {
+                hart,
+                hardware_id,
+                label,
+                boot,
+                note,
+            } => self.register_hart_with_id(hart, hardware_id, &label, boot, &note),
+            SemanticCommand::SetHartState {
+                hart,
+                hart_generation,
+                state,
+                reason,
+                note,
+            } => self.set_hart_state(hart, hart_generation, state, &reason, &note),
             SemanticCommand::CreateRuntimeActivation {
                 activation,
                 owner_task,

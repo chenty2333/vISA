@@ -1,0 +1,128 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "S0-hart-object-state",
+  "phase": "Phase 2 Full SMP Runtime",
+  "status": "pass",
+  "scope": [
+    "Add HartRecord semantic object with nonzero contract identity and separate hardware_id metadata",
+    "Add RegisterHart and SetHartState commands with exact generation preconditions",
+    "Add HartRegistered and HartStateChanged EventLog evidence",
+    "Expose hart evidence through semantic package roots, osctl stable JSON views, scheduler view, and golden trace"
+  ],
+  "no_goals": [
+    "hart-local current activation",
+    "per-hart event attribution",
+    "SMP runnable queue ownership",
+    "IPI delivery",
+    "remote preempt or park",
+    "activation migration",
+    "target-side execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/hart.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/graph/snapshot.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/smp/golden_s0_hart_object_state.trace.json",
+    "tests/reports/checkpoints/s0_hart_object_state.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/smp/golden_s0_hart_object_state.trace.json",
+    "tests/reports/checkpoints/s0_hart_object_state.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "Hart hardware id 0 is stored as metadata instead of becoming an invalid ObjectRef id=0",
+      "Hart state mutation is routed through command preflight and exact generation checks",
+      "osctl hart output uses an explicit ViewV1 shape instead of dumping internal records"
+    ],
+    "residual_notes": [
+      "TimerInterrupt.hart remains the old hardware-id field; S2 should add exact HartRef attribution",
+      "S0 intentionally does not model hart-local current activation or cross-hart scheduling"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core smp_runtime_s0",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core hart_root",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- hart list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/smp/golden_s0_hart_object_state.trace.json",
+    "osctl_views": [
+      "osctl hart list --json <migration.json>",
+      "osctl scheduler list --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "hart_roots"
+    ]
+  },
+  "residual_gaps": [
+    "TimerInterrupt.hart remains hardware-id metadata until S2 per-hart event attribution adds exact HartRef generation",
+    "Hart-local current activation is intentionally deferred to S1"
+  ],
+  "next_checkpoint": "S1-hart-local-current-activation"
+}

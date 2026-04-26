@@ -1,4 +1,5 @@
 pub type TaskId = u32;
+pub type HartId = u32;
 pub type RunnableQueueId = u64;
 pub type ActivationContextId = u64;
 pub type SavedContextId = u64;

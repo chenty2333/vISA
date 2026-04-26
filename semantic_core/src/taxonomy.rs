@@ -18,6 +18,31 @@ impl FrontendKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HartState {
+    Created,
+    Booting,
+    Idle,
+    Running,
+    Parked,
+    Offline,
+    Faulted,
+}
+
+impl HartState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Booting => "booting",
+            Self::Idle => "idle",
+            Self::Running => "running",
+            Self::Parked => "parked",
+            Self::Offline => "offline",
+            Self::Faulted => "faulted",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskState {
     Runnable,
     Running,

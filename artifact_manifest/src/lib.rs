@@ -221,6 +221,8 @@ pub struct SemanticSnapshotManifest {
     pub roots: SemanticRootSetManifest,
     #[serde(default)]
     pub pending_wait_count: usize,
+    #[serde(default)]
+    pub hart_count: usize,
     pub task_count: usize,
     #[serde(default)]
     pub task_record_count: usize,
@@ -311,6 +313,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub target_artifacts: Vec<TargetArtifactImageManifest>,
     #[serde(default)]
+    pub hart_records: Vec<HartRecordManifest>,
+    #[serde(default)]
     pub task_records: Vec<TaskRecordManifest>,
     #[serde(default)]
     pub runtime_activation_records: Vec<RuntimeActivationRecordManifest>,
@@ -376,6 +380,8 @@ pub struct SemanticSnapshotManifest {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SemanticRootSetManifest {
+    #[serde(default)]
+    pub hart_roots: Vec<String>,
     #[serde(default)]
     pub task_roots: Vec<String>,
     #[serde(default)]
@@ -458,6 +464,18 @@ pub struct SemanticRootSetManifest {
     pub interface_event_roots: Vec<String>,
     #[serde(default)]
     pub event_log_tail: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct HartRecordManifest {
+    pub id: u64,
+    pub hardware_id: u32,
+    pub label: String,
+    pub state: String,
+    pub generation: u64,
+    pub boot: bool,
+    pub last_event: Option<u64>,
+    pub note: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
