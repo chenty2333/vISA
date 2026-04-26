@@ -535,6 +535,51 @@ impl MmioRegionObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrqLineTrigger {
+    Edge,
+    Level,
+}
+
+impl IrqLineTrigger {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Edge => "edge",
+            Self::Level => "level",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrqLinePolarity {
+    ActiveHigh,
+    ActiveLow,
+}
+
+impl IrqLinePolarity {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ActiveHigh => "active-high",
+            Self::ActiveLow => "active-low",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrqLineObjectState {
+    Registered,
+    Released,
+}
+
+impl IrqLineObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Registered => "registered",
+            Self::Released => "released",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

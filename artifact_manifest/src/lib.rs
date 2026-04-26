@@ -275,6 +275,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub mmio_region_object_count: usize,
     #[serde(default)]
+    pub irq_line_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -401,6 +403,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub mmio_region_objects: Vec<MmioRegionObjectManifest>,
     #[serde(default)]
+    pub irq_line_objects: Vec<IrqLineObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -506,6 +510,8 @@ pub struct SemanticRootSetManifest {
     pub dma_buffer_object_roots: Vec<String>,
     #[serde(default)]
     pub mmio_region_object_roots: Vec<String>,
+    #[serde(default)]
+    pub irq_line_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1208,6 +1214,22 @@ pub struct MmioRegionObjectManifest {
     pub offset: u64,
     pub length: u64,
     pub access: String,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IrqLineObjectManifest {
+    pub id: u64,
+    pub device: u64,
+    pub device_generation: u64,
+    pub resource: u64,
+    pub resource_generation: u64,
+    pub irq_number: u32,
+    pub trigger: String,
+    pub polarity: String,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

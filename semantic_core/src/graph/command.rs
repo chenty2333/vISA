@@ -291,6 +291,17 @@ pub enum SemanticCommand {
         access: MmioRegionObjectAccess,
         note: String,
     },
+    RecordIrqLineObject {
+        irq_line: IrqLineObjectId,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        resource: ResourceId,
+        resource_generation: Generation,
+        irq_number: u32,
+        trigger: IrqLineTrigger,
+        polarity: IrqLinePolarity,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -523,6 +534,7 @@ impl SemanticCommand {
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
             Self::RecordMmioRegionObject { .. } => "record-mmio-region-object",
+            Self::RecordIrqLineObject { .. } => "record-irq-line-object",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1723,6 +1735,28 @@ impl SemanticGraph {
                     *access,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordIrqLineObject {
+                irq_line,
+                device,
+                device_generation,
+                resource,
+                resource_generation,
+                irq_number,
+                trigger,
+                polarity,
+                ..
+            } => self
+                .validate_irq_line_object(
+                    *irq_line,
+                    *device,
+                    *device_generation,
+                    *resource,
+                    *resource_generation,
+                    *irq_number,
+                    *trigger,
+                    *polarity,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2705,6 +2739,27 @@ impl SemanticGraph {
                 offset,
                 length,
                 access,
+                &note,
+            ),
+            SemanticCommand::RecordIrqLineObject {
+                irq_line,
+                device,
+                device_generation,
+                resource,
+                resource_generation,
+                irq_number,
+                trigger,
+                polarity,
+                note,
+            } => self.record_irq_line_object_with_id(
+                irq_line,
+                device,
+                device_generation,
+                resource,
+                resource_generation,
+                irq_number,
+                trigger,
+                polarity,
                 &note,
             ),
             SemanticCommand::ResumeActivation {

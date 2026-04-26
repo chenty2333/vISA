@@ -2151,6 +2151,190 @@ fn io_runtime_i4_rejects_stale_wrong_resource_or_duplicate_mmio_region() {
 }
 
 #[test]
+fn io_runtime_i5_irq_line_object_records_device_and_resource_identity() {
+    let mut graph = SemanticGraph::new();
+    let device_resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let device_resource_generation = graph.resource_handle(device_resource).unwrap().generation;
+    let irq_resource = graph.register_resource(ResourceKind::IrqLine, None, "irq:fake-io0-rx");
+    let irq_resource_generation = graph.resource_handle(irq_resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        device_resource,
+        device_resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "device object harness",
+    ));
+    let cursor_before = graph.event_log().cursor();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i5-test",
+        SemanticCommand::RecordIrqLineObject {
+            irq_line: 901,
+            device: 401,
+            device_generation: 1,
+            resource: irq_resource,
+            resource_generation: irq_resource_generation,
+            irq_number: 5,
+            trigger: IrqLineTrigger::Level,
+            polarity: IrqLinePolarity::ActiveHigh,
+            note: "irq line object harness".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.irq_line_objects().len(), 1);
+    let irq_line = &graph.irq_line_objects()[0];
+    assert_eq!(irq_line.id, 901);
+    assert_eq!(irq_line.device, 401);
+    assert_eq!(irq_line.device_generation, 1);
+    assert_eq!(irq_line.resource, irq_resource);
+    assert_eq!(irq_line.resource_generation, irq_resource_generation);
+    assert_eq!(irq_line.irq_number, 5);
+    assert_eq!(irq_line.trigger, IrqLineTrigger::Level);
+    assert_eq!(irq_line.polarity, IrqLinePolarity::ActiveHigh);
+    assert_eq!(irq_line.state, IrqLineObjectState::Registered);
+    assert!(irq_line.recorded_at_event > cursor_before);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "IrqLineObjectRecorded irq_line=901 device=401@1 resource={irq_resource}@{irq_resource_generation} irq_number=5 trigger=level polarity=active-high generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn io_runtime_i5_rejects_stale_wrong_resource_or_duplicate_irq_line() {
+    let mut graph = SemanticGraph::new();
+    let device_resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let device_resource_generation = graph.resource_handle(device_resource).unwrap().generation;
+    let irq_resource = graph.register_resource(ResourceKind::IrqLine, None, "irq:fake-io0-rx");
+    let irq_resource_generation = graph.resource_handle(irq_resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        device_resource,
+        device_resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "device object harness",
+    ));
+
+    let stale_device = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i5-test",
+        SemanticCommand::RecordIrqLineObject {
+            irq_line: 901,
+            device: 401,
+            device_generation: 2,
+            resource: irq_resource,
+            resource_generation: irq_resource_generation,
+            irq_number: 5,
+            trigger: IrqLineTrigger::Level,
+            polarity: IrqLinePolarity::ActiveHigh,
+            note: "stale device generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_device.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_device.violations,
+        vec!["irq line object device generation is missing or inactive".to_string()]
+    );
+
+    let wrong_resource = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i5-test",
+        SemanticCommand::RecordIrqLineObject {
+            irq_line: 901,
+            device: 401,
+            device_generation: 1,
+            resource: device_resource,
+            resource_generation: device_resource_generation,
+            irq_number: 5,
+            trigger: IrqLineTrigger::Level,
+            polarity: IrqLinePolarity::ActiveHigh,
+            note: "non-irq resource must reject".to_string(),
+        },
+    ));
+    assert_eq!(wrong_resource.status, CommandStatus::Rejected);
+    assert_eq!(
+        wrong_resource.violations,
+        vec!["irq line object resource kind is not irq-line".to_string()]
+    );
+
+    let stale_resource = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "i5-test",
+        SemanticCommand::RecordIrqLineObject {
+            irq_line: 901,
+            device: 401,
+            device_generation: 1,
+            resource: irq_resource,
+            resource_generation: irq_resource_generation + 1,
+            irq_number: 5,
+            trigger: IrqLineTrigger::Level,
+            polarity: IrqLinePolarity::ActiveHigh,
+            note: "stale resource generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_resource.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_resource.violations,
+        vec!["irq line object resource generation mismatch".to_string()]
+    );
+
+    assert!(graph.record_irq_line_object_with_id(
+        901,
+        401,
+        1,
+        irq_resource,
+        irq_resource_generation,
+        5,
+        IrqLineTrigger::Level,
+        IrqLinePolarity::ActiveHigh,
+        "irq line object harness",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "i5-test",
+        SemanticCommand::RecordIrqLineObject {
+            irq_line: 902,
+            device: 401,
+            device_generation: 1,
+            resource: irq_resource,
+            resource_generation: irq_resource_generation,
+            irq_number: 5,
+            trigger: IrqLineTrigger::Edge,
+            polarity: IrqLinePolarity::ActiveLow,
+            note: "duplicate irq number must reject".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["irq line object number already exists for device generation".to_string()]
+    );
+
+    graph.corrupt_irq_line_object_device_generation_for_test(901, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::IrqLineObjectMissingDevice {
+            irq_line: 901,
+            device: 401,
+        })
+    );
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

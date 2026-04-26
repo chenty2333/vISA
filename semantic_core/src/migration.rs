@@ -846,6 +846,25 @@ pub enum SemanticInvariantError {
     MmioRegionObjectMissingEvent {
         mmio_region: MmioRegionObjectId,
     },
+    IrqLineObjectInvalid {
+        irq_line: IrqLineObjectId,
+    },
+    IrqLineObjectMissingDevice {
+        irq_line: IrqLineObjectId,
+        device: DeviceObjectId,
+    },
+    IrqLineObjectMissingResource {
+        irq_line: IrqLineObjectId,
+        resource: ResourceId,
+    },
+    IrqLineObjectDuplicateNumber {
+        irq_line: IrqLineObjectId,
+        device: DeviceObjectId,
+        irq_number: u32,
+    },
+    IrqLineObjectMissingEvent {
+        irq_line: IrqLineObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

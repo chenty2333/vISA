@@ -783,6 +783,28 @@ impl MmioRegionObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrqLineObjectRecord {
+    pub id: IrqLineObjectId,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub resource: ResourceId,
+    pub resource_generation: Generation,
+    pub irq_number: u32,
+    pub trigger: IrqLineTrigger,
+    pub polarity: IrqLinePolarity,
+    pub generation: Generation,
+    pub state: IrqLineObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl IrqLineObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::IrqLineObject, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

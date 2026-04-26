@@ -91,6 +91,7 @@ pub enum ObjectKind {
     DescriptorObject,
     DmaBufferObject,
     MmioRegionObject,
+    IrqLineObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -147,6 +148,7 @@ impl ObjectKind {
             Self::DescriptorObject => "descriptor-object",
             Self::DmaBufferObject => "dma-buffer-object",
             Self::MmioRegionObject => "mmio-region-object",
+            Self::IrqLineObject => "irq-line-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -363,6 +365,7 @@ typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
 typed_ref!(DescriptorObjectRef, ObjectKind::DescriptorObject);
 typed_ref!(DmaBufferObjectRef, ObjectKind::DmaBufferObject);
 typed_ref!(MmioRegionObjectRef, ObjectKind::MmioRegionObject);
+typed_ref!(IrqLineObjectRef, ObjectKind::IrqLineObject);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1643,6 +1646,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("mmio region object root/count mismatch"));
     }
+    if roots.irq_line_object_roots.len() != package.semantic.irq_line_object_count
+        || package.semantic.irq_line_objects.len() != package.semantic.irq_line_object_count
+    {
+        return Err(ContractError::new("irq line object root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2190,6 +2198,7 @@ mod tests {
                 descriptor_object_count: 0,
                 dma_buffer_object_count: 0,
                 mmio_region_object_count: 0,
+                irq_line_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2255,6 +2264,7 @@ mod tests {
                 descriptor_objects: Vec::new(),
                 dma_buffer_objects: Vec::new(),
                 mmio_region_objects: Vec::new(),
+                irq_line_objects: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3099,6 +3109,32 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_irq_line_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.irq_line_object_count = 1;
+        package
+            .semantic
+            .irq_line_objects
+            .push(artifact_manifest::IrqLineObjectManifest {
+                id: 22,
+                device: 17,
+                device_generation: 1,
+                resource: 23,
+                resource_generation: 1,
+                irq_number: 5,
+                trigger: "level".to_owned(),
+                polarity: "active-high".to_owned(),
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 58,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "irq line object root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3595,6 +3631,8 @@ mod tests {
         assert!(DmaBufferObjectRef::try_from_ref(dma_buffer_object).is_ok());
         let mmio_region_object = ObjectRef::new(ObjectKind::MmioRegionObject, 21, 1).unwrap();
         assert!(MmioRegionObjectRef::try_from_ref(mmio_region_object).is_ok());
+        let irq_line_object = ObjectRef::new(ObjectKind::IrqLineObject, 22, 1).unwrap();
+        assert!(IrqLineObjectRef::try_from_ref(irq_line_object).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

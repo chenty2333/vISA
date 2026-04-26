@@ -302,6 +302,17 @@ pub enum EventKind {
         access: MmioRegionObjectAccess,
         generation: Generation,
     },
+    IrqLineObjectRecorded {
+        irq_line: IrqLineObjectId,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        resource: ResourceId,
+        resource_generation: Generation,
+        irq_number: u32,
+        trigger: IrqLineTrigger,
+        polarity: IrqLinePolarity,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1064,6 +1075,21 @@ impl EventKind {
             } => format!(
                 "MmioRegionObjectRecorded mmio_region={mmio_region} device={device}@{device_generation} resource={resource}@{resource_generation} index={region_index} offset={offset} length={length} access={} generation={generation}",
                 access.as_str()
+            ),
+            Self::IrqLineObjectRecorded {
+                irq_line,
+                device,
+                device_generation,
+                resource,
+                resource_generation,
+                irq_number,
+                trigger,
+                polarity,
+                generation,
+            } => format!(
+                "IrqLineObjectRecorded irq_line={irq_line} device={device}@{device_generation} resource={resource}@{resource_generation} irq_number={irq_number} trigger={} polarity={} generation={generation}",
+                trigger.as_str(),
+                polarity.as_str()
             ),
             Self::RuntimeActivationResumed {
                 resume,
