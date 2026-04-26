@@ -387,6 +387,22 @@ pub enum SemanticInvariantError {
         preemption: PreemptionId,
         activation: ActivationId,
     },
+    SchedulerDecisionMissingQueue {
+        decision: SchedulerDecisionId,
+        queue: RunnableQueueId,
+    },
+    SchedulerDecisionMissingActivation {
+        decision: SchedulerDecisionId,
+        activation: ActivationId,
+    },
+    SchedulerDecisionQueueEntryMismatch {
+        decision: SchedulerDecisionId,
+        activation: ActivationId,
+    },
+    SchedulerDecisionMissingTask {
+        decision: SchedulerDecisionId,
+        task: TaskId,
+    },
     StoreReferencesMissingFaultDomain {
         store: StoreId,
         fault_domain: FaultDomainId,

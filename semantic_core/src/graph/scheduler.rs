@@ -442,6 +442,86 @@ impl SemanticGraph {
         true
     }
 
+    pub fn record_scheduler_decision_with_id(
+        &mut self,
+        decision: SchedulerDecisionId,
+        queue: RunnableQueueId,
+        queue_generation: Generation,
+        selected_activation: ActivationId,
+        selected_activation_generation: Generation,
+        reason: &str,
+        note: &str,
+    ) -> bool {
+        if decision == 0
+            || reason.is_empty()
+            || self
+                .scheduler_decisions
+                .iter()
+                .any(|record| record.id == decision)
+        {
+            return false;
+        }
+        let Some(queue_record) = self.runnable_queues.iter().find(|record| {
+            record.id == queue
+                && record.generation == queue_generation
+                && record.state == RunnableQueueState::Active
+        }) else {
+            return false;
+        };
+        if !queue_record.entries.iter().any(|entry| {
+            entry.activation == selected_activation
+                && entry.activation_generation == selected_activation_generation
+        }) {
+            return false;
+        }
+        let Some(activation) = self.runtime_activations.iter().find(|record| {
+            record.id == selected_activation
+                && record.generation == selected_activation_generation
+                && record.state == RuntimeActivationState::Runnable
+                && record.runnable_queue == Some(queue)
+                && record.runnable_queue_generation == Some(queue_generation)
+        }) else {
+            return false;
+        };
+        let owner_task = activation.owner_task;
+        let owner_task_generation = activation.owner_task_generation;
+        if !self
+            .tasks
+            .iter()
+            .any(|task| task.id == owner_task && task.generation == owner_task_generation)
+        {
+            return false;
+        }
+
+        self.next_scheduler_decision_id = self.next_scheduler_decision_id.max(decision + 1);
+        let event = self.event_log.push(
+            "scheduler",
+            EventKind::SchedulerDecisionRecorded {
+                decision,
+                queue,
+                queue_generation,
+                activation: selected_activation,
+                activation_generation: selected_activation_generation,
+                generation: 1,
+            },
+        );
+        self.scheduler_decisions.push(SchedulerDecisionRecord {
+            id: decision,
+            queue,
+            queue_generation,
+            selected_activation,
+            selected_activation_generation,
+            owner_task,
+            owner_task_generation,
+            generation: 1,
+            state: SchedulerDecisionState::Recorded,
+            decided_at_event: event,
+            reason: reason.to_string(),
+            note: note.to_string(),
+        });
+        true
+    }
+
     pub fn runtime_activations(&self) -> &[RuntimeActivationRecord] {
         &self.runtime_activations
     }
@@ -454,6 +534,10 @@ impl SemanticGraph {
         &self.preemptions
     }
 
+    pub fn scheduler_decisions(&self) -> &[SchedulerDecisionRecord] {
+        &self.scheduler_decisions
+    }
+
     pub fn runtime_activation_count(&self) -> usize {
         self.runtime_activations.len()
     }
@@ -464,6 +548,10 @@ impl SemanticGraph {
 
     pub fn preemption_count(&self) -> usize {
         self.preemptions.len()
+    }
+
+    pub fn scheduler_decision_count(&self) -> usize {
+        self.scheduler_decisions.len()
     }
 
     #[cfg(test)]
@@ -490,6 +578,21 @@ impl SemanticGraph {
             .find(|record| record.id == preemption)
         {
             record.timer_interrupt_generation = generation;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_scheduler_decision_activation_generation_for_test(
+        &mut self,
+        decision: SchedulerDecisionId,
+        generation: Generation,
+    ) {
+        if let Some(record) = self
+            .scheduler_decisions
+            .iter_mut()
+            .find(|record| record.id == decision)
+        {
+            record.selected_activation_generation = generation;
         }
     }
 
@@ -671,6 +774,89 @@ impl SemanticGraph {
                         activation: preemption.activation,
                     });
                 }
+            }
+        }
+
+        for decision in &self.scheduler_decisions {
+            if decision.state == SchedulerDecisionState::Dropped {
+                continue;
+            }
+            let Some(queue) = self.runnable_queues.iter().find(|record| {
+                record.id == decision.queue && record.generation == decision.queue_generation
+            }) else {
+                return Err(SemanticInvariantError::SchedulerDecisionMissingQueue {
+                    decision: decision.id,
+                    queue: decision.queue,
+                });
+            };
+            if !self.tasks.iter().any(|task| {
+                task.id == decision.owner_task && task.generation == decision.owner_task_generation
+            }) {
+                return Err(SemanticInvariantError::SchedulerDecisionMissingTask {
+                    decision: decision.id,
+                    task: decision.owner_task,
+                });
+            }
+            let was_queued_at_decision_generation = self.event_log.events.iter().any(|event| {
+                matches!(
+                    &event.kind,
+                    EventKind::RunnableQueued {
+                        queue,
+                        activation,
+                        activation_generation,
+                    } if *queue == decision.queue
+                        && *activation == decision.selected_activation
+                        && *activation_generation == decision.selected_activation_generation
+                )
+            });
+            if !was_queued_at_decision_generation {
+                return Err(
+                    SemanticInvariantError::SchedulerDecisionQueueEntryMismatch {
+                        decision: decision.id,
+                        activation: decision.selected_activation,
+                    },
+                );
+            }
+            let Some(activation) = self
+                .runtime_activations
+                .iter()
+                .find(|record| record.id == decision.selected_activation)
+            else {
+                return Err(SemanticInvariantError::SchedulerDecisionMissingActivation {
+                    decision: decision.id,
+                    activation: decision.selected_activation,
+                });
+            };
+            if activation.generation < decision.selected_activation_generation {
+                return Err(SemanticInvariantError::SchedulerDecisionMissingActivation {
+                    decision: decision.id,
+                    activation: decision.selected_activation,
+                });
+            }
+            if activation.generation == decision.selected_activation_generation
+                && (activation.state != RuntimeActivationState::Runnable
+                    || activation.runnable_queue != Some(decision.queue)
+                    || activation.runnable_queue_generation != Some(decision.queue_generation))
+            {
+                return Err(SemanticInvariantError::SchedulerDecisionMissingActivation {
+                    decision: decision.id,
+                    activation: decision.selected_activation,
+                });
+            }
+            if activation.generation == decision.selected_activation_generation
+                && (queue.state != RunnableQueueState::Active
+                    || !queue.entries.iter().any(|entry| {
+                        entry.activation == decision.selected_activation
+                            && entry.activation_generation
+                                == decision.selected_activation_generation
+                    }))
+            {
+                return Err(
+                    SemanticInvariantError::SchedulerDecisionQueueEntryMismatch {
+                        decision: decision.id,
+                        activation: decision.selected_activation,
+                    },
+                );
             }
         }
 

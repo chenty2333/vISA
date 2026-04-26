@@ -169,6 +169,23 @@ impl PreemptionState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SchedulerDecisionState {
+    Recorded,
+    Superseded,
+    Dropped,
+}
+
+impl SchedulerDecisionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Superseded => "superseded",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
 impl TaskState {
     pub const fn as_str(self) -> &'static str {
         match self {

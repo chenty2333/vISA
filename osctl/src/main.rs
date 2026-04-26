@@ -10,8 +10,8 @@ use artifact_manifest::{
     BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
     CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest, HostcallTraceManifest,
     InterfaceEventManifest, MigrationPackageManifest, PreemptionManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, StoreRecordManifest,
-    SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
     TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
@@ -208,7 +208,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         "task" | "store" | "cap" | "capability" | "wait" | "cleanup" | "command" | "scheduler"
         | "runtime-activation" | "runnable-queue" | "activation-context" | "saved-context"
-        | "timer-interrupt" | "preemption" | "context" => {
+        | "timer-interrupt" | "preemption" | "scheduler-decision" | "context" => {
             handle_view_command(&command, args.collect())
         }
         "state" => {
@@ -374,7 +374,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler-decision|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -573,6 +573,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "saved-context" => "saved-context",
         "timer-interrupt" => "timer-interrupt",
         "preemption" => "preemption",
+        "scheduler-decision" => "scheduler-decision",
         "scheduler" => "scheduler",
         "runnable-queue" => "runnable-queue",
         "cap" | "capability" => "capability",
@@ -802,6 +803,37 @@ fn preemption_view_v1(preemption: &PreemptionManifest) -> serde_json::Value {
     })
 }
 
+fn scheduler_decision_view_v1(decision: &SchedulerDecisionManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "scheduler-decision",
+        "id": decision.id,
+        "generation": decision.generation,
+        "state": decision.state,
+        "owner": {
+            "scheduler": 1,
+            "task": decision.owner_task,
+            "task_generation": decision.owner_task_generation,
+        },
+        "references": {
+            "queue": {
+                "id": decision.queue,
+                "generation": decision.queue_generation,
+            },
+            "selected_activation": {
+                "id": decision.selected_activation,
+                "generation": decision.selected_activation_generation,
+            },
+        },
+        "reason": decision.reason,
+        "note": decision.note,
+        "last_transition": {
+            "decided_at_event": decision.decided_at_event,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -854,6 +886,14 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "queue": preemption.queue,
                 "queue_generation": preemption.queue_generation,
             })).collect::<Vec<_>>(),
+            "scheduler_decisions": package.semantic.scheduler_decisions.iter().map(|decision| serde_json::json!({
+                "id": decision.id,
+                "generation": decision.generation,
+                "selected_activation": decision.selected_activation,
+                "selected_activation_generation": decision.selected_activation_generation,
+                "queue": decision.queue,
+                "queue_generation": decision.queue_generation,
+            })).collect::<Vec<_>>(),
         },
         "last_transition": {
             "scheduler_decision_cursor": package.substrate_boundary.scheduler_decision_cursor,
@@ -865,6 +905,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "saved_context_count": package.semantic.saved_context_count,
             "timer_interrupt_count": package.semantic.timer_interrupt_count,
             "preemption_count": package.semantic.preemption_count,
+            "scheduler_decision_count": package.semantic.scheduler_decision_count,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -1265,6 +1306,12 @@ fn stable_views_for_kind(
             .preemptions
             .iter()
             .map(preemption_view_v1)
+            .collect()),
+        "scheduler-decision" => Ok(package
+            .semantic
+            .scheduler_decisions
+            .iter()
+            .map(scheduler_decision_view_v1)
             .collect()),
         "store" => Ok(package
             .semantic
@@ -1882,7 +1929,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} scheduler_decisions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.task_count,
@@ -1892,6 +1939,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.saved_context_count,
             package.semantic.timer_interrupt_count,
             package.semantic.preemption_count,
+            package.semantic.scheduler_decision_count,
             package.semantic.resource_count,
             package.semantic.store_count,
             package.semantic.capability_count,
@@ -2054,6 +2102,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.timer_interrupt_roots,
     );
     print_roots("preemption", &package.semantic.roots.preemption_roots);
+    print_roots(
+        "scheduler-decision",
+        &package.semantic.roots.scheduler_decision_roots,
+    );
     print_roots("resource", &package.semantic.roots.resource_roots);
     print_roots("authority", &package.semantic.roots.authority_roots);
     print_roots("store", &package.semantic.roots.store_roots);
@@ -2402,6 +2454,34 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 Some(saved.saved_at_event),
             ));
         }
+    }
+    for decision in &package.semantic.scheduler_decisions {
+        let from = object_ref_json("scheduler-decision", decision.id, decision.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("runnable-queue", decision.queue, decision.queue_generation),
+            "selected-from",
+            "historical",
+            Some(decision.decided_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "activation",
+                decision.selected_activation,
+                decision.selected_activation_generation,
+            ),
+            "selected",
+            "historical",
+            Some(decision.decided_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json("task", decision.owner_task, decision.owner_task_generation),
+            "owned-by-task",
+            "historical",
+            Some(decision.decided_at_event),
+        ));
     }
     for trap in &package.semantic.trap_records {
         let from = object_ref_json("trap", trap.id, trap.generation);
@@ -4144,6 +4224,7 @@ mod tests {
         package.semantic.saved_context_count = 1;
         package.semantic.timer_interrupt_count = 1;
         package.semantic.preemption_count = 1;
+        package.semantic.scheduler_decision_count = 1;
         package.substrate_boundary.timer_epoch = 3;
         package.semantic.task_records.push(TaskRecordManifest {
             id: 7,
@@ -4252,6 +4333,23 @@ mod tests {
             preempted_at_event: 12,
             note: "preempted".to_owned(),
         });
+        package
+            .semantic
+            .scheduler_decisions
+            .push(SchedulerDecisionManifest {
+                id: 16,
+                queue: 1,
+                queue_generation: 1,
+                selected_activation: 11,
+                selected_activation_generation: 3,
+                owner_task: 7,
+                owner_task_generation: 1,
+                generation: 1,
+                state: "recorded".to_owned(),
+                decided_at_event: 13,
+                reason: "runnable-available".to_owned(),
+                note: "select activation".to_owned(),
+            });
         let context = activation_context_view_v1(&package.semantic.activation_contexts[0]);
         assert_eq!(context["kind"], "activation-context");
         assert_eq!(context["references"]["activation"]["generation"], 2);
@@ -4281,14 +4379,27 @@ mod tests {
             3
         );
         assert_eq!(preemption["references"]["timer_interrupt"]["generation"], 1);
+        let decision = scheduler_decision_view_v1(&package.semantic.scheduler_decisions[0]);
+        assert_eq!(decision["kind"], "scheduler-decision");
+        assert_eq!(
+            decision["references"]["selected_activation"]["generation"],
+            3
+        );
+        assert_eq!(decision["references"]["queue"]["generation"], 1);
+        assert_eq!(decision["reason"], "runnable-available");
         let scheduler = scheduler_view_v1(&package);
         assert_eq!(scheduler["kind"], "scheduler");
         assert_eq!(scheduler["references"]["queues"][0]["entries"], 1);
         assert_eq!(scheduler["references"]["preemptions"][0]["activation"], 11);
+        assert_eq!(
+            scheduler["references"]["scheduler_decisions"][0]["selected_activation_generation"],
+            3
+        );
         assert_eq!(scheduler["last_transition"]["activation_context_count"], 1);
         assert_eq!(scheduler["last_transition"]["saved_context_count"], 1);
         assert_eq!(scheduler["last_transition"]["timer_interrupt_count"], 1);
         assert_eq!(scheduler["last_transition"]["preemption_count"], 1);
+        assert_eq!(scheduler["last_transition"]["scheduler_decision_count"], 1);
         assert_eq!(scheduler["last_transition"]["timer_epoch"], 3);
         assert_eq!(
             scheduler["last_transition"]["scheduler_decision_cursor"],
@@ -4350,6 +4461,15 @@ mod tests {
                     && edge["to"]["kind"] == "preemption"
                     && edge["to"]["generation"] == 1
                     && edge["relation"] == "captured-from-preemption"
+                    && edge["mode"] == "historical")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "scheduler-decision"
+                    && edge["to"]["kind"] == "activation"
+                    && edge["to"]["generation"] == 3
+                    && edge["relation"] == "selected"
                     && edge["mode"] == "historical")
         );
     }

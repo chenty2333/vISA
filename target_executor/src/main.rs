@@ -16,11 +16,12 @@ use artifact_manifest::{
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
     MigrationTargetManifest, PreemptionManifest, RequiredArtifactProfileManifest,
     RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
-    SavedContextManifest, SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
-    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
-    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
-    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
-    TrapRecordManifest, WaitRecordManifest,
+    SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
+    SemanticSnapshotManifest, StoreRecordManifest, SubstrateBoundaryManifest,
+    SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
+    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
+    TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -461,6 +462,19 @@ fn record_preemptive_runtime_context_evidence(
                 sp: 0x9000,
                 flags: 0,
                 note: "p4-save-preempted-context-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            50,
+            "target-executor-p5",
+            SemanticCommand::RecordSchedulerDecision {
+                decision: 9001,
+                queue: 9002,
+                queue_generation: 1,
+                selected_activation: 9002,
+                selected_activation_generation: 4,
+                reason: "runnable-available".to_owned(),
+                note: "p5-scheduler-decision-harness".to_owned(),
             },
         ),
     ];
@@ -1475,6 +1489,7 @@ fn demo_migration_package(
             saved_context_count: semantic.saved_context_count(),
             timer_interrupt_count: semantic.timer_interrupt_count(),
             preemption_count: semantic.preemption_count(),
+            scheduler_decision_count: semantic.scheduler_decision_count(),
             resource_count: semantic.resource_count(),
             authority_count: semantic.authority_count(),
             active_authority_count: semantic.active_authority_count(),
@@ -1539,6 +1554,11 @@ fn demo_migration_package(
                 .preemptions()
                 .iter()
                 .map(preemption_manifest)
+                .collect(),
+            scheduler_decisions: semantic
+                .scheduler_decisions()
+                .iter()
+                .map(scheduler_decision_manifest)
                 .collect(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
@@ -1733,6 +1753,22 @@ fn semantic_roots(
                     preemption.queue_generation,
                     preemption.state.as_str(),
                     preemption.generation
+                )
+            })
+            .collect(),
+        scheduler_decision_roots: semantic
+            .scheduler_decisions()
+            .iter()
+            .map(|decision| {
+                format!(
+                    "scheduler-decision id={} queue={}@{} activation={}@{} state={} generation={}",
+                    decision.id,
+                    decision.queue,
+                    decision.queue_generation,
+                    decision.selected_activation,
+                    decision.selected_activation_generation,
+                    decision.state.as_str(),
+                    decision.generation
                 )
             })
             .collect(),
@@ -2304,6 +2340,25 @@ fn preemption_manifest(preemption: &semantic_core::PreemptionRecord) -> Preempti
         state: preemption.state.as_str().to_owned(),
         preempted_at_event: preemption.preempted_at_event,
         note: preemption.note.clone(),
+    }
+}
+
+fn scheduler_decision_manifest(
+    decision: &semantic_core::SchedulerDecisionRecord,
+) -> SchedulerDecisionManifest {
+    SchedulerDecisionManifest {
+        id: decision.id,
+        queue: decision.queue,
+        queue_generation: decision.queue_generation,
+        selected_activation: decision.selected_activation,
+        selected_activation_generation: decision.selected_activation_generation,
+        owner_task: u64::from(decision.owner_task),
+        owner_task_generation: decision.owner_task_generation,
+        generation: decision.generation,
+        state: decision.state.as_str().to_owned(),
+        decided_at_event: decision.decided_at_event,
+        reason: decision.reason.clone(),
+        note: decision.note.clone(),
     }
 }
 

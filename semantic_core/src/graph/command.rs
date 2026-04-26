@@ -65,6 +65,15 @@ pub enum SemanticCommand {
         queue: RunnableQueueId,
         note: String,
     },
+    RecordSchedulerDecision {
+        decision: SchedulerDecisionId,
+        queue: RunnableQueueId,
+        queue_generation: Generation,
+        selected_activation: ActivationId,
+        selected_activation_generation: Generation,
+        reason: String,
+        note: String,
+    },
     GrantCapability {
         subject: String,
         debug_object_label: String,
@@ -222,6 +231,7 @@ impl SemanticCommand {
             Self::SavePreemptedContext { .. } => "save-preempted-context",
             Self::RecordTimerInterrupt { .. } => "record-timer-interrupt",
             Self::PreemptActivation { .. } => "preempt-activation",
+            Self::RecordSchedulerDecision { .. } => "record-scheduler-decision",
             Self::GrantCapability { .. } => "grant-capability",
             Self::RevokeCapability { .. } => "revoke-capability",
             Self::CreateWait { .. } => "create-wait",
@@ -798,6 +808,72 @@ impl SemanticGraph {
                     Ok(())
                 }
             }
+            SemanticCommand::RecordSchedulerDecision {
+                decision,
+                queue,
+                queue_generation,
+                selected_activation,
+                selected_activation_generation,
+                reason,
+                ..
+            } => {
+                if *decision == 0 {
+                    Err(CommandError::precondition(
+                        "scheduler decision id=0 is invalid",
+                    ))
+                } else if reason.is_empty() {
+                    Err(CommandError::precondition(
+                        "scheduler decision reason is empty",
+                    ))
+                } else if self
+                    .scheduler_decisions
+                    .iter()
+                    .any(|record| record.id == *decision)
+                {
+                    Err(CommandError::precondition(
+                        "scheduler decision already exists",
+                    ))
+                } else {
+                    let Some(queue_record) = self.runnable_queues.iter().find(|record| {
+                        record.id == *queue
+                            && record.generation == *queue_generation
+                            && record.state == RunnableQueueState::Active
+                    }) else {
+                        return Err(CommandError::precondition(
+                            "scheduler decision queue generation is missing or inactive",
+                        ));
+                    };
+                    if !queue_record.entries.iter().any(|entry| {
+                        entry.activation == *selected_activation
+                            && entry.activation_generation == *selected_activation_generation
+                    }) {
+                        return Err(CommandError::precondition(
+                            "scheduler decision activation is not queued",
+                        ));
+                    }
+                    let Some(activation) = self.runtime_activations.iter().find(|record| {
+                        record.id == *selected_activation
+                            && record.generation == *selected_activation_generation
+                            && record.state == RuntimeActivationState::Runnable
+                            && record.runnable_queue == Some(*queue)
+                            && record.runnable_queue_generation == Some(*queue_generation)
+                    }) else {
+                        return Err(CommandError::precondition(
+                            "scheduler decision activation generation is not runnable",
+                        ));
+                    };
+                    if self.tasks.iter().any(|task| {
+                        task.id == activation.owner_task
+                            && task.generation == activation.owner_task_generation
+                    }) {
+                        Ok(())
+                    } else {
+                        Err(CommandError::precondition(
+                            "scheduler decision owner task generation is missing",
+                        ))
+                    }
+                }
+            }
             SemanticCommand::GrantCapability { operations, .. } if operations.is_empty() => Err(
                 CommandError::precondition("grant-capability requires at least one operation"),
             ),
@@ -1027,6 +1103,23 @@ impl SemanticGraph {
                 timer_interrupt,
                 timer_interrupt_generation,
                 queue,
+                &note,
+            ),
+            SemanticCommand::RecordSchedulerDecision {
+                decision,
+                queue,
+                queue_generation,
+                selected_activation,
+                selected_activation_generation,
+                reason,
+                note,
+            } => self.record_scheduler_decision_with_id(
+                decision,
+                queue,
+                queue_generation,
+                selected_activation,
+                selected_activation_generation,
+                &reason,
                 &note,
             ),
             SemanticCommand::GrantCapability {

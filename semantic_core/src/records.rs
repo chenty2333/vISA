@@ -163,6 +163,32 @@ impl PreemptionRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SchedulerDecisionRecord {
+    pub id: SchedulerDecisionId,
+    pub queue: RunnableQueueId,
+    pub queue_generation: Generation,
+    pub selected_activation: ActivationId,
+    pub selected_activation_generation: Generation,
+    pub owner_task: TaskId,
+    pub owner_task_generation: Generation,
+    pub generation: Generation,
+    pub state: SchedulerDecisionState,
+    pub decided_at_event: EventId,
+    pub reason: String,
+    pub note: String,
+}
+
+impl SchedulerDecisionRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::SchedulerDecision,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceRecord {
     pub id: ResourceId,
     pub label: String,

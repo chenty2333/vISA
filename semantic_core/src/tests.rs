@@ -1272,7 +1272,7 @@ fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let old_generation = graph
         .capability_generation("driver_virtio_net", "mmio.virtio-net0")
         .expect("authority generation");
-    assert_eq!(graph.check_invariants(), Ok(()));
+    assert!(graph.check_invariants().is_ok());
 
     assert!(graph.release_authority_binding(authority, "driver micro-reboot"));
     assert_eq!(graph.active_authority_count(), 0);
@@ -1326,7 +1326,7 @@ fn authority_bindings_drive_resource_and_capability_lifecycle() {
             .check_capability("driver_virtio_net", "mmio.virtio-net0", "write")
             .is_ok()
     );
-    assert_eq!(graph.check_invariants(), Ok(()));
+    assert!(graph.check_invariants().is_ok());
 }
 
 #[test]
@@ -1644,7 +1644,7 @@ fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
         RuntimeActivationState::Running
     );
     assert!(graph.runnable_queues()[0].entries.is_empty());
-    assert!(graph.check_invariants().is_ok());
+    assert_eq!(graph.check_invariants(), Ok(()));
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
         "RuntimeActivationStateChanged activation=11 runnable->running generation=3"
@@ -1749,7 +1749,7 @@ fn preemptive_runtime_p0_rejects_duplicate_queue_and_generationless_store_owner(
     expected.push("activation already queued".to_string());
     assert_eq!(duplicate.violations, expected);
     assert!(graph.runnable_queues()[1].entries.is_empty());
-    assert!(graph.check_invariants().is_ok());
+    assert_eq!(graph.check_invariants(), Ok(()));
 }
 
 #[test]
@@ -2233,6 +2233,141 @@ fn preemptive_runtime_p4_invariants_reject_saved_context_preemption_generation_l
     assert_eq!(
         graph.check_invariants(),
         Err(SemanticInvariantError::SavedContextMissingPreemptionGeneration { saved_context: 13 })
+    );
+}
+
+fn p5_preempted_activation_with_saved_context() -> SemanticGraph {
+    let mut graph = p4_preempted_activation();
+    assert!(graph.save_preempted_context_with_ids(12, 13, 6, 1, 0x2000, 0x9000, 0, "timer"));
+    graph
+}
+
+#[test]
+fn preemptive_runtime_p5_scheduler_decision_records_runnable_choice() {
+    let mut graph = p5_preempted_activation_with_saved_context();
+
+    let decision = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p5-test",
+        SemanticCommand::RecordSchedulerDecision {
+            decision: 14,
+            queue: 1,
+            queue_generation: 1,
+            selected_activation: 11,
+            selected_activation_generation: 4,
+            reason: "runnable-available".to_string(),
+            note: "choose preempted activation".to_string(),
+        },
+    ));
+    assert_eq!(decision.status, CommandStatus::Applied);
+    assert_eq!(graph.scheduler_decisions().len(), 1);
+    assert_eq!(
+        graph.scheduler_decisions()[0].state,
+        SchedulerDecisionState::Recorded
+    );
+    assert_eq!(graph.scheduler_decisions()[0].selected_activation, 11);
+    assert_eq!(
+        graph.scheduler_decisions()[0].selected_activation_generation,
+        4
+    );
+    assert_eq!(graph.scheduler_decisions()[0].owner_task, 7);
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Runnable
+    );
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "SchedulerDecisionRecorded decision=14 queue=1@1 activation=11@4 generation=1"
+    );
+}
+
+#[test]
+fn preemptive_runtime_p5_scheduler_decision_is_historical_after_dequeue() {
+    let mut graph = p4_preempted_activation();
+    assert!(graph.record_scheduler_decision_with_id(
+        14,
+        1,
+        1,
+        11,
+        4,
+        "runnable-available",
+        "choose"
+    ));
+    assert!(graph.dequeue_runnable_activation(1, 11));
+
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Running
+    );
+    assert_eq!(graph.runtime_activations()[0].generation, 5);
+    assert!(graph.runnable_queues()[0].entries.is_empty());
+    assert_eq!(graph.check_invariants(), Ok(()));
+}
+
+#[test]
+fn preemptive_runtime_p5_rejects_unqueued_or_stale_decision() {
+    let mut graph = p5_preempted_activation_with_saved_context();
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p5-test",
+        SemanticCommand::RecordSchedulerDecision {
+            decision: 14,
+            queue: 1,
+            queue_generation: 1,
+            selected_activation: 11,
+            selected_activation_generation: 3,
+            reason: "stale".to_string(),
+            note: "stale activation".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("scheduler decision activation is not queued".to_string());
+    assert_eq!(stale.violations, expected);
+    assert!(graph.scheduler_decisions().is_empty());
+
+    let empty_reason = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p5-test",
+        SemanticCommand::RecordSchedulerDecision {
+            decision: 14,
+            queue: 1,
+            queue_generation: 1,
+            selected_activation: 11,
+            selected_activation_generation: 4,
+            reason: "".to_string(),
+            note: "empty reason".to_string(),
+        },
+    ));
+    assert_eq!(empty_reason.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("scheduler decision reason is empty".to_string());
+    assert_eq!(empty_reason.violations, expected);
+}
+
+#[test]
+fn preemptive_runtime_p5_invariants_reject_decision_generation_leak() {
+    let mut graph = p5_preempted_activation_with_saved_context();
+    assert!(graph.record_scheduler_decision_with_id(
+        14,
+        1,
+        1,
+        11,
+        4,
+        "runnable-available",
+        "choose"
+    ));
+    graph.corrupt_scheduler_decision_activation_generation_for_test(14, 3);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::SchedulerDecisionQueueEntryMismatch {
+                decision: 14,
+                activation: 11,
+            }
+        )
     );
 }
 

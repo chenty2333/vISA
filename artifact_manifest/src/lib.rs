@@ -236,6 +236,8 @@ pub struct SemanticSnapshotManifest {
     pub timer_interrupt_count: usize,
     #[serde(default)]
     pub preemption_count: usize,
+    #[serde(default)]
+    pub scheduler_decision_count: usize,
     pub resource_count: usize,
     #[serde(default)]
     pub authority_count: usize,
@@ -315,6 +317,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub preemptions: Vec<PreemptionManifest>,
     #[serde(default)]
+    pub scheduler_decisions: Vec<SchedulerDecisionManifest>,
+    #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
     #[serde(default)]
     pub store_records: Vec<StoreRecordManifest>,
@@ -372,6 +376,8 @@ pub struct SemanticRootSetManifest {
     pub timer_interrupt_roots: Vec<String>,
     #[serde(default)]
     pub preemption_roots: Vec<String>,
+    #[serde(default)]
+    pub scheduler_decision_roots: Vec<String>,
     #[serde(default)]
     pub resource_roots: Vec<String>,
     #[serde(default)]
@@ -599,6 +605,22 @@ pub struct PreemptionManifest {
     pub generation: u64,
     pub state: String,
     pub preempted_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SchedulerDecisionManifest {
+    pub id: u64,
+    pub queue: u64,
+    pub queue_generation: u64,
+    pub selected_activation: u64,
+    pub selected_activation_generation: u64,
+    pub owner_task: u64,
+    pub owner_task_generation: u64,
+    pub generation: u64,
+    pub state: String,
+    pub decided_at_event: u64,
+    pub reason: String,
     pub note: String,
 }
 
