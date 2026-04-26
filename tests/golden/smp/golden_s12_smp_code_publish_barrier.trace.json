@@ -1,0 +1,159 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "S12-smp-code-publish-barrier",
+  "name": "golden_s12_smp_code_publish_barrier",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/target-runtime-abi/02-code-publish-and-cache.md",
+    "references/specs/target-runtime-abi/08-default-profile.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "W^X page-table update",
+    "real local or remote icache instruction execution",
+    "real code object publication",
+    "trap-gate forced parking",
+    "real target-side execution"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "record-smp-safe-point",
+        "safe_point": "smp-safe-point:9001@1",
+        "participants": [
+          "hart:1@2",
+          "hart:2@4"
+        ],
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "complete-stop-the-world-rendezvous",
+        "rendezvous": "stop-the-world-rendezvous:9101@1",
+        "epoch": 1,
+        "safe_point": "smp-safe-point:9001@1",
+        "stop_new_activations": true,
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "validate-smp-code-publish-barrier",
+        "barrier": "smp-code-publish-barrier:9201@1",
+        "rendezvous": "stop-the-world-rendezvous:9101@1",
+        "code_publish_epoch": "0->1",
+        "remote_icache_sync_required": true,
+        "code_publish_executed": false,
+        "expected": "applied"
+      },
+      {
+        "id": 4,
+        "command": "validate-smp-code-publish-barrier",
+        "rendezvous": "stop-the-world-rendezvous:9101@2",
+        "expected": "rejected",
+        "violation": "smp code publish barrier rendezvous is missing"
+      },
+      {
+        "id": 5,
+        "command": "validate-smp-code-publish-barrier",
+        "remote_icache_sync_required": false,
+        "expected": "rejected",
+        "violation": "smp code publish barrier requires remote icache sync"
+      },
+      {
+        "id": 6,
+        "command": "validate-smp-code-publish-barrier",
+        "code_publish_executed": true,
+        "expected": "rejected",
+        "violation": "smp code publish barrier must not execute code publish"
+      },
+      {
+        "id": 7,
+        "command": "validate-smp-code-publish-barrier",
+        "hart_advanced_after_rendezvous": "hart:2@5",
+        "expected": "rejected",
+        "violation": "smp code publish barrier participant generation is stale"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "SmpSafePointRecorded",
+      "safe_point": "smp-safe-point:9001@1",
+      "participant_count": 2
+    },
+    {
+      "kind": "StopTheWorldRendezvousCompleted",
+      "rendezvous": "stop-the-world-rendezvous:9101@1",
+      "epoch": 1,
+      "safe_point": "smp-safe-point:9001@1",
+      "participant_count": 2
+    },
+    {
+      "kind": "SmpCodePublishBarrierValidated",
+      "barrier": "smp-code-publish-barrier:9201@1",
+      "rendezvous": "stop-the-world-rendezvous:9101@1",
+      "code_publish_epoch": "0->1",
+      "participant_count": 2
+    },
+    {
+      "kind": "HartEventAttribution",
+      "event_kind": "SmpCodePublishBarrierHartSynced",
+      "hart": "hart:1@2"
+    },
+    {
+      "kind": "HartEventAttribution",
+      "event_kind": "SmpCodePublishBarrierHartSynced",
+      "hart": "hart:2@4"
+    }
+  ],
+  "expected": {
+    "views": {
+      "smp-code-publish-barrier": {
+        "id": 9201,
+        "generation": 1,
+        "state": "validated",
+        "rendezvous": "stop-the-world-rendezvous:9101@1",
+        "rendezvous_epoch": 1,
+        "code_publish_epoch_before": 0,
+        "code_publish_epoch_after": 1,
+        "remote_icache_sync_required": true,
+        "code_publish_executed": false,
+        "participants": [
+          "hart:1@2",
+          "hart:2@4"
+        ],
+        "participant_count": 2
+      },
+      "scheduler": {
+        "smp_code_publish_barrier_count": 1,
+        "hart_event_attribution_count_delta": 2
+      },
+      "graph-history": {
+        "edges": [
+          "smp-code-publish-barrier:9201@1 --publish-rendezvous--> stop-the-world-rendezvous:9101@1",
+          "smp-code-publish-barrier:9201@1 --participant-hart--> hart:1@2",
+          "smp-code-publish-barrier:9201@1 --participant-hart--> hart:2@4"
+        ]
+      }
+    },
+    "invariants": [
+      "Barrier must reference an exact completed stop-the-world rendezvous generation",
+      "Barrier code_publish_epoch must advance by exactly one",
+      "Barrier must require remote icache sync evidence for every rendezvous participant",
+      "Barrier must not mark real code publish as executed in S12",
+      "Barrier remains historical evidence and survives later hart generation changes"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "smp_runtime_s12_code_publish_barrier_validates_from_rendezvous",
+      "smp_runtime_s12_rejects_bad_barrier_inputs",
+      "smp_runtime_s12_history_survives_later_hart_transition",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "semantic_roots_reject_smp_code_publish_barrier_root_mismatch"
+    ]
+  }
+}

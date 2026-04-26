@@ -255,6 +255,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub stop_the_world_rendezvous_count: usize,
     #[serde(default)]
+    pub smp_code_publish_barrier_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -361,6 +363,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub stop_the_world_rendezvous: Vec<StopTheWorldRendezvousManifest>,
     #[serde(default)]
+    pub smp_code_publish_barriers: Vec<SmpCodePublishBarrierManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -446,6 +450,8 @@ pub struct SemanticRootSetManifest {
     pub smp_safe_point_roots: Vec<String>,
     #[serde(default)]
     pub stop_the_world_rendezvous_roots: Vec<String>,
+    #[serde(default)]
+    pub smp_code_publish_barrier_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -904,6 +910,34 @@ pub struct StopTheWorldRendezvousManifest {
     pub generation: u64,
     pub state: String,
     pub completed_at_event: u64,
+    pub reason: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SmpCodePublishBarrierParticipantManifest {
+    pub hart: u64,
+    pub hart_generation: u64,
+    pub hardware_hart: u32,
+    pub last_seen_code_epoch_before: u64,
+    pub last_seen_code_epoch_after: u64,
+    pub semantic_icache_sync: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SmpCodePublishBarrierManifest {
+    pub id: u64,
+    pub rendezvous: u64,
+    pub rendezvous_generation: u64,
+    pub rendezvous_epoch: u64,
+    pub code_publish_epoch_before: u64,
+    pub code_publish_epoch_after: u64,
+    pub participants: Vec<SmpCodePublishBarrierParticipantManifest>,
+    pub remote_icache_sync_required: bool,
+    pub code_publish_executed: bool,
+    pub generation: u64,
+    pub state: String,
+    pub validated_at_event: u64,
     pub reason: String,
     pub note: String,
 }

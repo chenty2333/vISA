@@ -451,6 +451,44 @@ impl StopTheWorldRendezvousRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmpCodePublishBarrierParticipantRecord {
+    pub hart: HartId,
+    pub hart_generation: Generation,
+    pub hardware_hart: u32,
+    pub last_seen_code_epoch_before: u64,
+    pub last_seen_code_epoch_after: u64,
+    pub semantic_icache_sync: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmpCodePublishBarrierRecord {
+    pub id: SmpCodePublishBarrierId,
+    pub rendezvous: StopTheWorldRendezvousId,
+    pub rendezvous_generation: Generation,
+    pub rendezvous_epoch: u64,
+    pub code_publish_epoch_before: u64,
+    pub code_publish_epoch_after: u64,
+    pub participants: Vec<SmpCodePublishBarrierParticipantRecord>,
+    pub remote_icache_sync_required: bool,
+    pub code_publish_executed: bool,
+    pub generation: Generation,
+    pub state: SmpCodePublishBarrierState,
+    pub validated_at_event: EventId,
+    pub reason: String,
+    pub note: String,
+}
+
+impl SmpCodePublishBarrierRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::SmpCodePublishBarrier,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

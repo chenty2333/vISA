@@ -1,0 +1,154 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "S12-smp-code-publish-barrier",
+  "phase": "Phase 2 Full SMP Runtime",
+  "status": "pass",
+  "scope": [
+    "Add a semantic SMP code publish barrier object that validates against an exact completed S11 stop-the-world rendezvous generation",
+    "Require code_publish_epoch to advance by exactly one while keeping real code publication disabled in this checkpoint",
+    "Require remote icache sync evidence for every rendezvous participant hart generation",
+    "Expose barrier evidence through semantic package roots/counts, target_executor host-validation output, osctl ViewV1, scheduler view, and history graph edges"
+  ],
+  "no_goals": [
+    "Real W^X page-table update",
+    "Real local or remote icache instruction execution",
+    "Real dynamic code publish",
+    "Trap-gate forced parking",
+    "Real interrupt masking",
+    "Real target-side execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/graph/smp_code_publish.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/smp/golden_s12_smp_code_publish_barrier.trace.json",
+    "tests/reports/checkpoints/s12_smp_code_publish_barrier.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/smp/golden_s12_smp_code_publish_barrier.trace.json",
+    "tests/reports/checkpoints/s12_smp_code_publish_barrier.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "Barrier participants are derived from the completed rendezvous instead of trusting caller-provided participant lists",
+      "Command preflight rejects stale rendezvous generation, missing remote sync, real code publish execution, and harts that advanced after the rendezvous",
+      "Invariant diagnostics verify the primary barrier event and per-hart attribution separately",
+      "No W^X, page-table, icache instruction, or real code-publish behavior was mixed into the semantic S12 object"
+    ],
+    "residual_notes": [
+      "S13 must reuse this rendezvous/barrier quiescence evidence for cleanup quiescence",
+      "S14 must integrate snapshot barrier semantics without treating substrate mappings as semantic truth",
+      "Real dynamic code publish remains a later target-runtime checkpoint"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core smp_runtime_s12",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core smp_code_publish_barrier",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- smp-code-publish-barrier list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only && python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "python osctl smp-code-publish-barrier/scheduler/contract/history assertions",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/smp/golden_s12_smp_code_publish_barrier.trace.json",
+    "osctl_views": [
+      "osctl smp-code-publish-barrier list --json <migration.json>",
+      "osctl scheduler list --json <migration.json>",
+      "osctl graph --history --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "smp_code_publish_barrier_roots",
+      "stop_the_world_rendezvous_roots",
+      "smp_safe_point_roots",
+      "hart_event_attribution_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 251,
+      "smp_code_publish_barrier_count": 1,
+      "stop_the_world_rendezvous_count": 1,
+      "smp_safe_point_count": 1,
+      "hart_event_attribution_count": 29,
+      "hart_count": 2
+    }
+  },
+  "residual_gaps": [
+    "S13 SMP cleanup quiescence remains unimplemented",
+    "S14 SMP snapshot barrier remains unimplemented",
+    "S15 SMP stress/property tests remain unimplemented"
+  ],
+  "next_checkpoint": "S13-smp-cleanup-quiescence"
+}

@@ -684,6 +684,24 @@ pub enum SemanticInvariantError {
         rendezvous: StopTheWorldRendezvousId,
         event: EventId,
     },
+    SmpCodePublishBarrierInvalid {
+        barrier: SmpCodePublishBarrierId,
+    },
+    SmpCodePublishBarrierRendezvousMissing {
+        barrier: SmpCodePublishBarrierId,
+        rendezvous: StopTheWorldRendezvousId,
+    },
+    SmpCodePublishBarrierParticipantMismatch {
+        barrier: SmpCodePublishBarrierId,
+        hart: HartId,
+    },
+    SmpCodePublishBarrierMissingEvent {
+        barrier: SmpCodePublishBarrierId,
+    },
+    SmpCodePublishBarrierMissingHartEventAttribution {
+        barrier: SmpCodePublishBarrierId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

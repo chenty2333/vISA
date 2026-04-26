@@ -3436,6 +3436,202 @@ fn smp_runtime_s11_history_survives_later_hart_transition() {
     );
 }
 
+fn s12_smp_code_publish_barrier_graph() -> SemanticGraph {
+    let mut graph = s11_stop_the_world_graph();
+    assert!(graph.complete_stop_the_world_rendezvous_with_id(
+        81,
+        1,
+        71,
+        1,
+        true,
+        "code-publish-boundary",
+        "all harts parked at activation boundary",
+    ));
+    graph
+}
+
+#[test]
+fn smp_runtime_s12_code_publish_barrier_validates_from_rendezvous() {
+    let mut graph = s12_smp_code_publish_barrier_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s12-test",
+        SemanticCommand::ValidateSmpCodePublishBarrier {
+            barrier: 91,
+            rendezvous: 81,
+            rendezvous_generation: 1,
+            code_publish_epoch_before: 0,
+            code_publish_epoch_after: 1,
+            remote_icache_sync_required: true,
+            code_publish_executed: false,
+            reason: "semantic-code-publish-barrier".to_string(),
+            note: "validate remote icache sync evidence only".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.smp_code_publish_barriers().len(), 1);
+    let barrier = &graph.smp_code_publish_barriers()[0];
+    assert_eq!(barrier.rendezvous, 81);
+    assert_eq!(barrier.rendezvous_generation, 1);
+    assert_eq!(barrier.rendezvous_epoch, 1);
+    assert_eq!(barrier.code_publish_epoch_before, 0);
+    assert_eq!(barrier.code_publish_epoch_after, 1);
+    assert!(barrier.remote_icache_sync_required);
+    assert!(!barrier.code_publish_executed);
+    assert_eq!(barrier.participants.len(), 2);
+    assert!(
+        barrier
+            .participants
+            .iter()
+            .all(|participant| participant.semantic_icache_sync
+                && participant.last_seen_code_epoch_before == 0
+                && participant.last_seen_code_epoch_after == 1)
+    );
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == barrier.validated_at_event
+            && record.hart == 1
+            && record.hart_generation == 2
+            && record.event_kind == "SmpCodePublishBarrierHartSynced"
+    }));
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == barrier.validated_at_event
+            && record.hart == 2
+            && record.hart_generation == 4
+            && record.event_kind == "SmpCodePublishBarrierHartSynced"
+    }));
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "SmpCodePublishBarrierValidated barrier=91 rendezvous=81@1 code_publish_epoch=0->1 participants=2 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s12_rejects_bad_barrier_inputs() {
+    let mut stale_rendezvous = s12_smp_code_publish_barrier_graph();
+    let stale = stale_rendezvous.apply_envelope(CommandEnvelope::new(
+        1,
+        "s12-test",
+        SemanticCommand::ValidateSmpCodePublishBarrier {
+            barrier: 91,
+            rendezvous: 81,
+            rendezvous_generation: 2,
+            code_publish_epoch_before: 0,
+            code_publish_epoch_after: 1,
+            remote_icache_sync_required: true,
+            code_publish_executed: false,
+            reason: "semantic-code-publish-barrier".to_string(),
+            note: "must reject stale rendezvous".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp code publish barrier rendezvous is missing".to_string());
+    assert_eq!(stale.violations, expected);
+
+    let mut missing_sync = s12_smp_code_publish_barrier_graph();
+    let missing_sync_result = missing_sync.apply_envelope(CommandEnvelope::new(
+        2,
+        "s12-test",
+        SemanticCommand::ValidateSmpCodePublishBarrier {
+            barrier: 91,
+            rendezvous: 81,
+            rendezvous_generation: 1,
+            code_publish_epoch_before: 0,
+            code_publish_epoch_after: 1,
+            remote_icache_sync_required: false,
+            code_publish_executed: false,
+            reason: "semantic-code-publish-barrier".to_string(),
+            note: "must require remote sync".to_string(),
+        },
+    ));
+    assert_eq!(missing_sync_result.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp code publish barrier requires remote icache sync".to_string());
+    assert_eq!(missing_sync_result.violations, expected);
+
+    let mut real_publish = s12_smp_code_publish_barrier_graph();
+    let real_publish_result = real_publish.apply_envelope(CommandEnvelope::new(
+        3,
+        "s12-test",
+        SemanticCommand::ValidateSmpCodePublishBarrier {
+            barrier: 91,
+            rendezvous: 81,
+            rendezvous_generation: 1,
+            code_publish_epoch_before: 0,
+            code_publish_epoch_after: 1,
+            remote_icache_sync_required: true,
+            code_publish_executed: true,
+            reason: "semantic-code-publish-barrier".to_string(),
+            note: "must not execute real publish in s12".to_string(),
+        },
+    ));
+    assert_eq!(real_publish_result.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp code publish barrier must not execute code publish".to_string());
+    assert_eq!(real_publish_result.violations, expected);
+
+    let mut stale_hart = s12_smp_code_publish_barrier_graph();
+    assert!(stale_hart.set_hart_state(
+        2,
+        4,
+        HartState::Booting,
+        "advance before publish barrier",
+        "not parked"
+    ));
+    let stale_hart_result = stale_hart.apply_envelope(CommandEnvelope::new(
+        4,
+        "s12-test",
+        SemanticCommand::ValidateSmpCodePublishBarrier {
+            barrier: 91,
+            rendezvous: 81,
+            rendezvous_generation: 1,
+            code_publish_epoch_before: 0,
+            code_publish_epoch_after: 1,
+            remote_icache_sync_required: true,
+            code_publish_executed: false,
+            reason: "semantic-code-publish-barrier".to_string(),
+            note: "must reject stale participant generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_hart_result.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp code publish barrier participant generation is stale".to_string());
+    assert_eq!(stale_hart_result.violations, expected);
+}
+
+#[test]
+fn smp_runtime_s12_history_survives_later_hart_transition() {
+    let mut graph = s12_smp_code_publish_barrier_graph();
+    assert!(graph.validate_smp_code_publish_barrier_with_id(
+        91,
+        81,
+        1,
+        0,
+        1,
+        true,
+        false,
+        "semantic-code-publish-barrier",
+        "validate remote icache sync evidence only",
+    ));
+    assert!(graph.set_hart_state(
+        1,
+        2,
+        HartState::Booting,
+        "advance after publish barrier",
+        "later"
+    ));
+    assert!(graph.check_invariants().is_ok());
+
+    graph.corrupt_smp_code_publish_barrier_event_for_test(91, 999);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::SmpCodePublishBarrierMissingEvent { barrier: 91 })
+    );
+}
+
 #[test]
 fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let mut graph = SemanticGraph::new();

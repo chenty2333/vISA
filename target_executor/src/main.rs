@@ -21,12 +21,14 @@ use artifact_manifest::{
     RemoteParkManifest, RemotePreemptManifest, RequiredArtifactProfileManifest,
     RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
     SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
-    SemanticSnapshotManifest, SmpSafePointManifest, SmpSafePointParticipantManifest,
-    StopTheWorldRendezvousManifest, StopTheWorldRendezvousParticipantManifest, StoreRecordManifest,
-    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
-    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
-    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
-    TrapRecordManifest, WaitRecordManifest,
+    SemanticSnapshotManifest, SmpCodePublishBarrierManifest,
+    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    SmpSafePointParticipantManifest, StopTheWorldRendezvousManifest,
+    StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
+    SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
+    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
+    TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -591,6 +593,21 @@ fn record_preemptive_runtime_context_evidence(
                 stop_new_activations: true,
                 reason: "s11-stop-the-world-code-publish-boundary".to_owned(),
                 note: "s11-stop-the-world-rendezvous-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            9_012,
+            "target-executor-s12",
+            SemanticCommand::ValidateSmpCodePublishBarrier {
+                barrier: 9201,
+                rendezvous: 9101,
+                rendezvous_generation: 1,
+                code_publish_epoch_before: 0,
+                code_publish_epoch_after: 1,
+                remote_icache_sync_required: true,
+                code_publish_executed: false,
+                reason: "s12-smp-code-publish-barrier".to_owned(),
+                note: "s12-semantic-code-publish-barrier-harness".to_owned(),
             },
         ),
         CommandEnvelope::new(
@@ -1987,6 +2004,7 @@ fn demo_migration_package(
             activation_migration_count: semantic.activation_migration_count(),
             smp_safe_point_count: semantic.smp_safe_point_count(),
             stop_the_world_rendezvous_count: semantic.stop_the_world_rendezvous_count(),
+            smp_code_publish_barrier_count: semantic.smp_code_publish_barrier_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2097,6 +2115,11 @@ fn demo_migration_package(
                 .stop_the_world_rendezvous()
                 .iter()
                 .map(stop_the_world_rendezvous_manifest)
+                .collect(),
+            smp_code_publish_barriers: semantic
+                .smp_code_publish_barriers()
+                .iter()
+                .map(smp_code_publish_barrier_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2489,6 +2512,23 @@ fn semantic_roots(
                     rendezvous.participants.len(),
                     rendezvous.state.as_str(),
                     rendezvous.generation
+                )
+            })
+            .collect(),
+        smp_code_publish_barrier_roots: semantic
+            .smp_code_publish_barriers()
+            .iter()
+            .map(|barrier| {
+                format!(
+                    "smp-code-publish-barrier id={} rendezvous={}@{} code_publish_epoch={}->{} participants={} state={} generation={}",
+                    barrier.id,
+                    barrier.rendezvous,
+                    barrier.rendezvous_generation,
+                    barrier.code_publish_epoch_before,
+                    barrier.code_publish_epoch_after,
+                    barrier.participants.len(),
+                    barrier.state.as_str(),
+                    barrier.generation
                 )
             })
             .collect(),
@@ -3422,6 +3462,38 @@ fn stop_the_world_rendezvous_manifest(
         completed_at_event: rendezvous.completed_at_event,
         reason: rendezvous.reason.clone(),
         note: rendezvous.note.clone(),
+    }
+}
+
+fn smp_code_publish_barrier_manifest(
+    barrier: &semantic_core::SmpCodePublishBarrierRecord,
+) -> SmpCodePublishBarrierManifest {
+    SmpCodePublishBarrierManifest {
+        id: barrier.id,
+        rendezvous: barrier.rendezvous,
+        rendezvous_generation: barrier.rendezvous_generation,
+        rendezvous_epoch: barrier.rendezvous_epoch,
+        code_publish_epoch_before: barrier.code_publish_epoch_before,
+        code_publish_epoch_after: barrier.code_publish_epoch_after,
+        participants: barrier
+            .participants
+            .iter()
+            .map(|participant| SmpCodePublishBarrierParticipantManifest {
+                hart: u64::from(participant.hart),
+                hart_generation: participant.hart_generation,
+                hardware_hart: participant.hardware_hart,
+                last_seen_code_epoch_before: participant.last_seen_code_epoch_before,
+                last_seen_code_epoch_after: participant.last_seen_code_epoch_after,
+                semantic_icache_sync: participant.semantic_icache_sync,
+            })
+            .collect(),
+        remote_icache_sync_required: barrier.remote_icache_sync_required,
+        code_publish_executed: barrier.code_publish_executed,
+        generation: barrier.generation,
+        state: barrier.state.as_str().to_owned(),
+        validated_at_event: barrier.validated_at_event,
+        reason: barrier.reason.clone(),
+        note: barrier.note.clone(),
     }
 }
 

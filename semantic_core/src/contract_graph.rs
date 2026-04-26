@@ -1396,6 +1396,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::ActivationMigration
             | ContractObjectKind::SmpSafePoint
             | ContractObjectKind::StopTheWorldRendezvous
+            | ContractObjectKind::SmpCodePublishBarrier
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

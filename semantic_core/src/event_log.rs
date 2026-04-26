@@ -203,6 +203,15 @@ pub enum EventKind {
         participant_count: u32,
         generation: Generation,
     },
+    SmpCodePublishBarrierValidated {
+        barrier: SmpCodePublishBarrierId,
+        rendezvous: StopTheWorldRendezvousId,
+        rendezvous_generation: Generation,
+        code_publish_epoch_before: u64,
+        code_publish_epoch_after: u64,
+        participant_count: u32,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -842,6 +851,17 @@ impl EventKind {
                 generation,
             } => format!(
                 "StopTheWorldRendezvousCompleted rendezvous={rendezvous} epoch={epoch} safe_point={safe_point}@{safe_point_generation} coordinator_hart={coordinator_hart}@{coordinator_hart_generation} participants={participant_count} generation={generation}"
+            ),
+            Self::SmpCodePublishBarrierValidated {
+                barrier,
+                rendezvous,
+                rendezvous_generation,
+                code_publish_epoch_before,
+                code_publish_epoch_after,
+                participant_count,
+                generation,
+            } => format!(
+                "SmpCodePublishBarrierValidated barrier={barrier} rendezvous={rendezvous}@{rendezvous_generation} code_publish_epoch={code_publish_epoch_before}->{code_publish_epoch_after} participants={participant_count} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

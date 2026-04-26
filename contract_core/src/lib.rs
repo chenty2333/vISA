@@ -81,6 +81,7 @@ pub enum ObjectKind {
     ActivationMigration,
     SmpSafePoint,
     StopTheWorldRendezvous,
+    SmpCodePublishBarrier,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -127,6 +128,7 @@ impl ObjectKind {
             Self::ActivationMigration => "activation-migration",
             Self::SmpSafePoint => "smp-safe-point",
             Self::StopTheWorldRendezvous => "stop-the-world-rendezvous",
+            Self::SmpCodePublishBarrier => "smp-code-publish-barrier",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -333,6 +335,7 @@ typed_ref!(
     StopTheWorldRendezvousRef,
     ObjectKind::StopTheWorldRendezvous
 );
+typed_ref!(SmpCodePublishBarrierRef, ObjectKind::SmpCodePublishBarrier);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1551,6 +1554,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "stop-the-world rendezvous root/count mismatch",
         ));
     }
+    if roots.smp_code_publish_barrier_roots.len() != package.semantic.smp_code_publish_barrier_count
+        || package.semantic.smp_code_publish_barriers.len()
+            != package.semantic.smp_code_publish_barrier_count
+    {
+        return Err(ContractError::new(
+            "smp code publish barrier root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2088,6 +2099,7 @@ mod tests {
                 activation_migration_count: 0,
                 smp_safe_point_count: 0,
                 stop_the_world_rendezvous_count: 0,
+                smp_code_publish_barrier_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2143,6 +2155,7 @@ mod tests {
                 activation_migrations: Vec::new(),
                 smp_safe_points: Vec::new(),
                 stop_the_world_rendezvous: Vec::new(),
+                smp_code_publish_barriers: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -2613,6 +2626,53 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "stop-the-world rendezvous root/count mismatch"
+        );
+    }
+
+    #[test]
+    fn semantic_roots_reject_smp_code_publish_barrier_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.smp_code_publish_barrier_count = 1;
+        package.semantic.smp_code_publish_barriers.push(
+            artifact_manifest::SmpCodePublishBarrierManifest {
+                id: 10,
+                rendezvous: 9,
+                rendezvous_generation: 1,
+                rendezvous_epoch: 1,
+                code_publish_epoch_before: 0,
+                code_publish_epoch_after: 1,
+                participants: vec![
+                    artifact_manifest::SmpCodePublishBarrierParticipantManifest {
+                        hart: 1,
+                        hart_generation: 2,
+                        hardware_hart: 0,
+                        last_seen_code_epoch_before: 0,
+                        last_seen_code_epoch_after: 1,
+                        semantic_icache_sync: true,
+                    },
+                    artifact_manifest::SmpCodePublishBarrierParticipantManifest {
+                        hart: 2,
+                        hart_generation: 4,
+                        hardware_hart: 1,
+                        last_seen_code_epoch_before: 0,
+                        last_seen_code_epoch_after: 1,
+                        semantic_icache_sync: true,
+                    },
+                ],
+                remote_icache_sync_required: true,
+                code_publish_executed: false,
+                generation: 1,
+                state: "validated".to_owned(),
+                validated_at_event: 12,
+                reason: "smp-code-publish-barrier".to_owned(),
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "smp code publish barrier root/count mismatch"
         );
     }
 
@@ -3092,6 +3152,9 @@ mod tests {
         assert!(SmpSafePointRef::try_from_ref(safe_point).is_ok());
         let rendezvous = ObjectRef::new(ObjectKind::StopTheWorldRendezvous, 11, 1).unwrap();
         assert!(StopTheWorldRendezvousRef::try_from_ref(rendezvous).is_ok());
+        let code_publish_barrier =
+            ObjectRef::new(ObjectKind::SmpCodePublishBarrier, 12, 1).unwrap();
+        assert!(SmpCodePublishBarrierRef::try_from_ref(code_publish_barrier).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

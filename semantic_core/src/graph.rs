@@ -22,6 +22,7 @@ pub struct SemanticGraph {
     activation_migrations: Vec<ActivationMigrationRecord>,
     smp_safe_points: Vec<SmpSafePointRecord>,
     stop_the_world_rendezvous: Vec<StopTheWorldRendezvousRecord>,
+    smp_code_publish_barriers: Vec<SmpCodePublishBarrierRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -55,6 +56,7 @@ pub struct SemanticGraph {
     next_activation_migration_id: ActivationMigrationId,
     next_smp_safe_point_id: SmpSafePointId,
     next_stop_the_world_rendezvous_id: StopTheWorldRendezvousId,
+    next_smp_code_publish_barrier_id: SmpCodePublishBarrierId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -89,6 +91,7 @@ mod remote;
 mod remote_park;
 mod resource;
 mod scheduler;
+mod smp_code_publish;
 mod smp_safe_point;
 mod snapshot;
 mod stop_the_world;
@@ -123,6 +126,7 @@ impl SemanticGraph {
             activation_migrations: Vec::new(),
             smp_safe_points: Vec::new(),
             stop_the_world_rendezvous: Vec::new(),
+            smp_code_publish_barriers: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -156,6 +160,7 @@ impl SemanticGraph {
             next_activation_migration_id: 1,
             next_smp_safe_point_id: 1,
             next_stop_the_world_rendezvous_id: 1,
+            next_smp_code_publish_barrier_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,
