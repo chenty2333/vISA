@@ -1,0 +1,113 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "I2-descriptor-object",
+  "name": "golden_i2_descriptor_object",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md"
+  ],
+  "no_goals": [
+    "real descriptor ring ownership",
+    "real DMA buffer ownership",
+    "real virtqueue implementation",
+    "real DMA/MMIO/IRQ access",
+    "network or block vertical implementation"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "record-queue-object",
+        "queue": "queue:9801@1",
+        "device": "device:9701@1",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "record-descriptor-object",
+        "descriptor": "descriptor:9901@1",
+        "queue": "queue:9801@1",
+        "slot": 0,
+        "access": "read-write",
+        "length": 2048,
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "record-descriptor-object",
+        "queue": "queue:9801@2",
+        "expected": "rejected",
+        "violation": "descriptor object queue generation is missing or inactive"
+      },
+      {
+        "id": 4,
+        "command": "record-descriptor-object",
+        "length": 0,
+        "expected": "rejected",
+        "violation": "descriptor object length is zero"
+      },
+      {
+        "id": 5,
+        "command": "record-descriptor-object",
+        "slot": 64,
+        "expected": "rejected",
+        "violation": "descriptor object slot is outside queue depth"
+      },
+      {
+        "id": 6,
+        "command": "record-descriptor-object",
+        "queue": "queue:9801@1",
+        "slot": 0,
+        "expected": "rejected",
+        "violation": "descriptor object slot already exists for queue generation"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "DescriptorObjectRecorded",
+      "descriptor": "descriptor:9901@1",
+      "queue": "queue:9801@1",
+      "slot": 0,
+      "access": "read-write",
+      "length": 2048
+    }
+  ],
+  "expected": {
+    "views": {
+      "descriptor": {
+        "id": 9901,
+        "generation": 1,
+        "state": "registered",
+        "queue": "queue:9801@1",
+        "slot": 0,
+        "access": "read-write",
+        "length": 2048
+      },
+      "graph-live": {
+        "edges": [
+          "descriptor:9901@1 --descriptor-queue--> queue:9801@1"
+        ]
+      }
+    },
+    "invariants": [
+      "DescriptorObject must reference an exact registered QueueObject generation",
+      "DescriptorObject slot must be within QueueObject depth",
+      "DescriptorObject length must be nonzero",
+      "DescriptorObject slot is unique within a QueueObject generation",
+      "DescriptorObject is semantic descriptor evidence, not adapter ring memory or DMA ownership"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "io_runtime_i2_descriptor_object_records_queue_identity",
+      "io_runtime_i2_rejects_stale_out_of_bounds_or_duplicate_descriptor",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "semantic_roots_reject_descriptor_object_root_mismatch"
+    ]
+  }
+}

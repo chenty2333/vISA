@@ -90,6 +90,7 @@ impl SemanticGraph {
         self.check_smp_scaling_benchmark_invariants()?;
         self.check_device_object_invariants()?;
         self.check_queue_object_invariants()?;
+        self.check_descriptor_object_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;

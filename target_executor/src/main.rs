@@ -13,9 +13,9 @@ use artifact_manifest::{
     CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
     CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
     CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
-    CrossHartSchedulerDecisionManifest, DeviceObjectManifest, GuestStateManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IpiEventManifest, MemoryClassPolicyManifest,
+    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceObjectManifest,
+    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IpiEventManifest, MemoryClassPolicyManifest,
     MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
     MigrationPackageManifest, MigrationTargetManifest, PreemptionLatencySampleManifest,
     PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
@@ -42,12 +42,12 @@ use semantic_core::{
     BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass,
     CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
     CodePublisher, CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot,
-    ContractObjectKind, ContractObjectRef, ContractViolation, EntrypointState, EventKind,
-    EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HartState,
-    HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
-    IpiEventKind, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
-    PackageReplayValidator, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
-    RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
+    ContractObjectKind, ContractObjectRef, ContractViolation, DescriptorObjectAccess,
+    EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration,
+    FrontendKind, HartState, HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec,
+    HostcallTraceRecord, IpiEventKind, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
+    MigrationObjectRecord, PackageReplayValidator, QueueObjectRole, ReplayPackageValidationState,
+    ResourceKind, RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
     SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
     StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
@@ -1124,6 +1124,19 @@ fn record_preemptive_runtime_context_evidence(
                 note: "i1-record-queue-object-harness".to_owned(),
             },
         ),
+        CommandEnvelope::new(
+            102,
+            "target-executor-i2",
+            SemanticCommand::RecordDescriptorObject {
+                descriptor: 9901,
+                queue: 9801,
+                queue_generation: 1,
+                slot: 0,
+                access: DescriptorObjectAccess::ReadWrite,
+                length: 2048,
+                note: "i2-record-descriptor-object-harness".to_owned(),
+            },
+        ),
     ];
     for command in commands {
         let result = semantic.apply_envelope(command);
@@ -2158,6 +2171,7 @@ fn demo_migration_package(
             smp_scaling_benchmark_count: semantic.smp_scaling_benchmark_count(),
             device_object_count: semantic.device_object_count(),
             queue_object_count: semantic.queue_object_count(),
+            descriptor_object_count: semantic.descriptor_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2303,6 +2317,11 @@ fn demo_migration_package(
                 .queue_objects()
                 .iter()
                 .map(queue_object_manifest)
+                .collect(),
+            descriptor_objects: semantic
+                .descriptor_objects()
+                .iter()
+                .map(descriptor_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2818,6 +2837,23 @@ fn semantic_roots(
                     queue.device_generation,
                     queue.state.as_str(),
                     queue.generation
+                )
+            })
+            .collect(),
+        descriptor_object_roots: semantic
+            .descriptor_objects()
+            .iter()
+            .map(|descriptor| {
+                format!(
+                    "descriptor-object id={} queue={}@{} slot={} access={} length={} state={} generation={}",
+                    descriptor.id,
+                    descriptor.queue,
+                    descriptor.queue_generation,
+                    descriptor.slot,
+                    descriptor.access.as_str(),
+                    descriptor.length,
+                    descriptor.state.as_str(),
+                    descriptor.generation
                 )
             })
             .collect(),
@@ -3967,6 +4003,23 @@ fn queue_object_manifest(queue: &semantic_core::QueueObjectRecord) -> QueueObjec
         state: queue.state.as_str().to_owned(),
         recorded_at_event: queue.recorded_at_event,
         note: queue.note.clone(),
+    }
+}
+
+fn descriptor_object_manifest(
+    descriptor: &semantic_core::DescriptorObjectRecord,
+) -> DescriptorObjectManifest {
+    DescriptorObjectManifest {
+        id: descriptor.id,
+        queue: descriptor.queue,
+        queue_generation: descriptor.queue_generation,
+        slot: descriptor.slot,
+        access: descriptor.access.as_str().to_owned(),
+        length: descriptor.length,
+        generation: descriptor.generation,
+        state: descriptor.state.as_str().to_owned(),
+        recorded_at_event: descriptor.recorded_at_event,
+        note: descriptor.note.clone(),
     }
 }
 

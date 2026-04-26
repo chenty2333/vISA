@@ -271,6 +271,15 @@ pub enum EventKind {
         depth: u32,
         generation: Generation,
     },
+    DescriptorObjectRecorded {
+        descriptor: DescriptorObjectId,
+        queue: QueueObjectId,
+        queue_generation: Generation,
+        slot: u16,
+        access: DescriptorObjectAccess,
+        length: u32,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -993,6 +1002,18 @@ impl EventKind {
             } => format!(
                 "QueueObjectRecorded queue={queue} device={device}@{device_generation} role={} index={queue_index} depth={depth} generation={generation}",
                 role.as_str()
+            ),
+            Self::DescriptorObjectRecorded {
+                descriptor,
+                queue,
+                queue_generation,
+                slot,
+                access,
+                length,
+                generation,
+            } => format!(
+                "DescriptorObjectRecorded descriptor={descriptor} queue={queue}@{queue_generation} slot={slot} access={} length={length} generation={generation}",
+                access.as_str()
             ),
             Self::RuntimeActivationResumed {
                 resume,

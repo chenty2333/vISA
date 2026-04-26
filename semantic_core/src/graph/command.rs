@@ -260,6 +260,15 @@ pub enum SemanticCommand {
         device_generation: Generation,
         note: String,
     },
+    RecordDescriptorObject {
+        descriptor: DescriptorObjectId,
+        queue: QueueObjectId,
+        queue_generation: Generation,
+        slot: u16,
+        access: DescriptorObjectAccess,
+        length: u32,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -489,6 +498,7 @@ impl SemanticCommand {
             Self::RecordSmpScalingBenchmark { .. } => "record-smp-scaling-benchmark",
             Self::RecordDeviceObject { .. } => "record-device-object",
             Self::RecordQueueObject { .. } => "record-queue-object",
+            Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1627,6 +1637,24 @@ impl SemanticGraph {
                     *device_generation,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordDescriptorObject {
+                descriptor,
+                queue,
+                queue_generation,
+                slot,
+                access,
+                length,
+                ..
+            } => self
+                .validate_descriptor_object(
+                    *descriptor,
+                    *queue,
+                    *queue_generation,
+                    *slot,
+                    *access,
+                    *length,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2550,6 +2578,23 @@ impl SemanticGraph {
                 depth,
                 device,
                 device_generation,
+                &note,
+            ),
+            SemanticCommand::RecordDescriptorObject {
+                descriptor,
+                queue,
+                queue_generation,
+                slot,
+                access,
+                length,
+                note,
+            } => self.record_descriptor_object_with_id(
+                descriptor,
+                queue,
+                queue_generation,
+                slot,
+                access,
+                length,
                 &note,
             ),
             SemanticCommand::ResumeActivation {

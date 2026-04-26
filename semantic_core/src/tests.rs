@@ -1517,6 +1517,190 @@ fn io_runtime_i1_rejects_stale_or_duplicate_queue() {
 }
 
 #[test]
+fn io_runtime_i2_descriptor_object_records_queue_identity() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        resource,
+        resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "device object harness",
+    ));
+    assert!(graph.record_queue_object_with_id(
+        501,
+        "fake-io0-rx",
+        QueueObjectRole::Rx,
+        0,
+        64,
+        401,
+        1,
+        "queue object harness",
+    ));
+    let cursor_before = graph.event_log().cursor();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i2-test",
+        SemanticCommand::RecordDescriptorObject {
+            descriptor: 601,
+            queue: 501,
+            queue_generation: 1,
+            slot: 0,
+            access: DescriptorObjectAccess::ReadWrite,
+            length: 2048,
+            note: "descriptor object harness".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.descriptor_objects().len(), 1);
+    let descriptor = &graph.descriptor_objects()[0];
+    assert_eq!(descriptor.id, 601);
+    assert_eq!(descriptor.queue, 501);
+    assert_eq!(descriptor.queue_generation, 1);
+    assert_eq!(descriptor.slot, 0);
+    assert_eq!(descriptor.access, DescriptorObjectAccess::ReadWrite);
+    assert_eq!(descriptor.length, 2048);
+    assert_eq!(descriptor.state, DescriptorObjectState::Registered);
+    assert!(descriptor.recorded_at_event > cursor_before);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "DescriptorObjectRecorded descriptor=601 queue=501@1 slot=0 access=read-write length=2048 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn io_runtime_i2_rejects_stale_out_of_bounds_or_duplicate_descriptor() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        resource,
+        resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "device object harness",
+    ));
+    assert!(graph.record_queue_object_with_id(
+        501,
+        "fake-io0-rx",
+        QueueObjectRole::Rx,
+        0,
+        2,
+        401,
+        1,
+        "queue object harness",
+    ));
+
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i2-test",
+        SemanticCommand::RecordDescriptorObject {
+            descriptor: 601,
+            queue: 501,
+            queue_generation: 2,
+            slot: 0,
+            access: DescriptorObjectAccess::ReadWrite,
+            length: 2048,
+            note: "stale queue generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale.violations,
+        vec!["descriptor object queue generation is missing or inactive".to_string()]
+    );
+
+    let zero_length = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i2-test",
+        SemanticCommand::RecordDescriptorObject {
+            descriptor: 601,
+            queue: 501,
+            queue_generation: 1,
+            slot: 0,
+            access: DescriptorObjectAccess::ReadWrite,
+            length: 0,
+            note: "zero length must reject".to_string(),
+        },
+    ));
+    assert_eq!(zero_length.status, CommandStatus::Rejected);
+    assert_eq!(
+        zero_length.violations,
+        vec!["descriptor object length is zero".to_string()]
+    );
+
+    let out_of_bounds = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "i2-test",
+        SemanticCommand::RecordDescriptorObject {
+            descriptor: 601,
+            queue: 501,
+            queue_generation: 1,
+            slot: 2,
+            access: DescriptorObjectAccess::ReadWrite,
+            length: 2048,
+            note: "slot outside queue depth must reject".to_string(),
+        },
+    ));
+    assert_eq!(out_of_bounds.status, CommandStatus::Rejected);
+    assert_eq!(
+        out_of_bounds.violations,
+        vec!["descriptor object slot is outside queue depth".to_string()]
+    );
+
+    assert!(graph.record_descriptor_object_with_id(
+        601,
+        501,
+        1,
+        0,
+        DescriptorObjectAccess::ReadWrite,
+        2048,
+        "descriptor object harness",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "i2-test",
+        SemanticCommand::RecordDescriptorObject {
+            descriptor: 602,
+            queue: 501,
+            queue_generation: 1,
+            slot: 0,
+            access: DescriptorObjectAccess::ReadOnly,
+            length: 128,
+            note: "duplicate slot must reject".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["descriptor object slot already exists for queue generation".to_string()]
+    );
+
+    graph.corrupt_descriptor_object_queue_generation_for_test(601, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::DescriptorObjectMissingQueue {
+            descriptor: 601,
+            queue: 501
+        })
+    );
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

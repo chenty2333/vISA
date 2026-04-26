@@ -29,6 +29,7 @@ pub struct SemanticGraph {
     smp_scaling_benchmarks: Vec<SmpScalingBenchmarkRecord>,
     device_objects: Vec<DeviceObjectRecord>,
     queue_objects: Vec<QueueObjectRecord>,
+    descriptor_objects: Vec<DescriptorObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -69,6 +70,7 @@ pub struct SemanticGraph {
     next_smp_scaling_benchmark_id: SmpScalingBenchmarkId,
     next_device_object_id: DeviceObjectId,
     next_queue_object_id: QueueObjectId,
+    next_descriptor_object_id: DescriptorObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -92,6 +94,7 @@ mod cleanup;
 mod command;
 mod context;
 mod cross_scheduler;
+mod descriptor_object;
 mod device_object;
 mod hart;
 mod hart_event;
@@ -151,6 +154,7 @@ impl SemanticGraph {
             smp_scaling_benchmarks: Vec::new(),
             device_objects: Vec::new(),
             queue_objects: Vec::new(),
+            descriptor_objects: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -191,6 +195,7 @@ impl SemanticGraph {
             next_smp_scaling_benchmark_id: 1,
             next_device_object_id: 1,
             next_queue_object_id: 1,
+            next_descriptor_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

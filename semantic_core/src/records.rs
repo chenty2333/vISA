@@ -707,6 +707,30 @@ impl QueueObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DescriptorObjectRecord {
+    pub id: DescriptorObjectId,
+    pub queue: QueueObjectId,
+    pub queue_generation: Generation,
+    pub slot: u16,
+    pub access: DescriptorObjectAccess,
+    pub length: u32,
+    pub generation: Generation,
+    pub state: DescriptorObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl DescriptorObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::DescriptorObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

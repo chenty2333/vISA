@@ -269,6 +269,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub queue_object_count: usize,
     #[serde(default)]
+    pub descriptor_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -389,6 +391,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub queue_objects: Vec<QueueObjectManifest>,
     #[serde(default)]
+    pub descriptor_objects: Vec<DescriptorObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -488,6 +492,8 @@ pub struct SemanticRootSetManifest {
     pub device_object_roots: Vec<String>,
     #[serde(default)]
     pub queue_object_roots: Vec<String>,
+    #[serde(default)]
+    pub descriptor_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1144,6 +1150,20 @@ pub struct QueueObjectManifest {
     pub depth: u32,
     pub device: u64,
     pub device_generation: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct DescriptorObjectManifest {
+    pub id: u64,
+    pub queue: u64,
+    pub queue_generation: u64,
+    pub slot: u16,
+    pub access: String,
+    pub length: u32,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

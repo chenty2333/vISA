@@ -794,6 +794,21 @@ pub enum SemanticInvariantError {
     QueueObjectMissingEvent {
         queue: QueueObjectId,
     },
+    DescriptorObjectInvalid {
+        descriptor: DescriptorObjectId,
+    },
+    DescriptorObjectMissingQueue {
+        descriptor: DescriptorObjectId,
+        queue: QueueObjectId,
+    },
+    DescriptorObjectDuplicateSlot {
+        descriptor: DescriptorObjectId,
+        queue: QueueObjectId,
+        slot: u16,
+    },
+    DescriptorObjectMissingEvent {
+        descriptor: DescriptorObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
