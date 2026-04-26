@@ -23,6 +23,7 @@ members = [
     "service_core",
     "substrate_api",
     "supervisor_catalog",
+    "target_abi",
     "target_executor",
     "vfs_service",
     "wasm_app",
@@ -43,6 +44,7 @@ substrate_api = { path = "substrate_api" }
 sha2 = "0.10"
 spin = "0.9.8"
 supervisor_catalog = { path = "supervisor_catalog" }
+target_abi = { path = "target_abi" }
 uart_16550 = "0.3.2"
 vmos_abi = { path = "abi" }
 wasmtime = { version = "43.0.0", default-features = false }
