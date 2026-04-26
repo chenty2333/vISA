@@ -723,6 +723,58 @@ impl IoFaultInjectionState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IoValidationReportState {
+    Passed,
+    Failed,
+}
+
+impl IoValidationReportState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IoValidationViolationCode {
+    MissingStore,
+    MissingDevice,
+    MissingQueue,
+    MissingDescriptor,
+    MissingResource,
+    MissingCapability,
+    MissingWait,
+    MissingCleanup,
+    StaleGeneration,
+    ActiveCapabilityWithoutBinding,
+    PendingWaitAfterCleanup,
+    CleanupLiveLeak,
+    FaultCleanupMismatch,
+}
+
+impl IoValidationViolationCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MissingStore => "missing-store",
+            Self::MissingDevice => "missing-device",
+            Self::MissingQueue => "missing-queue",
+            Self::MissingDescriptor => "missing-descriptor",
+            Self::MissingResource => "missing-resource",
+            Self::MissingCapability => "missing-capability",
+            Self::MissingWait => "missing-wait",
+            Self::MissingCleanup => "missing-cleanup",
+            Self::StaleGeneration => "stale-generation",
+            Self::ActiveCapabilityWithoutBinding => "active-capability-without-binding",
+            Self::PendingWaitAfterCleanup => "pending-wait-after-cleanup",
+            Self::CleanupLiveLeak => "cleanup-live-leak",
+            Self::FaultCleanupMismatch => "fault-cleanup-mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

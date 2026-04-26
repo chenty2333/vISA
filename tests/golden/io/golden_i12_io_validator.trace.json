@@ -1,0 +1,100 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "I12-io-validator",
+  "name": "golden_i12_io_validator",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md",
+    "references/specs/semantic-contract-v0.1/05-wait-token-event-bridge.md",
+    "references/specs/semantic-contract-v0.1/06-store-fault-cleanup.md",
+    "references/specs/substrate-api-v0/01-authority-traits.md"
+  ],
+  "no_goals": [
+    "real hardware validation",
+    "real MMIO/DMA/IRQ access",
+    "virtio backend validation",
+    "network or block vertical validation"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "inject-io-fault",
+        "fault": "io-fault-injection:9968@1",
+        "cleanup": "io-cleanup:9967@1",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "validate-io-runtime",
+        "report": "io-validation-report:9969@1",
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "validate-io-runtime",
+        "scenario": "corrupted io-wait driver binding generation",
+        "expected": "failed-report",
+        "violation": "stale-generation"
+      },
+      {
+        "id": 4,
+        "command": "validate-io-runtime",
+        "scenario": "cleanup effect references future capability generation",
+        "expected": "failed-report",
+        "violation": "stale-generation"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "IoValidationReportRecorded",
+      "report": "io-validation-report:9969@1",
+      "ok": true,
+      "violation_count": 0
+    }
+  ],
+  "expected": {
+    "views": {
+      "io-validation-report": {
+        "count": 1,
+        "id": 9969,
+        "generation": 1,
+        "state": "passed",
+        "ok": true,
+        "violation_count": 0,
+        "devices": 1,
+        "dma_buffers": 1,
+        "irq_events": 2,
+        "io_cleanups": 1,
+        "io_fault_injections": 1
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "IO validator emits osctl-visible report objects",
+      "Clean IO subgraph validates with zero violations",
+      "Corrupted IO generation edges are reported as stable violation codes",
+      "Validator evidence is package-root counted",
+      "Validator does not replace semantic_core invariants; it records reviewable evidence"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "io_runtime_i12_validator_reports_clean_io_subgraph",
+      "io_runtime_i12_validator_records_generation_violations_without_hiding_them",
+      "io_runtime_i12_validator_rejects_future_cleanup_capability_generation",
+      "io_validation_report_view_v1_exposes_counts_and_violations",
+      "semantic_roots_reject_io_validation_report_root_mismatch"
+    ],
+    "osctl_json_view": "io-validation-report list --json"
+  }
+}

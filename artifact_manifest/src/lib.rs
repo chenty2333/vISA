@@ -289,6 +289,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub io_fault_injection_count: usize,
     #[serde(default)]
+    pub io_validation_report_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -429,6 +431,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub io_fault_injections: Vec<IoFaultInjectionManifest>,
     #[serde(default)]
+    pub io_validation_reports: Vec<IoValidationReportManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -548,6 +552,8 @@ pub struct SemanticRootSetManifest {
     pub io_cleanup_roots: Vec<String>,
     #[serde(default)]
     pub io_fault_injection_roots: Vec<String>,
+    #[serde(default)]
+    pub io_validation_report_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1408,6 +1414,38 @@ pub struct IoFaultInjectionManifest {
     pub kind: String,
     pub state: String,
     pub injected_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IoValidationViolationManifest {
+    pub code: String,
+    pub subject: ContractObjectRefManifest,
+    pub relation: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IoValidationReportManifest {
+    pub id: u64,
+    pub generation: u64,
+    pub state: String,
+    pub validated_at_event: u64,
+    pub event_log_cursor: u64,
+    pub observed_device_count: usize,
+    pub observed_queue_count: usize,
+    pub observed_descriptor_count: usize,
+    pub observed_dma_buffer_count: usize,
+    pub observed_mmio_region_count: usize,
+    pub observed_irq_line_count: usize,
+    pub observed_irq_event_count: usize,
+    pub observed_device_capability_count: usize,
+    pub observed_driver_binding_count: usize,
+    pub observed_io_wait_count: usize,
+    pub observed_io_cleanup_count: usize,
+    pub observed_io_fault_injection_count: usize,
+    pub violation_count: usize,
+    pub violations: Vec<IoValidationViolationManifest>,
     pub note: String,
 }
 

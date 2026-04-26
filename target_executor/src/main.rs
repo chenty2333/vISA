@@ -17,16 +17,16 @@ use artifact_manifest::{
     DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
     InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    MmioRegionObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
-    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
-    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
+    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -1462,7 +1462,7 @@ fn record_preemptive_runtime_context_evidence(
             .into());
         }
     }
-    let i10_commands = [
+    let io_evidence_commands = [
         CommandEnvelope::new(
             116,
             "target-executor-i10",
@@ -1513,8 +1513,16 @@ fn record_preemptive_runtime_context_evidence(
                 note: "i11-injected-device-fault-harness".to_owned(),
             },
         ),
+        CommandEnvelope::new(
+            119,
+            "target-executor-i12",
+            SemanticCommand::ValidateIoRuntime {
+                report: 9969,
+                note: "i12-io-validator-harness".to_owned(),
+            },
+        ),
     ];
-    for command in i10_commands {
+    for command in io_evidence_commands {
         let result = semantic.apply_envelope(command);
         if result.status != CommandStatus::Applied {
             return Err(format!(
@@ -2557,6 +2565,7 @@ fn demo_migration_package(
             io_wait_count: semantic.io_wait_count(),
             io_cleanup_count: semantic.io_cleanup_count(),
             io_fault_injection_count: semantic.io_fault_injection_count(),
+            io_validation_report_count: semantic.io_validation_report_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2748,6 +2757,11 @@ fn demo_migration_package(
                 .io_fault_injections()
                 .iter()
                 .map(io_fault_injection_manifest)
+                .collect(),
+            io_validation_reports: semantic
+                .io_validation_reports()
+                .iter()
+                .map(io_validation_report_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -3462,6 +3476,24 @@ fn semantic_roots(
                     fault.cleanup_generation,
                     fault.state.as_str(),
                     fault.generation
+                )
+            })
+            .collect(),
+        io_validation_report_roots: semantic
+            .io_validation_reports()
+            .iter()
+            .map(|report| {
+                format!(
+                    "io-validation-report id={} state={} violations={} devices={} dma_buffers={} irq_events={} cleanups={} fault_injections={} generation={}",
+                    report.id,
+                    report.state.as_str(),
+                    report.violations.len(),
+                    report.observed_device_count,
+                    report.observed_dma_buffer_count,
+                    report.observed_irq_event_count,
+                    report.observed_io_cleanup_count,
+                    report.observed_io_fault_injection_count,
+                    report.generation
                 )
             })
             .collect(),
@@ -4857,6 +4889,42 @@ fn io_fault_injection_manifest(
         state: fault.state.as_str().to_owned(),
         injected_at_event: fault.injected_at_event,
         note: fault.note.clone(),
+    }
+}
+
+fn io_validation_report_manifest(
+    report: &semantic_core::IoValidationReportRecord,
+) -> IoValidationReportManifest {
+    IoValidationReportManifest {
+        id: report.id,
+        generation: report.generation,
+        state: report.state.as_str().to_owned(),
+        validated_at_event: report.validated_at_event,
+        event_log_cursor: report.event_log_cursor,
+        observed_device_count: report.observed_device_count,
+        observed_queue_count: report.observed_queue_count,
+        observed_descriptor_count: report.observed_descriptor_count,
+        observed_dma_buffer_count: report.observed_dma_buffer_count,
+        observed_mmio_region_count: report.observed_mmio_region_count,
+        observed_irq_line_count: report.observed_irq_line_count,
+        observed_irq_event_count: report.observed_irq_event_count,
+        observed_device_capability_count: report.observed_device_capability_count,
+        observed_driver_binding_count: report.observed_driver_binding_count,
+        observed_io_wait_count: report.observed_io_wait_count,
+        observed_io_cleanup_count: report.observed_io_cleanup_count,
+        observed_io_fault_injection_count: report.observed_io_fault_injection_count,
+        violation_count: report.violations.len(),
+        violations: report
+            .violations
+            .iter()
+            .map(|violation| IoValidationViolationManifest {
+                code: violation.code.as_str().to_owned(),
+                subject: contract_object_ref_manifest(violation.subject),
+                relation: violation.relation.clone(),
+                message: violation.message.clone(),
+            })
+            .collect(),
+        note: report.note.clone(),
     }
 }
 

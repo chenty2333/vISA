@@ -1,0 +1,155 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "I12-io-validator",
+  "phase": "Phase 3 IO Semantic Core",
+  "status": "pass",
+  "scope": [
+    "Add IoValidationReport as semantic IO validator evidence",
+    "Add ValidateIoRuntime command that records clean or failed IO validation reports without mutating IO authority",
+    "Collect validator violations for dangling or stale Store, DeviceObject, QueueObject, DescriptorObject, DMA, MMIO, IRQ, DeviceCapability, DriverStoreBinding, IoWait, IoCleanup, and IoFaultInjection edges",
+    "Expose IoValidationReport through semantic package roots/counts, target_executor host-validation output, osctl ViewV1, replay roots, and checkpoint golden trace",
+    "Keep third-party/backend state out of semantic truth; I12 validates semantic IO objects only"
+  ],
+  "no_goals": [
+    "Real hardware validation",
+    "Real MMIO/DMA/IRQ access",
+    "Virtio backend validation",
+    "Network or block vertical validation",
+    "Replacing semantic_core invariant checks"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/io/golden_i12_io_validator.trace.json",
+    "tests/reports/checkpoints/i12_io_validator.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/io/golden_i12_io_validator.trace.json",
+    "tests/reports/checkpoints/i12_io_validator.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "Validator is a report object, not a second source of authority",
+      "Validator records all detected IO violations into stable codes instead of stopping at the first invariant failure",
+      "ValidateIoRuntime can produce failed reports for malformed IO graphs without hiding the malformed edge",
+      "osctl exposes validator state through ViewV1 rather than internal struct dumps",
+      "Unknown IO object refs fail closed instead of being treated as existing",
+      "IO validator distinguishes live refs from historical cleanup/fault refs; forged future capability generations are rejected",
+      "target_executor records I12 evidence after I11 cleanup, keeping runtime-only execution out of scope"
+    ],
+    "residual_notes": [
+      "Network and block verticals still need their own packet/block specific validators after Phase 4 and Phase 5 objects exist",
+      "Real backend fault injection and hardware validation remain adapter/backend concerns"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core io_runtime_i12",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core io_validation_report",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl io_validation_report_view_v1_exposes_counts_and_violations",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- io-validation-report list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- replay --until 303 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/io/golden_i12_io_validator.trace.json",
+    "osctl_views": [
+      "osctl io-validation-report list --json <migration.json>",
+      "osctl contract validate --json <migration.json>",
+      "osctl replay --until 303 --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "io_validation_report_roots",
+      "io_fault_injection_roots",
+      "io_cleanup_roots",
+      "io_wait_roots",
+      "device_capability_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 303,
+      "io_validation_report_count": 1,
+      "io_fault_injection_count": 1,
+      "io_cleanup_count": 1,
+      "report": "io-validation-report:9969@1",
+      "state": "passed",
+      "violation_count": 0
+    }
+  },
+  "residual_gaps": [
+    "Phase 4 Network Full Vertical remains unimplemented"
+  ],
+  "next_checkpoint": "N0-packet-device-object"
+}

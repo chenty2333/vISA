@@ -4033,6 +4033,126 @@ fn io_runtime_i11_rejects_stale_or_post_cleanup_fault_injection() {
 }
 
 #[test]
+fn io_runtime_i12_validator_reports_clean_io_subgraph() {
+    let (mut graph, driver_store, driver_store_generation, binding, _io_wait) =
+        setup_i10_io_cleanup_graph();
+    assert!(graph.inject_io_fault_with_id(
+        1417,
+        driver_store,
+        driver_store_generation,
+        401,
+        1,
+        binding,
+        1,
+        ContractObjectRef::new(ContractObjectKind::IrqLineObject, 901, 1),
+        1418,
+        IoFaultInjectionKind::DeviceFault,
+        "i12 cleanup before validation",
+    ));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i12-test",
+        SemanticCommand::ValidateIoRuntime {
+            report: 1419,
+            note: "i12 clean validator".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.io_validation_report_count(), 1);
+    let report = &graph.io_validation_reports()[0];
+    assert_eq!(report.state, IoValidationReportState::Passed);
+    assert!(report.violations.is_empty());
+    assert_eq!(report.observed_device_count, 1);
+    assert_eq!(report.observed_io_cleanup_count, 1);
+    assert_eq!(report.observed_io_fault_injection_count, 1);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "IoValidationReportRecorded report=1419 ok=true violations=0 devices=1 dma_buffers=1 irq_events=1 cleanups=1 fault_injections=1 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn io_runtime_i12_validator_records_generation_violations_without_hiding_them() {
+    let (mut graph, driver_store, driver_store_generation, binding, io_wait) =
+        setup_i10_io_cleanup_graph();
+    assert!(graph.inject_io_fault_with_id(
+        1420,
+        driver_store,
+        driver_store_generation,
+        401,
+        1,
+        binding,
+        1,
+        ContractObjectRef::new(ContractObjectKind::IrqLineObject, 901, 1),
+        1421,
+        IoFaultInjectionKind::DeviceFault,
+        "i12 cleanup before negative validation",
+    ));
+    graph.corrupt_io_wait_driver_binding_generation_for_test(io_wait, 2);
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i12-test",
+        SemanticCommand::ValidateIoRuntime {
+            report: 1422,
+            note: "i12 bad validator".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    let report = &graph.io_validation_reports()[0];
+    assert_eq!(report.state, IoValidationReportState::Failed);
+    assert!(report.violations.iter().any(|violation| {
+        violation.code == IoValidationViolationCode::StaleGeneration
+            && violation.subject.kind == ContractObjectKind::IoWait
+            && violation.subject.id == io_wait
+            && violation.relation == "io-wait->driver-binding"
+    }));
+}
+
+#[test]
+fn io_runtime_i12_validator_rejects_future_cleanup_capability_generation() {
+    let (mut graph, driver_store, driver_store_generation, binding, _io_wait) =
+        setup_i10_io_cleanup_graph();
+    assert!(graph.inject_io_fault_with_id(
+        1423,
+        driver_store,
+        driver_store_generation,
+        401,
+        1,
+        binding,
+        1,
+        ContractObjectRef::new(ContractObjectKind::IrqLineObject, 901, 1),
+        1424,
+        IoFaultInjectionKind::DeviceFault,
+        "i12 cleanup before capability-generation validation",
+    ));
+    graph.corrupt_io_cleanup_revoked_capability_generation_for_test(1424, 999);
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i12-test",
+        SemanticCommand::ValidateIoRuntime {
+            report: 1425,
+            note: "i12 future capability generation validator".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    let report = &graph.io_validation_reports()[0];
+    assert_eq!(report.state, IoValidationReportState::Failed);
+    assert!(report.violations.iter().any(|violation| {
+        violation.code == IoValidationViolationCode::StaleGeneration
+            && violation.subject.kind == ContractObjectKind::IoCleanup
+            && violation.subject.id == 1424
+            && violation.relation == "io-cleanup->effect"
+    }));
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

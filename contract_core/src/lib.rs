@@ -98,6 +98,7 @@ pub enum ObjectKind {
     IoWait,
     IoCleanup,
     IoFaultInjection,
+    IoValidationReport,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -161,6 +162,7 @@ impl ObjectKind {
             Self::IoWait => "io-wait",
             Self::IoCleanup => "io-cleanup",
             Self::IoFaultInjection => "io-fault-injection",
+            Self::IoValidationReport => "io-validation-report",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -384,6 +386,7 @@ typed_ref!(DriverStoreBindingRef, ObjectKind::DriverStoreBinding);
 typed_ref!(IoWaitRef, ObjectKind::IoWait);
 typed_ref!(IoCleanupRef, ObjectKind::IoCleanup);
 typed_ref!(IoFaultInjectionRef, ObjectKind::IoFaultInjection);
+typed_ref!(IoValidationReportRef, ObjectKind::IoValidationReport);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1702,6 +1705,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("io fault injection root/count mismatch"));
     }
+    if roots.io_validation_report_roots.len() != package.semantic.io_validation_report_count
+        || package.semantic.io_validation_reports.len()
+            != package.semantic.io_validation_report_count
+    {
+        return Err(ContractError::new(
+            "io validation report root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2256,6 +2267,7 @@ mod tests {
                 io_wait_count: 0,
                 io_cleanup_count: 0,
                 io_fault_injection_count: 0,
+                io_validation_report_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2328,6 +2340,7 @@ mod tests {
                 io_waits: Vec::new(),
                 io_cleanups: Vec::new(),
                 io_fault_injections: Vec::new(),
+                io_validation_reports: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3387,6 +3400,39 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_io_validation_report_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.io_validation_report_count = 1;
+        package.semantic.io_validation_reports.push(
+            artifact_manifest::IoValidationReportManifest {
+                id: 30,
+                generation: 1,
+                state: "passed".to_owned(),
+                validated_at_event: 66,
+                event_log_cursor: 65,
+                observed_device_count: 1,
+                observed_queue_count: 1,
+                observed_descriptor_count: 1,
+                observed_dma_buffer_count: 1,
+                observed_mmio_region_count: 1,
+                observed_irq_line_count: 1,
+                observed_irq_event_count: 1,
+                observed_device_capability_count: 1,
+                observed_driver_binding_count: 1,
+                observed_io_wait_count: 1,
+                observed_io_cleanup_count: 1,
+                observed_io_fault_injection_count: 1,
+                violation_count: 0,
+                violations: Vec::new(),
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "io validation report root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3897,6 +3943,8 @@ mod tests {
         assert!(IoCleanupRef::try_from_ref(io_cleanup).is_ok());
         let io_fault = ObjectRef::new(ObjectKind::IoFaultInjection, 28, 1).unwrap();
         assert!(IoFaultInjectionRef::try_from_ref(io_fault).is_ok());
+        let io_report = ObjectRef::new(ObjectKind::IoValidationReport, 29, 1).unwrap();
+        assert!(IoValidationReportRef::try_from_ref(io_report).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

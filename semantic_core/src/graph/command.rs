@@ -384,6 +384,10 @@ pub enum SemanticCommand {
         kind: IoFaultInjectionKind,
         note: String,
     },
+    ValidateIoRuntime {
+        report: IoValidationReportId,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -625,6 +629,7 @@ impl SemanticCommand {
             Self::CancelIoWait { .. } => "cancel-io-wait",
             Self::CleanupIoDriver { .. } => "cleanup-io-driver",
             Self::InjectIoFault { .. } => "inject-io-fault",
+            Self::ValidateIoRuntime { .. } => "validate-io-runtime",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -2067,6 +2072,9 @@ impl SemanticGraph {
                     *kind,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::ValidateIoRuntime { report, .. } => self
+                .validate_io_validation_report(*report)
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -3222,6 +3230,9 @@ impl SemanticGraph {
                 kind,
                 &note,
             ),
+            SemanticCommand::ValidateIoRuntime { report, note } => {
+                self.record_io_validation_report_with_id(report, &note)
+            }
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,

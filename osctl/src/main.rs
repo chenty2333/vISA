@@ -14,14 +14,14 @@ use artifact_manifest::{
     DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
     DriverStoreBindingManifest, HartEventAttributionManifest, HartRecordManifest,
     HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
-    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
-    MigrationPackageManifest, MmioRegionObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
-    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
-    SmpStressRunManifest, StopTheWorldRendezvousManifest, StoreRecordManifest,
-    SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
+    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
+    SavedContextManifest, SchedulerDecisionManifest, SmpCleanupQuiescenceManifest,
+    SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
+    SmpSnapshotBarrierManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
+    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
     TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
@@ -276,6 +276,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "io-cleanup"
         | "io-fault"
         | "io-fault-injection"
+        | "io-validation"
+        | "io-validation-report"
+        | "io-validator"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -446,7 +449,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -673,6 +676,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "io-wait" | "io-wait-token" => "io-wait",
         "io-cleanup" => "io-cleanup",
         "io-fault" | "io-fault-injection" => "io-fault-injection",
+        "io-validation" | "io-validation-report" | "io-validator" => "io-validation-report",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2240,6 +2244,60 @@ fn io_fault_injection_view_v1(fault: &IoFaultInjectionManifest) -> serde_json::V
     })
 }
 
+fn io_validation_report_view_v1(report: &IoValidationReportManifest) -> serde_json::Value {
+    let violations = report
+        .violations
+        .iter()
+        .map(|violation| {
+            serde_json::json!({
+                "code": violation.code,
+                "subject": object_ref_manifest_json(&violation.subject),
+                "relation": violation.relation,
+                "message": violation.message,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "io-validation-report",
+        "id": report.id,
+        "generation": report.generation,
+        "state": report.state,
+        "owner": serde_json::Value::Null,
+        "references": {
+            "validated_event": {
+                "id": report.validated_at_event,
+            },
+            "event_log_cursor": report.event_log_cursor,
+        },
+        "observed": {
+            "devices": report.observed_device_count,
+            "queues": report.observed_queue_count,
+            "descriptors": report.observed_descriptor_count,
+            "dma_buffers": report.observed_dma_buffer_count,
+            "mmio_regions": report.observed_mmio_region_count,
+            "irq_lines": report.observed_irq_line_count,
+            "irq_events": report.observed_irq_event_count,
+            "device_capabilities": report.observed_device_capability_count,
+            "driver_bindings": report.observed_driver_binding_count,
+            "io_waits": report.observed_io_wait_count,
+            "io_cleanups": report.observed_io_cleanup_count,
+            "io_fault_injections": report.observed_io_fault_injection_count,
+        },
+        "validation": {
+            "ok": report.state == "passed" && report.violation_count == 0,
+            "violation_count": report.violation_count,
+            "violations": violations,
+        },
+        "note": report.note,
+        "last_transition": {
+            "validated_at_event": report.validated_at_event,
+            "event_log_cursor": report.event_log_cursor,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -3291,6 +3349,12 @@ fn stable_views_for_kind(
             .iter()
             .map(io_fault_injection_view_v1)
             .collect()),
+        "io-validation" | "io-validation-report" | "io-validator" => Ok(package
+            .semantic
+            .io_validation_reports
+            .iter()
+            .map(io_validation_report_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -3937,7 +4001,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -3973,6 +4037,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.io_wait_count,
             package.semantic.io_cleanup_count,
             package.semantic.io_fault_injection_count,
+            package.semantic.io_validation_report_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -4105,7 +4170,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} descriptor_roots={} dma_buffer_roots={} mmio_region_roots={} irq_line_roots={} irq_event_roots={} device_capability_roots={} driver_store_binding_roots={} io_wait_roots={} io_cleanup_roots={} io_fault_injection_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} descriptor_roots={} dma_buffer_roots={} mmio_region_roots={} irq_line_roots={} irq_event_roots={} device_capability_roots={} driver_store_binding_roots={} io_wait_roots={} io_cleanup_roots={} io_fault_injection_roots={} io_validation_report_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -4158,6 +4223,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.io_wait_roots.len(),
         package.semantic.roots.io_cleanup_roots.len(),
         package.semantic.roots.io_fault_injection_roots.len(),
+        package.semantic.roots.io_validation_report_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -4251,6 +4317,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "io-fault-injection",
         &package.semantic.roots.io_fault_injection_roots,
+    );
+    print_roots(
+        "io-validation-report",
+        &package.semantic.roots.io_validation_report_roots,
     );
     print_roots(
         "activation-resume",
@@ -5850,6 +5920,18 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             Some(fault.injected_at_event),
         ));
     }
+    for report in &package.semantic.io_validation_reports {
+        let from = object_ref_json("io-validation-report", report.id, report.generation);
+        for violation in &report.violations {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(&violation.subject),
+                &violation.relation,
+                "historical",
+                Some(report.validated_at_event),
+            ));
+        }
+    }
     for resume in &package.semantic.activation_resumes {
         let from = object_ref_json("activation-resume", resume.id, resume.generation);
         edges.push(graph_edge(
@@ -7276,7 +7358,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -7311,6 +7393,7 @@ fn replay_until(
         package.semantic.roots.io_wait_roots.len(),
         package.semantic.roots.io_cleanup_roots.len(),
         package.semantic.roots.io_fault_injection_roots.len(),
+        package.semantic.roots.io_validation_report_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -7399,6 +7482,9 @@ fn replay_until(
     }
     for fault in &package.semantic.roots.io_fault_injection_roots {
         println!("replay io-fault-injection {fault}");
+    }
+    for report in &package.semantic.roots.io_validation_report_roots {
+        println!("replay io-validation-report {report}");
     }
     Ok(())
 }
@@ -7517,6 +7603,10 @@ fn print_replay_json(
     roots.insert(
         "io_fault_injections".to_owned(),
         serde_json::json!(package.semantic.roots.io_fault_injection_roots.len()),
+    );
+    roots.insert(
+        "io_validation_reports".to_owned(),
+        serde_json::json!(package.semantic.roots.io_validation_report_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -7862,7 +7952,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -7908,6 +7998,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.io_wait_count,
         package.semantic.io_cleanup_count,
         package.semantic.io_fault_injection_count,
+        package.semantic.io_validation_report_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -8311,6 +8402,51 @@ mod tests {
         assert_eq!(view["references"]["cleanup"]["id"], 47);
         assert_eq!(view["fault"]["kind"], "device-fault");
         assert_eq!(view["last_transition"]["injected_at_event"], 58);
+    }
+
+    #[test]
+    fn io_validation_report_view_v1_exposes_counts_and_violations() {
+        let view = io_validation_report_view_v1(&IoValidationReportManifest {
+            id: 49,
+            generation: 1,
+            state: "failed".to_owned(),
+            validated_at_event: 59,
+            event_log_cursor: 58,
+            observed_device_count: 1,
+            observed_queue_count: 1,
+            observed_descriptor_count: 1,
+            observed_dma_buffer_count: 1,
+            observed_mmio_region_count: 1,
+            observed_irq_line_count: 1,
+            observed_irq_event_count: 1,
+            observed_device_capability_count: 1,
+            observed_driver_binding_count: 1,
+            observed_io_wait_count: 1,
+            observed_io_cleanup_count: 1,
+            observed_io_fault_injection_count: 1,
+            violation_count: 1,
+            violations: vec![artifact_manifest::IoValidationViolationManifest {
+                code: "stale-generation".to_owned(),
+                subject: ContractObjectRefManifest {
+                    kind: "io-wait".to_owned(),
+                    id: 41,
+                    generation: 1,
+                },
+                relation: "io-wait->driver-binding".to_owned(),
+                message: "bad generation".to_owned(),
+            }],
+            note: "io validator".to_owned(),
+        });
+        assert_eq!(view["kind"], "io-validation-report");
+        assert_eq!(view["observed"]["devices"], 1);
+        assert_eq!(view["observed"]["io_fault_injections"], 1);
+        assert_eq!(view["validation"]["ok"], false);
+        assert_eq!(view["validation"]["violation_count"], 1);
+        assert_eq!(
+            view["validation"]["violations"][0]["subject"]["kind"],
+            "io-wait"
+        );
+        assert_eq!(view["last_transition"]["validated_at_event"], 59);
     }
 
     #[test]

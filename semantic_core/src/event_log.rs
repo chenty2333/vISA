@@ -417,6 +417,17 @@ pub enum EventKind {
         kind: IoFaultInjectionKind,
         generation: Generation,
     },
+    IoValidationReportRecorded {
+        report: IoValidationReportId,
+        ok: bool,
+        violation_count: usize,
+        device_count: usize,
+        dma_buffer_count: usize,
+        irq_event_count: usize,
+        cleanup_count: usize,
+        fault_injection_count: usize,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1322,6 +1333,19 @@ impl EventKind {
                 "IoFaultInjected fault={fault} kind={} driver_store={driver_store}@{driver_store_generation} device={device}@{device_generation} driver_binding={driver_binding}@{driver_binding_generation} target={} cleanup={cleanup}@{cleanup_generation} generation={generation}",
                 kind.as_str(),
                 target.summary()
+            ),
+            Self::IoValidationReportRecorded {
+                report,
+                ok,
+                violation_count,
+                device_count,
+                dma_buffer_count,
+                irq_event_count,
+                cleanup_count,
+                fault_injection_count,
+                generation,
+            } => format!(
+                "IoValidationReportRecorded report={report} ok={ok} violations={violation_count} devices={device_count} dma_buffers={dma_buffer_count} irq_events={irq_event_count} cleanups={cleanup_count} fault_injections={fault_injection_count} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

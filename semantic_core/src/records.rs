@@ -980,6 +980,47 @@ impl IoFaultInjectionRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IoValidationViolationRecord {
+    pub code: IoValidationViolationCode,
+    pub subject: ContractObjectRef,
+    pub relation: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IoValidationReportRecord {
+    pub id: IoValidationReportId,
+    pub generation: Generation,
+    pub state: IoValidationReportState,
+    pub validated_at_event: EventId,
+    pub event_log_cursor: EventId,
+    pub observed_device_count: usize,
+    pub observed_queue_count: usize,
+    pub observed_descriptor_count: usize,
+    pub observed_dma_buffer_count: usize,
+    pub observed_mmio_region_count: usize,
+    pub observed_irq_line_count: usize,
+    pub observed_irq_event_count: usize,
+    pub observed_device_capability_count: usize,
+    pub observed_driver_binding_count: usize,
+    pub observed_io_wait_count: usize,
+    pub observed_io_cleanup_count: usize,
+    pub observed_io_fault_injection_count: usize,
+    pub violations: Vec<IoValidationViolationRecord>,
+    pub note: String,
+}
+
+impl IoValidationReportRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::IoValidationReport,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

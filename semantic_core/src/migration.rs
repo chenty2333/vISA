@@ -1014,6 +1014,12 @@ pub enum SemanticInvariantError {
     IoFaultInjectionMissingEvent {
         fault: IoFaultInjectionId,
     },
+    IoValidationReportInvalid {
+        report: IoValidationReportId,
+    },
+    IoValidationReportMissingEvent {
+        report: IoValidationReportId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

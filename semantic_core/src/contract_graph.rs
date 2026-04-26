@@ -1413,6 +1413,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::IoWait
             | ContractObjectKind::IoCleanup
             | ContractObjectKind::IoFaultInjection
+            | ContractObjectKind::IoValidationReport
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

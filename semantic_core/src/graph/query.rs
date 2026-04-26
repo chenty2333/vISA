@@ -100,6 +100,7 @@ impl SemanticGraph {
         self.check_io_wait_invariants()?;
         self.check_io_cleanup_invariants()?;
         self.check_io_fault_injection_invariants()?;
+        self.check_io_validation_report_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;
