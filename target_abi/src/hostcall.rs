@@ -4,6 +4,10 @@ pub const HOSTCALL_FRAME_ARG_CAPACITY: usize = 8;
 pub const HOSTCALL_FRAME_RET_CAPACITY: usize = 4;
 pub const FAKE_HOSTCALL_TRAMPOLINE_REGISTER_A0: &str = "a0";
 pub const FAKE_HOSTCALL_TRAMPOLINE_REGISTER_A1: &str = "a1";
+pub const OBJECT_KIND_CAPABILITY_V1: u16 = 3;
+pub const OBJECT_KIND_STORE_V1: u16 = 6;
+pub const OBJECT_KIND_ACTIVATION_V1: u16 = 8;
+pub const OBJECT_KIND_CODE_OBJECT_V1: u16 = 10;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -456,10 +460,6 @@ mod tests {
     use super::*;
     use crate::RV64_ENTRY_HOSTCALL_TAIL_BYTES;
 
-    const STORE_KIND: u16 = 6;
-    const ACTIVATION_KIND: u16 = 8;
-    const CODE_KIND: u16 = 10;
-
     #[test]
     fn hostcall_frame_v1_roundtrip() {
         let mut frame = frame();
@@ -493,7 +493,7 @@ mod tests {
     #[test]
     fn caller_refs_mismatch_executor_identity_rejects() {
         let mut frame = frame();
-        frame.caller_code = ObjectRefRaw::new(CODE_KIND, 99, 1);
+        frame.caller_code = ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, 99, 1);
 
         assert_eq!(
             validate_trampoline_frame(
@@ -542,10 +542,10 @@ mod tests {
 
     fn frame() -> HostcallFrameV1 {
         let mut frame = HostcallFrameV1::new(42);
-        frame.caller_store = ObjectRefRaw::new(STORE_KIND, 1, 3);
-        frame.caller_activation = ObjectRefRaw::new(ACTIVATION_KIND, 2, 5);
-        frame.caller_code = ObjectRefRaw::new(CODE_KIND, 3, 7);
-        frame.capability = ObjectRefRaw::new(3, 4, 9);
+        frame.caller_store = ObjectRefRaw::new(OBJECT_KIND_STORE_V1, 1, 3);
+        frame.caller_activation = ObjectRefRaw::new(OBJECT_KIND_ACTIVATION_V1, 2, 5);
+        frame.caller_code = ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, 3, 7);
+        frame.capability = ObjectRefRaw::new(OBJECT_KIND_CAPABILITY_V1, 4, 9);
         frame.arg_count = 1;
         frame.ret_count = 1;
         frame
@@ -553,9 +553,9 @@ mod tests {
 
     fn identity() -> ActiveHostcallIdentity {
         ActiveHostcallIdentity {
-            store: ObjectRefRaw::new(STORE_KIND, 1, 3),
-            activation: ObjectRefRaw::new(ACTIVATION_KIND, 2, 5),
-            code: ObjectRefRaw::new(CODE_KIND, 3, 7),
+            store: ObjectRefRaw::new(OBJECT_KIND_STORE_V1, 1, 3),
+            activation: ObjectRefRaw::new(OBJECT_KIND_ACTIVATION_V1, 2, 5),
+            code: ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, 3, 7),
         }
     }
 }

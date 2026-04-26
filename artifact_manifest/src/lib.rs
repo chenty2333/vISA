@@ -616,6 +616,18 @@ pub struct TrapRecordManifest {
     #[serde(default)]
     pub artifact_generation: Option<u64>,
     pub offset: Option<u64>,
+    #[serde(default)]
+    pub target_pc: Option<u64>,
+    #[serde(default)]
+    pub trap_kind: Option<String>,
+    #[serde(default)]
+    pub function_index: Option<u32>,
+    #[serde(default)]
+    pub wasm_offset: Option<u64>,
+    #[serde(default)]
+    pub debug_symbol: Option<u32>,
+    #[serde(default)]
+    pub classification_status: Option<String>,
     pub hostcall: Option<String>,
     pub fault_policy: String,
     pub effect: String,

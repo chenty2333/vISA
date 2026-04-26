@@ -1,5 +1,6 @@
 use core::convert::TryFrom;
 
+#[cfg(feature = "hash")]
 use sha2::{Digest, Sha256};
 
 pub const TARGET_ARTIFACT_MAGIC: [u8; 8] = *b"SEMAOS\0\x01";
@@ -286,6 +287,7 @@ pub enum TargetArtifactError {
     BadSectionAlignment,
     DuplicateRequiredSection(SectionKindV1),
     MissingRequiredSection(SectionKindV1),
+    HashUnavailable,
     HashMismatch,
 }
 
@@ -424,28 +426,38 @@ pub fn canonical_zero_field_image_hash(bytes: &[u8]) -> Result<[u8; 32], TargetA
         }
     }
 
-    let mut hasher = Sha256::new();
-    for (index, byte) in bytes.iter().copied().enumerate() {
-        let in_image_hash =
-            (IMAGE_HASH_OFFSET..IMAGE_HASH_OFFSET + IMAGE_HASH_LEN).contains(&index);
-        let in_signature_hash = signature_section_hash
-            .map(|(start, end)| (start..end).contains(&index))
-            .unwrap_or(false);
-        let in_signature_payload = signature_payload
-            .map(|(start, end)| (start..end).contains(&index))
-            .unwrap_or(false);
-
-        if in_image_hash || in_signature_hash || in_signature_payload {
-            hasher.update([0]);
-        } else {
-            hasher.update([byte]);
-        }
+    #[cfg(not(feature = "hash"))]
+    {
+        let _ = signature_payload;
+        let _ = signature_section_hash;
+        return Err(TargetArtifactError::HashUnavailable);
     }
 
-    let digest = hasher.finalize();
-    let mut out = [0; 32];
-    out.copy_from_slice(&digest);
-    Ok(out)
+    #[cfg(feature = "hash")]
+    {
+        let mut hasher = Sha256::new();
+        for (index, byte) in bytes.iter().copied().enumerate() {
+            let in_image_hash =
+                (IMAGE_HASH_OFFSET..IMAGE_HASH_OFFSET + IMAGE_HASH_LEN).contains(&index);
+            let in_signature_hash = signature_section_hash
+                .map(|(start, end)| (start..end).contains(&index))
+                .unwrap_or(false);
+            let in_signature_payload = signature_payload
+                .map(|(start, end)| (start..end).contains(&index))
+                .unwrap_or(false);
+
+            if in_image_hash || in_signature_hash || in_signature_payload {
+                hasher.update([0]);
+            } else {
+                hasher.update([byte]);
+            }
+        }
+
+        let digest = hasher.finalize();
+        let mut out = [0; 32];
+        out.copy_from_slice(&digest);
+        Ok(out)
+    }
 }
 
 pub fn verify_canonical_zero_field_image_hash(
@@ -594,7 +606,7 @@ fn checked_mul(
     left.checked_mul(right).ok_or(error)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "hash"))]
 mod tests {
     use super::*;
 

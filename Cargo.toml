@@ -44,7 +44,7 @@ substrate_api = { path = "substrate_api" }
 sha2 = "0.10"
 spin = "0.9.8"
 supervisor_catalog = { path = "supervisor_catalog" }
-target_abi = { path = "target_abi" }
+target_abi = { path = "target_abi", default-features = false }
 uart_16550 = "0.3.2"
 vmos_abi = { path = "abi" }
 wasmtime = { version = "43.0.0", default-features = false }

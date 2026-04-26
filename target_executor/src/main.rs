@@ -41,6 +41,10 @@ use semantic_core::{
     TrapSurfaceState, VerifiedArtifact, memory_class_policies, validate_contract_graph,
 };
 use substrate_api::{SubstrateEvent, SubstrateRequester};
+use target_abi::{
+    OBJECT_KIND_CODE_OBJECT_V1, ObjectRefRaw, RV64_ENTRY_TRAP_EBREAK_OFFSET, TrapKindV1,
+    TrapMapEntryV1,
+};
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
 
@@ -763,6 +767,31 @@ fn run_activation_harness(
         );
         executor
             .release_dmw_lease(lease)
+            .map_err(|error| error.message())?;
+
+        let pc_trap = executor
+            .start_activation(
+                &store.store,
+                code,
+                ActivationEntry::Symbol("pc_trap_ebreak".to_owned()),
+            )
+            .map_err(|error| error.message())?;
+        let trap_map = [TrapMapEntryV1::new(
+            ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, code.id, code.generation),
+            RV64_ENTRY_TRAP_EBREAK_OFFSET,
+            RV64_ENTRY_TRAP_EBREAK_OFFSET + 4,
+            TrapKindV1::WasmUnreachable,
+            0,
+            RV64_ENTRY_TRAP_EBREAK_OFFSET,
+            0,
+        )];
+        executor
+            .trap_exit_by_pc(
+                pc_trap,
+                code,
+                code.text.start + RV64_ENTRY_TRAP_EBREAK_OFFSET,
+                &trap_map,
+            )
             .map_err(|error| error.message())?;
 
         for class in [
@@ -1747,6 +1776,12 @@ fn trap_record_manifest(trap: &semantic_core::TargetTrapRecord) -> TrapRecordMan
         artifact: trap.artifact,
         artifact_generation: trap.artifact_generation,
         offset: trap.offset,
+        target_pc: trap.target_pc,
+        trap_kind: trap.trap_kind.clone(),
+        function_index: trap.function_index,
+        wasm_offset: trap.wasm_offset,
+        debug_symbol: trap.debug_symbol,
+        classification_status: trap.classification_status.clone(),
         hostcall: trap.hostcall.clone(),
         fault_policy: trap.fault_policy.clone(),
         effect: trap.effect.summary(),

@@ -5,6 +5,7 @@ pub mod fake_aot;
 pub mod hostcall;
 pub mod profile;
 pub mod signature;
+pub mod trap;
 
 pub use artifact::{
     SectionKindV1, TargetArtifactError, TargetArtifactHeaderV1, TargetArtifactImage,
@@ -23,7 +24,8 @@ pub use hostcall::{
     FAKE_HOSTCALL_TRAMPOLINE_REGISTER_A0, FAKE_HOSTCALL_TRAMPOLINE_REGISTER_A1,
     FakeHostcallTailInvocation, HOSTCALL_FRAME_ARG_CAPACITY, HOSTCALL_FRAME_MAGIC,
     HOSTCALL_FRAME_RET_CAPACITY, HOSTCALL_FRAME_VERSION, HostcallFrameError, HostcallFrameV1,
-    HostcallStatusV1, ObjectRefRaw, validate_trampoline_frame,
+    HostcallStatusV1, OBJECT_KIND_ACTIVATION_V1, OBJECT_KIND_CAPABILITY_V1,
+    OBJECT_KIND_CODE_OBJECT_V1, OBJECT_KIND_STORE_V1, ObjectRefRaw, validate_trampoline_frame,
 };
 pub use profile::{
     CodePublishProfileV1, DmaProfileV1, DmwProfileV1, EndianV1, TargetArchV1,
@@ -31,4 +33,8 @@ pub use profile::{
 };
 pub use signature::{
     DevKeyRecordV1, SignatureRecordV1, SignatureSchemeV1, SignatureShapeError, SignatureStatusV1,
+};
+pub use trap::{
+    CodeRangeStateV1, PcRangeEntryV1, PcRangeRuntimeEntryV1, TrapAttributionV1, TrapKindV1,
+    TrapMapEntryV1, classify_trap_pc,
 };

@@ -598,6 +598,12 @@ fn trap_view_v1(trap: &TrapRecordManifest) -> serde_json::Value {
         },
         "trap_class": trap.class,
         "offset": trap.offset,
+        "target_pc": trap.target_pc,
+        "trap_kind": trap.trap_kind,
+        "function_index": trap.function_index,
+        "wasm_offset": trap.wasm_offset,
+        "debug_symbol": trap.debug_symbol,
+        "classification_status": trap.classification_status,
         "detail": trap.detail,
         "last_transition": {
             "fault_policy": trap.fault_policy,
@@ -2193,7 +2199,7 @@ fn inspect_package_object(
             );
             for trap in &package.semantic.trap_records {
                 let line = format!(
-                    "trap id={} class={} store={}@{} activation={}@{} code={}@{} artifact={}@{} offset={} hostcall={} policy={} effect={} detail={}",
+                    "trap id={} class={} store={}@{} activation={}@{} code={}@{} artifact={}@{} pc={} offset={} trap_kind={} hostcall={} policy={} effect={} detail={}",
                     trap.id,
                     trap.class,
                     display_option_u64(trap.store),
@@ -2204,7 +2210,9 @@ fn inspect_package_object(
                     display_option_u64(trap.code_generation),
                     display_option_u64(trap.artifact),
                     display_option_u64(trap.artifact_generation),
+                    display_option_u64(trap.target_pc),
                     display_option_u64(trap.offset),
+                    trap.trap_kind.as_deref().unwrap_or("none"),
                     trap.hostcall.as_deref().unwrap_or("none"),
                     trap.fault_policy,
                     trap.effect,

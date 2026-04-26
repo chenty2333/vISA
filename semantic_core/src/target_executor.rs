@@ -3,6 +3,10 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use super::*;
+use target_abi::{
+    OBJECT_KIND_CODE_OBJECT_V1, ObjectRefRaw, PcRangeEntryV1, PcRangeRuntimeEntryV1,
+    TrapAttributionV1, TrapKindV1, TrapMapEntryV1, classify_trap_pc,
+};
 
 pub const TARGET_ARTIFACT_GENERATION_V1: Generation = 1;
 
@@ -1627,6 +1631,25 @@ impl TargetTrapClass {
     }
 }
 
+fn trap_class_for_attribution(kind: TrapKindV1) -> TargetTrapClass {
+    match kind {
+        TrapKindV1::CapabilityDenied => TargetTrapClass::CapabilityTrap,
+        TrapKindV1::WindowViolation => TargetTrapClass::WindowTrap,
+        TrapKindV1::HostcallFault => TargetTrapClass::HostcallTrap,
+        TrapKindV1::UnknownCodeFault | TrapKindV1::SubstrateFault => {
+            TargetTrapClass::SubstrateFault
+        }
+        TrapKindV1::UnknownCodeTrap | TrapKindV1::StaleCodeExecutionFault => {
+            TargetTrapClass::CodeObjectTrap
+        }
+        TrapKindV1::WasmBounds
+        | TrapKindV1::WasmUnreachable
+        | TrapKindV1::BadIndirectCall
+        | TrapKindV1::IntegerDivByZero
+        | TrapKindV1::StackOverflow => TargetTrapClass::GuestTrap,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TargetTrapRecord {
     pub id: TargetTrapId,
@@ -1641,6 +1664,12 @@ pub struct TargetTrapRecord {
     pub artifact: Option<TargetArtifactId>,
     pub artifact_generation: Option<Generation>,
     pub offset: Option<u64>,
+    pub target_pc: Option<u64>,
+    pub trap_kind: Option<String>,
+    pub function_index: Option<u32>,
+    pub wasm_offset: Option<u64>,
+    pub debug_symbol: Option<u32>,
+    pub classification_status: Option<String>,
     pub hostcall: Option<String>,
     pub fault_policy: String,
     pub effect: FailureEffect,
@@ -3189,6 +3218,77 @@ impl TargetExecutor {
         ))
     }
 
+    pub fn trap_exit_by_pc(
+        &mut self,
+        activation: ActivationId,
+        code: &CodeObject,
+        pc: u64,
+        trap_map: &[TrapMapEntryV1],
+    ) -> Result<TargetTrapId, TargetExecutorError> {
+        let activation_index = self.activation_index(activation)?;
+        let activation_record = &self.activations[activation_index];
+        let code_store_mismatch = code.state != CodeObjectState::Retired
+            && (code.bound_store != Some(activation_record.store)
+                || code.bound_store_generation != Some(activation_record.store_generation));
+        if activation_record.code_object != code.id
+            || activation_record.code_generation != code.generation
+            || activation_record.artifact != code.artifact_id
+            || code_store_mismatch
+        {
+            self.record_trap_for_activation(
+                activation_index,
+                TargetTrapClass::CodeObjectTrap,
+                Some(code),
+                None,
+                "trap-attribution-failure",
+                FailureEffect::CompleteWithErrno(5),
+                "trap PC attribution did not match activation code object",
+            );
+            return Err(TargetExecutorError::CodeObjectMismatch);
+        }
+        if self.activations[activation_index].active_dmw_leases != 0 {
+            self.record_trap_for_activation(
+                activation_index,
+                TargetTrapClass::WindowTrap,
+                Some(code),
+                None,
+                "restart",
+                FailureEffect::CompleteWithErrno(14),
+                "activation attempted to trap with an active DMW lease",
+            );
+            return Err(TargetExecutorError::DmwLeaseActive);
+        }
+        let code_ref = ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, code.id, code.generation);
+        let range = PcRangeEntryV1::new(code_ref, code.text.start, code.text.len, 0, 0);
+        let runtime_range = if code.state == CodeObjectState::Retired {
+            PcRangeRuntimeEntryV1::retired(range)
+        } else {
+            PcRangeRuntimeEntryV1::live(range)
+        };
+        let ranges = [runtime_range];
+        let attribution = classify_trap_pc(pc, &ranges, trap_map);
+        let class = trap_class_for_attribution(attribution.trap_kind);
+        let detail = format!(
+            "pc={pc:#x} code_offset={} trap_kind={}",
+            attribution
+                .code_offset
+                .map(|offset| format!("{offset:#x}"))
+                .unwrap_or_else(|| "none".to_string()),
+            attribution.trap_kind.as_str()
+        );
+        Ok(self.record_trap_for_activation_attributed(
+            activation_index,
+            class,
+            attribution.code_object.map(|_| code),
+            None,
+            attribution.trap_kind.as_str(),
+            FailureEffect::CompleteWithErrno(5),
+            &detail,
+            attribution.code_offset,
+            Some(attribution),
+        ))
+    }
+
     pub fn synthetic_trap(
         &mut self,
         class: TargetTrapClass,
@@ -3229,6 +3329,12 @@ impl TargetExecutor {
             artifact: code.map(|code| code.artifact_id),
             artifact_generation: code.map(|_| TARGET_ARTIFACT_GENERATION_V1),
             offset: Some(0),
+            target_pc: None,
+            trap_kind: None,
+            function_index: None,
+            wasm_offset: None,
+            debug_symbol: None,
+            classification_status: None,
             hostcall: hostcall.map(|hostcall| hostcall.to_string()),
             fault_policy: "harness-classification".to_string(),
             effect: FailureEffect::CompleteWithErrno(5),
@@ -4108,6 +4214,31 @@ impl TargetExecutor {
         effect: FailureEffect,
         detail: &str,
     ) -> TargetTrapId {
+        self.record_trap_for_activation_attributed(
+            activation_index,
+            class,
+            code,
+            hostcall,
+            fault_policy,
+            effect,
+            detail,
+            Some(0),
+            None,
+        )
+    }
+
+    fn record_trap_for_activation_attributed(
+        &mut self,
+        activation_index: usize,
+        class: TargetTrapClass,
+        code: Option<&CodeObject>,
+        hostcall: Option<String>,
+        fault_policy: &str,
+        effect: FailureEffect,
+        detail: &str,
+        offset: Option<u64>,
+        attribution: Option<TrapAttributionV1>,
+    ) -> TargetTrapId {
         let activation_id = self.activations[activation_index].id;
         let store = self.activations[activation_index].store;
         let store_generation = self.activations[activation_index].store_generation;
@@ -4141,7 +4272,14 @@ impl TargetExecutor {
             code_generation: code.map(|code| code.generation),
             artifact: code.map(|code| code.artifact_id),
             artifact_generation: code.map(|_| TARGET_ARTIFACT_GENERATION_V1),
-            offset: Some(0),
+            offset,
+            target_pc: attribution.map(|attribution| attribution.pc),
+            trap_kind: attribution.map(|attribution| attribution.trap_kind.as_str().to_string()),
+            function_index: attribution.and_then(|attribution| attribution.function_index),
+            wasm_offset: attribution.and_then(|attribution| attribution.wasm_offset),
+            debug_symbol: attribution.and_then(|attribution| attribution.debug_symbol),
+            classification_status: attribution
+                .map(|attribution| attribution.trap_kind.as_str().to_string()),
             hostcall,
             fault_policy: fault_policy.to_string(),
             effect,
@@ -4994,6 +5132,12 @@ mod tests {
             artifact: Some(retired_code.artifact_id),
             artifact_generation: Some(1),
             offset: Some(0),
+            target_pc: None,
+            trap_kind: None,
+            function_index: None,
+            wasm_offset: None,
+            debug_symbol: None,
+            classification_status: None,
             hostcall: Some("hostcall.bad".to_string()),
             fault_policy: "debug".to_string(),
             effect: FailureEffect::CompleteWithErrno(22),
@@ -5581,6 +5725,12 @@ mod tests {
             artifact: None,
             artifact_generation: None,
             offset: None,
+            target_pc: None,
+            trap_kind: None,
+            function_index: None,
+            wasm_offset: None,
+            debug_symbol: None,
+            classification_status: None,
             hostcall: None,
             fault_policy: "history-only".to_string(),
             effect: FailureEffect::CompleteWithErrno(5),
@@ -6091,5 +6241,143 @@ mod tests {
                 .iter()
                 .any(|record| record.class == MigrationObjectClass::NeverMigrated)
         );
+    }
+
+    #[test]
+    fn trap_record_uses_historical_refs() {
+        let (_artifact, store, code, _capabilities) = running_store_and_code();
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("entry_trap_ebreak".to_string()),
+            )
+            .unwrap();
+        let offset = target_abi::RV64_ENTRY_TRAP_EBREAK_OFFSET;
+        let trap_map = [TrapMapEntryV1::new(
+            ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, code.id, code.generation),
+            offset,
+            offset + 4,
+            TrapKindV1::WasmUnreachable,
+            1,
+            0x20,
+            7,
+        )];
+
+        let trap_id = executor
+            .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
+            .unwrap();
+        let trap = executor
+            .traps()
+            .iter()
+            .find(|trap| trap.id == trap_id)
+            .unwrap();
+
+        assert_eq!(trap.store, Some(store.store.id));
+        assert_eq!(trap.store_generation, Some(store.store.generation));
+        assert_eq!(trap.activation, Some(activation));
+        assert!(trap.activation_generation.is_some());
+        assert_eq!(trap.code_object, Some(code.id));
+        assert_eq!(trap.code_generation, Some(code.generation));
+        assert_eq!(trap.artifact, Some(code.artifact_id));
+        assert_eq!(
+            trap.artifact_generation,
+            Some(TARGET_ARTIFACT_GENERATION_V1)
+        );
+        assert_eq!(trap.offset, Some(offset));
+        assert_eq!(trap.trap_kind.as_deref(), Some("wasm-unreachable"));
+        assert_eq!(
+            trap.classification_status.as_deref(),
+            Some("wasm-unreachable")
+        );
+    }
+
+    #[test]
+    fn cleanup_targets_exact_store_generation() {
+        let (_artifact, mut store, mut code, mut capabilities) = running_store_and_code();
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("entry_trap_ebreak".to_string()),
+            )
+            .unwrap();
+        let offset = target_abi::RV64_ENTRY_TRAP_EBREAK_OFFSET;
+        let trap_map = [TrapMapEntryV1::new(
+            ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, code.id, code.generation),
+            offset,
+            offset + 4,
+            TrapKindV1::WasmUnreachable,
+            1,
+            0x20,
+            7,
+        )];
+        executor
+            .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
+            .unwrap();
+        let fault_generation = store.store.generation;
+
+        let cleanup_id = executor
+            .run_fault_cleanup(
+                &mut store.store,
+                Some(activation),
+                Some(&mut code),
+                &mut capabilities,
+                "trap-cleanup",
+            )
+            .unwrap();
+        let cleanup = executor
+            .cleanup_transactions()
+            .iter()
+            .find(|cleanup| cleanup.id == cleanup_id)
+            .unwrap();
+
+        assert_eq!(cleanup.store_generation, fault_generation);
+        assert_eq!(cleanup.result_store_generation, Some(fault_generation + 1));
+    }
+
+    #[test]
+    fn trap_exit_rejects_code_object_attribution_mismatch() {
+        let (_artifact, store, code, _capabilities) = running_store_and_code();
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("entry_trap_ebreak".to_string()),
+            )
+            .unwrap();
+        let mut wrong_code = code.clone();
+        wrong_code.id += 1;
+        let offset = target_abi::RV64_ENTRY_TRAP_EBREAK_OFFSET;
+        let trap_map = [TrapMapEntryV1::new(
+            ObjectRefRaw::new(
+                OBJECT_KIND_CODE_OBJECT_V1,
+                wrong_code.id,
+                wrong_code.generation,
+            ),
+            offset,
+            offset + 4,
+            TrapKindV1::WasmUnreachable,
+            1,
+            0x20,
+            7,
+        )];
+
+        let result = executor.trap_exit_by_pc(
+            activation,
+            &wrong_code,
+            wrong_code.text.start + offset,
+            &trap_map,
+        );
+
+        assert_eq!(result, Err(TargetExecutorError::CodeObjectMismatch));
+        let trap = executor.traps().last().expect("mismatch trap is visible");
+        assert_eq!(trap.class, TargetTrapClass::CodeObjectTrap);
+        assert_eq!(trap.fault_policy, "trap-attribution-failure");
+        assert_eq!(trap.activation, Some(activation));
+        assert!(trap.activation_generation.is_some());
     }
 }

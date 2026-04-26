@@ -17,4 +17,5 @@ service_core.workspace = true
 sha2.workspace = true
 substrate_api.workspace = true
 supervisor_catalog.workspace = true
+target_abi.workspace = true
 wasmtime = { workspace = true, features = ["runtime", "std"] }
