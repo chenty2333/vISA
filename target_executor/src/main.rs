@@ -97,9 +97,39 @@ fn run() -> Result<(), Box<dyn Error>> {
     publish_host_boundary_status(&mut semantic, &manifest);
 
     for entry in &plan.modules {
-        let store = executor.load_store(entry)?;
-        register_store_semantics(&mut semantic, entry);
-        stores.push(store);
+        match executor.load_store(entry) {
+            Ok(store) => {
+                register_store_semantics(&mut semantic, entry);
+                stores.push(store);
+            }
+            Err(error) => {
+                let reason = format!("host-validation-error:{error}");
+                semantic.record_artifact_verification(
+                    &entry.package,
+                    &entry.artifact_name,
+                    &entry.manifest_binding_hash,
+                    &entry.target_artifact_sha256,
+                    &entry.abi_fingerprint,
+                    &entry.signature_scheme,
+                    &entry.signer,
+                    ArtifactVerificationState::Rejected,
+                    Some(&reason),
+                );
+                let package_path = prepare_migration_package(
+                    &artifact_root,
+                    migration_path.clone(),
+                    &manifest,
+                    &semantic,
+                    &TargetExecutorV1Report::default(),
+                )?;
+                return Err(format!(
+                    "{} host-side validation failed before activation; wrote rejection evidence to {}",
+                    entry.package,
+                    package_path.display()
+                )
+                .into());
+            }
+        }
     }
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
