@@ -329,6 +329,16 @@ impl<'a> TargetArtifactImage<'a> {
             .find(|section| section.kind == kind)
     }
 
+    pub fn section_payload(
+        &self,
+        kind: SectionKindV1,
+    ) -> Result<Option<&'a [u8]>, TargetArtifactError> {
+        match self.section(kind) {
+            Some(section) => section_payload(self.bytes, &section).map(Some),
+            None => Ok(None),
+        }
+    }
+
     fn validate(&self) -> Result<(), TargetArtifactError> {
         validate_header(self.bytes, &self.header)?;
         let mut required_seen: u16 = 0;

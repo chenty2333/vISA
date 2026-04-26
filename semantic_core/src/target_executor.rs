@@ -124,7 +124,8 @@ impl TombstoneRecord {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetArtifactKind {
-    Cwasm,
+    TargetArtifactImageV1,
+    CwasmPayload,
     SupervisorCore,
     NativeStub,
 }
@@ -132,7 +133,8 @@ pub enum TargetArtifactKind {
 impl TargetArtifactKind {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Cwasm => "cwasm",
+            Self::TargetArtifactImageV1 => "target-artifact-image-v1",
+            Self::CwasmPayload => "cwasm-payload",
             Self::SupervisorCore => "supervisor-core",
             Self::NativeStub => "native-stub",
         }
@@ -579,7 +581,7 @@ impl TargetArtifactImage {
             package: package.to_string(),
             artifact_name: artifact_name.to_string(),
             role: role.to_string(),
-            kind: TargetArtifactKind::Cwasm,
+            kind: TargetArtifactKind::TargetArtifactImageV1,
             target_profile: target_profile.to_string(),
             abi_fingerprint: abi_fingerprint.to_string(),
             manifest_binding_hash: manifest_binding_hash.to_string(),

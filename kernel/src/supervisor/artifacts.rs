@@ -73,7 +73,9 @@ impl ArtifactRegistryError {
             Self::EmptyPackage => "supervisor artifact package is empty",
             Self::EmptyArtifact => "supervisor artifact name is empty",
             Self::MissingMemoryExport => "supervisor artifact does not export memory",
-            Self::RawWasmExecutionMode => "supervisor artifact profile does not require cwasm",
+            Self::RawWasmExecutionMode => {
+                "supervisor artifact profile does not require TargetArtifactImage"
+            }
             Self::EmptyManifestPlan => "embedded supervisor manifest plan is empty",
             Self::ManifestModuleCountMismatch => {
                 "embedded supervisor manifest module count does not match catalog"
@@ -328,7 +330,7 @@ impl ArtifactRegistry {
     fn validate_trust_profile(profile: ArtifactTrustProfile) -> Result<(), ArtifactRegistryError> {
         if profile.compiler_engine != "wasmtime"
             || profile.execution_mode != "precompiled-core-module"
-            || profile.artifact_format != "cwasm"
+            || profile.artifact_format != SUPERVISOR_ARTIFACT_FORMAT
         {
             return Err(ArtifactRegistryError::RawWasmExecutionMode);
         }

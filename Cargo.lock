@@ -34,6 +34,7 @@ dependencies = [
  "service_core",
  "sha2",
  "supervisor_catalog",
+ "target_abi",
  "wasmtime",
 ]
 

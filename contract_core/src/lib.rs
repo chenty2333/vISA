@@ -16,10 +16,11 @@ use supervisor_catalog::{
     ARTIFACT_SIGNATURE_PROFILE, CAPABILITY_ABI_VERSION, COMPONENT_MODEL_VERSION, CapabilitySpec,
     DMW_LAYOUT, HOSTCALL_ABI_VERSION, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
     RUNTIME_ONLY_EXECUTOR_ABI, SEMANTIC_CONTRACT_SCHEMA_VERSION, SUPERVISOR_ABI_VERSION,
-    SUPERVISOR_ARTIFACT_FORMAT, SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_CONTRACT_VERSION,
-    SUPERVISOR_EXECUTION_MODE, SUPERVISOR_WASM_MODULES, SUPERVISOR_WORLD, WASI_PROFILE_NONE,
-    WASM_FEATURE_PROFILE, WIT_PACKAGE_VERSION, WasmModuleSpec, catalog_contract_fingerprint,
-    module_dependencies, module_interface_spec, package_set_fingerprint,
+    SUPERVISOR_ARTIFACT_FORMAT, SUPERVISOR_CODE_PAYLOAD_FORMAT, SUPERVISOR_COMPILER_ENGINE,
+    SUPERVISOR_CONTRACT_VERSION, SUPERVISOR_EXECUTION_MODE, SUPERVISOR_WASM_MODULES,
+    SUPERVISOR_WORLD, WASI_PROFILE_NONE, WASM_FEATURE_PROFILE, WIT_PACKAGE_VERSION, WasmModuleSpec,
+    catalog_contract_fingerprint, module_dependencies, module_interface_spec,
+    package_set_fingerprint,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -359,6 +360,8 @@ pub struct ContractValidationViewV1 {
 pub const RUNTIME_MODE_RESEARCH: &str = "research";
 pub const RUNTIME_MODE_PRODUCTION: &str = "production";
 pub const RUNTIME_MODE_REPLAY: &str = "replay";
+pub const TARGET_ARTIFACT_FORMAT_V1: &str = "target-artifact-image-v1";
+pub const CODE_PAYLOAD_FORMAT_CWASM: &str = SUPERVISOR_CODE_PAYLOAD_FORMAT;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedArtifactPlan {
@@ -370,6 +373,7 @@ pub struct ValidatedArtifactPlan {
     pub compiler_engine: String,
     pub compiler_execution_mode: String,
     pub artifact_format: String,
+    pub target_artifact_format: String,
     pub runtime_executor_abi: String,
     pub modules: Vec<ValidatedArtifactEntry>,
 }
@@ -406,8 +410,11 @@ pub struct ValidatedArtifactEntry {
     pub fault_policy: String,
     pub wasm_path: String,
     pub cwasm_path: String,
+    pub target_artifact_path: String,
     pub wasm_sha256: String,
     pub cwasm_sha256: String,
+    pub target_artifact_sha256: String,
+    pub code_payload_format: String,
     pub expected_exports: Vec<String>,
     pub capabilities: Vec<CapabilityManifest>,
     pub abi_fingerprint: String,
@@ -544,6 +551,11 @@ pub fn validate_artifact_manifest(manifest: &ArtifactBundleManifest) -> Contract
     if manifest.compiler.artifact_format != SUPERVISOR_ARTIFACT_FORMAT {
         return Err(ContractError::new("manifest artifact format mismatch"));
     }
+    if normalized_target_artifact_format(&manifest.compiler) != TARGET_ARTIFACT_FORMAT_V1 {
+        return Err(ContractError::new(
+            "manifest target artifact format mismatch",
+        ));
+    }
     if manifest.compiler.execution_mode != SUPERVISOR_EXECUTION_MODE {
         return Err(ContractError::new("manifest execution mode mismatch"));
     }
@@ -595,8 +607,11 @@ pub fn build_validated_artifact_plan(
                 fault_policy: entry.fault_policy.clone(),
                 wasm_path: entry.wasm_path.clone(),
                 cwasm_path: entry.cwasm_path.clone(),
+                target_artifact_path: entry.target_artifact_path.clone(),
                 wasm_sha256: entry.wasm_sha256.clone(),
                 cwasm_sha256: entry.cwasm_sha256.clone(),
+                target_artifact_sha256: entry.target_artifact_sha256.clone(),
+                code_payload_format: normalized_code_payload_format(entry).to_owned(),
                 expected_exports: entry.expected_exports.clone(),
                 capabilities: entry.capabilities.clone(),
                 abi_fingerprint: entry.abi_fingerprint.clone(),
@@ -619,6 +634,7 @@ pub fn build_validated_artifact_plan(
         compiler_engine: manifest.compiler.engine.clone(),
         compiler_execution_mode: manifest.compiler.execution_mode.clone(),
         artifact_format: manifest.compiler.artifact_format.clone(),
+        target_artifact_format: normalized_target_artifact_format(&manifest.compiler).to_owned(),
         runtime_executor_abi: manifest.compiler.runtime_executor_abi.clone(),
         modules,
     })
@@ -909,6 +925,22 @@ pub fn normalized_runtime_mode(mode: &str) -> &'static str {
     }
 }
 
+pub fn normalized_target_artifact_format(compiler: &artifact_manifest::CompilerManifest) -> &str {
+    if compiler.target_artifact_format.is_empty() {
+        TARGET_ARTIFACT_FORMAT_V1
+    } else {
+        &compiler.target_artifact_format
+    }
+}
+
+pub fn normalized_code_payload_format(entry: &ModuleArtifactManifest) -> &str {
+    if entry.code_payload_format.is_empty() {
+        CODE_PAYLOAD_FORMAT_CWASM
+    } else {
+        &entry.code_payload_format
+    }
+}
+
 fn manifest_entry_for_spec<'a>(
     manifest: &'a ArtifactBundleManifest,
     spec: &WasmModuleSpec,
@@ -1033,7 +1065,25 @@ pub fn validate_manifest_entry(
             spec.package
         )));
     }
-    if entry.signature.artifact_hash != entry.cwasm_sha256 {
+    if normalized_code_payload_format(entry) != CODE_PAYLOAD_FORMAT_CWASM {
+        return Err(ContractError::new(format!(
+            "{} code payload format mismatch",
+            spec.package
+        )));
+    }
+    if entry.target_artifact_path.is_empty() || !entry.target_artifact_path.ends_with(".tart") {
+        return Err(ContractError::new(format!(
+            "{} target artifact path is not a TargetArtifactImage",
+            spec.package
+        )));
+    }
+    if entry.target_artifact_sha256.is_empty() {
+        return Err(ContractError::new(format!(
+            "{} target artifact hash is empty",
+            spec.package
+        )));
+    }
+    if entry.signature.artifact_hash != entry.target_artifact_sha256 {
         return Err(ContractError::new(format!(
             "{} signature artifact hash mismatch",
             spec.package
@@ -1059,7 +1109,7 @@ pub fn validate_manifest_entry(
     }
     if !entry.cwasm_path.ends_with(".cwasm") {
         return Err(ContractError::new(format!(
-            "{} artifact path is not a cwasm module",
+            "{} code payload path is not a cwasm module",
             spec.package
         )));
     }
@@ -1618,6 +1668,7 @@ mod tests {
             .map(|spec| {
                 let wasm_sha256 = format!("{}-wasm", spec.package);
                 let cwasm_sha256 = format!("{}-cwasm", spec.package);
+                let target_artifact_sha256 = format!("{}-target-artifact", spec.package);
                 let abi_fingerprint = module_abi_fingerprint(spec);
                 let manifest_binding_hash =
                     manifest_binding_hash(spec, &wasm_sha256, &cwasm_sha256, &abi_fingerprint);
@@ -1628,8 +1679,11 @@ mod tests {
                     fault_policy: spec.fault_policy.as_str().to_owned(),
                     wasm_path: format!("target/test/{}.wasm", spec.package),
                     cwasm_path: format!("target/test/{}.cwasm", spec.package),
+                    target_artifact_path: format!("target/test/{}.tart", spec.package),
                     wasm_sha256,
                     cwasm_sha256: cwasm_sha256.clone(),
+                    target_artifact_sha256: target_artifact_sha256.clone(),
+                    code_payload_format: CODE_PAYLOAD_FORMAT_CWASM.to_owned(),
                     expected_exports: spec
                         .expected_exports
                         .iter()
@@ -1675,7 +1729,7 @@ mod tests {
                     interfaces: interface_manifest(spec),
                     signature: SignatureManifest {
                         scheme: ARTIFACT_SIGNATURE_PROFILE.to_owned(),
-                        artifact_hash: cwasm_sha256,
+                        artifact_hash: target_artifact_sha256,
                         manifest_binding_hash,
                         signer: "test-signer".to_owned(),
                         public_key_hint: "test-key".to_owned(),
@@ -1707,6 +1761,7 @@ mod tests {
                 engine_version: "test".to_owned(),
                 execution_mode: SUPERVISOR_EXECUTION_MODE.to_owned(),
                 artifact_format: SUPERVISOR_ARTIFACT_FORMAT.to_owned(),
+                target_artifact_format: TARGET_ARTIFACT_FORMAT_V1.to_owned(),
                 runtime_executor_abi: RUNTIME_ONLY_EXECUTOR_ABI.to_owned(),
             },
             modules,

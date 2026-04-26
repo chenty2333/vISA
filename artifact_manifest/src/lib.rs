@@ -47,6 +47,8 @@ pub struct CompilerManifest {
     pub execution_mode: String,
     pub artifact_format: String,
     #[serde(default)]
+    pub target_artifact_format: String,
+    #[serde(default)]
     pub runtime_executor_abi: String,
 }
 
@@ -58,8 +60,14 @@ pub struct ModuleArtifactManifest {
     pub fault_policy: String,
     pub wasm_path: String,
     pub cwasm_path: String,
+    #[serde(default)]
+    pub target_artifact_path: String,
     pub wasm_sha256: String,
     pub cwasm_sha256: String,
+    #[serde(default)]
+    pub target_artifact_sha256: String,
+    #[serde(default)]
+    pub code_payload_format: String,
     pub expected_exports: Vec<String>,
     pub exports: Vec<ExternManifest>,
     pub imports: Vec<ImportManifest>,

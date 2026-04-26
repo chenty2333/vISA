@@ -8,6 +8,7 @@ use service_core::net_contract::{
     VIRTIO_NET0_TX_QUEUE_DEPTH,
 };
 use sha2::{Digest, Sha256};
+use target_abi::{SectionKindV1, TargetArtifactImage};
 use wasmtime::{Config, Engine, Instance, Module, Precompiled, Store};
 
 pub struct RuntimeOnlyExecutor {
@@ -27,13 +28,36 @@ impl RuntimeOnlyExecutor {
         &self,
         entry: &ValidatedArtifactEntry,
     ) -> Result<LoadedRuntimeStore, Box<dyn Error>> {
-        let module_path = self.workspace_root.join(&entry.cwasm_path);
-        let module_bytes = fs::read(&module_path)?;
-        if sha256_hex(&module_bytes) != entry.cwasm_sha256 {
-            return Err(format!("{} cwasm hash mismatch", entry.package).into());
+        let target_artifact_path = self.workspace_root.join(&entry.target_artifact_path);
+        let target_artifact = fs::read(&target_artifact_path)?;
+        if sha256_hex(&target_artifact) != entry.target_artifact_sha256 {
+            return Err(format!("{} target artifact hash mismatch", entry.package).into());
+        }
+        let image = TargetArtifactImage::parse(&target_artifact).map_err(|error| {
+            format!(
+                "{} target artifact validation failed: {error:?}",
+                entry.package
+            )
+        })?;
+        let module_bytes = image
+            .section_payload(SectionKindV1::CodeObject)
+            .map_err(|error| {
+                format!(
+                    "{} code payload extraction failed: {error:?}",
+                    entry.package
+                )
+            })?
+            .ok_or_else(|| {
+                format!(
+                    "{} target artifact missing CodeObject section",
+                    entry.package
+                )
+            })?;
+        if sha256_hex(module_bytes) != entry.cwasm_sha256 {
+            return Err(format!("{} CodeObject cwasm payload hash mismatch", entry.package).into());
         }
 
-        match Engine::detect_precompiled(&module_bytes) {
+        match Engine::detect_precompiled(module_bytes) {
             Some(Precompiled::Module) => {}
             Some(Precompiled::Component) => {
                 return Err(format!("{} is a component artifact", entry.package).into());
@@ -41,7 +65,7 @@ impl RuntimeOnlyExecutor {
             None => return Err(format!("{} is not a precompiled artifact", entry.package).into()),
         }
 
-        let module = unsafe { Module::deserialize(&self.engine, &module_bytes)? };
+        let module = unsafe { Module::deserialize(&self.engine, module_bytes)? };
         validate_exports(entry, &module)?;
         let mut store = Store::new(&self.engine, ());
         let instance = Instance::new(&mut store, &module, &[])?;

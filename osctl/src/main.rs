@@ -944,6 +944,7 @@ fn print_plan(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
                 "engine": &plan.compiler_engine,
                 "execution_mode": &plan.compiler_execution_mode,
                 "artifact_format": &plan.artifact_format,
+                "target_artifact_format": &plan.target_artifact_format,
                 "runtime_executor_abi": &plan.runtime_executor_abi
             },
             "module_count": plan.module_count(),
@@ -954,6 +955,9 @@ fn print_plan(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
                 "artifact_name": &module.artifact_name,
                 "role": &module.role,
                 "fault_policy": &module.fault_policy,
+                "target_artifact_path": &module.target_artifact_path,
+                "target_artifact_sha256": &module.target_artifact_sha256,
+                "code_payload_format": &module.code_payload_format,
                 "cwasm_path": &module.cwasm_path,
                 "cwasm_sha256": &module.cwasm_sha256,
                 "abi_fingerprint": &module.abi_fingerprint,
@@ -2739,10 +2743,13 @@ fn inspect_manifest_object(
             );
             for module in &plan.modules {
                 let line = format!(
-                    "artifact package={} name={} role={} cwasm={} hash={} abi={} binding={} caps={} exports={}",
+                    "artifact package={} name={} role={} target_artifact={} target_hash={} payload={} cwasm={} hash={} abi={} binding={} caps={} exports={}",
                     module.package,
                     module.artifact_name,
                     module.role,
+                    module.target_artifact_path,
+                    module.target_artifact_sha256,
+                    module.code_payload_format,
                     module.cwasm_path,
                     module.cwasm_sha256,
                     module.abi_fingerprint,
@@ -2777,6 +2784,9 @@ fn inspect_manifest_object_json(
                         "artifact_name": &module.artifact_name,
                         "role": &module.role,
                         "fault_policy": &module.fault_policy,
+                        "target_artifact_path": &module.target_artifact_path,
+                        "target_artifact_sha256": &module.target_artifact_sha256,
+                        "code_payload_format": &module.code_payload_format,
                         "cwasm_path": &module.cwasm_path,
                         "cwasm_sha256": &module.cwasm_sha256,
                         "abi_fingerprint": &module.abi_fingerprint,
@@ -3292,11 +3302,14 @@ fn print_plan_text(plan: &ValidatedArtifactPlan) {
     );
     for module in &plan.modules {
         println!(
-            "load {} artifact={} role={} policy={} path={} hash={} abi={} binding={} limits=mem{} table{} hostcalls{}",
+            "load {} artifact={} role={} policy={} target={} target_hash={} payload={} cwasm={} hash={} abi={} binding={} limits=mem{} table{} hostcalls{}",
             module.package,
             module.artifact_name,
             module.role,
             module.fault_policy,
+            module.target_artifact_path,
+            short_hash(&module.target_artifact_sha256),
+            module.code_payload_format,
             module.cwasm_path,
             short_hash(&module.cwasm_sha256),
             short_hash(&module.abi_fingerprint),
@@ -3879,7 +3892,7 @@ mod tests {
                 "network_contract_version": "test",
                 "compiler_engine": "wasmtime",
                 "compiler_execution_mode": "precompiled-core-module",
-                "artifact_format": "cwasm",
+                "artifact_format": "target-artifact-image-v1",
                 "runtime_executor_abi": "vmos-runtime-only-executor-v0"
             },
             "guest": {

@@ -10,8 +10,9 @@ use artifact_manifest::{
     SignatureManifest, SubstrateAuthorityRequirementManifest, TargetManifest,
 };
 use contract_core::{
-    RUNTIME_MODE_RESEARCH, ValidatedArtifactEntry, build_validated_artifact_plan,
-    expected_supervisor_contract, manifest_binding_hash, module_abi_fingerprint,
+    CODE_PAYLOAD_FORMAT_CWASM, RUNTIME_MODE_RESEARCH, TARGET_ARTIFACT_FORMAT_V1,
+    ValidatedArtifactEntry, build_validated_artifact_plan, expected_supervisor_contract,
+    manifest_binding_hash, module_abi_fingerprint,
 };
 use service_core::net_contract::{
     NETWORK_CONTRACT_ABI_VERSION, NETWORK_CONTRACT_VERSION, VIRTIO_NET0_MTU,
@@ -23,6 +24,11 @@ use supervisor_catalog::{
     RUNTIME_ONLY_EXECUTOR_ABI, SUPERVISOR_ABI_VERSION, SUPERVISOR_ARTIFACT_FORMAT,
     SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_EXECUTION_MODE, SUPERVISOR_WASM_MODULES,
     WASM_FEATURE_PROFILE, module_dependencies, module_interface_spec,
+};
+use target_abi::artifact::{
+    ArtifactKindCodeV1, CodeFormatCodeV1, SectionKindV1, TARGET_ARTIFACT_HEADER_LEN,
+    TARGET_SECTION_HEADER_LEN, TargetAbiCodeV1, TargetArchCodeV1, TargetArtifactHeaderV1,
+    TargetArtifactImage, TargetSectionHeaderV1, canonical_zero_field_image_hash,
 };
 use wasmtime::{Config, Engine, ExternType, Instance, Module, Precompiled, Store, Strategy};
 
@@ -181,6 +187,7 @@ fn compile_artifacts(
     for module in SUPERVISOR_WASM_MODULES {
         let wasm_path = wasm_artifact_path(wasm_build_root, profile, module.package);
         let cwasm_path = artifact_root.join(format!("{}.cwasm", module.package));
+        let target_artifact_path = artifact_root.join(format!("{}.tart", module.package));
         let wasm_bytes = fs::read(&wasm_path)?;
         let compiled = engine.precompile_module(&wasm_bytes)?;
         fs::write(&cwasm_path, &compiled)?;
@@ -202,10 +209,28 @@ fn compile_artifacts(
                 name: import.name().to_owned(),
                 kind: extern_kind(import.ty()).to_owned(),
             })
-            .collect();
+            .collect::<Vec<_>>();
         let abi_fingerprint = module_abi_fingerprint(module);
         let manifest_binding_hash =
             manifest_binding_hash(module, &wasm_sha256, &cwasm_sha256, &abi_fingerprint);
+        let target_artifact = build_target_artifact_image(TargetArtifactBuildInput {
+            module,
+            compiled: &compiled,
+            wasm_sha256: &wasm_sha256,
+            cwasm_sha256: &cwasm_sha256,
+            abi_fingerprint: &abi_fingerprint,
+            manifest_binding_hash: &manifest_binding_hash,
+            imports: &imports,
+            profile: HOST_ARTIFACT_PROFILE,
+        })?;
+        TargetArtifactImage::parse(&target_artifact).map_err(|error| {
+            format!(
+                "{} target artifact validation failed: {error:?}",
+                module.package
+            )
+        })?;
+        fs::write(&target_artifact_path, &target_artifact)?;
+        let target_artifact_sha256 = sha256_hex(&target_artifact);
 
         modules.push(ModuleArtifactManifest {
             package: module.package.to_owned(),
@@ -214,8 +239,11 @@ fn compile_artifacts(
             fault_policy: module.fault_policy.as_str().to_owned(),
             wasm_path: relative_to_workspace(workspace_root, &wasm_path),
             cwasm_path: relative_to_workspace(workspace_root, &cwasm_path),
+            target_artifact_path: relative_to_workspace(workspace_root, &target_artifact_path),
             wasm_sha256,
             cwasm_sha256: cwasm_sha256.clone(),
+            target_artifact_sha256: target_artifact_sha256.clone(),
+            code_payload_format: CODE_PAYLOAD_FORMAT_CWASM.to_owned(),
             expected_exports: module
                 .expected_exports
                 .iter()
@@ -249,7 +277,7 @@ fn compile_artifacts(
             interfaces: interface_manifest(module),
             signature: SignatureManifest {
                 scheme: "prototype-self-signed-sha256".to_owned(),
-                artifact_hash: cwasm_sha256,
+                artifact_hash: target_artifact_sha256,
                 manifest_binding_hash,
                 signer: "vmos-aotc-dev".to_owned(),
                 public_key_hint: "prototype-dev-key".to_owned(),
@@ -280,6 +308,7 @@ fn compile_artifacts(
             engine_version: WASMTIME_CRATE_VERSION.to_owned(),
             execution_mode: SUPERVISOR_EXECUTION_MODE.to_owned(),
             artifact_format: SUPERVISOR_ARTIFACT_FORMAT.to_owned(),
+            target_artifact_format: TARGET_ARTIFACT_FORMAT_V1.to_owned(),
             runtime_executor_abi: RUNTIME_ONLY_EXECUTOR_ABI.to_owned(),
         },
         modules,
@@ -344,6 +373,199 @@ fn interface_manifest(module: &supervisor_catalog::WasmModuleSpec) -> InterfaceR
     }
 }
 
+struct TargetArtifactBuildInput<'a> {
+    module: &'a supervisor_catalog::WasmModuleSpec,
+    compiled: &'a [u8],
+    wasm_sha256: &'a str,
+    cwasm_sha256: &'a str,
+    abi_fingerprint: &'a str,
+    manifest_binding_hash: &'a str,
+    imports: &'a [ImportManifest],
+    profile: &'a str,
+}
+
+struct TargetArtifactSectionPayload {
+    kind: SectionKindV1,
+    align: usize,
+    payload: Vec<u8>,
+}
+
+fn build_target_artifact_image(
+    input: TargetArtifactBuildInput<'_>,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    let sections = vec![
+        TargetArtifactSectionPayload {
+            kind: SectionKindV1::Manifest,
+            align: 8,
+            payload: serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "vmos-target-artifact-manifest-v1",
+                "package": input.module.package,
+                "artifact_name": input.module.artifact_name,
+                "role": input.module.role.as_str(),
+                "fault_policy": input.module.fault_policy.as_str(),
+                "wasm_sha256": input.wasm_sha256,
+                "code_payload_format": CODE_PAYLOAD_FORMAT_CWASM,
+                "code_payload_sha256": input.cwasm_sha256,
+                "abi_fingerprint": input.abi_fingerprint,
+                "manifest_binding_hash": input.manifest_binding_hash,
+            }))?,
+        },
+        TargetArtifactSectionPayload {
+            kind: SectionKindV1::ContractMetadata,
+            align: 8,
+            payload: serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "vmos-contract-metadata-v1",
+                "supervisor_contract": expected_supervisor_contract(),
+                "runtime_executor_abi": RUNTIME_ONLY_EXECUTOR_ABI,
+                "network_contract_version": NETWORK_CONTRACT_VERSION,
+            }))?,
+        },
+        TargetArtifactSectionPayload {
+            kind: SectionKindV1::CodeObject,
+            align: 8,
+            payload: input.compiled.to_vec(),
+        },
+        TargetArtifactSectionPayload {
+            kind: SectionKindV1::HostcallImportTable,
+            align: 8,
+            payload: serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "vmos-hostcall-import-table-v1",
+                "imports": input.imports,
+            }))?,
+        },
+        TargetArtifactSectionPayload {
+            kind: SectionKindV1::TrapMap,
+            align: 8,
+            payload: serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "vmos-trap-map-v1",
+                "entries": [],
+                "attribution": "wasmtime-frame-or-unknown-code-trap",
+            }))?,
+        },
+        TargetArtifactSectionPayload {
+            kind: SectionKindV1::PcRangeTable,
+            align: 8,
+            payload: serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "vmos-pc-range-table-v1",
+                "entries": [],
+                "native_pc": "not-authoritative-for-host-cwasm-validation",
+            }))?,
+        },
+        TargetArtifactSectionPayload {
+            kind: SectionKindV1::ProfileRequirements,
+            align: 8,
+            payload: serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "vmos-target-profile-requirements-v1",
+                "artifact_profile": input.profile,
+                "host_arch": env::consts::ARCH,
+                "compiler_engine": SUPERVISOR_COMPILER_ENGINE,
+                "engine_version": WASMTIME_CRATE_VERSION,
+                "execution_mode": SUPERVISOR_EXECUTION_MODE,
+                "target_artifact_format": TARGET_ARTIFACT_FORMAT_V1,
+                "code_payload_format": CODE_PAYLOAD_FORMAT_CWASM,
+                "wasm_feature_profile": WASM_FEATURE_PROFILE,
+                "memory64": false,
+                "multi_memory": false,
+                "component_model": false,
+            }))?,
+        },
+        TargetArtifactSectionPayload {
+            kind: SectionKindV1::Signature,
+            align: 8,
+            payload: serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "vmos-target-signature-v1",
+                "scheme": "unsigned-research",
+                "signature_enforced": false,
+                "signature_verified": false,
+            }))?,
+        },
+    ];
+
+    let section_table_len = sections.len() * TARGET_SECTION_HEADER_LEN;
+    let payload_base = align_up_usize(TARGET_ARTIFACT_HEADER_LEN + section_table_len, 8);
+    let mut cursor = payload_base;
+    let mut layout = Vec::with_capacity(sections.len());
+    for section in &sections {
+        cursor = align_up_usize(cursor, section.align);
+        layout.push(cursor);
+        cursor = cursor
+            .checked_add(section.payload.len())
+            .ok_or("target artifact image length overflowed")?;
+    }
+
+    let mut image = vec![0; cursor];
+    for (index, section) in sections.iter().enumerate() {
+        let offset = layout[index];
+        image[offset..offset + section.payload.len()].copy_from_slice(&section.payload);
+
+        let mut header = TargetSectionHeaderV1::new(
+            section.kind,
+            offset as u64,
+            section.payload.len() as u64,
+            section.align as u32,
+        );
+        header.hash = Sha256::digest(&section.payload).into();
+        let section_header_start = TARGET_ARTIFACT_HEADER_LEN + index * TARGET_SECTION_HEADER_LEN;
+        header
+            .write_to(
+                &mut image[section_header_start..section_header_start + TARGET_SECTION_HEADER_LEN],
+            )
+            .map_err(|error| format!("writing target artifact section failed: {error:?}"))?;
+    }
+
+    let manifest_hash: [u8; 32] = Sha256::digest(&sections[0].payload).into();
+    let mut header = TargetArtifactHeaderV1 {
+        magic: target_abi::artifact::TARGET_ARTIFACT_MAGIC,
+        header_len: TARGET_ARTIFACT_HEADER_LEN as u32,
+        image_len: image.len() as u64,
+        schema_major: target_abi::artifact::TARGET_ARTIFACT_SCHEMA_MAJOR,
+        schema_minor: 0,
+        target_arch: target_arch_code(env::consts::ARCH)?,
+        target_abi: TargetAbiCodeV1::Custom as u16,
+        endian: 1,
+        pointer_width: (usize::BITS) as u8,
+        artifact_kind: artifact_kind_code(input.module.role.as_str()),
+        code_format: CodeFormatCodeV1::WasmtimeSerialized as u16,
+        section_count: sections.len() as u32,
+        section_table_off: TARGET_ARTIFACT_HEADER_LEN as u64,
+        manifest_hash,
+        image_hash: [0; 32],
+        flags: 0,
+    };
+    header
+        .write_to(&mut image[..TARGET_ARTIFACT_HEADER_LEN])
+        .map_err(|error| format!("writing target artifact header failed: {error:?}"))?;
+    header.image_hash = canonical_zero_field_image_hash(&image)
+        .map_err(|error| format!("hashing target artifact image failed: {error:?}"))?;
+    header
+        .write_to(&mut image[..TARGET_ARTIFACT_HEADER_LEN])
+        .map_err(|error| format!("writing target artifact hash failed: {error:?}"))?;
+    TargetArtifactImage::parse(&image)
+        .map_err(|error| format!("validating target artifact image failed: {error:?}"))?;
+    Ok(image)
+}
+
+fn target_arch_code(arch: &str) -> Result<u16, Box<dyn Error>> {
+    match arch {
+        "riscv64" => Ok(TargetArchCodeV1::Riscv64 as u16),
+        "x86_64" => Ok(TargetArchCodeV1::X86_64 as u16),
+        "aarch64" => Ok(TargetArchCodeV1::Aarch64 as u16),
+        other => Err(format!("unsupported target artifact host arch `{other}`").into()),
+    }
+}
+
+fn artifact_kind_code(role: &str) -> u16 {
+    match role {
+        "driver" => ArtifactKindCodeV1::Driver as u16,
+        "frontend_guest" => ArtifactKindCodeV1::App as u16,
+        _ => ArtifactKindCodeV1::Service as u16,
+    }
+}
+
+fn align_up_usize(value: usize, align: usize) -> usize {
+    value.div_ceil(align) * align
+}
+
 fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {
     let engine = runtime_engine()?;
     let workspace_root = workspace_root()?;
@@ -351,12 +573,49 @@ fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {
     let plan = build_validated_artifact_plan(&manifest)?;
 
     for entry in &plan.modules {
-        let artifact_path = workspace_root.join(&entry.cwasm_path);
-        let artifact = fs::read(&artifact_path)?;
-        if sha256_hex(&artifact) != entry.cwasm_sha256 {
-            return Err(format!("{} cwasm hash mismatch", entry.package).into());
+        let target_artifact_path = workspace_root.join(&entry.target_artifact_path);
+        let target_artifact = fs::read(&target_artifact_path)?;
+        if sha256_hex(&target_artifact) != entry.target_artifact_sha256 {
+            return Err(format!("{} target artifact hash mismatch", entry.package).into());
         }
-        match Engine::detect_precompiled_file(&artifact_path)? {
+        let image = TargetArtifactImage::parse(&target_artifact).map_err(|error| {
+            format!(
+                "{} target artifact validation failed: {error:?}",
+                entry.package
+            )
+        })?;
+        let artifact = image
+            .section_payload(SectionKindV1::CodeObject)
+            .map_err(|error| {
+                format!(
+                    "{} code payload extraction failed: {error:?}",
+                    entry.package
+                )
+            })?
+            .ok_or_else(|| {
+                format!(
+                    "{} target artifact missing CodeObject section",
+                    entry.package
+                )
+            })?;
+        if sha256_hex(artifact) != entry.cwasm_sha256 {
+            return Err(format!("{} CodeObject cwasm payload hash mismatch", entry.package).into());
+        }
+
+        let cwasm_path = workspace_root.join(&entry.cwasm_path);
+        let cwasm_sidecar = fs::read(&cwasm_path)?;
+        if sha256_hex(&cwasm_sidecar) != entry.cwasm_sha256 {
+            return Err(format!("{} cwasm sidecar hash mismatch", entry.package).into());
+        }
+        if cwasm_sidecar != artifact {
+            return Err(format!(
+                "{} cwasm sidecar differs from CodeObject payload",
+                entry.package
+            )
+            .into());
+        }
+
+        match Engine::detect_precompiled(artifact) {
             Some(Precompiled::Module) => {}
             Some(Precompiled::Component) => {
                 return Err(
@@ -370,7 +629,7 @@ fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {
             }
         }
 
-        let module_binary = unsafe { Module::deserialize_file(&engine, &artifact_path)? };
+        let module_binary = unsafe { Module::deserialize(&engine, artifact)? };
         verify_exports(entry, &module_binary)?;
 
         let mut store = Store::new(&engine, ());
@@ -589,5 +848,48 @@ impl Cli {
         }
 
         Self { command, profile }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cwasm_payload_is_wrapped_in_target_artifact_image() {
+        let module = &SUPERVISOR_WASM_MODULES[0];
+        let compiled = b"fake precompiled cwasm payload";
+        let wasm_sha256 = sha256_hex(b"fake wasm");
+        let cwasm_sha256 = sha256_hex(compiled);
+        let abi_fingerprint = module_abi_fingerprint(module);
+        let binding = manifest_binding_hash(module, &wasm_sha256, &cwasm_sha256, &abi_fingerprint);
+        let imports = Vec::new();
+
+        let image = build_target_artifact_image(TargetArtifactBuildInput {
+            module,
+            compiled,
+            wasm_sha256: &wasm_sha256,
+            cwasm_sha256: &cwasm_sha256,
+            abi_fingerprint: &abi_fingerprint,
+            manifest_binding_hash: &binding,
+            imports: &imports,
+            profile: HOST_ARTIFACT_PROFILE,
+        })
+        .expect("target artifact image");
+        let parsed = TargetArtifactImage::parse(&image).expect("parse target artifact");
+
+        assert_eq!(
+            parsed.header().code_format,
+            CodeFormatCodeV1::WasmtimeSerialized as u16
+        );
+        assert!(parsed.section(SectionKindV1::Manifest).is_some());
+        assert!(parsed.section(SectionKindV1::ContractMetadata).is_some());
+        assert_eq!(
+            parsed
+                .section_payload(SectionKindV1::CodeObject)
+                .expect("code payload")
+                .expect("code section"),
+            compiled
+        );
     }
 }
