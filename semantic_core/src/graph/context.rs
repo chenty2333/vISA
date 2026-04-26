@@ -376,13 +376,18 @@ impl SemanticGraph {
         for context in &self.activation_contexts {
             let Some(activation) = self.runtime_activations.iter().find(|activation| {
                 activation.id == context.activation
-                    && activation.generation == context.activation_generation
+                    && (activation.generation == context.activation_generation
+                        || (context.state == ActivationContextState::Dropped
+                            && activation.generation >= context.activation_generation))
             }) else {
                 return Err(SemanticInvariantError::ActivationContextMissingActivation {
                     context: context.id,
                     activation: context.activation,
                 });
             };
+            if context.state == ActivationContextState::Dropped {
+                continue;
+            }
             if context.state != ActivationContextState::Dropped
                 && matches!(
                     activation.state,

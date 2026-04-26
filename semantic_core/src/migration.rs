@@ -442,6 +442,22 @@ pub enum SemanticInvariantError {
         activation_wait: ActivationWaitId,
         activation: ActivationId,
     },
+    ActivationCleanupMissingStore {
+        cleanup: ActivationCleanupId,
+        store: StoreId,
+    },
+    ActivationCleanupMissingActivation {
+        cleanup: ActivationCleanupId,
+        activation: ActivationId,
+    },
+    ActivationCleanupMissingWait {
+        cleanup: ActivationCleanupId,
+        wait: WaitId,
+    },
+    ActivationCleanupMissingTask {
+        cleanup: ActivationCleanupId,
+        task: TaskId,
+    },
     StoreReferencesMissingFaultDomain {
         store: StoreId,
         fault_domain: FaultDomainId,

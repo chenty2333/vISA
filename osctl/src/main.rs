@@ -6,10 +6,10 @@ use std::fs;
 use std::path::Path;
 
 use artifact_manifest::{
-    ActivationContextManifest, ActivationRecordManifest, ActivationResumeManifest,
-    ActivationWaitManifest, ArtifactBundleManifest, BoundaryValidationReportManifest,
-    CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandResultManifest, ContractObjectRefManifest, HostcallTraceManifest,
+    ActivationCleanupManifest, ActivationContextManifest, ActivationRecordManifest,
+    ActivationResumeManifest, ActivationWaitManifest, ArtifactBundleManifest,
+    BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
+    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest, HostcallTraceManifest,
     InterfaceEventManifest, MigrationPackageManifest, PreemptionManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
@@ -210,7 +210,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         "task" | "store" | "cap" | "capability" | "wait" | "cleanup" | "command" | "scheduler"
         | "runtime-activation" | "runnable-queue" | "activation-context" | "saved-context"
         | "timer-interrupt" | "preemption" | "scheduler-decision" | "activation-resume"
-        | "activation-wait" | "context" => handle_view_command(&command, args.collect()),
+        | "activation-wait" | "activation-cleanup" | "context" => {
+            handle_view_command(&command, args.collect())
+        }
         "state" => {
             let Some(path) = args.next() else {
                 return Err("state requires a manifest/package JSON path".into());
@@ -374,7 +376,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler-decision|activation-resume|activation-wait|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler-decision|activation-resume|activation-wait|activation-cleanup|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -576,6 +578,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "scheduler-decision" => "scheduler-decision",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
+        "activation-cleanup" => "activation-cleanup",
         "scheduler" => "scheduler",
         "runnable-queue" => "runnable-queue",
         "cap" | "capability" => "capability",
@@ -917,6 +920,49 @@ fn activation_wait_view_v1(wait: &ActivationWaitManifest) -> serde_json::Value {
     })
 }
 
+fn activation_cleanup_view_v1(cleanup: &ActivationCleanupManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "activation-cleanup",
+        "id": cleanup.id,
+        "generation": cleanup.generation,
+        "state": cleanup.state,
+        "owner": {
+            "store": cleanup.store,
+            "target_store_generation": cleanup.target_store_generation,
+            "result_store_generation": cleanup.result_store_generation,
+            "task": cleanup.owner_task,
+            "task_generation_before": cleanup.owner_task_generation_before,
+            "task_generation_after": cleanup.owner_task_generation_after,
+        },
+        "references": {
+            "activation": {
+                "id": cleanup.activation,
+                "generation_before": cleanup.activation_generation_before,
+                "generation_after": cleanup.activation_generation_after,
+            },
+            "wait": cleanup.wait.map(|id| serde_json::json!({
+                "id": id,
+                "generation": cleanup.wait_generation,
+            })),
+            "steps": cleanup.steps.iter().map(|step| serde_json::json!({
+                "kind": step.kind,
+                "target": step.target,
+                "observed_generation": step.observed_generation,
+                "status": step.status,
+                "event": step.event,
+            })).collect::<Vec<_>>(),
+        },
+        "reason": cleanup.reason,
+        "note": cleanup.note,
+        "last_transition": {
+            "started_at_event": cleanup.started_at_event,
+            "completed_at_event": cleanup.completed_at_event,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -994,6 +1040,15 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "wait_generation": wait.wait_generation,
                 "state": wait.state,
             })).collect::<Vec<_>>(),
+            "activation_cleanups": package.semantic.activation_cleanups.iter().map(|cleanup| serde_json::json!({
+                "id": cleanup.id,
+                "generation": cleanup.generation,
+                "store": cleanup.store,
+                "result_store_generation": cleanup.result_store_generation,
+                "activation": cleanup.activation,
+                "activation_generation_after": cleanup.activation_generation_after,
+                "state": cleanup.state,
+            })).collect::<Vec<_>>(),
         },
         "last_transition": {
             "scheduler_decision_cursor": package.substrate_boundary.scheduler_decision_cursor,
@@ -1008,6 +1063,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "scheduler_decision_count": package.semantic.scheduler_decision_count,
             "activation_resume_count": package.semantic.activation_resume_count,
             "activation_wait_count": package.semantic.activation_wait_count,
+            "activation_cleanup_count": package.semantic.activation_cleanup_count,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -1427,6 +1483,12 @@ fn stable_views_for_kind(
             .activation_waits
             .iter()
             .map(activation_wait_view_v1)
+            .collect()),
+        "activation-cleanup" => Ok(package
+            .semantic
+            .activation_cleanups
+            .iter()
+            .map(activation_cleanup_view_v1)
             .collect()),
         "store" => Ok(package
             .semantic
@@ -2044,7 +2106,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} scheduler_decisions={} activation_resumes={} activation_waits={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} scheduler_decisions={} activation_resumes={} activation_waits={} activation_cleanups={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.task_count,
@@ -2057,6 +2119,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.scheduler_decision_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
+            package.semantic.activation_cleanup_count,
             package.semantic.resource_count,
             package.semantic.store_count,
             package.semantic.capability_count,
@@ -2184,7 +2247,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} activation_resume_roots={} activation_wait_roots={}",
+        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.task_roots.len(),
@@ -2208,7 +2271,8 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.tombstone_roots.len(),
         package.semantic.roots.contract_violation_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
-        package.semantic.roots.activation_wait_roots.len()
+        package.semantic.roots.activation_wait_roots.len(),
+        package.semantic.roots.activation_cleanup_roots.len()
     );
     print_roots("task", &package.semantic.roots.task_roots);
     print_roots(
@@ -2232,6 +2296,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "activation-wait",
         &package.semantic.roots.activation_wait_roots,
+    );
+    print_roots(
+        "activation-cleanup",
+        &package.semantic.roots.activation_cleanup_roots,
     );
     print_roots("resource", &package.semantic.roots.resource_roots);
     print_roots("authority", &package.semantic.roots.authority_roots);
@@ -2763,6 +2831,54 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "cancelled-to",
                 "historical",
                 activation_wait.completed_at_event,
+            ));
+        }
+    }
+    for cleanup in &package.semantic.activation_cleanups {
+        let from = object_ref_json("activation-cleanup", cleanup.id, cleanup.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("store", cleanup.store, cleanup.target_store_generation),
+            "cleanup-target",
+            "historical",
+            Some(cleanup.started_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("store", cleanup.store, cleanup.result_store_generation),
+            "marked-dead",
+            "cleanup-effect",
+            Some(cleanup.completed_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "activation",
+                cleanup.activation,
+                cleanup.activation_generation_before,
+            ),
+            "sealed-from",
+            "historical",
+            Some(cleanup.started_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "activation",
+                cleanup.activation,
+                cleanup.activation_generation_after,
+            ),
+            "sealed-to",
+            "cleanup-effect",
+            Some(cleanup.completed_at_event),
+        ));
+        if let (Some(wait), Some(wait_generation)) = (cleanup.wait, cleanup.wait_generation) {
+            edges.push(graph_edge(
+                from,
+                object_ref_json("wait-token", wait, wait_generation),
+                "cancelled-wait",
+                "cleanup-effect",
+                Some(cleanup.completed_at_event),
             ));
         }
     }
@@ -4097,6 +4213,7 @@ fn print_replay_json(
             "tombstones": package.semantic.roots.tombstone_roots.len(),
             "contract_violations": package.semantic.roots.contract_violation_roots.len(),
             "cleanup": package.semantic.roots.cleanup_roots.len(),
+            "activation_cleanup": package.semantic.roots.activation_cleanup_roots.len(),
             "memory_policies": package.semantic.roots.memory_policy_roots.len(),
             "snapshot_validation": package.semantic.roots.snapshot_validation_roots.len(),
             "replay_validation": package.semantic.roots.replay_validation_roots.len(),
@@ -4119,6 +4236,7 @@ fn print_replay_json(
             "tombstone_roots": &package.semantic.roots.tombstone_roots,
             "contract_violation_roots": &package.semantic.roots.contract_violation_roots,
             "cleanup_roots": &package.semantic.roots.cleanup_roots,
+            "activation_cleanup_roots": &package.semantic.roots.activation_cleanup_roots,
             "memory_policy_roots": &package.semantic.roots.memory_policy_roots,
             "snapshot_validation_roots": &package.semantic.roots.snapshot_validation_roots,
             "replay_validation_roots": &package.semantic.roots.replay_validation_roots,
@@ -4142,7 +4260,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} activation_cleanups={} substrate_events={} command_results={} interface_events={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.active_authority_count,
@@ -4162,6 +4280,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.trap_record_count,
         package.semantic.hostcall_trace_count,
         package.semantic.migration_object_count,
+        package.semantic.activation_cleanup_count,
         package.semantic.substrate_event_count,
         package.semantic.command_result_count,
         package.semantic.interface_event_count
@@ -4512,6 +4631,7 @@ mod tests {
         package.semantic.scheduler_decision_count = 1;
         package.semantic.activation_resume_count = 1;
         package.semantic.activation_wait_count = 1;
+        package.semantic.activation_cleanup_count = 1;
         package.substrate_boundary.timer_epoch = 3;
         package.semantic.task_records.push(TaskRecordManifest {
             id: 7,
@@ -4683,6 +4803,40 @@ mod tests {
                 cancel_reason: Some("timeout".to_owned()),
                 note: "activation wait".to_owned(),
             });
+        package
+            .semantic
+            .activation_cleanups
+            .push(ActivationCleanupManifest {
+                id: 20,
+                store: 3,
+                target_store_generation: 2,
+                result_store_generation: 4,
+                activation: 11,
+                activation_generation_before: 5,
+                activation_generation_after: 6,
+                wait: Some(19),
+                wait_generation: Some(1),
+                owner_task: 7,
+                owner_task_generation_before: 2,
+                owner_task_generation_after: 3,
+                generation: 1,
+                state: "completed".to_owned(),
+                reason: "driver-store-fault".to_owned(),
+                started_at_event: 17,
+                completed_at_event: 18,
+                steps: vec![artifact_manifest::ActivationCleanupStepManifest {
+                    kind: "cancel-wait".to_owned(),
+                    target: ContractObjectRefManifest {
+                        kind: "wait-token".to_owned(),
+                        id: 19,
+                        generation: 1,
+                    },
+                    observed_generation: 1,
+                    status: "done".to_owned(),
+                    event: Some(17),
+                }],
+                note: "cleanup".to_owned(),
+            });
         let context = activation_context_view_v1(&package.semantic.activation_contexts[0]);
         assert_eq!(context["kind"], "activation-context");
         assert_eq!(context["references"]["activation"]["generation"], 2);
@@ -4742,6 +4896,19 @@ mod tests {
         );
         assert_eq!(activation_wait["references"]["wait"]["generation"], 1);
         assert_eq!(activation_wait["cancel_reason"], "timeout");
+        let activation_cleanup =
+            activation_cleanup_view_v1(&package.semantic.activation_cleanups[0]);
+        assert_eq!(activation_cleanup["kind"], "activation-cleanup");
+        assert_eq!(activation_cleanup["owner"]["target_store_generation"], 2);
+        assert_eq!(activation_cleanup["owner"]["result_store_generation"], 4);
+        assert_eq!(
+            activation_cleanup["references"]["activation"]["generation_after"],
+            6
+        );
+        assert_eq!(
+            activation_cleanup["references"]["steps"][0]["target"]["kind"],
+            "wait-token"
+        );
         let scheduler = scheduler_view_v1(&package);
         assert_eq!(scheduler["kind"], "scheduler");
         assert_eq!(scheduler["references"]["queues"][0]["entries"], 1);
@@ -4757,6 +4924,7 @@ mod tests {
         assert_eq!(scheduler["last_transition"]["scheduler_decision_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_resume_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_wait_count"], 1);
+        assert_eq!(scheduler["last_transition"]["activation_cleanup_count"], 1);
         assert_eq!(scheduler["last_transition"]["timer_epoch"], 3);
         assert_eq!(
             scheduler["last_transition"]["scheduler_decision_cursor"],

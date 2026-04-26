@@ -242,6 +242,8 @@ pub struct SemanticSnapshotManifest {
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
+    #[serde(default)]
+    pub activation_cleanup_count: usize,
     pub resource_count: usize,
     #[serde(default)]
     pub authority_count: usize,
@@ -327,6 +329,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
     #[serde(default)]
+    pub activation_cleanups: Vec<ActivationCleanupManifest>,
+    #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
     #[serde(default)]
     pub store_records: Vec<StoreRecordManifest>,
@@ -390,6 +394,8 @@ pub struct SemanticRootSetManifest {
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
     pub activation_wait_roots: Vec<String>,
+    #[serde(default)]
+    pub activation_cleanup_roots: Vec<String>,
     #[serde(default)]
     pub resource_roots: Vec<String>,
     #[serde(default)]
@@ -685,6 +691,41 @@ pub struct ActivationWaitManifest {
     #[serde(default)]
     pub cancel_reason: Option<String>,
     pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ActivationCleanupManifest {
+    pub id: u64,
+    pub store: u64,
+    pub target_store_generation: u64,
+    pub result_store_generation: u64,
+    pub activation: u64,
+    pub activation_generation_before: u64,
+    pub activation_generation_after: u64,
+    pub wait: Option<u64>,
+    #[serde(default)]
+    pub wait_generation: Option<u64>,
+    pub owner_task: u64,
+    pub owner_task_generation_before: u64,
+    pub owner_task_generation_after: u64,
+    pub generation: u64,
+    pub state: String,
+    pub reason: String,
+    pub started_at_event: u64,
+    pub completed_at_event: u64,
+    #[serde(default)]
+    pub steps: Vec<ActivationCleanupStepManifest>,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ActivationCleanupStepManifest {
+    pub kind: String,
+    pub target: ContractObjectRefManifest,
+    pub observed_generation: u64,
+    pub status: String,
+    #[serde(default)]
+    pub event: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

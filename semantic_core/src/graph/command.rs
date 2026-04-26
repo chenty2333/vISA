@@ -101,6 +101,17 @@ pub enum SemanticCommand {
         reason: WaitCancelReason,
         note: String,
     },
+    CleanupActivationForStoreFault {
+        cleanup: ActivationCleanupId,
+        store: StoreId,
+        store_generation: Generation,
+        activation: ActivationId,
+        activation_generation: Generation,
+        wait: Option<WaitId>,
+        wait_generation: Option<Generation>,
+        reason: String,
+        note: String,
+    },
     GrantCapability {
         subject: String,
         debug_object_label: String,
@@ -262,6 +273,7 @@ impl SemanticCommand {
             Self::ResumeActivation { .. } => "resume-activation",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
             Self::CancelActivationWait { .. } => "cancel-activation-wait",
+            Self::CleanupActivationForStoreFault { .. } => "cleanup-activation-for-store-fault",
             Self::GrantCapability { .. } => "grant-capability",
             Self::RevokeCapability { .. } => "revoke-capability",
             Self::CreateWait { .. } => "create-wait",
@@ -1132,6 +1144,81 @@ impl SemanticGraph {
                     ))
                 }
             }
+            SemanticCommand::CleanupActivationForStoreFault {
+                cleanup,
+                store,
+                store_generation,
+                activation,
+                activation_generation,
+                wait,
+                wait_generation,
+                reason,
+                ..
+            } => {
+                if *cleanup == 0 {
+                    return Err(CommandError::precondition(
+                        "activation cleanup id=0 is invalid",
+                    ));
+                }
+                if reason.is_empty() {
+                    return Err(CommandError::precondition(
+                        "activation cleanup reason is empty",
+                    ));
+                }
+                if self
+                    .activation_cleanups
+                    .iter()
+                    .any(|record| record.id == *cleanup)
+                {
+                    return Err(CommandError::precondition(
+                        "activation cleanup already exists",
+                    ));
+                }
+                if !self.stores.iter().any(|record| {
+                    record.id == *store
+                        && record.generation == *store_generation
+                        && record.state != StoreState::Dead
+                }) {
+                    return Err(CommandError::precondition(
+                        "cleanup target store generation is missing or dead",
+                    ));
+                }
+                if !self.runtime_activations.iter().any(|record| {
+                    record.id == *activation
+                        && record.generation == *activation_generation
+                        && record.owner_store == Some(*store)
+                        && record.owner_store_generation == Some(*store_generation)
+                        && !matches!(
+                            record.state,
+                            RuntimeActivationState::Dead | RuntimeActivationState::Exited
+                        )
+                }) {
+                    return Err(CommandError::precondition(
+                        "cleanup target activation generation is missing or not store-owned",
+                    ));
+                }
+                match (*wait, *wait_generation) {
+                    (Some(wait), Some(generation)) => {
+                        if self.waits.iter().any(|record| {
+                            record.id == wait
+                                && record.generation == generation
+                                && record.state == WaitState::Pending
+                                && record.owner_store == Some(*store)
+                                && record.owner_store_generation == Some(*store_generation)
+                        }) {
+                            Ok(())
+                        } else {
+                            Err(CommandError::precondition(
+                                "cleanup wait generation is missing or not pending",
+                            ))
+                        }
+                    }
+                    (Some(_), None) | (None, Some(_)) => Err(CommandError::precondition(
+                        "cleanup wait and wait generation must be paired",
+                    )),
+                    (None, None) => Ok(()),
+                }
+            }
             SemanticCommand::GrantCapability { operations, .. } if operations.is_empty() => Err(
                 CommandError::precondition("grant-capability requires at least one operation"),
             ),
@@ -1434,6 +1521,27 @@ impl SemanticGraph {
                 wait_generation,
                 errno,
                 reason,
+                &note,
+            ),
+            SemanticCommand::CleanupActivationForStoreFault {
+                cleanup,
+                store,
+                store_generation,
+                activation,
+                activation_generation,
+                wait,
+                wait_generation,
+                reason,
+                note,
+            } => self.cleanup_activation_for_store_fault_with_id(
+                cleanup,
+                store,
+                store_generation,
+                activation,
+                activation_generation,
+                wait,
+                wait_generation,
+                &reason,
                 &note,
             ),
             SemanticCommand::GrantCapability {

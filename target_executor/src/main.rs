@@ -6,22 +6,23 @@ use std::path::{Path, PathBuf};
 mod runtime;
 
 use artifact_manifest::{
-    ActivationContextManifest, ActivationRecordManifest, ActivationResumeManifest,
-    ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
-    BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
-    CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
-    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
-    CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
-    GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest, PreemptionManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
-    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
-    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
-    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
-    TrapRecordManifest, WaitRecordManifest,
+    ActivationCleanupManifest, ActivationCleanupStepManifest, ActivationContextManifest,
+    ActivationRecordManifest, ActivationResumeManifest, ActivationWaitManifest,
+    ArtifactBundleManifest, AuthorityObjectRefManifest, BoundaryValidationReportManifest,
+    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
+    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
+    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
+    ContractViolationManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
+    InterfaceEventManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, PreemptionManifest, RequiredArtifactProfileManifest,
+    RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
+    SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
+    SemanticSnapshotManifest, StoreRecordManifest, SubstrateBoundaryManifest,
+    SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
+    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
+    TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -335,6 +336,18 @@ fn record_preemptive_runtime_context_evidence(
 ) -> Result<(), Box<dyn Error>> {
     semantic.ensure_task(9001, FrontendKind::LinuxElf, "p0-preemptive-demo-task");
     semantic.ensure_task(9002, FrontendKind::LinuxElf, "p2-timer-demo-task");
+    semantic.ensure_task(9003, FrontendKind::LinuxElf, "p8-cleanup-demo-task");
+    let cleanup_store = semantic.register_store(
+        "p8.cleanup.driver",
+        "p8-cleanup-driver.fake-aot",
+        "driver",
+        "restartable",
+    );
+    semantic.set_store_state(cleanup_store, StoreState::Running);
+    let cleanup_store_generation = semantic
+        .store_handle(cleanup_store)
+        .map(|handle| handle.generation)
+        .ok_or("p8 cleanup store handle is missing")?;
     let commands = [
         CommandEnvelope::new(
             10,
@@ -522,6 +535,81 @@ fn record_preemptive_runtime_context_evidence(
                 errno: 110,
                 reason: semantic_core::WaitCancelReason::Timeout,
                 note: "p7-cancel-wait-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            80,
+            "target-executor-p8",
+            SemanticCommand::CreateRunnableQueue {
+                queue: 9003,
+                label: "cleanup-target-runnable-queue".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            81,
+            "target-executor-p8",
+            SemanticCommand::CreateRuntimeActivation {
+                activation: 9003,
+                owner_task: 9003,
+                owner_task_generation: 1,
+                owner_store: Some(cleanup_store),
+                owner_store_generation: Some(cleanup_store_generation),
+                code_object: None,
+            },
+        ),
+        CommandEnvelope::new(
+            82,
+            "target-executor-p8",
+            SemanticCommand::EnqueueRunnable {
+                queue: 9003,
+                activation: 9003,
+                activation_generation: 1,
+            },
+        ),
+        CommandEnvelope::new(
+            83,
+            "target-executor-p8",
+            SemanticCommand::DequeueRunnable {
+                queue: 9003,
+                activation: 9003,
+            },
+        ),
+        CommandEnvelope::new(
+            84,
+            "target-executor-p8",
+            SemanticCommand::BlockActivationOnWait {
+                activation_wait: 9002,
+                activation: 9003,
+                activation_generation: 3,
+                wait: 9004,
+                kind: SemanticWaitKind::DeviceIrq,
+                blockers: {
+                    let mut blockers = Vec::new();
+                    blockers.push(ContractObjectRef::new(
+                        ContractObjectKind::Store,
+                        cleanup_store,
+                        cleanup_store_generation,
+                    ));
+                    blockers
+                },
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                note: "p8-block-driver-wait-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            85,
+            "target-executor-p8",
+            SemanticCommand::CleanupActivationForStoreFault {
+                cleanup: 9001,
+                store: cleanup_store,
+                store_generation: cleanup_store_generation,
+                activation: 9003,
+                activation_generation: 4,
+                wait: Some(9004),
+                wait_generation: Some(1),
+                reason: "driver-store-fault".to_owned(),
+                note: "p8-cleanup-dead-store-harness".to_owned(),
             },
         ),
     ];
@@ -1495,7 +1583,7 @@ fn demo_migration_package(
         .cloned()
         .chain(semantic.wait_records().iter().map(wait_record_manifest))
         .collect::<Vec<_>>();
-    let roots = semantic_roots(manifest, &logical_capabilities, semantic, target_v1);
+    let roots = semantic_roots(&logical_capabilities, semantic, target_v1);
     MigrationPackageManifest {
         schema_version: 1,
         package_format: "vmos-semantic-package-v1".to_owned(),
@@ -1545,6 +1633,7 @@ fn demo_migration_package(
             scheduler_decision_count: semantic.scheduler_decision_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
+            activation_cleanup_count: semantic.activation_cleanup_count(),
             resource_count: semantic.resource_count(),
             authority_count: semantic.authority_count(),
             active_authority_count: semantic.active_authority_count(),
@@ -1625,6 +1714,11 @@ fn demo_migration_package(
                 .iter()
                 .map(activation_wait_manifest)
                 .collect(),
+            activation_cleanups: semantic
+                .activation_cleanups()
+                .iter()
+                .map(activation_cleanup_manifest)
+                .collect(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
             capability_records: target_v1.capability_records.clone(),
@@ -1679,7 +1773,6 @@ fn demo_migration_package(
 }
 
 fn semantic_roots(
-    manifest: &ArtifactBundleManifest,
     capabilities: &[MigrationCapabilityManifest],
     semantic: &SemanticGraph,
     target_v1: &TargetExecutorV1Report,
@@ -1871,10 +1964,44 @@ fn semantic_roots(
                 )
             })
             .collect(),
-        resource_roots: manifest
-            .modules
+        activation_cleanup_roots: semantic
+            .activation_cleanups()
             .iter()
-            .map(|module| format!("resource:store:{}", module.package))
+            .map(|cleanup| {
+                format!(
+                    "activation-cleanup id={} store={}@{}->{} activation={}@{}->{} wait={}@{} state={} generation={}",
+                    cleanup.id,
+                    cleanup.store,
+                    cleanup.target_store_generation,
+                    cleanup.result_store_generation,
+                    cleanup.activation,
+                    cleanup.activation_generation_before,
+                    cleanup.activation_generation_after,
+                    cleanup
+                        .wait
+                        .map(|wait| wait.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    cleanup
+                        .wait_generation
+                        .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    cleanup.state.as_str(),
+                    cleanup.generation
+                )
+            })
+            .collect(),
+        resource_roots: semantic
+            .resources()
+            .iter()
+            .map(|resource| {
+                format!(
+                    "resource id={} kind={} generation={} live={}",
+                    resource.id,
+                    resource.kind.as_str(),
+                    resource.generation,
+                    resource.live
+                )
+            })
             .collect(),
         authority_roots: semantic
             .authority_bindings()
@@ -1908,10 +2035,18 @@ fn semantic_roots(
                 )
             }))
             .collect(),
-        store_roots: manifest
-            .modules
+        store_roots: semantic
+            .stores()
             .iter()
-            .map(|module| format!("store:{}", module.package))
+            .map(|store| {
+                format!(
+                    "store id={} package={} state={} generation={}",
+                    store.id,
+                    store.package,
+                    store.state.as_str(),
+                    store.generation
+                )
+            })
             .collect(),
         capability_roots: capabilities
             .iter()
@@ -2523,6 +2658,42 @@ fn activation_wait_manifest(wait: &semantic_core::ActivationWaitRecord) -> Activ
         completed_at_event: wait.completed_at_event,
         cancel_reason: wait.cancel_reason.map(|reason| reason.as_str().to_owned()),
         note: wait.note.clone(),
+    }
+}
+
+fn activation_cleanup_manifest(
+    cleanup: &semantic_core::ActivationCleanupRecord,
+) -> ActivationCleanupManifest {
+    ActivationCleanupManifest {
+        id: cleanup.id,
+        store: cleanup.store,
+        target_store_generation: cleanup.target_store_generation,
+        result_store_generation: cleanup.result_store_generation,
+        activation: cleanup.activation,
+        activation_generation_before: cleanup.activation_generation_before,
+        activation_generation_after: cleanup.activation_generation_after,
+        wait: cleanup.wait,
+        wait_generation: cleanup.wait_generation,
+        owner_task: u64::from(cleanup.owner_task),
+        owner_task_generation_before: cleanup.owner_task_generation_before,
+        owner_task_generation_after: cleanup.owner_task_generation_after,
+        generation: cleanup.generation,
+        state: cleanup.state.as_str().to_owned(),
+        reason: cleanup.reason.clone(),
+        started_at_event: cleanup.started_at_event,
+        completed_at_event: cleanup.completed_at_event,
+        steps: cleanup
+            .steps
+            .iter()
+            .map(|step| ActivationCleanupStepManifest {
+                kind: step.kind.as_str().to_owned(),
+                target: contract_object_ref_manifest(step.target),
+                observed_generation: step.observed_generation,
+                status: step.status.as_str().to_owned(),
+                event: step.event,
+            })
+            .collect(),
+        note: cleanup.note.clone(),
     }
 }
 

@@ -249,6 +249,48 @@ impl ActivationWaitRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivationCleanupStepRecord {
+    pub kind: ActivationCleanupStepKind,
+    pub target: ContractObjectRef,
+    pub observed_generation: Generation,
+    pub status: ActivationCleanupStepStatus,
+    pub event: Option<EventId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivationCleanupRecord {
+    pub id: ActivationCleanupId,
+    pub store: StoreId,
+    pub target_store_generation: Generation,
+    pub result_store_generation: Generation,
+    pub activation: ActivationId,
+    pub activation_generation_before: Generation,
+    pub activation_generation_after: Generation,
+    pub wait: Option<WaitId>,
+    pub wait_generation: Option<Generation>,
+    pub owner_task: TaskId,
+    pub owner_task_generation_before: Generation,
+    pub owner_task_generation_after: Generation,
+    pub generation: Generation,
+    pub state: ActivationCleanupState,
+    pub reason: String,
+    pub started_at_event: EventId,
+    pub completed_at_event: EventId,
+    pub steps: Vec<ActivationCleanupStepRecord>,
+    pub note: String,
+}
+
+impl ActivationCleanupRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::ActivationCleanup,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceRecord {
     pub id: ResourceId,
     pub label: String,

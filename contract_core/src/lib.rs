@@ -75,6 +75,7 @@ pub enum ObjectKind {
     SchedulerDecision,
     ActivationResume,
     ActivationWait,
+    ActivationCleanup,
     Resource,
     Capability,
     WaitToken,
@@ -110,6 +111,7 @@ impl ObjectKind {
             Self::SchedulerDecision => "scheduler-decision",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
+            Self::ActivationCleanup => "activation-cleanup",
             Self::Resource => "resource",
             Self::Capability => "capability",
             Self::WaitToken => "wait-token",
@@ -299,6 +301,7 @@ typed_ref!(PreemptionRef, ObjectKind::Preemption);
 typed_ref!(SchedulerDecisionRef, ObjectKind::SchedulerDecision);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
+typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
 typed_ref!(FaultDomainRef, ObjectKind::FaultDomain);
 typed_ref!(ArtifactRef, ObjectKind::Artifact);
 typed_ref!(CodeObjectRef, ObjectKind::CodeObject);
@@ -1471,6 +1474,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("activation wait root/count mismatch"));
     }
+    if roots.activation_cleanup_roots.len() != package.semantic.activation_cleanup_count
+        || package.semantic.activation_cleanups.len() != package.semantic.activation_cleanup_count
+    {
+        return Err(ContractError::new("activation cleanup root/count mismatch"));
+    }
     if roots.resource_roots.len() != package.semantic.resource_count {
         return Err(ContractError::new("resource root/count mismatch"));
     }
@@ -1973,6 +1981,7 @@ mod tests {
                 scheduler_decision_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
+                activation_cleanup_count: 0,
                 resource_count: 0,
                 authority_count: 0,
                 active_authority_count: 0,
@@ -2017,6 +2026,7 @@ mod tests {
                 scheduler_decisions: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
+                activation_cleanups: Vec::new(),
                 code_objects: Vec::new(),
                 store_records: Vec::new(),
                 capability_records: Vec::new(),
@@ -2311,6 +2321,39 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "activation wait root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_activation_cleanup_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.activation_cleanup_count = 1;
+        package
+            .semantic
+            .activation_cleanups
+            .push(artifact_manifest::ActivationCleanupManifest {
+                id: 10,
+                store: 7,
+                target_store_generation: 2,
+                result_store_generation: 4,
+                activation: 11,
+                activation_generation_before: 5,
+                activation_generation_after: 6,
+                wait: Some(41),
+                wait_generation: Some(1),
+                owner_task: 9,
+                owner_task_generation_before: 2,
+                owner_task_generation_after: 3,
+                generation: 1,
+                state: "completed".to_owned(),
+                reason: "store-fault".to_owned(),
+                started_at_event: 8,
+                completed_at_event: 9,
+                steps: Vec::new(),
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "activation cleanup root/count mismatch");
     }
 
     #[test]

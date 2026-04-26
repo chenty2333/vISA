@@ -7,6 +7,7 @@ pub type PreemptionId = u64;
 pub type SchedulerDecisionId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
+pub type ActivationCleanupId = u64;
 pub type ResourceId = u64;
 pub type CapabilityId = u64;
 pub type FaultDomainId = u64;

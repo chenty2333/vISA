@@ -169,6 +169,9 @@ impl SemanticGraph {
     pub fn resource_count(&self) -> usize {
         self.resources.len()
     }
+    pub fn resources(&self) -> &[ResourceRecord] {
+        &self.resources
+    }
     pub fn live_resource_count(&self) -> usize {
         self.resources
             .iter()

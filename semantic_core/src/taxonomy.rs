@@ -237,6 +237,65 @@ impl TaskState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivationCleanupState {
+    Completed,
+    Skipped,
+    Failed,
+}
+
+impl ActivationCleanupState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Skipped => "skipped",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivationCleanupStepKind {
+    StopNewActivation,
+    CancelWait,
+    MarkTaskFaulted,
+    SealActivation,
+    DropContext,
+    DropResources,
+    MarkStoreDead,
+}
+
+impl ActivationCleanupStepKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StopNewActivation => "stop-new-activation",
+            Self::CancelWait => "cancel-wait",
+            Self::MarkTaskFaulted => "mark-task-faulted",
+            Self::SealActivation => "seal-activation",
+            Self::DropContext => "drop-context",
+            Self::DropResources => "drop-resources",
+            Self::MarkStoreDead => "mark-store-dead",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivationCleanupStepStatus {
+    Done,
+    SkippedStaleGeneration,
+    SkippedNotPresent,
+}
+
+impl ActivationCleanupStepStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::SkippedStaleGeneration => "skipped-stale-generation",
+            Self::SkippedNotPresent => "skipped-not-present",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResourceKind {
     Fd,
     Timer,

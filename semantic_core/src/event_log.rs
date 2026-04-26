@@ -113,6 +113,24 @@ pub enum EventKind {
         reason: WaitCancelReason,
         generation: Generation,
     },
+    RuntimeActivationCleanupStarted {
+        cleanup: ActivationCleanupId,
+        store: StoreId,
+        store_generation: Generation,
+        activation: ActivationId,
+        activation_generation: Generation,
+        generation: Generation,
+    },
+    RuntimeActivationCleanupCompleted {
+        cleanup: ActivationCleanupId,
+        store: StoreId,
+        target_store_generation: Generation,
+        result_store_generation: Generation,
+        activation: ActivationId,
+        activation_generation_before: Generation,
+        activation_generation_after: Generation,
+        generation: Generation,
+    },
     ResourceCreated {
         resource: ResourceId,
         kind: ResourceKind,
@@ -579,6 +597,28 @@ impl EventKind {
             } => format!(
                 "RuntimeActivationWaitCancelled activation_wait={activation_wait} activation={activation}@{from_generation}->{to_generation} wait={wait}@{wait_generation} reason={} generation={generation}",
                 reason.as_str()
+            ),
+            Self::RuntimeActivationCleanupStarted {
+                cleanup,
+                store,
+                store_generation,
+                activation,
+                activation_generation,
+                generation,
+            } => format!(
+                "RuntimeActivationCleanupStarted cleanup={cleanup} store={store}@{store_generation} activation={activation}@{activation_generation} generation={generation}"
+            ),
+            Self::RuntimeActivationCleanupCompleted {
+                cleanup,
+                store,
+                target_store_generation,
+                result_store_generation,
+                activation,
+                activation_generation_before,
+                activation_generation_after,
+                generation,
+            } => format!(
+                "RuntimeActivationCleanupCompleted cleanup={cleanup} store={store}@{target_store_generation}->{result_store_generation} activation={activation}@{activation_generation_before}->{activation_generation_after} generation={generation}"
             ),
             Self::ResourceCreated {
                 resource,

@@ -1,4 +1,5 @@
 use super::*;
+use alloc::format;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
@@ -2730,6 +2731,227 @@ fn preemptive_runtime_p7_invariants_reject_waiting_activation_runnable_leak() {
         graph.check_invariants(),
         Err(SemanticInvariantError::PendingTaskHasRunnableActivation {
             task: 7,
+            activation: 11,
+        })
+    );
+}
+
+fn p8_pending_store_activation() -> (SemanticGraph, StoreId, Generation) {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "driver-thread-7");
+    let store = graph.register_store("driver.p8", "driver.fake-aot", "driver", "restartable");
+    graph.set_store_state(store, StoreState::Running);
+    let store_generation = graph.store_handle(store).unwrap().generation;
+    assert!(graph.create_runnable_queue_with_id(1, "driver-rq"));
+    assert!(graph.create_runtime_activation_with_id(
+        11,
+        7,
+        1,
+        Some(store),
+        Some(store_generation),
+        None
+    ));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(graph.dequeue_runnable_activation(1, 11));
+    assert!(graph.block_activation_on_wait_with_id(
+        16,
+        11,
+        3,
+        17,
+        SemanticWaitKind::DeviceIrq,
+        {
+            let mut blockers = Vec::new();
+            blockers.push(ContractObjectRef::new(
+                ContractObjectKind::Store,
+                store,
+                store_generation,
+            ));
+            blockers
+        },
+        None,
+        RestartPolicy::InternalOnly,
+        "driver waits for irq"
+    ));
+    (graph, store, store_generation)
+}
+
+#[test]
+fn preemptive_runtime_p8_cleanup_cancels_wait_and_kills_dead_store_activation() {
+    let (mut graph, store, store_generation) = p8_pending_store_activation();
+
+    let cleanup = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p8-test",
+        SemanticCommand::CleanupActivationForStoreFault {
+            cleanup: 20,
+            store,
+            store_generation,
+            activation: 11,
+            activation_generation: 4,
+            wait: Some(17),
+            wait_generation: Some(1),
+            reason: "driver-store-fault".to_string(),
+            note: "cleanup store-owned activation".to_string(),
+        },
+    ));
+    assert_eq!(cleanup.status, CommandStatus::Applied);
+    assert_eq!(graph.activation_cleanups().len(), 1);
+    assert_eq!(
+        graph.activation_cleanups()[0].state,
+        ActivationCleanupState::Completed
+    );
+    assert_eq!(
+        graph.activation_cleanups()[0].target_store_generation,
+        store_generation
+    );
+    assert_eq!(
+        graph.activation_cleanups()[0].activation_generation_after,
+        5
+    );
+    assert_eq!(graph.wait_records()[0].state, WaitState::Cancelled);
+    assert_eq!(
+        graph.wait_records()[0].cancel_reason,
+        Some(WaitCancelReason::StoreFault)
+    );
+    assert_eq!(
+        graph.activation_waits()[0].state,
+        ActivationWaitState::Cancelled
+    );
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Dead
+    );
+    assert_eq!(graph.tasks()[0].state, TaskState::Faulted);
+    assert_eq!(graph.tasks()[0].pending_wait, None);
+    assert_eq!(graph.stores()[0].state, StoreState::Dead);
+    assert!(
+        graph
+            .resources()
+            .iter()
+            .filter(|resource| resource.owner_store == Some(store))
+            .all(|resource| !resource.live)
+    );
+    assert_eq!(
+        graph.runtime_activations()[0].owner_store_generation,
+        Some(graph.activation_cleanups()[0].result_store_generation)
+    );
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "RuntimeActivationCleanupCompleted cleanup=20 store={store}@{store_generation}->{} activation=11@4->5 generation=1",
+            graph.activation_cleanups()[0].result_store_generation
+        )
+    );
+}
+
+#[test]
+fn preemptive_runtime_p8_cleanup_rejects_stale_store_generation_and_no_resume_leak() {
+    let (mut graph, store, store_generation) = p8_pending_store_activation();
+    graph.set_store_state(store, StoreState::Suspended);
+    graph.set_store_state(store, StoreState::Running);
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p8-test",
+        SemanticCommand::CleanupActivationForStoreFault {
+            cleanup: 20,
+            store,
+            store_generation,
+            activation: 11,
+            activation_generation: 4,
+            wait: Some(17),
+            wait_generation: Some(1),
+            reason: "stale cleanup".to_string(),
+            note: "old store generation".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("cleanup target store generation is missing or dead".to_string());
+    assert_eq!(stale.violations, expected);
+    assert_ne!(graph.stores()[0].state, StoreState::Dead);
+
+    let (mut graph, store, store_generation) = p8_pending_store_activation();
+    assert!(graph.cleanup_activation_for_store_fault_with_id(
+        20,
+        store,
+        store_generation,
+        11,
+        4,
+        Some(17),
+        Some(1),
+        "driver-store-fault",
+        "cleanup"
+    ));
+    let enqueue = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p8-test",
+        SemanticCommand::EnqueueRunnable {
+            queue: 1,
+            activation: 11,
+            activation_generation: 5,
+        },
+    ));
+    assert_eq!(enqueue.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("activation is not enqueueable".to_string());
+    assert_eq!(enqueue.violations, expected);
+    assert!(graph.runnable_queues()[0].entries.is_empty());
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn preemptive_runtime_p8_cleanup_history_survives_store_restart_generation() {
+    let (mut graph, store, store_generation) = p8_pending_store_activation();
+    assert!(graph.cleanup_activation_for_store_fault_with_id(
+        20,
+        store,
+        store_generation,
+        11,
+        4,
+        Some(17),
+        Some(1),
+        "driver-store-fault",
+        "cleanup"
+    ));
+    let cleanup_result_generation = graph.activation_cleanups()[0].result_store_generation;
+
+    let rebind = graph.rebind_store_instance(store).expect("store rebind");
+    assert!(rebind.generation > cleanup_result_generation);
+    graph.set_store_state(store, StoreState::Running);
+
+    assert!(graph.store_handle(store).unwrap().generation > cleanup_result_generation);
+    assert_eq!(
+        graph.runtime_activations()[0].owner_store_generation,
+        Some(cleanup_result_generation)
+    );
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Dead
+    );
+    assert_eq!(graph.check_invariants(), Ok(()));
+}
+
+#[test]
+fn preemptive_runtime_p8_invariants_reject_cleanup_generation_leak() {
+    let (mut graph, store, store_generation) = p8_pending_store_activation();
+    assert!(graph.cleanup_activation_for_store_fault_with_id(
+        20,
+        store,
+        store_generation,
+        11,
+        4,
+        Some(17),
+        Some(1),
+        "driver-store-fault",
+        "cleanup"
+    ));
+    graph.corrupt_activation_cleanup_after_generation_for_test(20, 99);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::ActivationCleanupMissingActivation {
+            cleanup: 20,
             activation: 11,
         })
     );

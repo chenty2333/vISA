@@ -16,6 +16,7 @@ pub struct SemanticGraph {
     scheduler_decisions: Vec<SchedulerDecisionRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
+    activation_cleanups: Vec<ActivationCleanupRecord>,
     resources: Vec<ResourceRecord>,
     authority_bindings: Vec<AuthorityBindingRecord>,
     waits: Vec<WaitRecord>,
@@ -39,6 +40,7 @@ pub struct SemanticGraph {
     next_scheduler_decision_id: SchedulerDecisionId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
+    next_activation_cleanup_id: ActivationCleanupId,
     next_authority_id: AuthorityId,
     next_fault_domain_id: FaultDomainId,
     next_store_id: StoreId,
@@ -52,6 +54,7 @@ pub struct SemanticGraph {
 mod authority;
 mod boundary;
 mod capability;
+mod cleanup;
 mod command;
 mod context;
 mod interface;
@@ -85,6 +88,7 @@ impl SemanticGraph {
             scheduler_decisions: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
+            activation_cleanups: Vec::new(),
             resources: Vec::new(),
             authority_bindings: Vec::new(),
             waits: Vec::new(),
@@ -108,6 +112,7 @@ impl SemanticGraph {
             next_scheduler_decision_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
+            next_activation_cleanup_id: 1,
             next_authority_id: 1,
             next_fault_domain_id: 1,
             next_store_id: 1,

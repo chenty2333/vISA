@@ -861,16 +861,34 @@ impl SemanticGraph {
                 });
             };
             if let Some(store) = activation.owner_store {
-                let Some(store_record) = self.stores.iter().find(|record| {
-                    record.id == store
-                        && activation.owner_store_generation == Some(record.generation)
-                }) else {
+                let Some(owner_store_generation) = activation.owner_store_generation else {
                     return Err(SemanticInvariantError::ActivationReferencesMissingStore {
                         activation: activation.id,
                         store,
                     });
                 };
-                if store_record.state == StoreState::Dead
+                let Some(current_store) = self.stores.iter().find(|record| record.id == store)
+                else {
+                    return Err(SemanticInvariantError::ActivationReferencesMissingStore {
+                        activation: activation.id,
+                        store,
+                    });
+                };
+                if current_store.generation != owner_store_generation {
+                    let historical_dead_activation = matches!(
+                        activation.state,
+                        RuntimeActivationState::Dead | RuntimeActivationState::Exited
+                    ) && current_store.generation
+                        > owner_store_generation;
+                    if !historical_dead_activation {
+                        return Err(SemanticInvariantError::ActivationReferencesMissingStore {
+                            activation: activation.id,
+                            store,
+                        });
+                    }
+                }
+                if current_store.generation == owner_store_generation
+                    && current_store.state == StoreState::Dead
                     && activation.state != RuntimeActivationState::Dead
                 {
                     return Err(SemanticInvariantError::DeadStoreOwnsLiveActivation {
