@@ -358,6 +358,21 @@ impl SmpSnapshotBarrierState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmpStressRunState {
+    Recorded,
+    Rejected,
+}
+
+impl SmpStressRunState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

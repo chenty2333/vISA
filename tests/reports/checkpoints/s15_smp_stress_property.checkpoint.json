@@ -1,0 +1,162 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "S15-smp-stress-property-tests",
+  "phase": "Phase 2 Full SMP Runtime",
+  "status": "pass",
+  "scope": [
+    "Add semantic SMP stress/property evidence as a first-class SmpStressRun object",
+    "Record property coverage only when the graph already contains remote preempt, remote park, activation migration, code publish barrier, cleanup quiescence, and snapshot barrier evidence",
+    "Reject incomplete stress coverage and dirty property results before producing a stable record",
+    "Expose stress evidence through semantic package roots/counts, target_executor host-validation output, osctl ViewV1, scheduler view, replay roots, and history graph edges"
+  ],
+  "no_goals": [
+    "Real target-side runtime execution",
+    "Real SMP scheduler fairness tuning",
+    "Real SMP dynamic code publish",
+    "Real snapshot COW implementation",
+    "Real substrate snapshot hooks",
+    "SMP scaling benchmark"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/graph/smp_stress.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/smp/golden_s15_smp_stress_property.trace.json",
+    "tests/reports/checkpoints/s15_smp_stress_property.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/smp/golden_s15_smp_stress_property.trace.json",
+    "tests/reports/checkpoints/s15_smp_stress_property.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "Stress/property evidence is represented as a semantic record instead of an unqueryable test-only println",
+      "Coverage counts and last evidence references are derived from SemanticGraph state rather than caller-provided object labels",
+      "The command rejects incomplete SMP coverage and invariant-dirty graphs before appending EventLog evidence",
+      "osctl uses an explicit ViewV1 for smp-stress-run rather than dumping internal records",
+      "No real target-side execution, real SMP code publish, substrate snapshot hook, or scheduler fairness policy was mixed into S15"
+    ],
+    "residual_notes": [
+      "S16 should add SMP scaling benchmark metrics and experiment reports",
+      "Stress/property tests are deterministic semantic harness checks, not randomized model checking",
+      "Real production scheduler fairness remains outside Phase 2's stated no-goals"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core smp_runtime_s15",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core smp_stress_run",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- smp-stress-run list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only && python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "python osctl smp-stress-run/scheduler/contract/history assertions",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/smp/golden_s15_smp_stress_property.trace.json",
+    "osctl_views": [
+      "osctl smp-stress-run list --json <migration.json>",
+      "osctl scheduler list --json <migration.json>",
+      "osctl graph --history --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "smp_stress_run_roots",
+      "smp_snapshot_barrier_roots",
+      "smp_cleanup_quiescence_roots",
+      "smp_code_publish_barrier_roots",
+      "stop_the_world_rendezvous_roots",
+      "smp_safe_point_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 258,
+      "smp_stress_run_count": 1,
+      "smp_snapshot_barrier_count": 1,
+      "smp_cleanup_quiescence_count": 1,
+      "smp_code_publish_barrier_count": 1,
+      "stop_the_world_rendezvous_count": 3,
+      "smp_safe_point_count": 3,
+      "hart_event_attribution_count": 41,
+      "hart_count": 2
+    }
+  },
+  "residual_gaps": [
+    "S16 SMP scaling benchmark remains unimplemented"
+  ],
+  "next_checkpoint": "S16-smp-scaling-benchmark"
+}

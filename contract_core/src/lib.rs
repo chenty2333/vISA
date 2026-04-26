@@ -84,6 +84,7 @@ pub enum ObjectKind {
     SmpCodePublishBarrier,
     SmpCleanupQuiescence,
     SmpSnapshotBarrier,
+    SmpStressRun,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -133,6 +134,7 @@ impl ObjectKind {
             Self::SmpCodePublishBarrier => "smp-code-publish-barrier",
             Self::SmpCleanupQuiescence => "smp-cleanup-quiescence",
             Self::SmpSnapshotBarrier => "smp-snapshot-barrier",
+            Self::SmpStressRun => "smp-stress-run",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -342,6 +344,7 @@ typed_ref!(
 typed_ref!(SmpCodePublishBarrierRef, ObjectKind::SmpCodePublishBarrier);
 typed_ref!(SmpCleanupQuiescenceRef, ObjectKind::SmpCleanupQuiescence);
 typed_ref!(SmpSnapshotBarrierRef, ObjectKind::SmpSnapshotBarrier);
+typed_ref!(SmpStressRunRef, ObjectKind::SmpStressRun);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1584,6 +1587,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "smp snapshot barrier root/count mismatch",
         ));
     }
+    if roots.smp_stress_run_roots.len() != package.semantic.smp_stress_run_count
+        || package.semantic.smp_stress_runs.len() != package.semantic.smp_stress_run_count
+    {
+        return Err(ContractError::new("smp stress run root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2124,6 +2132,7 @@ mod tests {
                 smp_code_publish_barrier_count: 0,
                 smp_cleanup_quiescence_count: 0,
                 smp_snapshot_barrier_count: 0,
+                smp_stress_run_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2182,6 +2191,7 @@ mod tests {
                 smp_code_publish_barriers: Vec::new(),
                 smp_cleanup_quiescence: Vec::new(),
                 smp_snapshot_barriers: Vec::new(),
+                smp_stress_runs: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -2816,6 +2826,56 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_smp_stress_run_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.smp_stress_run_count = 1;
+        package
+            .semantic
+            .smp_stress_runs
+            .push(artifact_manifest::SmpStressRunManifest {
+                id: 15,
+                scenario: "smp-stress".to_owned(),
+                iterations: 3,
+                hart_count: 2,
+                event_log_cursor: 50,
+                observed_safe_point_count: 3,
+                observed_rendezvous_count: 3,
+                observed_code_publish_barrier_count: 1,
+                observed_cleanup_quiescence_count: 1,
+                observed_snapshot_barrier_count: 1,
+                observed_activation_migration_count: 1,
+                observed_remote_preempt_count: 1,
+                observed_remote_park_count: 1,
+                invariant_checks: 3,
+                property_failures: 0,
+                last_safe_point: 3,
+                last_safe_point_generation: 1,
+                last_rendezvous: 3,
+                last_rendezvous_generation: 1,
+                last_code_publish_barrier: 1,
+                last_code_publish_barrier_generation: 1,
+                last_cleanup_quiescence: 1,
+                last_cleanup_quiescence_generation: 1,
+                last_snapshot_barrier: 1,
+                last_snapshot_barrier_generation: 1,
+                last_activation_migration: 1,
+                last_activation_migration_generation: 1,
+                last_remote_preempt: 1,
+                last_remote_preempt_generation: 1,
+                last_remote_park: 1,
+                last_remote_park_generation: 1,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 51,
+                reason: "smp-stress-property".to_owned(),
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "smp stress run root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3298,6 +3358,8 @@ mod tests {
         assert!(SmpCleanupQuiescenceRef::try_from_ref(cleanup_quiescence).is_ok());
         let snapshot_barrier = ObjectRef::new(ObjectKind::SmpSnapshotBarrier, 14, 1).unwrap();
         assert!(SmpSnapshotBarrierRef::try_from_ref(snapshot_barrier).is_ok());
+        let stress_run = ObjectRef::new(ObjectKind::SmpStressRun, 15, 1).unwrap();
+        assert!(SmpStressRunRef::try_from_ref(stress_run).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

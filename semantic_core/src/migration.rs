@@ -749,6 +749,16 @@ pub enum SemanticInvariantError {
     SmpSnapshotBarrierBoundaryViolation {
         barrier: SmpSnapshotBarrierId,
     },
+    SmpStressRunInvalid {
+        run: SmpStressRunId,
+    },
+    SmpStressRunMissingEvidence {
+        run: SmpStressRunId,
+        evidence: &'static str,
+    },
+    SmpStressRunMissingEvent {
+        run: SmpStressRunId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

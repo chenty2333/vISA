@@ -232,6 +232,16 @@ pub enum EventKind {
         participant_count: u32,
         generation: Generation,
     },
+    SmpStressRunRecorded {
+        run: SmpStressRunId,
+        scenario: String,
+        iterations: u32,
+        hart_count: u32,
+        safe_point_count: u32,
+        rendezvous_count: u32,
+        property_failures: u32,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -906,6 +916,18 @@ impl EventKind {
                 generation,
             } => format!(
                 "SmpSnapshotBarrierValidated barrier={barrier} rendezvous={rendezvous}@{rendezvous_generation} cursor={event_log_cursor} participants={participant_count} generation={generation}"
+            ),
+            Self::SmpStressRunRecorded {
+                run,
+                scenario,
+                iterations,
+                hart_count,
+                safe_point_count,
+                rendezvous_count,
+                property_failures,
+                generation,
+            } => format!(
+                "SmpStressRunRecorded run={run} scenario={scenario} iterations={iterations} harts={hart_count} safe_points={safe_point_count} rendezvous={rendezvous_count} property_failures={property_failures} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

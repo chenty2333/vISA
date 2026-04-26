@@ -25,7 +25,7 @@ use artifact_manifest::{
     SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
     SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpSnapshotBarrierManifest,
-    SmpSnapshotBarrierParticipantManifest, StopTheWorldRendezvousManifest,
+    SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
     SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
     TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
@@ -1061,6 +1061,18 @@ fn record_preemptive_runtime_context_evidence(
                 note: "s14-clean-snapshot-boundary-harness".to_owned(),
             },
         ),
+        CommandEnvelope::new(
+            98,
+            "target-executor-s15",
+            SemanticCommand::RecordSmpStressRun {
+                run: 9501,
+                scenario: "target-executor-s15-integrated-smp-sequence".to_owned(),
+                iterations: 3,
+                invariant_checks: 6,
+                reason: "s15-smp-stress-property-tests".to_owned(),
+                note: "s15-record-property-clean-smp-sequence".to_owned(),
+            },
+        ),
     ];
     for command in commands {
         let result = semantic.apply_envelope(command);
@@ -2091,6 +2103,7 @@ fn demo_migration_package(
             smp_code_publish_barrier_count: semantic.smp_code_publish_barrier_count(),
             smp_cleanup_quiescence_count: semantic.smp_cleanup_quiescence_count(),
             smp_snapshot_barrier_count: semantic.smp_snapshot_barrier_count(),
+            smp_stress_run_count: semantic.smp_stress_run_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2216,6 +2229,11 @@ fn demo_migration_package(
                 .smp_snapshot_barriers()
                 .iter()
                 .map(smp_snapshot_barrier_manifest)
+                .collect(),
+            smp_stress_runs: semantic
+                .smp_stress_runs()
+                .iter()
+                .map(smp_stress_run_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2661,6 +2679,22 @@ fn semantic_roots(
                     barrier.participants.len(),
                     barrier.state.as_str(),
                     barrier.generation
+                )
+            })
+            .collect(),
+        smp_stress_run_roots: semantic
+            .smp_stress_runs()
+            .iter()
+            .map(|run| {
+                format!(
+                    "smp-stress-run id={} scenario={} iterations={} invariants={} failures={} cursor={} generation={}",
+                    run.id,
+                    run.scenario,
+                    run.iterations,
+                    run.invariant_checks,
+                    run.property_failures,
+                    run.event_log_cursor,
+                    run.generation
                 )
             })
             .collect(),
@@ -3709,6 +3743,47 @@ fn smp_snapshot_barrier_manifest(
         validated_at_event: barrier.validated_at_event,
         reason: barrier.reason.clone(),
         note: barrier.note.clone(),
+    }
+}
+
+fn smp_stress_run_manifest(run: &semantic_core::SmpStressRunRecord) -> SmpStressRunManifest {
+    SmpStressRunManifest {
+        id: run.id,
+        scenario: run.scenario.clone(),
+        iterations: run.iterations,
+        hart_count: run.hart_count,
+        event_log_cursor: run.event_log_cursor,
+        observed_safe_point_count: run.observed_safe_point_count,
+        observed_rendezvous_count: run.observed_rendezvous_count,
+        observed_code_publish_barrier_count: run.observed_code_publish_barrier_count,
+        observed_cleanup_quiescence_count: run.observed_cleanup_quiescence_count,
+        observed_snapshot_barrier_count: run.observed_snapshot_barrier_count,
+        observed_activation_migration_count: run.observed_activation_migration_count,
+        observed_remote_preempt_count: run.observed_remote_preempt_count,
+        observed_remote_park_count: run.observed_remote_park_count,
+        invariant_checks: run.invariant_checks,
+        property_failures: run.property_failures,
+        last_safe_point: run.last_safe_point,
+        last_safe_point_generation: run.last_safe_point_generation,
+        last_rendezvous: run.last_rendezvous,
+        last_rendezvous_generation: run.last_rendezvous_generation,
+        last_code_publish_barrier: run.last_code_publish_barrier,
+        last_code_publish_barrier_generation: run.last_code_publish_barrier_generation,
+        last_cleanup_quiescence: run.last_cleanup_quiescence,
+        last_cleanup_quiescence_generation: run.last_cleanup_quiescence_generation,
+        last_snapshot_barrier: run.last_snapshot_barrier,
+        last_snapshot_barrier_generation: run.last_snapshot_barrier_generation,
+        last_activation_migration: run.last_activation_migration,
+        last_activation_migration_generation: run.last_activation_migration_generation,
+        last_remote_preempt: run.last_remote_preempt,
+        last_remote_preempt_generation: run.last_remote_preempt_generation,
+        last_remote_park: run.last_remote_park,
+        last_remote_park_generation: run.last_remote_park_generation,
+        generation: run.generation,
+        state: run.state.as_str().to_owned(),
+        recorded_at_event: run.recorded_at_event,
+        reason: run.reason.clone(),
+        note: run.note.clone(),
     }
 }
 

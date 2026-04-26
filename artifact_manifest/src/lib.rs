@@ -261,6 +261,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub smp_snapshot_barrier_count: usize,
     #[serde(default)]
+    pub smp_stress_run_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -373,6 +375,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub smp_snapshot_barriers: Vec<SmpSnapshotBarrierManifest>,
     #[serde(default)]
+    pub smp_stress_runs: Vec<SmpStressRunManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -464,6 +468,8 @@ pub struct SemanticRootSetManifest {
     pub smp_cleanup_quiescence_roots: Vec<String>,
     #[serde(default)]
     pub smp_snapshot_barrier_roots: Vec<String>,
+    #[serde(default)]
+    pub smp_stress_run_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1027,6 +1033,46 @@ pub struct SmpSnapshotBarrierManifest {
     pub generation: u64,
     pub state: String,
     pub validated_at_event: u64,
+    pub reason: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SmpStressRunManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub iterations: u32,
+    pub hart_count: u32,
+    pub event_log_cursor: u64,
+    pub observed_safe_point_count: u32,
+    pub observed_rendezvous_count: u32,
+    pub observed_code_publish_barrier_count: u32,
+    pub observed_cleanup_quiescence_count: u32,
+    pub observed_snapshot_barrier_count: u32,
+    pub observed_activation_migration_count: u32,
+    pub observed_remote_preempt_count: u32,
+    pub observed_remote_park_count: u32,
+    pub invariant_checks: u32,
+    pub property_failures: u32,
+    pub last_safe_point: u64,
+    pub last_safe_point_generation: u64,
+    pub last_rendezvous: u64,
+    pub last_rendezvous_generation: u64,
+    pub last_code_publish_barrier: u64,
+    pub last_code_publish_barrier_generation: u64,
+    pub last_cleanup_quiescence: u64,
+    pub last_cleanup_quiescence_generation: u64,
+    pub last_snapshot_barrier: u64,
+    pub last_snapshot_barrier_generation: u64,
+    pub last_activation_migration: u64,
+    pub last_activation_migration_generation: u64,
+    pub last_remote_preempt: u64,
+    pub last_remote_preempt_generation: u64,
+    pub last_remote_park: u64,
+    pub last_remote_park_generation: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
     pub reason: String,
     pub note: String,
 }

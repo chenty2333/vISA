@@ -219,6 +219,14 @@ pub enum SemanticCommand {
         reason: String,
         note: String,
     },
+    RecordSmpStressRun {
+        run: SmpStressRunId,
+        scenario: String,
+        iterations: u32,
+        invariant_checks: u32,
+        reason: String,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -444,6 +452,7 @@ impl SemanticCommand {
             Self::ValidateSmpCodePublishBarrier { .. } => "validate-smp-code-publish-barrier",
             Self::ValidateSmpCleanupQuiescence { .. } => "validate-smp-cleanup-quiescence",
             Self::ValidateSmpSnapshotBarrier { .. } => "validate-smp-snapshot-barrier",
+            Self::RecordSmpStressRun { .. } => "record-smp-stress-run",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1512,6 +1521,16 @@ impl SemanticGraph {
                     reason,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordSmpStressRun {
+                run,
+                scenario,
+                iterations,
+                invariant_checks,
+                reason,
+                ..
+            } => self
+                .validate_smp_stress_run(*run, scenario, *iterations, *invariant_checks, reason)
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2356,6 +2375,21 @@ impl SemanticGraph {
                 rendezvous,
                 rendezvous_generation,
                 snapshot_state,
+                &reason,
+                &note,
+            ),
+            SemanticCommand::RecordSmpStressRun {
+                run,
+                scenario,
+                iterations,
+                invariant_checks,
+                reason,
+                note,
+            } => self.record_smp_stress_run_with_id(
+                run,
+                &scenario,
+                iterations,
+                invariant_checks,
                 &reason,
                 &note,
             ),

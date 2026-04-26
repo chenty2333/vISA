@@ -5669,6 +5669,239 @@ fn smp_runtime_s14_history_survives_hart_transition() {
     assert_eq!(cursor, graph.smp_snapshot_barriers()[0].event_log_cursor);
 }
 
+fn s15_stress_graph(include_snapshot: bool) -> SemanticGraph {
+    let mut graph = s12_smp_code_publish_barrier_graph();
+    assert!(graph.validate_smp_code_publish_barrier_with_id(
+        91,
+        81,
+        1,
+        0,
+        1,
+        true,
+        false,
+        "semantic-code-publish-barrier",
+        "validate remote icache sync evidence only",
+    ));
+    assert!(graph.record_ipi_event_with_id(
+        171,
+        1,
+        2,
+        2,
+        4,
+        IpiEventKind::SchedulerKick,
+        "s15-remote-park",
+        "park hart1 before stress barrier",
+    ));
+    assert!(graph.remote_park_hart_with_id(
+        171,
+        171,
+        1,
+        1,
+        2,
+        2,
+        4,
+        "s15-remote-maintenance",
+        "remote park for stress property run",
+    ));
+
+    graph.ensure_task(70, FrontendKind::LinuxElf, "s15-driver-thread");
+    let store = graph.register_store("driver.s15", "driver.fake-aot", "driver", "restartable");
+    graph.set_store_state(store, StoreState::Running);
+    let store_generation = graph.store_handle(store).unwrap().generation;
+    assert!(graph.create_runnable_queue_with_id(70, "s15-cleanup-rq"));
+    assert!(graph.bind_runnable_queue_owner(70, 1, 1, 2, "hart0 owns cleanup queue"));
+    assert!(graph.create_runtime_activation_with_id(
+        70,
+        70,
+        1,
+        Some(store),
+        Some(store_generation),
+        None
+    ));
+    assert!(graph.enqueue_runnable_activation(70, 70, 1));
+    assert!(graph.dequeue_runnable_activation(70, 70));
+    assert!(graph.block_activation_on_wait_with_id(
+        170,
+        70,
+        3,
+        171,
+        SemanticWaitKind::DeviceIrq,
+        {
+            let mut blockers = Vec::new();
+            blockers.push(ContractObjectRef::new(
+                ContractObjectKind::Store,
+                store,
+                store_generation,
+            ));
+            blockers
+        },
+        None,
+        RestartPolicy::InternalOnly,
+        "s15 driver waits for irq",
+    ));
+    assert!(graph.cleanup_activation_for_store_fault_with_id(
+        170,
+        store,
+        store_generation,
+        70,
+        4,
+        Some(171),
+        Some(1),
+        "s15-driver-store-fault",
+        "cleanup stress driver",
+    ));
+    let result_generation = graph.activation_cleanups()[0].result_store_generation;
+    assert!(graph.record_smp_safe_point_with_id(
+        171,
+        1,
+        2,
+        vec![(1, 2), (2, 5)],
+        "s15-cleanup-quiescence-boundary",
+        "stress cleanup safe point",
+    ));
+    assert!(graph.complete_stop_the_world_rendezvous_with_id(
+        171,
+        2,
+        171,
+        1,
+        true,
+        "s15-cleanup-rendezvous",
+        "stress cleanup rendezvous",
+    ));
+    assert!(graph.validate_smp_cleanup_quiescence_with_id(
+        171,
+        170,
+        1,
+        171,
+        1,
+        store,
+        store_generation,
+        result_generation,
+        "s15-cleanup-quiescence",
+        "stress cleanup quiescence evidence",
+    ));
+    if include_snapshot {
+        assert!(graph.record_smp_safe_point_with_id(
+            181,
+            1,
+            2,
+            vec![(1, 2), (2, 5)],
+            "s15-snapshot-boundary",
+            "stress snapshot safe point",
+        ));
+        assert!(graph.complete_stop_the_world_rendezvous_with_id(
+            181,
+            3,
+            181,
+            1,
+            true,
+            "s15-snapshot-rendezvous",
+            "stress snapshot rendezvous",
+        ));
+        assert!(graph.validate_smp_snapshot_barrier_with_id(
+            181,
+            181,
+            1,
+            SnapshotBarrierValidationState::default(),
+            "s15-smp-snapshot-barrier",
+            "stress snapshot barrier",
+        ));
+    }
+    graph
+}
+
+#[test]
+fn smp_runtime_s15_stress_run_records_property_evidence() {
+    let mut graph = s15_stress_graph(true);
+    let cursor_before = graph.event_log().cursor();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s15-test",
+        SemanticCommand::RecordSmpStressRun {
+            run: 191,
+            scenario: "s15-smp-stress-property".to_string(),
+            iterations: 3,
+            invariant_checks: 6,
+            reason: "smp-stress-property-tests".to_string(),
+            note: "stress code publish cleanup snapshot properties".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.smp_stress_runs().len(), 1);
+    let run = &graph.smp_stress_runs()[0];
+    assert_eq!(run.id, 191);
+    assert_eq!(run.iterations, 3);
+    assert_eq!(run.hart_count, 2);
+    assert_eq!(run.event_log_cursor, cursor_before);
+    assert_eq!(run.observed_safe_point_count, 3);
+    assert_eq!(run.observed_rendezvous_count, 3);
+    assert_eq!(run.observed_code_publish_barrier_count, 1);
+    assert_eq!(run.observed_cleanup_quiescence_count, 1);
+    assert_eq!(run.observed_snapshot_barrier_count, 1);
+    assert_eq!(run.observed_activation_migration_count, 1);
+    assert_eq!(run.observed_remote_preempt_count, 1);
+    assert_eq!(run.observed_remote_park_count, 1);
+    assert_eq!(run.property_failures, 0);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "SmpStressRunRecorded run=191 scenario=s15-smp-stress-property iterations=3 harts=2 safe_points=3 rendezvous=3 property_failures=0 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s15_rejects_incomplete_or_dirty_property_run() {
+    let mut missing_snapshot = s15_stress_graph(false);
+    let rejected = missing_snapshot.apply_envelope(CommandEnvelope::new(
+        1,
+        "s15-test",
+        SemanticCommand::RecordSmpStressRun {
+            run: 191,
+            scenario: "s15-smp-stress-property".to_string(),
+            iterations: 3,
+            invariant_checks: 3,
+            reason: "missing-snapshot".to_string(),
+            note: "must reject incomplete coverage".to_string(),
+        },
+    ));
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp stress run safe point coverage is incomplete".to_string());
+    assert_eq!(rejected.violations, expected);
+
+    let mut graph = s15_stress_graph(true);
+    assert!(graph.record_smp_stress_run_with_id(
+        191,
+        "s15-smp-stress-property",
+        3,
+        6,
+        "smp-stress-property-tests",
+        "stress run",
+    ));
+    graph.corrupt_smp_stress_run_failures_for_test(191, 1);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::SmpStressRunInvalid { run: 191 })
+    );
+
+    let mut graph = s15_stress_graph(true);
+    assert!(graph.record_smp_stress_run_with_id(
+        191,
+        "s15-smp-stress-property",
+        3,
+        6,
+        "smp-stress-property-tests",
+        "stress run",
+    ));
+    graph.corrupt_smp_stress_run_snapshot_count_for_test(191, 0);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::SmpStressRunInvalid { run: 191 })
+    );
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

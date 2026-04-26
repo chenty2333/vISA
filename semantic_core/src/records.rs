@@ -584,6 +584,52 @@ impl SmpSnapshotBarrierRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmpStressRunRecord {
+    pub id: SmpStressRunId,
+    pub scenario: String,
+    pub iterations: u32,
+    pub hart_count: u32,
+    pub event_log_cursor: EventId,
+    pub observed_safe_point_count: u32,
+    pub observed_rendezvous_count: u32,
+    pub observed_code_publish_barrier_count: u32,
+    pub observed_cleanup_quiescence_count: u32,
+    pub observed_snapshot_barrier_count: u32,
+    pub observed_activation_migration_count: u32,
+    pub observed_remote_preempt_count: u32,
+    pub observed_remote_park_count: u32,
+    pub invariant_checks: u32,
+    pub property_failures: u32,
+    pub last_safe_point: SmpSafePointId,
+    pub last_safe_point_generation: Generation,
+    pub last_rendezvous: StopTheWorldRendezvousId,
+    pub last_rendezvous_generation: Generation,
+    pub last_code_publish_barrier: SmpCodePublishBarrierId,
+    pub last_code_publish_barrier_generation: Generation,
+    pub last_cleanup_quiescence: SmpCleanupQuiescenceId,
+    pub last_cleanup_quiescence_generation: Generation,
+    pub last_snapshot_barrier: SmpSnapshotBarrierId,
+    pub last_snapshot_barrier_generation: Generation,
+    pub last_activation_migration: ActivationMigrationId,
+    pub last_activation_migration_generation: Generation,
+    pub last_remote_preempt: RemotePreemptId,
+    pub last_remote_preempt_generation: Generation,
+    pub last_remote_park: RemoteParkId,
+    pub last_remote_park_generation: Generation,
+    pub generation: Generation,
+    pub state: SmpStressRunState,
+    pub recorded_at_event: EventId,
+    pub reason: String,
+    pub note: String,
+}
+
+impl SmpStressRunRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::SmpStressRun, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,
