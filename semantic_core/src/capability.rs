@@ -14,6 +14,34 @@ fn stable_authority_id(label: &str) -> u64 {
     if id == 0 { 1 } else { id }
 }
 
+fn mix_handle_hash(mut hash: u64, value: u64) -> u64 {
+    for byte in value.to_le_bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn capability_handle_tag(
+    subject: &str,
+    owner_store: Option<StoreId>,
+    owner_store_generation: Option<Generation>,
+    slot: u32,
+    generation: u32,
+) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in subject.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash = mix_handle_hash(hash, owner_store.unwrap_or(0));
+    hash = mix_handle_hash(hash, owner_store_generation.unwrap_or(0));
+    hash = mix_handle_hash(hash, u64::from(slot));
+    hash = mix_handle_hash(hash, u64::from(generation));
+    let tag = hash & 0x7fff_ffff_ffff_ffff;
+    if tag == 0 { 1 } else { tag }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OperationSet {
     operations: Vec<String>,
@@ -257,22 +285,31 @@ impl AuthorityObjectRef {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CapabilityHandle {
-    pub cap: CapabilityId,
-    pub generation: Generation,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub slot: u32,
+    pub generation: u32,
+    pub tag: u64,
     pub rights_hint: OperationSet,
     pub class_hint: CapabilityClass,
 }
 
 impl CapabilityHandle {
     pub fn new(
-        cap: CapabilityId,
-        generation: Generation,
+        owner_store: StoreId,
+        owner_store_generation: Generation,
+        slot: u32,
+        generation: u32,
+        tag: u64,
         rights_hint: Vec<String>,
         class_hint: CapabilityClass,
     ) -> Self {
         Self {
-            cap,
+            owner_store,
+            owner_store_generation,
+            slot,
             generation,
+            tag,
             rights_hint: OperationSet::from_owned(rights_hint),
             class_hint,
         }
@@ -293,10 +330,38 @@ pub struct CapabilityRecord {
     pub owner_task: Option<TaskId>,
     pub source: String,
     pub generation: Generation,
+    pub handle_slot: u32,
+    pub handle_generation: u32,
+    pub handle_tag: u64,
     pub parent: Option<CapabilityId>,
     pub manifest_decl: bool,
     pub debug_object_label: String,
     pub revoked: bool,
+}
+
+impl CapabilityRecord {
+    fn refresh_handle_identity(&mut self) {
+        self.handle_generation = self.generation as u32;
+        self.handle_tag = capability_handle_tag(
+            &self.subject,
+            self.owner_store,
+            self.owner_store_generation,
+            self.handle_slot,
+            self.handle_generation,
+        );
+    }
+
+    pub fn store_local_handle(&self, rights_hint: Vec<String>) -> Option<CapabilityHandle> {
+        Some(CapabilityHandle::new(
+            self.owner_store?,
+            self.owner_store_generation?,
+            self.handle_slot,
+            self.handle_generation,
+            self.handle_tag,
+            rights_hint,
+            self.class,
+        ))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -398,13 +463,15 @@ impl CapabilityLedger {
             record.manifest_decl = true;
             record.debug_object_label = object.to_string();
             record.generation += 1;
+            record.refresh_handle_identity();
             record.revoked = false;
             return Ok(record.id);
         }
 
         let id = self.next_id;
         self.next_id += 1;
-        self.records.push(CapabilityRecord {
+        let handle_slot = self.next_handle_slot(subject, owner_store, owner_store_generation);
+        let mut record = CapabilityRecord {
             id,
             subject: subject.to_string(),
             object: object.to_string(),
@@ -417,11 +484,16 @@ impl CapabilityLedger {
             owner_task,
             source: source.to_string(),
             generation: 1,
+            handle_slot,
+            handle_generation: 1,
+            handle_tag: 0,
             parent: None,
             manifest_decl: true,
             debug_object_label: object.to_string(),
             revoked: false,
-        });
+        };
+        record.refresh_handle_identity();
+        self.records.push(record);
         Ok(id)
     }
 
@@ -455,11 +527,13 @@ impl CapabilityLedger {
             record.source = source.to_string();
             record.manifest_decl = manifest_decl;
             record.generation += 1;
+            record.refresh_handle_identity();
             record.revoked = false;
             return Ok(record.id);
         }
         let id = self.next_id;
         self.next_id += 1;
+        let handle_slot = self.next_handle_slot(subject, owner_store, owner_store_generation);
         let generation = self
             .records
             .iter()
@@ -470,7 +544,7 @@ impl CapabilityLedger {
             .max()
             .unwrap_or(0)
             + 1;
-        self.records.push(CapabilityRecord {
+        let mut record = CapabilityRecord {
             id,
             subject: subject.to_string(),
             object: debug_object_label.to_string(),
@@ -483,11 +557,16 @@ impl CapabilityLedger {
             owner_task,
             source: source.to_string(),
             generation,
+            handle_slot,
+            handle_generation: generation as u32,
+            handle_tag: 0,
             parent: None,
             manifest_decl,
             debug_object_label: debug_object_label.to_string(),
             revoked: false,
-        });
+        };
+        record.refresh_handle_identity();
+        self.records.push(record);
         Ok(id)
     }
 
@@ -500,7 +579,7 @@ impl CapabilityLedger {
     ) -> CapabilityId {
         let id = self.next_id;
         self.next_id += 1;
-        self.records.push(CapabilityRecord {
+        let mut record = CapabilityRecord {
             id,
             subject: subject.to_string(),
             object: object.to_string(),
@@ -513,11 +592,16 @@ impl CapabilityLedger {
             owner_task: None,
             source: "debug-label-only-test".to_string(),
             generation: 1,
+            handle_slot: self.next_handle_slot(subject, None, None),
+            handle_generation: 1,
+            handle_tag: 0,
             parent: None,
             manifest_decl: true,
             debug_object_label: object.to_string(),
             revoked: false,
-        });
+        };
+        record.refresh_handle_identity();
+        self.records.push(record);
         id
     }
 
@@ -605,6 +689,7 @@ impl CapabilityLedger {
         };
         record.revoked = true;
         record.generation += 1;
+        record.refresh_handle_identity();
         true
     }
 
@@ -621,6 +706,7 @@ impl CapabilityLedger {
         }
         record.revoked = true;
         record.generation += 1;
+        record.refresh_handle_identity();
         true
     }
 
@@ -640,6 +726,7 @@ impl CapabilityLedger {
         }
         record.revoked = true;
         record.generation += 1;
+        record.refresh_handle_identity();
         Some(record.id)
     }
 
@@ -655,7 +742,27 @@ impl CapabilityLedger {
             .find(|record| record.subject == subject && record.object == object)?;
         record.revoked = true;
         record.generation += 1;
+        record.refresh_handle_identity();
         Some(record.id)
+    }
+
+    fn next_handle_slot(
+        &self,
+        subject: &str,
+        owner_store: Option<StoreId>,
+        owner_store_generation: Option<Generation>,
+    ) -> u32 {
+        self.records
+            .iter()
+            .filter(|record| {
+                record.subject == subject
+                    && record.owner_store == owner_store
+                    && record.owner_store_generation == owner_store_generation
+            })
+            .map(|record| record.handle_slot)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1)
     }
 
     const fn validate_owner_store_generation(
@@ -687,6 +794,7 @@ impl CapabilityLedger {
             {
                 record.revoked = true;
                 record.generation += 1;
+                record.refresh_handle_identity();
                 revoked.push(record.id);
             }
         }
@@ -699,6 +807,7 @@ impl CapabilityLedger {
             if record.subject == subject && !record.revoked {
                 record.revoked = true;
                 record.generation += 1;
+                record.refresh_handle_identity();
                 revoked_ids.push(record.id);
             }
         }
@@ -764,14 +873,21 @@ impl CapabilityLedger {
         handle: Option<&CapabilityHandle>,
     ) -> Result<&CapabilityRecord, CapabilityDenyReason> {
         if let Some(handle) = handle {
-            let Some(record) = self.records.iter().find(|record| record.id == handle.cap) else {
+            let Some(record) = self.records.iter().find(|record| {
+                record.owner_store == Some(handle.owner_store)
+                    && record.owner_store_generation == Some(handle.owner_store_generation)
+                    && record.handle_slot == handle.slot
+            }) else {
                 return Err(CapabilityDenyReason::Missing);
             };
             if record.subject != subject {
                 return Err(CapabilityDenyReason::SubjectMismatch);
             }
-            if record.generation != handle.generation {
+            if record.handle_generation != handle.generation {
                 return Err(CapabilityDenyReason::GenerationMismatch);
+            }
+            if record.handle_tag != handle.tag {
+                return Err(CapabilityDenyReason::BadTag);
             }
             if record.class != handle.class_hint {
                 return Err(CapabilityDenyReason::ClassMismatch);
@@ -853,6 +969,7 @@ pub enum CapabilityDenyReason {
     SubjectMismatch,
     ObjectMismatch,
     ClassMismatch,
+    BadTag,
     ManifestDeclarationMissing,
 }
 
@@ -866,6 +983,7 @@ impl CapabilityDenyReason {
             Self::SubjectMismatch => "subject-mismatch",
             Self::ObjectMismatch => "object-mismatch",
             Self::ClassMismatch => "class-mismatch",
+            Self::BadTag => "bad-tag",
             Self::ManifestDeclarationMissing => "manifest-declaration-missing",
         }
     }

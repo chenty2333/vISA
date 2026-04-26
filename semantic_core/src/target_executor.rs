@@ -1487,8 +1487,11 @@ pub struct CapabilityRefV1(pub WireObjectRef);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CapabilityHandleV1 {
-    pub capability: CapabilityRefV1,
+pub struct ExecutorCapabilityHandleV1 {
+    pub owner_store: StoreRefV1,
+    pub slot: u32,
+    pub slot_generation: u32,
+    pub tag: u64,
     pub rights_mask: u64,
     pub object_class: u16,
     pub reserved: [u16; 3],
@@ -1496,7 +1499,7 @@ pub struct CapabilityHandleV1 {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HostcallFrameV1 {
+pub struct ExecutorHostcallFrameV1 {
     pub magic: u32,
     pub abi_version: u16,
     pub frame_size: u16,
@@ -1513,14 +1516,14 @@ pub struct HostcallFrameV1 {
     pub hostcall_seq: u64,
     pub caller_offset: u64,
     pub args: [u64; 6],
-    pub cap_args: [CapabilityHandleV1; 4],
+    pub cap_args: [ExecutorCapabilityHandleV1; 4],
     pub ret0: u64,
     pub ret1: u64,
     pub trap_out: TrapRefV1,
     pub wait_token_out: WaitTokenRefV1,
 }
 
-impl HostcallFrameV1 {
+impl ExecutorHostcallFrameV1 {
     pub const MAGIC: u32 = 0x564d_4843;
     pub const ABI_VERSION: u16 = 1;
     pub const FRAME_SIZE: u16 = core::mem::size_of::<Self>() as u16;
@@ -1559,7 +1562,7 @@ impl HostcallFrameV1 {
     }
 }
 
-impl Default for HostcallFrameV1 {
+impl Default for ExecutorHostcallFrameV1 {
     fn default() -> Self {
         Self {
             magic: Self::MAGIC,
@@ -1578,7 +1581,7 @@ impl Default for HostcallFrameV1 {
             hostcall_seq: 0,
             caller_offset: 0,
             args: [0; 6],
-            cap_args: [CapabilityHandleV1::default(); 4],
+            cap_args: [ExecutorCapabilityHandleV1::default(); 4],
             ret0: 0,
             ret1: 0,
             trap_out: TrapRefV1(WireObjectRef::NULL),
@@ -1711,6 +1714,11 @@ pub struct CapabilityHandleArg {
     pub object: String,
     pub object_ref: Option<AuthorityObjectRef>,
     pub generation: Generation,
+    pub owner_store: Option<StoreId>,
+    pub owner_store_generation: Option<Generation>,
+    pub handle_slot: u32,
+    pub handle_generation: u32,
+    pub handle_tag: u64,
     pub class_hint: Option<CapabilityClass>,
     pub rights_mask: u64,
     pub rights: Vec<String>,
@@ -1730,6 +1738,11 @@ impl CapabilityHandleArg {
             object: object.to_string(),
             object_ref: Some(AuthorityObjectRef::from_label(class, object)),
             generation,
+            owner_store: None,
+            owner_store_generation: None,
+            handle_slot: 0,
+            handle_generation: 0,
+            handle_tag: 0,
             class_hint: Some(class),
             rights_mask,
             rights: rights.iter().map(|right| (*right).to_string()).collect(),
@@ -1738,8 +1751,11 @@ impl CapabilityHandleArg {
 
     pub fn capability_handle(&self) -> Option<CapabilityHandle> {
         Some(CapabilityHandle::new(
-            self.id,
-            self.generation,
+            self.owner_store?,
+            self.owner_store_generation?,
+            self.handle_slot,
+            self.handle_generation,
+            self.handle_tag,
             self.rights.clone(),
             self.class_hint?,
         ))
@@ -1751,6 +1767,11 @@ impl CapabilityHandleArg {
             object: record.debug_object_label.clone(),
             object_ref: record.object_ref,
             generation: record.generation,
+            owner_store: record.owner_store,
+            owner_store_generation: record.owner_store_generation,
+            handle_slot: record.handle_slot,
+            handle_generation: record.handle_generation,
+            handle_tag: record.handle_tag,
             class_hint: Some(record.class),
             rights_mask,
             rights: rights.iter().map(|right| (*right).to_string()).collect(),
@@ -1792,7 +1813,7 @@ pub struct HostcallFrame {
 
 impl HostcallFrame {
     pub const ABI_VERSION: &'static str = "vmos-target-hostcall-frame-v1";
-    pub const FRAME_SIZE: u16 = HostcallFrameV1::FRAME_SIZE;
+    pub const FRAME_SIZE: u16 = ExecutorHostcallFrameV1::FRAME_SIZE;
 
     pub fn new(
         activation: ActivationId,
@@ -1886,8 +1907,8 @@ impl HostcallFrame {
         self
     }
 
-    pub fn to_wire_frame(&self) -> HostcallFrameV1 {
-        let mut frame = HostcallFrameV1 {
+    pub fn to_wire_frame(&self) -> ExecutorHostcallFrameV1 {
+        let mut frame = ExecutorHostcallFrameV1 {
             flags: self.flags,
             record_mode: self.record_mode.as_u16(),
             ret_tag: self.ret_tag.as_u16(),
@@ -1924,17 +1945,26 @@ impl HostcallFrame {
                     ))
                 },
             ),
-            ..HostcallFrameV1::default()
+            ..ExecutorHostcallFrameV1::default()
         };
-        frame.cap_arg_count = self.cap_args.len().min(HostcallFrameV1::CAP_ARG_CAPACITY) as u16;
+        frame.cap_arg_count = self
+            .cap_args
+            .len()
+            .min(ExecutorHostcallFrameV1::CAP_ARG_CAPACITY) as u16;
         for (slot, arg) in self
             .cap_args
             .iter()
-            .take(HostcallFrameV1::CAP_ARG_CAPACITY)
+            .take(ExecutorHostcallFrameV1::CAP_ARG_CAPACITY)
             .enumerate()
         {
-            frame.cap_args[slot] = CapabilityHandleV1 {
-                capability: CapabilityRefV1(WireObjectRef::new(arg.id, arg.generation)),
+            frame.cap_args[slot] = ExecutorCapabilityHandleV1 {
+                owner_store: StoreRefV1(WireObjectRef::new(
+                    arg.owner_store.unwrap_or(0),
+                    arg.owner_store_generation.unwrap_or(0),
+                )),
+                slot: arg.handle_slot,
+                slot_generation: arg.handle_generation,
+                tag: arg.handle_tag,
                 rights_mask: arg.rights_mask,
                 object_class: CapabilityClass::from_object(&arg.object).as_u16(),
                 reserved: [0; 3],
@@ -2519,14 +2549,14 @@ impl TargetExecutor {
         Ok(id)
     }
 
-    fn bad_abi_reason(frame: &HostcallFrameV1) -> Option<&'static str> {
-        if frame.magic != HostcallFrameV1::MAGIC {
+    fn bad_abi_reason(frame: &ExecutorHostcallFrameV1) -> Option<&'static str> {
+        if frame.magic != ExecutorHostcallFrameV1::MAGIC {
             Some("bad-hostcall-magic")
-        } else if frame.abi_version != HostcallFrameV1::ABI_VERSION {
+        } else if frame.abi_version != ExecutorHostcallFrameV1::ABI_VERSION {
             Some("bad-hostcall-abi")
-        } else if frame.frame_size != HostcallFrameV1::FRAME_SIZE {
+        } else if frame.frame_size != ExecutorHostcallFrameV1::FRAME_SIZE {
             Some("bad-frame-size")
-        } else if frame.cap_arg_count as usize > HostcallFrameV1::CAP_ARG_CAPACITY {
+        } else if frame.cap_arg_count as usize > ExecutorHostcallFrameV1::CAP_ARG_CAPACITY {
             Some("bad-cap-arg-count")
         } else if RecordMode::from_u16(frame.record_mode).is_none() {
             Some("bad-record-mode")
@@ -2538,7 +2568,7 @@ impl TargetExecutor {
     }
 
     fn semantic_frame_from_wire(
-        wire: &HostcallFrameV1,
+        wire: &ExecutorHostcallFrameV1,
         code: &CodeObject,
         spec: &HostcallSpec,
         capabilities: &CapabilityLedger,
@@ -2556,7 +2586,7 @@ impl TargetExecutor {
             .unwrap_or(0);
         (
             HostcallFrame {
-                abi_version: if wire.abi_version == HostcallFrameV1::ABI_VERSION {
+                abi_version: if wire.abi_version == ExecutorHostcallFrameV1::ABI_VERSION {
                     HostcallFrame::ABI_VERSION.to_string()
                 } else {
                     format!("wire-v{}", wire.abi_version)
@@ -2597,27 +2627,43 @@ impl TargetExecutor {
     }
 
     fn decode_capability_handles(
-        wire: &HostcallFrameV1,
+        wire: &ExecutorHostcallFrameV1,
         capabilities: &CapabilityLedger,
     ) -> (Vec<CapabilityHandleArg>, Option<&'static str>) {
         let mut args = Vec::new();
         let mut decode_error = None;
         for handle in wire.cap_args.iter().take(wire.cap_arg_count as usize) {
-            let capability_id = handle.capability.0.id;
-            let capability_generation = handle.capability.0.generation;
-            let Some(record) = capabilities.active(capability_id) else {
+            let owner_store = handle.owner_store.0.id;
+            let owner_store_generation = handle.owner_store.0.generation;
+            let Some(record) = capabilities.records().iter().find(|record| {
+                record.owner_store == Some(owner_store)
+                    && record.owner_store_generation == Some(owner_store_generation)
+                    && record.handle_slot == handle.slot
+                    && !record.revoked
+            }) else {
                 decode_error.get_or_insert("cap-arg-missing");
                 args.push(CapabilityHandleArg {
-                    id: capability_id,
+                    id: 0,
                     object: "<missing-capability>".to_string(),
                     object_ref: None,
-                    generation: capability_generation,
+                    generation: 0,
+                    owner_store: Some(owner_store),
+                    owner_store_generation: Some(owner_store_generation),
+                    handle_slot: handle.slot,
+                    handle_generation: handle.slot_generation,
+                    handle_tag: handle.tag,
                     class_hint: CapabilityClass::from_u16(handle.object_class),
                     rights_mask: handle.rights_mask,
                     rights: Vec::new(),
                 });
                 continue;
             };
+            if record.handle_generation != handle.slot_generation {
+                decode_error.get_or_insert("cap-arg-generation");
+            }
+            if record.handle_tag != handle.tag {
+                decode_error.get_or_insert("cap-arg-tag");
+            }
             match CapabilityClass::from_u16(handle.object_class) {
                 Some(class) if class == record.class => {}
                 Some(_) => {
@@ -2635,10 +2681,15 @@ impl TargetExecutor {
                 }
             };
             args.push(CapabilityHandleArg {
-                id: capability_id,
+                id: record.id,
                 object: record.object.clone(),
                 object_ref: record.object_ref,
-                generation: capability_generation,
+                generation: record.generation,
+                owner_store: record.owner_store,
+                owner_store_generation: record.owner_store_generation,
+                handle_slot: handle.slot,
+                handle_generation: handle.slot_generation,
+                handle_tag: handle.tag,
                 class_hint: CapabilityClass::from_u16(handle.object_class),
                 rights_mask: handle.rights_mask,
                 rights,
@@ -2650,7 +2701,7 @@ impl TargetExecutor {
     pub fn invoke_hostcall(
         &mut self,
         code: &CodeObject,
-        wire_frame: HostcallFrameV1,
+        wire_frame: ExecutorHostcallFrameV1,
         capabilities: &CapabilityLedger,
     ) -> Result<(), TargetExecutorError> {
         let bad_abi = Self::bad_abi_reason(&wire_frame);
@@ -2660,9 +2711,9 @@ impl TargetExecutor {
                 wire_frame.activation_id(),
                 reason,
                 wire_frame.abi_version,
-                HostcallFrameV1::ABI_VERSION,
+                ExecutorHostcallFrameV1::ABI_VERSION,
                 wire_frame.frame_size,
-                HostcallFrameV1::FRAME_SIZE
+                ExecutorHostcallFrameV1::FRAME_SIZE
             ));
         }
         let activation_index = self.activation_index(wire_frame.activation_id())?;
@@ -3897,7 +3948,18 @@ impl TargetExecutor {
         }
         let mut matched_frame_object = false;
         for handle in &frame.cap_args {
-            let Some(record) = capabilities.active(handle.id) else {
+            let Some(owner_store) = handle.owner_store else {
+                return Some("cap-arg-missing");
+            };
+            let Some(owner_store_generation) = handle.owner_store_generation else {
+                return Some("cap-arg-missing");
+            };
+            let Some(record) = capabilities.records().iter().find(|record| {
+                record.owner_store == Some(owner_store)
+                    && record.owner_store_generation == Some(owner_store_generation)
+                    && record.handle_slot == handle.handle_slot
+                    && !record.revoked
+            }) else {
                 return Some("cap-arg-missing");
             };
             if record.subject != subject {
@@ -3909,8 +3971,13 @@ impl TargetExecutor {
             if handle.class_hint != Some(record.class) || record.class != object_ref.class() {
                 return Some("cap-arg-object-class");
             }
-            if record.generation != handle.generation {
+            if record.handle_generation != handle.handle_generation
+                || record.generation != handle.generation
+            {
                 return Some("cap-arg-generation");
+            }
+            if record.handle_tag != handle.handle_tag {
+                return Some("cap-arg-tag");
             }
             if handle.rights.is_empty() {
                 return Some("cap-arg-empty-rights");
@@ -4463,16 +4530,19 @@ mod tests {
     #[test]
     fn hostcall_frame_v1_wire_abi_is_fixed_layout() {
         assert_eq!(
-            HostcallFrameV1::FRAME_SIZE as usize,
-            core::mem::size_of::<HostcallFrameV1>()
+            ExecutorHostcallFrameV1::FRAME_SIZE as usize,
+            core::mem::size_of::<ExecutorHostcallFrameV1>()
         );
-        assert_eq!(HostcallFrameV1::default().magic, HostcallFrameV1::MAGIC);
         assert_eq!(
-            HostcallFrameV1::default().record_mode,
+            ExecutorHostcallFrameV1::default().magic,
+            ExecutorHostcallFrameV1::MAGIC
+        );
+        assert_eq!(
+            ExecutorHostcallFrameV1::default().record_mode,
             RecordMode::Deterministic.as_u16()
         );
         assert_eq!(
-            HostcallFrameV1::default().ret_tag,
+            ExecutorHostcallFrameV1::default().ret_tag,
             HostcallReturnTag::Ok.as_u16()
         );
         assert_eq!(WireObjectRef::NULL, WireObjectRef::new(0, 0));
@@ -4751,7 +4821,7 @@ mod tests {
             .unwrap();
         let mut stale_cap_args = Vec::new();
         let mut stale_arg = CapabilityHandleArg::from_record(&cap, 1, &["map"]);
-        stale_arg.generation += 1;
+        stale_arg.handle_generation += 1;
         stale_cap_args.push(stale_arg);
         assert_eq!(
             executor.invoke_hostcall(
@@ -4810,6 +4880,44 @@ mod tests {
                 .hostcall_trace()
                 .iter()
                 .any(|trace| trace.result == "cap-arg-rights-mask")
+        );
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("_start".to_string()),
+            )
+            .unwrap();
+        let mut forged_global_id_args = Vec::new();
+        let mut forged_global_id = CapabilityHandleArg::from_record(&cap, 1, &["map"]);
+        forged_global_id.handle_slot =
+            cap.object_ref.expect("authority object ref").object().id as u32;
+        forged_global_id.handle_tag = 0;
+        forged_global_id_args.push(forged_global_id);
+        assert_eq!(
+            executor.invoke_hostcall(
+                &code,
+                HostcallFrame::new_bound(
+                    activation,
+                    &store.store,
+                    &code,
+                    1,
+                    "mmio.virtio-net",
+                    "map",
+                    cap.generation,
+                )
+                .with_cap_args(forged_global_id_args)
+                .to_wire_frame(),
+                &capabilities,
+            ),
+            Err(TargetExecutorError::CapabilityDenied)
+        );
+        assert!(
+            executor
+                .hostcall_trace()
+                .iter()
+                .any(|trace| trace.result == "cap-arg-missing" || trace.result == "cap-arg-tag")
         );
     }
 

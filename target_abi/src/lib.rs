@@ -2,6 +2,7 @@
 
 pub mod artifact;
 pub mod fake_aot;
+pub mod hostcall;
 pub mod profile;
 pub mod signature;
 
@@ -16,6 +17,13 @@ pub use fake_aot::{
     RV64_ENTRY_HOSTCALL_TAIL_OFFSET, RV64_ENTRY_RETURN_OK_BYTES, RV64_ENTRY_RETURN_OK_OFFSET,
     RV64_ENTRY_TRAP_EBREAK_BYTES, RV64_ENTRY_TRAP_EBREAK_OFFSET, RelocationEntryV1,
     RelocationKindV1, apply_fake_patch, validate_real_aot_relocation,
+};
+pub use hostcall::{
+    ActivationScratchRegion, ActiveHostcallIdentity, CapabilityHandleRaw,
+    FAKE_HOSTCALL_TRAMPOLINE_REGISTER_A0, FAKE_HOSTCALL_TRAMPOLINE_REGISTER_A1,
+    FakeHostcallTailInvocation, HOSTCALL_FRAME_ARG_CAPACITY, HOSTCALL_FRAME_MAGIC,
+    HOSTCALL_FRAME_RET_CAPACITY, HOSTCALL_FRAME_VERSION, HostcallFrameError, HostcallFrameV1,
+    HostcallStatusV1, ObjectRefRaw, validate_trampoline_frame,
 };
 pub use profile::{
     CodePublishProfileV1, DmaProfileV1, DmwProfileV1, EndianV1, TargetArchV1,

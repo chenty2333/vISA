@@ -689,6 +689,16 @@ pub struct CapabilityHandleArgManifest {
     pub id: u64,
     pub object: String,
     pub generation: u64,
+    #[serde(default)]
+    pub owner_store: Option<u64>,
+    #[serde(default)]
+    pub owner_store_generation: Option<u64>,
+    #[serde(default)]
+    pub handle_slot: u32,
+    #[serde(default)]
+    pub handle_generation: u32,
+    #[serde(default)]
+    pub handle_tag: u64,
     pub rights_mask: u64,
     pub rights: Vec<String>,
 }

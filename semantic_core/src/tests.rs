@@ -2,6 +2,12 @@ use super::*;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
+fn handle_for(record: &CapabilityRecord, rights: &[&str]) -> CapabilityHandle {
+    record
+        .store_local_handle(rights.iter().map(|right| (*right).to_string()).collect())
+        .expect("capability record has store-local handle")
+}
+
 #[test]
 fn capability_attenuation_cannot_expand_rights() {
     let mut ledger = CapabilityLedger::new();
@@ -47,9 +53,7 @@ fn capability_authority_uses_object_ref_not_debug_label() {
         .find(|record| record.id == cap)
         .expect("capability record");
     let object_ref = record.object_ref.expect("authority object ref");
-    let mut rights = Vec::new();
-    rights.push("map".to_string());
-    let handle = CapabilityHandle::new(cap, record.generation, rights, record.class);
+    let handle = handle_for(record, &["map"]);
     assert!(
         ledger
             .check_authority("driver", object_ref, "map", Some(&handle))
@@ -87,14 +91,7 @@ fn capability_authority_uses_object_ref_not_debug_label() {
         .iter()
         .find(|record| record.id == wrong_cap)
         .expect("wrong capability record");
-    let mut wrong_rights = Vec::new();
-    wrong_rights.push("map".to_string());
-    let wrong_handle = CapabilityHandle::new(
-        wrong_cap,
-        wrong_record.generation,
-        wrong_rights,
-        wrong_record.class,
-    );
+    let wrong_handle = handle_for(wrong_record, &["map"]);
     assert_eq!(
         wrong_object.check_authority("driver", object_ref, "map", Some(&wrong_handle)),
         Err(CapabilityDenyReason::ObjectMismatch)
@@ -274,16 +271,13 @@ fn capability_authority_rejects_stale_revoked_wrong_subject_and_undeclared_exter
         .expect("capability record")
         .clone();
     let object_ref = record.object_ref.expect("authority object ref");
-    let mut rights = Vec::new();
-    rights.push("rx".to_string());
-    let stale_handle = CapabilityHandle::new(cap, record.generation + 1, rights, record.class);
+    let mut stale_handle = handle_for(&record, &["rx"]);
+    stale_handle.generation += 1;
     assert_eq!(
         ledger.check_authority("driver", object_ref, "rx", Some(&stale_handle)),
         Err(CapabilityDenyReason::GenerationMismatch)
     );
-    let mut rights = Vec::new();
-    rights.push("rx".to_string());
-    let wrong_subject_handle = CapabilityHandle::new(cap, record.generation, rights, record.class);
+    let wrong_subject_handle = handle_for(&record, &["rx"]);
     assert_eq!(
         ledger.check_authority(
             "other-driver",
@@ -752,6 +746,9 @@ fn contract_graph_rejects_active_capability_and_wait_owned_by_old_store_generati
         owner_task: None,
         source: "test".to_string(),
         generation: 1,
+        handle_slot: 1,
+        handle_generation: 1,
+        handle_tag: 1,
         parent: None,
         manifest_decl: true,
         debug_object_label: "packet-device.net0".to_string(),
