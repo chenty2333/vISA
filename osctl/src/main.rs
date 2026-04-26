@@ -627,10 +627,12 @@ fn hostcall_trace_view_v1(hostcall: &HostcallTraceManifest) -> serde_json::Value
             },
             "artifact": {
                 "id": hostcall.artifact,
-                "generation": 1,
+                "generation": hostcall.artifact_generation,
             },
             "trap_out": hostcall.trap_out,
+            "trap_generation_out": hostcall.trap_generation_out,
             "wait_token_out": hostcall.wait_token_out,
+            "wait_token_generation_out": hostcall.wait_token_generation_out,
         },
         "abi": {
             "version": hostcall.abi_version,
@@ -1823,7 +1825,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json("artifact", hostcall.artifact, 1),
+            object_ref_json("artifact", hostcall.artifact, hostcall.artifact_generation),
             "recorded",
             "historical",
             None,
@@ -1831,7 +1833,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         if let Some(trap) = hostcall.trap_out {
             edges.push(graph_edge(
                 from.clone(),
-                object_ref_json("trap", trap, 1),
+                object_ref_json("trap", trap, hostcall.trap_generation_out.unwrap_or(0)),
                 "caused",
                 "historical",
                 None,
@@ -1840,7 +1842,11 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         if let Some(wait) = hostcall.wait_token_out {
             edges.push(graph_edge(
                 from.clone(),
-                object_ref_json("wait-token", wait, 1),
+                object_ref_json(
+                    "wait-token",
+                    wait,
+                    hostcall.wait_token_generation_out.unwrap_or(0),
+                ),
                 "caused",
                 "historical",
                 None,
@@ -2246,7 +2252,7 @@ fn inspect_package_object(
                     .collect::<Vec<_>>()
                     .join(",");
                 let line = format!(
-                    "hostcall abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} subject={} object={} op={} cap_args=[{}] allowed={} result={} ret={} trap_out={} wait_out={}",
+                    "hostcall abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} store_generation={} code={} code_generation={} artifact={} artifact_generation={} number={} name={} category={} subject={} object={} op={} cap_args=[{}] allowed={} result={} ret={} trap_out={} trap_generation_out={} wait_out={} wait_generation_out={}",
                     trace.abi_version,
                     trace.frame_size,
                     trace.hostcall_seq,
@@ -2259,6 +2265,7 @@ fn inspect_package_object(
                     trace.code_object,
                     trace.code_generation,
                     trace.artifact,
+                    trace.artifact_generation,
                     trace.hostcall_number,
                     trace.name,
                     trace.category,
@@ -2270,7 +2277,9 @@ fn inspect_package_object(
                     trace.result,
                     display_default(&trace.ret_tag, "none"),
                     display_option_u64(trace.trap_out),
-                    display_option_u64(trace.wait_token_out)
+                    display_option_u64(trace.trap_generation_out),
+                    display_option_u64(trace.wait_token_out),
+                    display_option_u64(trace.wait_token_generation_out)
                 );
                 print_if_matches(&line, filter);
             }
@@ -3572,6 +3581,7 @@ mod tests {
             code_object: 3,
             code_generation: 4,
             artifact: 5,
+            artifact_generation: 7,
             hostcall_number: 64,
             hostcall_seq: 99,
             caller_offset: 16,
@@ -3585,6 +3595,7 @@ mod tests {
         });
         assert_eq!(hostcall["kind"], "hostcall");
         assert_eq!(hostcall["owner"]["activation_generation"], 6);
+        assert_eq!(hostcall["references"]["artifact"]["generation"], 7);
         assert_eq!(hostcall["call"]["caller_offset"], 16);
         assert_eq!(hostcall["last_error"], "hostcall-denied");
     }
@@ -3770,6 +3781,7 @@ mod tests {
             code_object: 3,
             code_generation: 4,
             artifact: 5,
+            artifact_generation: 7,
             hostcall_number: 1,
             name: "hostcall.packet-device.net0.rx".to_owned(),
             category: "packet-device".to_owned(),
@@ -3777,6 +3789,8 @@ mod tests {
             operation: "rx".to_owned(),
             allowed: true,
             result: "complete".to_owned(),
+            trap_out: Some(40),
+            trap_generation_out: Some(1),
             ..HostcallTraceManifest::default()
         });
         package
@@ -3824,6 +3838,15 @@ mod tests {
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
             && edge["from"]["kind"] == "hostcall"
             && edge["to"]["kind"] == "activation"));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "hostcall"
+            && edge["to"]["kind"] == "artifact"
+            && edge["to"]["generation"] == 7));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "hostcall"
+            && edge["relation"] == "caused"
+            && edge["to"]["kind"] == "trap"
+            && edge["to"]["generation"] == 1));
         assert!(history.iter().any(|edge| edge["mode"] == "cleanup-effect"
             && edge["relation"] == "revoked"
             && edge["to"]["kind"] == "capability"));

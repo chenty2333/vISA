@@ -1418,6 +1418,21 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("memory policy root/count mismatch"));
     }
+    if roots.substrate_event_roots.len() != package.semantic.substrate_event_count
+        || package.semantic.substrate_events.len() != package.semantic.substrate_event_count
+    {
+        return Err(ContractError::new("substrate event root/count mismatch"));
+    }
+    if roots.command_result_roots.len() != package.semantic.command_result_count
+        || package.semantic.command_results.len() != package.semantic.command_result_count
+    {
+        return Err(ContractError::new("command result root/count mismatch"));
+    }
+    if roots.interface_event_roots.len() != package.semantic.interface_event_count
+        || package.semantic.interface_events.len() != package.semantic.interface_event_count
+    {
+        return Err(ContractError::new("interface event root/count mismatch"));
+    }
     if package.semantic.snapshot_validation.violations.len()
         != package.semantic.snapshot_validation_violation_count
     {
@@ -1581,8 +1596,11 @@ fn rights_vec(capability: &CapabilitySpec) -> Vec<String> {
 mod tests {
     use super::*;
     use artifact_manifest::{
-        CompilerManifest, ExternManifest, SignatureManifest, SubstrateAuthorityRequirementManifest,
-        TargetManifest,
+        CommandResultManifest, CompilerManifest, ExternManifest, GuestStateManifest,
+        InterfaceEventManifest, MigrationHostManifest, MigrationPackageManifest,
+        MigrationTargetManifest, RequiredArtifactProfileManifest, SemanticRootSetManifest,
+        SemanticSnapshotManifest, SignatureManifest, SubstrateAuthorityRequirementManifest,
+        SubstrateBoundaryManifest, SubstrateEventManifest, TargetManifest,
     };
 
     fn valid_manifest() -> ArtifactBundleManifest {
@@ -1735,6 +1753,122 @@ mod tests {
         }
     }
 
+    fn minimal_migration_package() -> MigrationPackageManifest {
+        MigrationPackageManifest {
+            schema_version: 1,
+            package_format: "vmos-semantic-package-v1".to_owned(),
+            package_id: "contract-root-test".to_owned(),
+            source: MigrationHostManifest {
+                arch: "x86_64".to_owned(),
+            },
+            target: MigrationTargetManifest {
+                arch_requirement: "target-native".to_owned(),
+            },
+            required_artifact_profile: RequiredArtifactProfileManifest {
+                artifact_profile: "host-validation".to_owned(),
+                target_arch: "target-native".to_owned(),
+                machine_abi_version: MACHINE_ABI_VERSION.to_owned(),
+                supervisor_abi_version: SUPERVISOR_ABI_VERSION.to_owned(),
+                wasm_feature_profile: WASM_FEATURE_PROFILE.to_owned(),
+                memory64: false,
+                multi_memory: false,
+                dmw_layout: DMW_LAYOUT.to_owned(),
+                network_contract_version: NETWORK_CONTRACT_VERSION.to_owned(),
+                compiler_engine: SUPERVISOR_COMPILER_ENGINE.to_owned(),
+                compiler_execution_mode: SUPERVISOR_EXECUTION_MODE.to_owned(),
+                artifact_format: SUPERVISOR_ARTIFACT_FORMAT.to_owned(),
+                runtime_executor_abi: RUNTIME_ONLY_EXECUTOR_ABI.to_owned(),
+            },
+            guest: GuestStateManifest {
+                canonical_isa: "riscv64".to_owned(),
+                register_count: 33,
+                memory_page_count: 0,
+                vma_count: 0,
+                signal_queue_count: 0,
+                note: "root validation test".to_owned(),
+            },
+            semantic: SemanticSnapshotManifest {
+                barrier_id: 1,
+                event_log_cursor: 0,
+                roots: SemanticRootSetManifest::default(),
+                pending_wait_count: 0,
+                task_count: 0,
+                resource_count: 0,
+                authority_count: 0,
+                active_authority_count: 0,
+                wait_token_count: 0,
+                wait_record_count: 0,
+                capability_count: 0,
+                capability_record_count: 0,
+                fault_domain_count: 0,
+                store_count: 0,
+                store_record_count: 0,
+                transaction_count: 0,
+                active_transaction_count: 0,
+                fast_path_plan_count: 0,
+                active_fast_path_plan_count: 0,
+                boundary_count: 0,
+                artifact_verification_count: 0,
+                store_activation_count: 0,
+                executor_transition_count: 0,
+                target_artifact_count: 0,
+                code_object_count: 0,
+                activation_record_count: 0,
+                trap_record_count: 0,
+                hostcall_trace_count: 0,
+                migration_object_count: 0,
+                tombstone_count: 0,
+                contract_violation_count: 0,
+                cleanup_transaction_count: 0,
+                memory_policy_count: 0,
+                snapshot_validation_violation_count: 0,
+                replay_validation_violation_count: 0,
+                substrate_event_count: 0,
+                command_result_count: 0,
+                interface_event_count: 0,
+                target_artifacts: Vec::new(),
+                code_objects: Vec::new(),
+                store_records: Vec::new(),
+                capability_records: Vec::new(),
+                wait_records: Vec::new(),
+                activation_records: Vec::new(),
+                trap_records: Vec::new(),
+                hostcall_trace: Vec::new(),
+                migration_objects: Vec::new(),
+                tombstones: Vec::new(),
+                contract_violations: Vec::new(),
+                cleanup_transactions: Vec::new(),
+                memory_policies: Vec::new(),
+                snapshot_validation: Default::default(),
+                replay_validation: Default::default(),
+                substrate_events: Vec::new(),
+                command_results: Vec::new(),
+                interface_events: Vec::new(),
+                network_socket_count: 0,
+                network_rx_queue_bytes: 0,
+            },
+            logical_capabilities: Vec::new(),
+            substrate_boundary: SubstrateBoundaryManifest {
+                timer_epoch: 0,
+                pending_irq_causes: 0,
+                pending_dma_completions: 0,
+                active_dmw_lease_count: 0,
+                active_mmio_authority_count: 0,
+                active_dma_authority_count: 0,
+                active_irq_authority_count: 0,
+                active_packet_device_authority_count: 0,
+                active_virtio_queue_authority_count: 0,
+                pending_network_inputs: 0,
+                random_epoch: 0,
+                scheduler_decision_cursor: 0,
+                cow_epoch: 0,
+                background_copy_pages: 0,
+                native_state_policy: "test".to_owned(),
+            },
+            not_migrated: Vec::new(),
+        }
+    }
+
     #[test]
     fn validated_plan_preserves_manifest_order_and_totals() {
         let manifest = valid_manifest();
@@ -1767,6 +1901,84 @@ mod tests {
 
         let err = validate_artifact_manifest(&manifest).expect_err("bad binding must fail");
         assert!(err.to_string().contains("manifest binding hash mismatch"));
+    }
+
+    #[test]
+    fn semantic_roots_reject_substrate_event_count_mismatch() {
+        let mut package = minimal_migration_package();
+        package
+            .semantic
+            .substrate_events
+            .push(SubstrateEventManifest {
+                id: 1,
+                epoch: 7,
+                event_kind: "unsupported".to_owned(),
+                authority: "DmaAuthority".to_owned(),
+                operation: "dma_alloc".to_owned(),
+                requester: Some("test".to_owned()),
+                artifact: None,
+                store: None,
+                capability: None,
+                explanation: "unsupported probe".to_owned(),
+            });
+        package
+            .semantic
+            .roots
+            .substrate_event_roots
+            .push("substrate-event:unsupported:DmaAuthority:dma_alloc".to_owned());
+
+        let err = validate_migration_package(&package).expect_err("count mismatch must fail");
+        assert_eq!(err.to_string(), "substrate event root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_command_result_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.command_result_count = 1;
+        package
+            .semantic
+            .command_results
+            .push(CommandResultManifest {
+                id: 1,
+                issuer: "contract-test".to_owned(),
+                command: "create-wait".to_owned(),
+                status: "rejected".to_owned(),
+                events: Vec::new(),
+                effects: Vec::new(),
+                violations: vec!["missing owner".to_owned()],
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "command result root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_interface_event_count_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.interface_event_count = 1;
+        package
+            .semantic
+            .interface_events
+            .push(InterfaceEventManifest {
+                id: 1,
+                epoch: 9,
+                interface_kind: "standard-wasi".to_owned(),
+                interface: "wasi:clocks/monotonic-clock".to_owned(),
+                operation: "subscribe".to_owned(),
+                requester: Some("contract-test".to_owned()),
+                artifact: None,
+                store: None,
+                explanation: "unsupported interface".to_owned(),
+            });
+        package
+            .semantic
+            .roots
+            .interface_event_roots
+            .push("interface-event:standard-wasi:wasi:clocks/monotonic-clock:subscribe".to_owned());
+        package.semantic.interface_events.clear();
+
+        let err = validate_migration_package(&package).expect_err("vector mismatch must fail");
+        assert_eq!(err.to_string(), "interface event root/count mismatch");
     }
 
     #[test]

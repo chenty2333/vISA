@@ -1439,7 +1439,7 @@ fn semantic_roots(
             .iter()
             .map(|trace| {
                 format!(
-                    "hostcall abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} code={} number={} category={} subject={} object={} op={} cap_args={} allowed={} result={} ret={}",
+                    "hostcall abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} code={} artifact={}@{} number={} category={} subject={} object={} op={} cap_args={} allowed={} result={} ret={}",
                     trace.abi_version,
                     trace.frame_size,
                     trace.hostcall_seq,
@@ -1449,6 +1449,8 @@ fn semantic_roots(
                     trace.activation_generation,
                     trace.store,
                     trace.code_object,
+                    trace.artifact,
+                    trace.artifact_generation,
                     trace.hostcall_number,
                     trace.category,
                     trace.subject,
@@ -1766,6 +1768,7 @@ fn hostcall_trace_manifest(trace: &HostcallTraceRecord) -> HostcallTraceManifest
         code_object: trace.code_object,
         code_generation: trace.code_generation,
         artifact: trace.artifact,
+        artifact_generation: trace.artifact_generation,
         hostcall_number: trace.hostcall_number,
         hostcall_seq: trace.hostcall_seq,
         caller_offset: trace.caller_offset,
@@ -1783,7 +1786,9 @@ fn hostcall_trace_manifest(trace: &HostcallTraceRecord) -> HostcallTraceManifest
         ret0: trace.ret0,
         ret1: trace.ret1,
         trap_out: trace.trap_out,
+        trap_generation_out: trace.trap_generation_out,
         wait_token_out: trace.wait_token_out,
+        wait_token_generation_out: trace.wait_token_generation_out,
     }
 }
 

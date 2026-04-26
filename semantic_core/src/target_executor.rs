@@ -4,6 +4,8 @@ use alloc::vec::Vec;
 
 use super::*;
 
+pub const TARGET_ARTIFACT_GENERATION_V1: Generation = 1;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContractObjectKind {
     Task,
@@ -1768,6 +1770,7 @@ pub struct HostcallFrame {
     pub code_object: CodeObjectId,
     pub code_generation: Generation,
     pub artifact: TargetArtifactId,
+    pub artifact_generation: Generation,
     pub hostcall_number: u32,
     pub hostcall_seq: u64,
     pub caller_offset: u64,
@@ -1782,7 +1785,9 @@ pub struct HostcallFrame {
     pub ret0: u64,
     pub ret1: u64,
     pub trap_out: Option<TargetTrapId>,
+    pub trap_generation_out: Option<Generation>,
     pub wait_token_out: Option<WaitId>,
+    pub wait_token_generation_out: Option<Generation>,
 }
 
 impl HostcallFrame {
@@ -1809,6 +1814,7 @@ impl HostcallFrame {
             code_object: 0,
             code_generation: 0,
             artifact: 0,
+            artifact_generation: 0,
             hostcall_number,
             hostcall_seq: 1,
             caller_offset: 0,
@@ -1823,7 +1829,9 @@ impl HostcallFrame {
             ret0: 0,
             ret1: 0,
             trap_out: None,
+            trap_generation_out: None,
             wait_token_out: None,
+            wait_token_generation_out: None,
         }
     }
 
@@ -1849,6 +1857,7 @@ impl HostcallFrame {
         frame.code_object = code.id;
         frame.code_generation = code.generation;
         frame.artifact = code.artifact_id;
+        frame.artifact_generation = TARGET_ARTIFACT_GENERATION_V1;
         frame
     }
 
@@ -1891,7 +1900,7 @@ impl HostcallFrame {
                 self.code_object,
                 self.code_generation,
             )),
-            artifact: ArtifactRefV1(WireObjectRef::new(self.artifact, 1)),
+            artifact: ArtifactRefV1(WireObjectRef::new(self.artifact, self.artifact_generation)),
             hostcall_number: self.hostcall_number,
             hostcall_seq: self.hostcall_seq,
             caller_offset: self.caller_offset,
@@ -1901,13 +1910,20 @@ impl HostcallFrame {
             trap_out: self
                 .trap_out
                 .map_or(TrapRefV1(WireObjectRef::NULL), |trap| {
-                    TrapRefV1(WireObjectRef::new(trap, 1))
+                    TrapRefV1(WireObjectRef::new(
+                        trap,
+                        self.trap_generation_out.unwrap_or(1),
+                    ))
                 }),
-            wait_token_out: self
-                .wait_token_out
-                .map_or(WaitTokenRefV1(WireObjectRef::NULL), |wait| {
-                    WaitTokenRefV1(WireObjectRef::new(wait, 1))
-                }),
+            wait_token_out: self.wait_token_out.map_or(
+                WaitTokenRefV1(WireObjectRef::NULL),
+                |wait| {
+                    WaitTokenRefV1(WireObjectRef::new(
+                        wait,
+                        self.wait_token_generation_out.unwrap_or(1),
+                    ))
+                },
+            ),
             ..HostcallFrameV1::default()
         };
         frame.cap_arg_count = self.cap_args.len().min(HostcallFrameV1::CAP_ARG_CAPACITY) as u16;
@@ -1942,6 +1958,7 @@ pub struct HostcallTraceRecord {
     pub code_object: CodeObjectId,
     pub code_generation: Generation,
     pub artifact: TargetArtifactId,
+    pub artifact_generation: Generation,
     pub hostcall_number: u32,
     pub hostcall_seq: u64,
     pub caller_offset: u64,
@@ -1959,13 +1976,15 @@ pub struct HostcallTraceRecord {
     pub ret0: u64,
     pub ret1: u64,
     pub trap_out: Option<TargetTrapId>,
+    pub trap_generation_out: Option<Generation>,
     pub wait_token_out: Option<WaitId>,
+    pub wait_token_generation_out: Option<Generation>,
 }
 
 impl HostcallTraceRecord {
     pub fn summary(&self) -> String {
         format!(
-            "hostcall id={} generation={} abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} store_generation={} code={} code_generation={} artifact={} number={} name={} category={} subject={} object={} op={} allowed={} result={} ret={}",
+            "hostcall id={} generation={} abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} store_generation={} code={} code_generation={} artifact={} artifact_generation={} number={} name={} category={} subject={} object={} op={} allowed={} result={} ret={}",
             self.id,
             self.generation,
             self.abi_version,
@@ -1980,6 +1999,7 @@ impl HostcallTraceRecord {
             self.code_object,
             self.code_generation,
             self.artifact,
+            self.artifact_generation,
             self.hostcall_number,
             self.name,
             self.category.as_str(),
@@ -2550,6 +2570,7 @@ impl TargetExecutor {
                 code_object: wire.code_object_id(),
                 code_generation: wire.code_generation(),
                 artifact: wire.artifact_id(),
+                artifact_generation: wire.artifact_generation(),
                 hostcall_number: wire.hostcall_number,
                 hostcall_seq: wire.hostcall_seq,
                 caller_offset: wire.caller_offset,
@@ -2565,7 +2586,11 @@ impl TargetExecutor {
                 ret0: wire.ret0,
                 ret1: wire.ret1,
                 trap_out: (wire.trap_out.0.id != 0).then_some(wire.trap_out.0.id),
+                trap_generation_out: (wire.trap_out.0.id != 0)
+                    .then_some(wire.trap_out.0.generation),
                 wait_token_out: (wire.wait_token_out.0.id != 0).then_some(wire.wait_token_out.0.id),
+                wait_token_generation_out: (wire.wait_token_out.0.id != 0)
+                    .then_some(wire.wait_token_out.0.generation),
             },
             cap_arg_decode_error,
         )
@@ -2657,6 +2682,7 @@ impl TargetExecutor {
             || wire_frame.code_object_id() != code.id
             || wire_frame.code_generation() != code.generation
             || wire_frame.artifact_id() != code.artifact_id
+            || wire_frame.artifact_generation() != TARGET_ARTIFACT_GENERATION_V1
             || code.bound_store != Some(wire_frame.store_id())
             || code.bound_store_generation != Some(wire_frame.store_generation())
         {
@@ -3150,7 +3176,7 @@ impl TargetExecutor {
             code_object: code.map(|code| code.id),
             code_generation: code.map(|code| code.generation),
             artifact: code.map(|code| code.artifact_id),
-            artifact_generation: code.map(|_| 1),
+            artifact_generation: code.map(|_| TARGET_ARTIFACT_GENERATION_V1),
             offset: Some(0),
             hostcall: hostcall.map(|hostcall| hostcall.to_string()),
             fault_policy: "harness-classification".to_string(),
@@ -3980,6 +4006,7 @@ impl TargetExecutor {
             code_object: frame.code_object,
             code_generation: frame.code_generation,
             artifact: frame.artifact,
+            artifact_generation: frame.artifact_generation,
             hostcall_number: spec.number,
             hostcall_seq: frame.hostcall_seq,
             caller_offset: frame.caller_offset,
@@ -3997,7 +4024,10 @@ impl TargetExecutor {
             ret0: frame.ret0,
             ret1: frame.ret1,
             trap_out,
+            trap_generation_out: trap_out.map(|_| frame.trap_generation_out.unwrap_or(1)),
             wait_token_out,
+            wait_token_generation_out: wait_token_out
+                .map(|_| frame.wait_token_generation_out.unwrap_or(1)),
         });
     }
 
@@ -4043,7 +4073,7 @@ impl TargetExecutor {
             code_object: code.map(|code| code.id),
             code_generation: code.map(|code| code.generation),
             artifact: code.map(|code| code.artifact_id),
-            artifact_generation: code.map(|_| 1),
+            artifact_generation: code.map(|_| TARGET_ARTIFACT_GENERATION_V1),
             offset: Some(0),
             hostcall,
             fault_policy: fault_policy.to_string(),
@@ -4484,6 +4514,7 @@ mod tests {
             )
             .unwrap();
         assert!(executor.hostcall_trace()[0].allowed);
+        assert_eq!(executor.hostcall_trace()[0].artifact_generation, 1);
 
         for (number, object, operation) in [
             (2, "mmio.denied", "map"),
@@ -5490,6 +5521,7 @@ mod tests {
                     code_object: code.id,
                     code_generation: code.generation,
                     artifact: code.artifact_id,
+                    artifact_generation: 1,
                     hostcall_number: 1,
                     hostcall_seq: 1,
                     caller_offset: 0,
@@ -5507,7 +5539,9 @@ mod tests {
                     ret0: 0,
                     ret1: 0,
                     trap_out: None,
+                    trap_generation_out: None,
                     wait_token_out: None,
+                    wait_token_generation_out: None,
                 });
                 hostcalls
             },

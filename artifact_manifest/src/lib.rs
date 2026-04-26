@@ -647,6 +647,8 @@ pub struct HostcallTraceManifest {
     pub code_generation: u64,
     #[serde(default)]
     pub artifact: u64,
+    #[serde(default)]
+    pub artifact_generation: u64,
     pub hostcall_number: u32,
     #[serde(default)]
     pub hostcall_seq: u64,
@@ -675,7 +677,11 @@ pub struct HostcallTraceManifest {
     #[serde(default)]
     pub trap_out: Option<u64>,
     #[serde(default)]
+    pub trap_generation_out: Option<u64>,
+    #[serde(default)]
     pub wait_token_out: Option<u64>,
+    #[serde(default)]
+    pub wait_token_generation_out: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
