@@ -1156,6 +1156,48 @@ impl FakeNetBackendObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VirtioNetBackendObjectRecord {
+    pub id: VirtioNetBackendObjectId,
+    pub name: String,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub driver_binding: DriverStoreBindingId,
+    pub driver_binding_generation: Generation,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub provider: String,
+    pub profile: String,
+    pub model: String,
+    pub mtu: u32,
+    pub rx_queue_depth: u32,
+    pub tx_queue_depth: u32,
+    pub mac: [u8; 6],
+    pub frame_format_version: u32,
+    pub max_payload_len: u32,
+    pub device_features: u64,
+    pub driver_features: u64,
+    pub negotiated_features: u64,
+    pub rx_queue_index: u16,
+    pub tx_queue_index: u16,
+    pub queue_size: u16,
+    pub irq_vector: u16,
+    pub generation: Generation,
+    pub state: VirtioNetBackendObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl VirtioNetBackendObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::VirtioNetBackendObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

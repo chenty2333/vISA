@@ -270,6 +270,11 @@ const VFS_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
 }];
 const DRIVER_VIRTIO_NET_CAPABILITIES: &[CapabilitySpec] = &[
     CapabilitySpec {
+        name: "device.virtio-net0",
+        rights: &["probe"],
+        lifetime: "store",
+    },
+    CapabilitySpec {
         name: "packet-device.net0",
         rights: &["rx", "tx", "poll", "irq", "dma"],
         lifetime: "store",

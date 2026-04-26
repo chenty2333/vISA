@@ -35,7 +35,7 @@ use artifact_manifest::{
     SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
     TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
     TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
-    WaitRecordManifest,
+    VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -68,6 +68,10 @@ use service_core::net_contract::{
     PACKET_FRAME_FORMAT_VERSION, PACKET_MAX_PAYLOAD_LEN, VIRTIO_NET0_CONTRACT,
 };
 use substrate_api::{SubstrateEvent, SubstrateRequester};
+use substrate_virtio::net::{
+    VIRTIO_NET_BACKEND_MODEL, VIRTIO_NET_BACKEND_PROFILE, VIRTIO_NET_BACKEND_PROVIDER,
+    VirtioNetBackendConfig,
+};
 use target_abi::{
     OBJECT_KIND_CODE_OBJECT_V1, ObjectRefRaw, RV64_ENTRY_TRAP_EBREAK_OFFSET, TrapKindV1,
     TrapMapEntryV1,
@@ -160,6 +164,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    record_network_runtime_n5_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -321,6 +326,105 @@ fn publish_host_boundary_status(semantic: &mut SemanticGraph, manifest: &Artifac
         "semantic-package-v1",
         Some("target-replay-runner"),
     );
+}
+
+fn record_network_runtime_n5_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let virtio_driver_store = semantic
+        .store_id("driver_virtio_net")
+        .ok_or("driver_virtio_net store is missing for n5 evidence")?;
+    let virtio_driver_store_generation = semantic
+        .store_handle(virtio_driver_store)
+        .map(|handle| handle.generation)
+        .ok_or("driver_virtio_net store handle is missing for n5 evidence")?;
+    let virtio_device_ref = ContractObjectRef::new(ContractObjectKind::DeviceObject, 10_001, 1);
+    let virtio_device_capability = semantic.grant_capability_with_authority_ref(
+        "driver_virtio_net",
+        "device.virtio-net0",
+        AuthorityObjectRef::internal(CapabilityClass::Device, virtio_device_ref),
+        &["probe"],
+        "store",
+        "n5-virtio-net-device-capability",
+        true,
+    );
+    let virtio_device_handle = semantic
+        .capabilities()
+        .record(virtio_device_capability)
+        .and_then(|record| record.store_local_handle(vec!["probe".to_owned()]))
+        .ok_or("n5 virtio net device capability handle is missing")?;
+    let virtio_config = VirtioNetBackendConfig::net0();
+    let commands = [
+        CommandEnvelope::new(
+            127,
+            "target-executor-n5",
+            SemanticCommand::RecordDeviceCapability {
+                device_capability: 10_008,
+                driver_store: virtio_driver_store,
+                driver_store_generation: virtio_driver_store_generation,
+                target: virtio_device_ref,
+                class: CapabilityClass::Device,
+                operation: "probe".to_owned(),
+                handle: virtio_device_handle,
+                note: "n5-record-virtio-net-device-capability-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            128,
+            "target-executor-n5",
+            SemanticCommand::BindDriverStore {
+                binding: 10_009,
+                driver_store: virtio_driver_store,
+                driver_store_generation: virtio_driver_store_generation,
+                device: 10_001,
+                device_generation: 1,
+                device_capability: 10_008,
+                device_capability_generation: 1,
+                note: "n5-bind-virtio-net-driver-store-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            129,
+            "target-executor-n5",
+            SemanticCommand::RecordVirtioNetBackendObject {
+                virtio_net_backend: 10_010,
+                name: "virtio-net0-backend".to_owned(),
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                driver_binding: 10_009,
+                driver_binding_generation: 1,
+                provider: VIRTIO_NET_BACKEND_PROVIDER.to_owned(),
+                profile: VIRTIO_NET_BACKEND_PROFILE.to_owned(),
+                model: VIRTIO_NET_BACKEND_MODEL.to_owned(),
+                mtu: VIRTIO_NET0_CONTRACT.mtu,
+                rx_queue_depth: VIRTIO_NET0_CONTRACT.rx_queue_depth,
+                tx_queue_depth: VIRTIO_NET0_CONTRACT.tx_queue_depth,
+                mac: VIRTIO_NET0_CONTRACT.mac,
+                frame_format_version: PACKET_FRAME_FORMAT_VERSION,
+                max_payload_len: PACKET_MAX_PAYLOAD_LEN,
+                device_features: virtio_config.device_features,
+                driver_features: virtio_config.driver_features,
+                negotiated_features: virtio_config.negotiated_features,
+                rx_queue_index: virtio_config.rx_queue_index,
+                tx_queue_index: virtio_config.tx_queue_index,
+                queue_size: virtio_config.queue_size,
+                irq_vector: virtio_config.irq_vector,
+                note: "n5-bind-virtio-net-backend-skeleton-harness".to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "network runtime n5 evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
@@ -2697,6 +2801,7 @@ fn demo_migration_package(
             packet_queue_object_count: semantic.packet_queue_object_count(),
             packet_descriptor_object_count: semantic.packet_descriptor_object_count(),
             fake_net_backend_object_count: semantic.fake_net_backend_object_count(),
+            virtio_net_backend_object_count: semantic.virtio_net_backend_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2918,6 +3023,11 @@ fn demo_migration_package(
                 .fake_net_backends()
                 .iter()
                 .map(fake_net_backend_object_manifest)
+                .collect(),
+            virtio_net_backends: semantic
+                .virtio_net_backends()
+                .iter()
+                .map(virtio_net_backend_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -3746,6 +3856,40 @@ fn semantic_roots(
                     backend.frame_format_version,
                     backend.max_payload_len,
                     backend.deterministic_seed,
+                    backend.state.as_str(),
+                    backend.generation
+                )
+            })
+            .collect(),
+        virtio_net_backend_object_roots: semantic
+            .virtio_net_backends()
+            .iter()
+            .map(|backend| {
+                format!(
+                    "virtio-net-backend-object id={} name={} packet_device={}@{} driver_binding={}@{} device={}@{} provider={} profile={} model={} mtu={} rx_queue_depth={} tx_queue_depth={} frame_format_version={} max_payload_len={} device_features={} driver_features={} negotiated_features={} rx_queue_index={} tx_queue_index={} queue_size={} irq_vector={} state={} generation={}",
+                    backend.id,
+                    backend.name,
+                    backend.packet_device,
+                    backend.packet_device_generation,
+                    backend.driver_binding,
+                    backend.driver_binding_generation,
+                    backend.device,
+                    backend.device_generation,
+                    backend.provider,
+                    backend.profile,
+                    backend.model,
+                    backend.mtu,
+                    backend.rx_queue_depth,
+                    backend.tx_queue_depth,
+                    backend.frame_format_version,
+                    backend.max_payload_len,
+                    backend.device_features,
+                    backend.driver_features,
+                    backend.negotiated_features,
+                    backend.rx_queue_index,
+                    backend.tx_queue_index,
+                    backend.queue_size,
+                    backend.irq_vector,
                     backend.state.as_str(),
                     backend.generation
                 )
@@ -5275,6 +5419,41 @@ fn fake_net_backend_object_manifest(
         frame_format_version: backend.frame_format_version,
         max_payload_len: backend.max_payload_len,
         deterministic_seed: backend.deterministic_seed,
+        generation: backend.generation,
+        state: backend.state.as_str().to_owned(),
+        recorded_at_event: backend.recorded_at_event,
+        note: backend.note.clone(),
+    }
+}
+
+fn virtio_net_backend_object_manifest(
+    backend: &semantic_core::VirtioNetBackendObjectRecord,
+) -> VirtioNetBackendObjectManifest {
+    VirtioNetBackendObjectManifest {
+        id: backend.id,
+        name: backend.name.clone(),
+        packet_device: backend.packet_device,
+        packet_device_generation: backend.packet_device_generation,
+        driver_binding: backend.driver_binding,
+        driver_binding_generation: backend.driver_binding_generation,
+        device: backend.device,
+        device_generation: backend.device_generation,
+        provider: backend.provider.clone(),
+        profile: backend.profile.clone(),
+        model: backend.model.clone(),
+        mtu: backend.mtu,
+        rx_queue_depth: backend.rx_queue_depth,
+        tx_queue_depth: backend.tx_queue_depth,
+        mac: backend.mac,
+        frame_format_version: backend.frame_format_version,
+        max_payload_len: backend.max_payload_len,
+        device_features: backend.device_features,
+        driver_features: backend.driver_features,
+        negotiated_features: backend.negotiated_features,
+        rx_queue_index: backend.rx_queue_index,
+        tx_queue_index: backend.tx_queue_index,
+        queue_size: backend.queue_size,
+        irq_vector: backend.irq_vector,
         generation: backend.generation,
         state: backend.state.as_str().to_owned(),
         recorded_at_event: backend.recorded_at_event,

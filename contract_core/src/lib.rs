@@ -104,6 +104,7 @@ pub enum ObjectKind {
     PacketQueueObject,
     PacketDescriptorObject,
     FakeNetBackendObject,
+    VirtioNetBackendObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -173,6 +174,7 @@ impl ObjectKind {
             Self::PacketQueueObject => "packet-queue-object",
             Self::PacketDescriptorObject => "packet-descriptor-object",
             Self::FakeNetBackendObject => "fake-net-backend-object",
+            Self::VirtioNetBackendObject => "virtio-net-backend-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -405,6 +407,10 @@ typed_ref!(
     ObjectKind::PacketDescriptorObject
 );
 typed_ref!(FakeNetBackendObjectRef, ObjectKind::FakeNetBackendObject);
+typed_ref!(
+    VirtioNetBackendObjectRef,
+    ObjectKind::VirtioNetBackendObject
+);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1770,6 +1776,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "fake net backend object root/count mismatch",
         ));
     }
+    if roots.virtio_net_backend_object_roots.len()
+        != package.semantic.virtio_net_backend_object_count
+        || package.semantic.virtio_net_backends.len()
+            != package.semantic.virtio_net_backend_object_count
+    {
+        return Err(ContractError::new(
+            "virtio net backend object root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2330,6 +2345,7 @@ mod tests {
                 packet_queue_object_count: 0,
                 packet_descriptor_object_count: 0,
                 fake_net_backend_object_count: 0,
+                virtio_net_backend_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2408,6 +2424,7 @@ mod tests {
                 packet_queue_objects: Vec::new(),
                 packet_descriptors: Vec::new(),
                 fake_net_backends: Vec::new(),
+                virtio_net_backends: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3638,6 +3655,50 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_virtio_net_backend_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.virtio_net_backend_object_count = 1;
+        package.semantic.virtio_net_backends.push(
+            artifact_manifest::VirtioNetBackendObjectManifest {
+                id: 36,
+                name: "virtio-net0".to_owned(),
+                packet_device: 31,
+                packet_device_generation: 1,
+                driver_binding: 1202,
+                driver_binding_generation: 1,
+                device: 30,
+                device_generation: 1,
+                provider: "substrate_virtio".to_owned(),
+                profile: "virtio-net-backend-skeleton-v1".to_owned(),
+                model: "virtio-net".to_owned(),
+                mtu: 1500,
+                rx_queue_depth: 4,
+                tx_queue_depth: 4,
+                mac: [2, 0x76, 0x6d, 0x6f, 0x73, 1],
+                frame_format_version: 2,
+                max_payload_len: 512,
+                device_features: 0x1,
+                driver_features: 0x1,
+                negotiated_features: 0x1,
+                rx_queue_index: 0,
+                tx_queue_index: 1,
+                queue_size: 4,
+                irq_vector: 5,
+                generation: 1,
+                state: "skeleton-ready".to_owned(),
+                recorded_at_event: 72,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "virtio net backend object root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -4138,6 +4199,9 @@ mod tests {
         let fake_net_backend_object =
             ObjectRef::new(ObjectKind::FakeNetBackendObject, 34, 1).unwrap();
         assert!(FakeNetBackendObjectRef::try_from_ref(fake_net_backend_object).is_ok());
+        let virtio_net_backend_object =
+            ObjectRef::new(ObjectKind::VirtioNetBackendObject, 35, 1).unwrap();
+        assert!(VirtioNetBackendObjectRef::try_from_ref(virtio_net_backend_object).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

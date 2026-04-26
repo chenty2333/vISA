@@ -482,6 +482,20 @@ pub enum EventKind {
         deterministic_seed: u64,
         generation: Generation,
     },
+    VirtioNetBackendSkeletonBound {
+        virtio_net_backend: VirtioNetBackendObjectId,
+        packet_device: PacketDeviceObjectId,
+        packet_device_generation: Generation,
+        driver_binding: DriverStoreBindingId,
+        driver_binding_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        queue_size: u16,
+        rx_queue_index: u16,
+        tx_queue_index: u16,
+        negotiated_features: u64,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1467,6 +1481,22 @@ impl EventKind {
                 generation,
             } => format!(
                 "FakeNetBackendObjectBound fake_net_backend={fake_net_backend} packet_device={packet_device}@{packet_device_generation} mtu={mtu} rx_queue_depth={rx_queue_depth} tx_queue_depth={tx_queue_depth} frame_format_version={frame_format_version} max_payload_len={max_payload_len} deterministic_seed={deterministic_seed} generation={generation}"
+            ),
+            Self::VirtioNetBackendSkeletonBound {
+                virtio_net_backend,
+                packet_device,
+                packet_device_generation,
+                driver_binding,
+                driver_binding_generation,
+                device,
+                device_generation,
+                queue_size,
+                rx_queue_index,
+                tx_queue_index,
+                negotiated_features,
+                generation,
+            } => format!(
+                "VirtioNetBackendSkeletonBound virtio_net_backend={virtio_net_backend} packet_device={packet_device}@{packet_device_generation} driver_binding={driver_binding}@{driver_binding_generation} device={device}@{device_generation} queue_size={queue_size} rx_queue_index={rx_queue_index} tx_queue_index={tx_queue_index} negotiated_features={negotiated_features} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

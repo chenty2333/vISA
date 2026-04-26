@@ -1093,6 +1093,28 @@ pub enum SemanticInvariantError {
     FakeNetBackendObjectMissingEvent {
         fake_net_backend: FakeNetBackendObjectId,
     },
+    VirtioNetBackendObjectInvalid {
+        virtio_net_backend: VirtioNetBackendObjectId,
+    },
+    VirtioNetBackendObjectMissingPacketDevice {
+        virtio_net_backend: VirtioNetBackendObjectId,
+        packet_device: PacketDeviceObjectId,
+    },
+    VirtioNetBackendObjectMissingDriverBinding {
+        virtio_net_backend: VirtioNetBackendObjectId,
+        driver_binding: DriverStoreBindingId,
+    },
+    VirtioNetBackendObjectDuplicateBinding {
+        virtio_net_backend: VirtioNetBackendObjectId,
+        packet_device: PacketDeviceObjectId,
+    },
+    VirtioNetBackendObjectDuplicateDriverBinding {
+        virtio_net_backend: VirtioNetBackendObjectId,
+        driver_binding: DriverStoreBindingId,
+    },
+    VirtioNetBackendObjectMissingEvent {
+        virtio_net_backend: VirtioNetBackendObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

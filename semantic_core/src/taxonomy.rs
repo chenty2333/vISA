@@ -882,6 +882,21 @@ impl FakeNetBackendObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VirtioNetBackendObjectState {
+    SkeletonReady,
+    Retired,
+}
+
+impl VirtioNetBackendObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SkeletonReady => "skeleton-ready",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

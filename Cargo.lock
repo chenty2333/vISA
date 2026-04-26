@@ -1042,6 +1042,10 @@ name = "substrate_api"
 version = "0.1.0"
 
 [[package]]
+name = "substrate_virtio"
+version = "0.1.0"
+
+[[package]]
 name = "supervisor_catalog"
 version = "0.1.0"
 
@@ -1081,6 +1085,7 @@ dependencies = [
  "service_core",
  "sha2",
  "substrate_api",
+ "substrate_virtio",
  "supervisor_catalog",
  "target_abi",
  "wasmtime",

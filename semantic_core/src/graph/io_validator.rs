@@ -664,6 +664,10 @@ impl SemanticGraph {
                 .fake_net_backends
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::VirtioNetBackendObject => self
+                .virtio_net_backends
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

@@ -1,0 +1,173 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "N5-virtio-net-backend-skeleton",
+  "name": "golden_n5_virtio_net_backend_skeleton",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md"
+  ],
+  "no_goals": [
+    "real virtio MMIO/DMA/IRQ datapath",
+    "RX interrupt path",
+    "RX wait resolution",
+    "TX capability gate",
+    "TX completion path",
+    "smoltcp integration",
+    "socket object model"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "record-device-capability",
+        "device_capability": "device-capability:10008@1",
+        "driver_store": "store:7@2",
+        "target": "device:10001@1",
+        "class": "device",
+        "operation": "probe",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "bind-driver-store",
+        "driver_binding": "driver-store-binding:10009@1",
+        "driver_store": "store:7@2",
+        "device": "device:10001@1",
+        "device_capability": "device-capability:10008@1",
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "record-virtio-net-backend-object",
+        "virtio_net_backend": "virtio-net-backend:10010@1",
+        "packet_device": "packet-device:10002@1",
+        "driver_binding": "driver-store-binding:10009@1",
+        "device": "device:10001@1",
+        "provider": "substrate_virtio",
+        "profile": "virtio-net-backend-skeleton-v1",
+        "model": "virtio-net",
+        "expected": "applied"
+      },
+      {
+        "id": 4,
+        "command": "record-virtio-net-backend-object",
+        "scenario": "stale packet device generation",
+        "expected": "rejected"
+      },
+      {
+        "id": 5,
+        "command": "record-virtio-net-backend-object",
+        "scenario": "stale driver binding generation",
+        "expected": "rejected"
+      },
+      {
+        "id": 6,
+        "command": "record-virtio-net-backend-object",
+        "scenario": "unsupported provider/profile/model",
+        "expected": "rejected"
+      },
+      {
+        "id": 7,
+        "command": "record-virtio-net-backend-object",
+        "scenario": "unsupported negotiated feature bit",
+        "expected": "rejected"
+      },
+      {
+        "id": 8,
+        "command": "record-virtio-net-backend-object",
+        "scenario": "duplicate live backend binding",
+        "expected": "rejected"
+      }
+    ],
+    "adapter": {
+      "crate": "substrate_virtio",
+      "module": "net",
+      "profile": "virtio-net-backend-skeleton-v1",
+      "note": "skeleton evidence only; substrate state is not semantic truth"
+    }
+  },
+  "events": [
+    {
+      "kind": "DeviceCapabilityRecorded",
+      "device_capability": "device-capability:10008@1",
+      "driver_store": "store:7@2",
+      "device": "device:10001@1"
+    },
+    {
+      "kind": "DriverStoreBound",
+      "driver_binding": "driver-store-binding:10009@1",
+      "driver_store": "store:7@2",
+      "device": "device:10001@1"
+    },
+    {
+      "kind": "VirtioNetBackendSkeletonBound",
+      "virtio_net_backend": "virtio-net-backend:10010@1",
+      "packet_device": "packet-device:10002@1",
+      "driver_binding": "driver-store-binding:10009@1",
+      "device": "device:10001@1",
+      "provider": "substrate_virtio",
+      "profile": "virtio-net-backend-skeleton-v1",
+      "model": "virtio-net"
+    }
+  ],
+  "expected": {
+    "views": {
+      "virtio-net-backend": {
+        "count": 1,
+        "virtio_net_backend": "virtio-net-backend:10010@1",
+        "packet_device": "packet-device:10002@1",
+        "driver_binding": "driver-store-binding:10009@1",
+        "device": "device:10001@1",
+        "provider": "substrate_virtio",
+        "profile": "virtio-net-backend-skeleton-v1",
+        "model": "virtio-net",
+        "mtu": 1500,
+        "rx_queue_depth": 4,
+        "tx_queue_depth": 4,
+        "frame_format_version": 2,
+        "max_payload_len": 512,
+        "device_features": 65568,
+        "driver_features": 32,
+        "negotiated_features": 32,
+        "rx_queue_index": 0,
+        "tx_queue_index": 1,
+        "queue_size": 4,
+        "irq_vector": 5
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "VirtioNetBackendSkeleton adapter state lives in substrate_virtio, not semantic_core",
+      "VirtioNetBackendObject is a semantic binding/evidence object",
+      "VirtioNetBackendObject references exact PacketDeviceObject generation",
+      "VirtioNetBackendObject references exact DriverStoreBinding generation",
+      "DriverStoreBinding references exact DeviceObject generation",
+      "DeviceCapability must be manifest-declared and capability-checked",
+      "VirtioNetBackendObject contract must match PacketDeviceObject contract",
+      "VirtioNetBackendObject provider/profile/model are fixed skeleton values",
+      "Negotiated features must be a subset of device and driver features",
+      "Only one live virtio backend may bind one PacketDeviceObject generation or DriverStoreBinding generation"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "network_runtime_n5_virtio_net_backend_skeleton_binds_driver_and_packet_device",
+      "network_runtime_n5_rejects_stale_mismatched_or_unsupported_backend",
+      "network_runtime_n5_invariants_reject_virtio_backend_generation_leak",
+      "network_runtime_n5_invariants_reject_invalid_virtio_irq_vector",
+      "virtio_net_skeleton_reports_stable_profile_evidence",
+      "virtio_net_skeleton_rejects_invalid_queue_and_feature_negotiation",
+      "virtio_net_backend_view_v1_exposes_driver_binding_and_profile_contract",
+      "semantic_roots_reject_virtio_net_backend_object_root_mismatch"
+    ],
+    "osctl_json_view": "virtio-net-backend list --json"
+  }
+}

@@ -45,6 +45,7 @@ pub struct SemanticGraph {
     packet_queue_objects: Vec<PacketQueueObjectRecord>,
     packet_descriptors: Vec<PacketDescriptorObjectRecord>,
     fake_net_backends: Vec<FakeNetBackendObjectRecord>,
+    virtio_net_backends: Vec<VirtioNetBackendObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -101,6 +102,7 @@ pub struct SemanticGraph {
     next_packet_queue_object_id: PacketQueueObjectId,
     next_packet_descriptor_object_id: PacketDescriptorObjectId,
     next_fake_net_backend_object_id: FakeNetBackendObjectId,
+    next_virtio_net_backend_object_id: VirtioNetBackendObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -166,6 +168,7 @@ mod substrate;
 mod task;
 mod timer;
 mod transaction;
+mod virtio_net_backend_object;
 mod wait;
 
 pub use command::*;
@@ -215,6 +218,7 @@ impl SemanticGraph {
             packet_queue_objects: Vec::new(),
             packet_descriptors: Vec::new(),
             fake_net_backends: Vec::new(),
+            virtio_net_backends: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -271,6 +275,7 @@ impl SemanticGraph {
             next_packet_queue_object_id: 1,
             next_packet_descriptor_object_id: 1,
             next_fake_net_backend_object_id: 1,
+            next_virtio_net_backend_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,
