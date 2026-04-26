@@ -2599,6 +2599,187 @@ fn smp_runtime_s6_history_still_requires_event_after_activation_advances() {
     );
 }
 
+fn s7_remote_park_graph() -> SemanticGraph {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "hart0", true, "boot hart"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "hart0 idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "secondary hart"));
+    assert!(graph.set_hart_state(2, 1, HartState::Idle, "ready", "hart1 idle"));
+    assert!(graph.record_ipi_event_with_id(
+        21,
+        1,
+        2,
+        2,
+        2,
+        IpiEventKind::SchedulerKick,
+        "remote-park-request",
+        "park target hart",
+    ));
+    graph
+}
+
+#[test]
+fn smp_runtime_s7_remote_park_parks_idle_target_hart() {
+    let mut graph = s7_remote_park_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s7-test",
+        SemanticCommand::RemoteParkHart {
+            remote_park: 31,
+            ipi: 21,
+            ipi_generation: 1,
+            source_hart: 1,
+            source_hart_generation: 2,
+            target_hart: 2,
+            target_hart_generation: 2,
+            reason: "remote-maintenance".to_string(),
+            note: "park secondary hart".to_string(),
+        },
+    ));
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.remote_parks().len(), 1);
+    assert_eq!(graph.remote_parks()[0].ipi, 21);
+    assert_eq!(graph.remote_parks()[0].target_hart_generation_before, 2);
+    assert_eq!(graph.remote_parks()[0].target_hart_generation_after, 3);
+    let target = graph.harts().iter().find(|hart| hart.id == 2).unwrap();
+    assert_eq!(target.state, HartState::Parked);
+    assert_eq!(target.generation, 3);
+    assert!(target.current_activation.is_none());
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == graph.remote_parks()[0].parked_at_event
+            && record.hart == 1
+            && record.event_kind == "RemoteParkSourceRecorded"
+    }));
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == graph.remote_parks()[0].parked_at_event
+            && record.hart == 2
+            && record.hart_generation == 3
+            && record.event_kind == "RemoteParkTargetRecorded"
+    }));
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "RemoteHartParked remote_park=31 ipi=21@1 source_hart=1@2 target_hart=2@2->3 reason=remote-maintenance generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s7_rejects_stale_ipi_and_running_target_hart() {
+    let mut graph = s7_remote_park_graph();
+    let stale_ipi = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s7-test",
+        SemanticCommand::RemoteParkHart {
+            remote_park: 31,
+            ipi: 21,
+            ipi_generation: 99,
+            source_hart: 1,
+            source_hart_generation: 2,
+            target_hart: 2,
+            target_hart_generation: 2,
+            reason: "remote-maintenance".to_string(),
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_ipi.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("remote park ipi generation is missing".to_string());
+    assert_eq!(stale_ipi.violations, expected);
+
+    assert!(graph.set_hart_state(1, 2, HartState::Booting, "source bump", "advance source"));
+    assert!(graph.set_hart_state(1, 3, HartState::Idle, "source ready", "source idle again"));
+    let stale_source = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s7-test",
+        SemanticCommand::RemoteParkHart {
+            remote_park: 32,
+            ipi: 21,
+            ipi_generation: 1,
+            source_hart: 1,
+            source_hart_generation: 2,
+            target_hart: 2,
+            target_hart_generation: 2,
+            reason: "remote-maintenance".to_string(),
+            note: "must reject stale source".to_string(),
+        },
+    ));
+    assert_eq!(stale_source.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("remote park source hart generation is missing".to_string());
+    assert_eq!(stale_source.violations, expected);
+
+    let mut running = s6_remote_preempt_graph();
+    let running_target = running.apply_envelope(CommandEnvelope::new(
+        2,
+        "s7-test",
+        SemanticCommand::RemoteParkHart {
+            remote_park: 31,
+            ipi: 21,
+            ipi_generation: 1,
+            source_hart: 1,
+            source_hart_generation: 2,
+            target_hart: 2,
+            target_hart_generation: 3,
+            reason: "remote-maintenance".to_string(),
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(running_target.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("remote park target hart is not idle".to_string());
+    assert_eq!(running_target.violations, expected);
+    assert!(graph.remote_parks().is_empty());
+}
+
+#[test]
+fn smp_runtime_s7_invariants_reject_remote_park_ipi_generation_leak() {
+    let mut graph = s7_remote_park_graph();
+    assert!(graph.remote_park_hart_with_id(
+        31,
+        21,
+        1,
+        1,
+        2,
+        2,
+        2,
+        "remote-maintenance",
+        "park secondary hart",
+    ));
+    graph.corrupt_remote_park_ipi_generation_for_test(31, 99);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::RemoteParkMissingIpi {
+            remote_park: 31,
+            ipi: 21,
+        })
+    );
+}
+
+#[test]
+fn smp_runtime_s7_history_still_requires_event_after_hart_unparks() {
+    let mut graph = s7_remote_park_graph();
+    assert!(graph.remote_park_hart_with_id(
+        31,
+        21,
+        1,
+        1,
+        2,
+        2,
+        2,
+        "remote-maintenance",
+        "park secondary hart",
+    ));
+    assert!(graph.set_hart_state(2, 3, HartState::Idle, "unpark", "later unpark"));
+    graph.corrupt_remote_park_event_for_test(31, 999);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::RemoteParkMissingEvent { remote_park: 31 })
+    );
+}
+
 #[test]
 fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let mut graph = SemanticGraph::new();

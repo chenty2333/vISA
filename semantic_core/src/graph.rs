@@ -15,6 +15,7 @@ pub struct SemanticGraph {
     timer_interrupts: Vec<TimerInterruptRecord>,
     ipi_events: Vec<IpiEventRecord>,
     remote_preempts: Vec<RemotePreemptRecord>,
+    remote_parks: Vec<RemoteParkRecord>,
     preemptions: Vec<PreemptionRecord>,
     scheduler_decisions: Vec<SchedulerDecisionRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
@@ -43,6 +44,7 @@ pub struct SemanticGraph {
     next_timer_interrupt_id: TimerInterruptId,
     next_ipi_event_id: IpiEventId,
     next_remote_preempt_id: RemotePreemptId,
+    next_remote_park_id: RemoteParkId,
     next_preemption_id: PreemptionId,
     next_scheduler_decision_id: SchedulerDecisionId,
     next_activation_resume_id: ActivationResumeId,
@@ -74,6 +76,7 @@ mod latency;
 mod network;
 mod query;
 mod remote;
+mod remote_park;
 mod resource;
 mod scheduler;
 mod snapshot;
@@ -101,6 +104,7 @@ impl SemanticGraph {
             timer_interrupts: Vec::new(),
             ipi_events: Vec::new(),
             remote_preempts: Vec::new(),
+            remote_parks: Vec::new(),
             preemptions: Vec::new(),
             scheduler_decisions: Vec::new(),
             activation_resumes: Vec::new(),
@@ -129,6 +133,7 @@ impl SemanticGraph {
             next_timer_interrupt_id: 1,
             next_ipi_event_id: 1,
             next_remote_preempt_id: 1,
+            next_remote_park_id: 1,
             next_preemption_id: 1,
             next_scheduler_decision_id: 1,
             next_activation_resume_id: 1,

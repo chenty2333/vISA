@@ -6,6 +6,7 @@ pub type SavedContextId = u64;
 pub type TimerInterruptId = u64;
 pub type IpiEventId = u64;
 pub type RemotePreemptId = u64;
+pub type RemoteParkId = u64;
 pub type PreemptionId = u64;
 pub type SchedulerDecisionId = u64;
 pub type ActivationResumeId = u64;

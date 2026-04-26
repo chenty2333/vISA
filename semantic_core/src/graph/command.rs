@@ -116,6 +116,17 @@ pub enum SemanticCommand {
         queue: RunnableQueueId,
         note: String,
     },
+    RemoteParkHart {
+        remote_park: RemoteParkId,
+        ipi: IpiEventId,
+        ipi_generation: Generation,
+        source_hart: HartId,
+        source_hart_generation: Generation,
+        target_hart: HartId,
+        target_hart_generation: Generation,
+        reason: String,
+        note: String,
+    },
     PreemptActivation {
         preemption: PreemptionId,
         activation: ActivationId,
@@ -349,6 +360,7 @@ impl SemanticCommand {
             Self::RecordTimerInterrupt { .. } => "record-timer-interrupt",
             Self::RecordIpiEvent { .. } => "record-ipi-event",
             Self::RemotePreemptActivation { .. } => "remote-preempt-activation",
+            Self::RemoteParkHart { .. } => "remote-park-hart",
             Self::PreemptActivation { .. } => "preempt-activation",
             Self::RecordSchedulerDecision { .. } => "record-scheduler-decision",
             Self::ResumeActivation { .. } => "resume-activation",
@@ -1086,6 +1098,26 @@ impl SemanticGraph {
                     *activation,
                     *activation_generation,
                     *queue,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RemoteParkHart {
+                remote_park,
+                ipi,
+                ipi_generation,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation,
+                ..
+            } => self
+                .validate_remote_park_hart(
+                    *remote_park,
+                    *ipi,
+                    *ipi_generation,
+                    *source_hart,
+                    *source_hart_generation,
+                    *target_hart,
+                    *target_hart_generation,
                 )
                 .map_err(CommandError::precondition),
             SemanticCommand::PreemptActivation {
@@ -1900,6 +1932,27 @@ impl SemanticGraph {
                 activation,
                 activation_generation,
                 queue,
+                &note,
+            ),
+            SemanticCommand::RemoteParkHart {
+                remote_park,
+                ipi,
+                ipi_generation,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation,
+                reason,
+                note,
+            } => self.remote_park_hart_with_id(
+                remote_park,
+                ipi,
+                ipi_generation,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation,
+                &reason,
                 &note,
             ),
             SemanticCommand::PreemptActivation {

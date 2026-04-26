@@ -74,6 +74,7 @@ pub enum ObjectKind {
     TimerInterrupt,
     IpiEvent,
     RemotePreempt,
+    RemotePark,
     Preemption,
     SchedulerDecision,
     ActivationResume,
@@ -115,6 +116,7 @@ impl ObjectKind {
             Self::TimerInterrupt => "timer-interrupt",
             Self::IpiEvent => "ipi-event",
             Self::RemotePreempt => "remote-preempt",
+            Self::RemotePark => "remote-park",
             Self::Preemption => "preemption",
             Self::SchedulerDecision => "scheduler-decision",
             Self::ActivationResume => "activation-resume",
@@ -310,6 +312,7 @@ typed_ref!(SavedContextRef, ObjectKind::SavedContext);
 typed_ref!(TimerInterruptRef, ObjectKind::TimerInterrupt);
 typed_ref!(IpiEventRef, ObjectKind::IpiEvent);
 typed_ref!(RemotePreemptRef, ObjectKind::RemotePreempt);
+typed_ref!(RemoteParkRef, ObjectKind::RemotePark);
 typed_ref!(PreemptionRef, ObjectKind::Preemption);
 typed_ref!(SchedulerDecisionRef, ObjectKind::SchedulerDecision);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
@@ -1484,6 +1487,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("remote preempt root/count mismatch"));
     }
+    if roots.remote_park_roots.len() != package.semantic.remote_park_count
+        || package.semantic.remote_parks.len() != package.semantic.remote_park_count
+    {
+        return Err(ContractError::new("remote park root/count mismatch"));
+    }
     if roots.preemption_roots.len() != package.semantic.preemption_count
         || package.semantic.preemptions.len() != package.semantic.preemption_count
     {
@@ -2024,6 +2032,7 @@ mod tests {
                 timer_interrupt_count: 0,
                 ipi_event_count: 0,
                 remote_preempt_count: 0,
+                remote_park_count: 0,
                 preemption_count: 0,
                 scheduler_decision_count: 0,
                 activation_resume_count: 0,
@@ -2074,6 +2083,7 @@ mod tests {
                 timer_interrupts: Vec::new(),
                 ipi_events: Vec::new(),
                 remote_preempts: Vec::new(),
+                remote_parks: Vec::new(),
                 preemptions: Vec::new(),
                 scheduler_decisions: Vec::new(),
                 activation_resumes: Vec::new(),
@@ -2319,6 +2329,33 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "remote preempt root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_remote_park_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.remote_park_count = 1;
+        package
+            .semantic
+            .remote_parks
+            .push(artifact_manifest::RemoteParkManifest {
+                id: 5,
+                ipi: 3,
+                ipi_generation: 1,
+                source_hart: 1,
+                source_hart_generation: 2,
+                target_hart: 2,
+                target_hart_generation_before: 3,
+                target_hart_generation_after: 4,
+                generation: 1,
+                state: "parked".to_owned(),
+                parked_at_event: 6,
+                reason: "test".to_owned(),
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "remote park root/count mismatch");
     }
 
     #[test]
@@ -2835,6 +2872,8 @@ mod tests {
         assert!(IpiEventRef::try_from_ref(ipi).is_ok());
         let remote_preempt = ObjectRef::new(ObjectKind::RemotePreempt, 6, 1).unwrap();
         assert!(RemotePreemptRef::try_from_ref(remote_preempt).is_ok());
+        let remote_park = ObjectRef::new(ObjectKind::RemotePark, 6, 1).unwrap();
+        assert!(RemoteParkRef::try_from_ref(remote_park).is_ok());
         let preemption = ObjectRef::new(ObjectKind::Preemption, 6, 1).unwrap();
         assert!(PreemptionRef::try_from_ref(preemption).is_ok());
         let decision = ObjectRef::new(ObjectKind::SchedulerDecision, 7, 1).unwrap();

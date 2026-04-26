@@ -1389,6 +1389,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::TimerInterrupt
             | ContractObjectKind::IpiEvent
             | ContractObjectKind::RemotePreempt
+            | ContractObjectKind::RemotePark
             | ContractObjectKind::Preemption
             | ContractObjectKind::SchedulerDecision
             | ContractObjectKind::ActivationResume

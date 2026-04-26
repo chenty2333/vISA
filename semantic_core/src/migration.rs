@@ -521,6 +521,32 @@ pub enum SemanticInvariantError {
         remote_preempt: RemotePreemptId,
         event: EventId,
     },
+    RemoteParkInvalid {
+        remote_park: RemoteParkId,
+    },
+    RemoteParkMissingIpi {
+        remote_park: RemoteParkId,
+        ipi: IpiEventId,
+    },
+    RemoteParkIpiMismatch {
+        remote_park: RemoteParkId,
+        ipi: IpiEventId,
+    },
+    RemoteParkMissingHart {
+        remote_park: RemoteParkId,
+        hart: HartId,
+    },
+    RemoteParkHartGenerationMismatch {
+        remote_park: RemoteParkId,
+        hart: HartId,
+    },
+    RemoteParkMissingEvent {
+        remote_park: RemoteParkId,
+    },
+    RemoteParkMissingHartEventAttribution {
+        remote_park: RemoteParkId,
+        event: EventId,
+    },
     PreemptionMissingTimerInterrupt {
         preemption: PreemptionId,
         interrupt: TimerInterruptId,

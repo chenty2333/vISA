@@ -17,13 +17,14 @@ use artifact_manifest::{
     IpiEventManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
     MigrationTargetManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    StoreRecordManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
-    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
-    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TaskRecordManifest,
-    TimerInterruptManifest, TombstoneManifest, TrapRecordManifest, WaitRecordManifest,
+    RemoteParkManifest, RemotePreemptManifest, RequiredArtifactProfileManifest,
+    RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
+    SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
+    SemanticSnapshotManifest, StoreRecordManifest, SubstrateBoundaryManifest,
+    SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
+    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
+    TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -835,6 +836,35 @@ fn record_preemptive_runtime_context_evidence(
                 wait_generation: Some(1),
                 reason: "driver-store-fault".to_owned(),
                 note: "p8-cleanup-dead-store-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            90,
+            "target-executor-s7",
+            SemanticCommand::RecordIpiEvent {
+                ipi: 9003,
+                source_hart: 1,
+                source_hart_generation: 4,
+                target_hart: 2,
+                target_hart_generation: 4,
+                kind: IpiEventKind::SchedulerKick,
+                reason: "s7-remote-park-ipi".to_owned(),
+                note: "s7-remote-park-ipi-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            91,
+            "target-executor-s7",
+            SemanticCommand::RemoteParkHart {
+                remote_park: 9001,
+                ipi: 9003,
+                ipi_generation: 1,
+                source_hart: 1,
+                source_hart_generation: 4,
+                target_hart: 2,
+                target_hart_generation: 4,
+                reason: "s7-remote-maintenance".to_owned(),
+                note: "s7-remote-park-harness".to_owned(),
             },
         ),
     ];
@@ -1857,6 +1887,7 @@ fn demo_migration_package(
             timer_interrupt_count: semantic.timer_interrupt_count(),
             ipi_event_count: semantic.ipi_event_count(),
             remote_preempt_count: semantic.remote_preempt_count(),
+            remote_park_count: semantic.remote_park_count(),
             preemption_count: semantic.preemption_count(),
             scheduler_decision_count: semantic.scheduler_decision_count(),
             activation_resume_count: semantic.activation_resume_count(),
@@ -1934,6 +1965,11 @@ fn demo_migration_package(
                 .remote_preempts()
                 .iter()
                 .map(remote_preempt_manifest)
+                .collect(),
+            remote_parks: semantic
+                .remote_parks()
+                .iter()
+                .map(remote_park_manifest)
                 .collect(),
             preemptions: semantic
                 .preemptions()
@@ -2204,6 +2240,26 @@ fn semantic_roots(
                     remote.queue,
                     remote.queue_generation,
                     remote.state.as_str(),
+                    remote.generation
+                )
+            })
+            .collect(),
+        remote_park_roots: semantic
+            .remote_parks()
+            .iter()
+            .map(|remote| {
+                format!(
+                    "remote-park id={} ipi={}@{} source_hart={}@{} target_hart={}@{}->{} state={} reason={} generation={}",
+                    remote.id,
+                    remote.ipi,
+                    remote.ipi_generation,
+                    remote.source_hart,
+                    remote.source_hart_generation,
+                    remote.target_hart,
+                    remote.target_hart_generation_before,
+                    remote.target_hart_generation_after,
+                    remote.state.as_str(),
+                    remote.reason,
                     remote.generation
                 )
             })
@@ -2989,6 +3045,24 @@ fn remote_preempt_manifest(remote: &semantic_core::RemotePreemptRecord) -> Remot
         generation: remote.generation,
         state: remote.state.as_str().to_owned(),
         preempted_at_event: remote.preempted_at_event,
+        note: remote.note.clone(),
+    }
+}
+
+fn remote_park_manifest(remote: &semantic_core::RemoteParkRecord) -> RemoteParkManifest {
+    RemoteParkManifest {
+        id: remote.id,
+        ipi: remote.ipi,
+        ipi_generation: remote.ipi_generation,
+        source_hart: u64::from(remote.source_hart),
+        source_hart_generation: remote.source_hart_generation,
+        target_hart: u64::from(remote.target_hart),
+        target_hart_generation_before: remote.target_hart_generation_before,
+        target_hart_generation_after: remote.target_hart_generation_after,
+        generation: remote.generation,
+        state: remote.state.as_str().to_owned(),
+        parked_at_event: remote.parked_at_event,
+        reason: remote.reason.clone(),
         note: remote.note.clone(),
     }
 }

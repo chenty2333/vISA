@@ -119,6 +119,29 @@ impl RemotePreemptRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteParkRecord {
+    pub id: RemoteParkId,
+    pub ipi: IpiEventId,
+    pub ipi_generation: Generation,
+    pub source_hart: HartId,
+    pub source_hart_generation: Generation,
+    pub target_hart: HartId,
+    pub target_hart_generation_before: Generation,
+    pub target_hart_generation_after: Generation,
+    pub generation: Generation,
+    pub state: RemoteParkState,
+    pub parked_at_event: EventId,
+    pub reason: String,
+    pub note: String,
+}
+
+impl RemoteParkRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::RemotePark, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunnableQueueEntry {
     pub activation: ActivationId,
     pub activation_generation: Generation,

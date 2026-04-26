@@ -1,0 +1,110 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "S7-remote-park",
+  "name": "golden_s7_remote_park",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "remote preempt",
+    "activation migration",
+    "stop-the-world safe point",
+    "SMP code publish barrier",
+    "real hardware IPI delivery",
+    "trap-gate forced parking"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "remote-park-hart",
+        "remote_park": "remote-park:31@1",
+        "ipi": "ipi-event:21@1",
+        "source_hart": "hart:1@2",
+        "target_hart": "hart:2@2->3",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "remote-park-hart",
+        "ipi": "ipi-event:21@99",
+        "expected": "rejected",
+        "violation": "remote park ipi generation is missing"
+      },
+      {
+        "id": 3,
+        "command": "remote-park-hart",
+        "target_hart": "hart:2@3",
+        "target_state": "running",
+        "expected": "rejected",
+        "violation": "remote park target hart is not idle"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "RemoteHartParked",
+      "remote_park": "remote-park:31@1",
+      "ipi": "ipi-event:21@1",
+      "source_hart": "hart:1@2",
+      "target_hart": "hart:2@2->3"
+    },
+    {
+      "kind": "HartEventAttribution",
+      "event_kind": "RemoteParkSourceRecorded",
+      "hart": "hart:1@2"
+    },
+    {
+      "kind": "HartEventAttribution",
+      "event_kind": "RemoteParkTargetRecorded",
+      "hart": "hart:2@3"
+    }
+  ],
+  "expected": {
+    "views": {
+      "remote-park": {
+        "id": 31,
+        "generation": 1,
+        "state": "parked",
+        "ipi": "ipi-event:21@1",
+        "source_hart": "hart:1@2",
+        "target_hart": "hart:2@2->3"
+      },
+      "scheduler": {
+        "remote_park_count": 1,
+        "ipi_event_count": 1,
+        "hart_event_attribution_count_delta": 2
+      },
+      "graph-history": {
+        "edges": [
+          "remote-park:31@1 --caused-by-ipi--> ipi-event:21@1",
+          "remote-park:31@1 --source-hart--> hart:1@2",
+          "remote-park:31@1 --target-hart-before--> hart:2@2",
+          "remote-park:31@1 --target-hart-after--> hart:2@3"
+        ]
+      }
+    },
+    "invariants": [
+      "Remote park must be caused by a SchedulerKick IPI with exact generation",
+      "Remote park source and target harts must be distinct",
+      "Remote park source hart cannot be offline, faulted, or already parked",
+      "Remote park target hart must be idle and must not own a current activation",
+      "Remote park bumps target hart generation and leaves the hart parked",
+      "Remote park records source and target per-hart attribution",
+      "Remote park history edges remain historical after a later unpark"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "smp_runtime_s7_remote_park_parks_idle_target_hart",
+      "smp_runtime_s7_rejects_stale_ipi_and_running_target_hart",
+      "smp_runtime_s7_invariants_reject_remote_park_ipi_generation_leak",
+      "smp_runtime_s7_history_still_requires_event_after_hart_unparks",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "semantic_roots_reject_remote_park_root_mismatch"
+    ]
+  }
+}

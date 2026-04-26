@@ -126,6 +126,18 @@ pub enum EventKind {
         queue_generation: Generation,
         generation: Generation,
     },
+    RemoteHartParked {
+        remote_park: RemoteParkId,
+        ipi: IpiEventId,
+        ipi_generation: Generation,
+        source_hart: HartId,
+        source_hart_generation: Generation,
+        target_hart: HartId,
+        target_hart_generation_before: Generation,
+        target_hart_generation_after: Generation,
+        reason: String,
+        generation: Generation,
+    },
     RuntimeActivationPreempted {
         preemption: PreemptionId,
         activation: ActivationId,
@@ -693,6 +705,20 @@ impl EventKind {
                 generation,
             } => format!(
                 "RemoteActivationPreempted remote_preempt={remote_preempt} ipi={ipi}@{ipi_generation} source_hart={source_hart}@{source_hart_generation} target_hart={target_hart}@{target_hart_generation_before}->{target_hart_generation_after} activation={activation}@{from_generation}->{to_generation} queue={queue}@{queue_generation} generation={generation}"
+            ),
+            Self::RemoteHartParked {
+                remote_park,
+                ipi,
+                ipi_generation,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation_before,
+                target_hart_generation_after,
+                reason,
+                generation,
+            } => format!(
+                "RemoteHartParked remote_park={remote_park} ipi={ipi}@{ipi_generation} source_hart={source_hart}@{source_hart_generation} target_hart={target_hart}@{target_hart_generation_before}->{target_hart_generation_after} reason={reason} generation={generation}"
             ),
             Self::RuntimeActivationPreempted {
                 preemption,
