@@ -471,6 +471,38 @@ impl DescriptorObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DmaBufferObjectAccess {
+    ReadOnly,
+    WriteOnly,
+    ReadWrite,
+}
+
+impl DmaBufferObjectAccess {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::WriteOnly => "write-only",
+            Self::ReadWrite => "read-write",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DmaBufferObjectState {
+    Registered,
+    Released,
+}
+
+impl DmaBufferObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Registered => "registered",
+            Self::Released => "released",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

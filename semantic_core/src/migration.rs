@@ -809,6 +809,24 @@ pub enum SemanticInvariantError {
     DescriptorObjectMissingEvent {
         descriptor: DescriptorObjectId,
     },
+    DmaBufferObjectInvalid {
+        dma_buffer: DmaBufferObjectId,
+    },
+    DmaBufferObjectMissingDescriptor {
+        dma_buffer: DmaBufferObjectId,
+        descriptor: DescriptorObjectId,
+    },
+    DmaBufferObjectMissingResource {
+        dma_buffer: DmaBufferObjectId,
+        resource: ResourceId,
+    },
+    DmaBufferObjectDuplicateDescriptor {
+        dma_buffer: DmaBufferObjectId,
+        descriptor: DescriptorObjectId,
+    },
+    DmaBufferObjectMissingEvent {
+        dma_buffer: DmaBufferObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

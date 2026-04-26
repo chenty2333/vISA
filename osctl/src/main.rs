@@ -11,15 +11,16 @@ use artifact_manifest::{
     ArtifactBundleManifest, BoundaryValidationReportManifest, CapabilityRecordManifest,
     CleanupTransactionManifest, CodeObjectManifest, CommandResultManifest,
     ContractObjectRefManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceObjectManifest, HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IpiEventManifest, MigrationPackageManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
-    SavedContextManifest, SchedulerDecisionManifest, SmpCleanupQuiescenceManifest,
-    SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
-    SmpSnapshotBarrierManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
-    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
-    TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
+    DeviceObjectManifest, DmaBufferObjectManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IpiEventManifest,
+    MigrationPackageManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
+    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
+    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
+    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -257,6 +258,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "queue-object"
         | "descriptor"
         | "descriptor-object"
+        | "dma-buffer"
+        | "dma-buffer-object"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -427,7 +430,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -645,6 +648,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "device" | "device-object" => "device",
         "queue" | "queue-object" => "queue",
         "descriptor" | "descriptor-object" => "descriptor",
+        "dma-buffer" | "dma-buffer-object" => "dma-buffer",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -1694,6 +1698,51 @@ fn descriptor_object_view_v1(descriptor: &DescriptorObjectManifest) -> serde_jso
     })
 }
 
+fn dma_buffer_object_view_v1(dma_buffer: &DmaBufferObjectManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "dma-buffer",
+        "id": dma_buffer.id,
+        "generation": dma_buffer.generation,
+        "state": dma_buffer.state,
+        "owner": {
+            "descriptor": object_ref_json(
+                "descriptor",
+                dma_buffer.descriptor,
+                dma_buffer.descriptor_generation
+            ),
+        },
+        "references": {
+            "descriptor": object_ref_json(
+                "descriptor",
+                dma_buffer.descriptor,
+                dma_buffer.descriptor_generation
+            ),
+            "resource": object_ref_json(
+                "resource",
+                dma_buffer.resource,
+                dma_buffer.resource_generation
+            ),
+            "event": {
+                "id": dma_buffer.recorded_at_event,
+            },
+        },
+        "identity": {
+            "access": dma_buffer.access,
+        },
+        "capacity": {
+            "length": dma_buffer.length,
+        },
+        "note": dma_buffer.note,
+        "last_transition": {
+            "recorded_at_event": dma_buffer.recorded_at_event,
+            "descriptor_generation": dma_buffer.descriptor_generation,
+            "resource_generation": dma_buffer.resource_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -2691,6 +2740,12 @@ fn stable_views_for_kind(
             .iter()
             .map(descriptor_object_view_v1)
             .collect()),
+        "dma-buffer" | "dma-buffer-object" => Ok(package
+            .semantic
+            .dma_buffer_objects
+            .iter()
+            .map(dma_buffer_object_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -3337,7 +3392,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -3364,6 +3419,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.device_object_count,
             package.semantic.queue_object_count,
             package.semantic.descriptor_object_count,
+            package.semantic.dma_buffer_object_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -3496,7 +3552,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} descriptor_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} descriptor_roots={} dma_buffer_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -3540,6 +3596,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.device_object_roots.len(),
         package.semantic.roots.queue_object_roots.len(),
         package.semantic.roots.descriptor_object_roots.len(),
+        package.semantic.roots.dma_buffer_object_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -3609,6 +3666,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "descriptor",
         &package.semantic.roots.descriptor_object_roots,
+    );
+    print_roots(
+        "dma-buffer",
+        &package.semantic.roots.dma_buffer_object_roots,
     );
     print_roots(
         "activation-resume",
@@ -3896,6 +3957,33 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "descriptor-queue",
             "live",
             Some(descriptor.recorded_at_event),
+        ));
+    }
+    for dma_buffer in &package.semantic.dma_buffer_objects {
+        if dma_buffer.state != "registered" {
+            continue;
+        }
+        edges.push(graph_edge(
+            object_ref_json("dma-buffer", dma_buffer.id, dma_buffer.generation),
+            object_ref_json(
+                "descriptor",
+                dma_buffer.descriptor,
+                dma_buffer.descriptor_generation,
+            ),
+            "dma-buffer-descriptor",
+            "live",
+            Some(dma_buffer.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            object_ref_json("dma-buffer", dma_buffer.id, dma_buffer.generation),
+            object_ref_json(
+                "resource",
+                dma_buffer.resource,
+                dma_buffer.resource_generation,
+            ),
+            "dma-buffer-resource",
+            "live",
+            Some(dma_buffer.recorded_at_event),
         ));
     }
     for wait in &package.semantic.wait_records {
@@ -4646,6 +4734,30 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "descriptor-queue",
             "live",
             Some(descriptor.recorded_at_event),
+        ));
+    }
+    for dma_buffer in &package.semantic.dma_buffer_objects {
+        edges.push(graph_edge(
+            object_ref_json("dma-buffer", dma_buffer.id, dma_buffer.generation),
+            object_ref_json(
+                "descriptor",
+                dma_buffer.descriptor,
+                dma_buffer.descriptor_generation,
+            ),
+            "dma-buffer-descriptor",
+            "live",
+            Some(dma_buffer.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            object_ref_json("dma-buffer", dma_buffer.id, dma_buffer.generation),
+            object_ref_json(
+                "resource",
+                dma_buffer.resource,
+                dma_buffer.resource_generation,
+            ),
+            "dma-buffer-resource",
+            "live",
+            Some(dma_buffer.recorded_at_event),
         ));
     }
     for resume in &package.semantic.activation_resumes {
@@ -6074,7 +6186,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -6100,6 +6212,7 @@ fn replay_until(
         package.semantic.roots.device_object_roots.len(),
         package.semantic.roots.queue_object_roots.len(),
         package.semantic.roots.descriptor_object_roots.len(),
+        package.semantic.roots.dma_buffer_object_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -6161,6 +6274,9 @@ fn replay_until(
     }
     for descriptor in &package.semantic.roots.descriptor_object_roots {
         println!("replay descriptor {descriptor}");
+    }
+    for dma_buffer in &package.semantic.roots.dma_buffer_object_roots {
+        println!("replay dma-buffer {dma_buffer}");
     }
     Ok(())
 }
@@ -6243,6 +6359,10 @@ fn print_replay_json(
     roots.insert(
         "descriptors".to_owned(),
         serde_json::json!(package.semantic.roots.descriptor_object_roots.len()),
+    );
+    roots.insert(
+        "dma_buffers".to_owned(),
+        serde_json::json!(package.semantic.roots.dma_buffer_object_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -6481,6 +6601,10 @@ fn print_replay_json(
         serde_json::json!(&package.semantic.roots.descriptor_object_roots),
     );
     roots.insert(
+        "dma_buffer_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.dma_buffer_object_roots),
+    );
+    roots.insert(
         "cleanup_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.cleanup_roots),
     );
@@ -6564,7 +6688,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -6601,6 +6725,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.device_object_count,
         package.semantic.queue_object_count,
         package.semantic.descriptor_object_count,
+        package.semantic.dma_buffer_object_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -6969,6 +7094,7 @@ mod tests {
         package.semantic.device_object_count = 1;
         package.semantic.queue_object_count = 1;
         package.semantic.descriptor_object_count = 1;
+        package.semantic.dma_buffer_object_count = 1;
         package.semantic.activation_resume_count = 1;
         package.semantic.activation_wait_count = 1;
         package.semantic.activation_cleanup_count = 1;
@@ -7554,6 +7680,22 @@ mod tests {
             });
         package
             .semantic
+            .dma_buffer_objects
+            .push(DmaBufferObjectManifest {
+                id: 38,
+                descriptor: 37,
+                descriptor_generation: 1,
+                resource: 100,
+                resource_generation: 1,
+                access: "read-write".to_owned(),
+                length: 2048,
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 32,
+                note: "dma buffer object".to_owned(),
+            });
+        package
+            .semantic
             .activation_resumes
             .push(ActivationResumeManifest {
                 id: 17,
@@ -7870,6 +8012,14 @@ mod tests {
         assert_eq!(descriptor["identity"]["slot"], 0);
         assert_eq!(descriptor["identity"]["access"], "read-write");
         assert_eq!(descriptor["capacity"]["length"], 2048);
+        let dma_buffer = dma_buffer_object_view_v1(&package.semantic.dma_buffer_objects[0]);
+        assert_eq!(dma_buffer["kind"], "dma-buffer");
+        assert_eq!(dma_buffer["owner"]["descriptor"]["id"], 37);
+        assert_eq!(dma_buffer["owner"]["descriptor"]["generation"], 1);
+        assert_eq!(dma_buffer["references"]["resource"]["id"], 100);
+        assert_eq!(dma_buffer["references"]["resource"]["generation"], 1);
+        assert_eq!(dma_buffer["identity"]["access"], "read-write");
+        assert_eq!(dma_buffer["capacity"]["length"], 2048);
         let resume = activation_resume_view_v1(&package.semantic.activation_resumes[0]);
         assert_eq!(resume["kind"], "activation-resume");
         assert_eq!(resume["references"]["activation"]["generation_before"], 3);
@@ -8060,6 +8210,26 @@ mod tests {
         assert!(
             live_edges
                 .iter()
+                .any(|edge| edge["from"]["kind"] == "dma-buffer"
+                    && edge["to"]["kind"] == "descriptor"
+                    && edge["to"]["id"] == 37
+                    && edge["to"]["generation"] == 1
+                    && edge["relation"] == "dma-buffer-descriptor"
+                    && edge["mode"] == "live")
+        );
+        assert!(
+            live_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "dma-buffer"
+                    && edge["to"]["kind"] == "resource"
+                    && edge["to"]["id"] == 100
+                    && edge["to"]["generation"] == 1
+                    && edge["relation"] == "dma-buffer-resource"
+                    && edge["mode"] == "live")
+        );
+        assert!(
+            live_edges
+                .iter()
                 .any(|edge| edge["from"]["kind"] == "activation"
                     && edge["to"]["kind"] == "runnable-queue"
                     && edge["to"]["generation"] == 1)
@@ -8245,6 +8415,24 @@ mod tests {
                     && edge["to"]["kind"] == "queue"
                     && edge["to"]["id"] == 36
                     && edge["relation"] == "descriptor-queue"
+                    && edge["mode"] == "live")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "dma-buffer"
+                    && edge["to"]["kind"] == "descriptor"
+                    && edge["to"]["id"] == 37
+                    && edge["relation"] == "dma-buffer-descriptor"
+                    && edge["mode"] == "live")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "dma-buffer"
+                    && edge["to"]["kind"] == "resource"
+                    && edge["to"]["id"] == 100
+                    && edge["relation"] == "dma-buffer-resource"
                     && edge["mode"] == "live")
         );
         assert!(

@@ -269,6 +269,16 @@ pub enum SemanticCommand {
         length: u32,
         note: String,
     },
+    RecordDmaBufferObject {
+        dma_buffer: DmaBufferObjectId,
+        descriptor: DescriptorObjectId,
+        descriptor_generation: Generation,
+        resource: ResourceId,
+        resource_generation: Generation,
+        access: DmaBufferObjectAccess,
+        length: u32,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -499,6 +509,7 @@ impl SemanticCommand {
             Self::RecordDeviceObject { .. } => "record-device-object",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
+            Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1655,6 +1666,26 @@ impl SemanticGraph {
                     *length,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordDmaBufferObject {
+                dma_buffer,
+                descriptor,
+                descriptor_generation,
+                resource,
+                resource_generation,
+                access,
+                length,
+                ..
+            } => self
+                .validate_dma_buffer_object(
+                    *dma_buffer,
+                    *descriptor,
+                    *descriptor_generation,
+                    *resource,
+                    *resource_generation,
+                    *access,
+                    *length,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2593,6 +2624,25 @@ impl SemanticGraph {
                 queue,
                 queue_generation,
                 slot,
+                access,
+                length,
+                &note,
+            ),
+            SemanticCommand::RecordDmaBufferObject {
+                dma_buffer,
+                descriptor,
+                descriptor_generation,
+                resource,
+                resource_generation,
+                access,
+                length,
+                note,
+            } => self.record_dma_buffer_object_with_id(
+                dma_buffer,
+                descriptor,
+                descriptor_generation,
+                resource,
+                resource_generation,
                 access,
                 length,
                 &note,

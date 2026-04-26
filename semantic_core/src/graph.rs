@@ -30,6 +30,7 @@ pub struct SemanticGraph {
     device_objects: Vec<DeviceObjectRecord>,
     queue_objects: Vec<QueueObjectRecord>,
     descriptor_objects: Vec<DescriptorObjectRecord>,
+    dma_buffer_objects: Vec<DmaBufferObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -71,6 +72,7 @@ pub struct SemanticGraph {
     next_device_object_id: DeviceObjectId,
     next_queue_object_id: QueueObjectId,
     next_descriptor_object_id: DescriptorObjectId,
+    next_dma_buffer_object_id: DmaBufferObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -96,6 +98,7 @@ mod context;
 mod cross_scheduler;
 mod descriptor_object;
 mod device_object;
+mod dma_buffer_object;
 mod hart;
 mod hart_event;
 mod interface;
@@ -155,6 +158,7 @@ impl SemanticGraph {
             device_objects: Vec::new(),
             queue_objects: Vec::new(),
             descriptor_objects: Vec::new(),
+            dma_buffer_objects: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -196,6 +200,7 @@ impl SemanticGraph {
             next_device_object_id: 1,
             next_queue_object_id: 1,
             next_descriptor_object_id: 1,
+            next_dma_buffer_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

@@ -280,6 +280,16 @@ pub enum EventKind {
         length: u32,
         generation: Generation,
     },
+    DmaBufferObjectRecorded {
+        dma_buffer: DmaBufferObjectId,
+        descriptor: DescriptorObjectId,
+        descriptor_generation: Generation,
+        resource: ResourceId,
+        resource_generation: Generation,
+        access: DmaBufferObjectAccess,
+        length: u32,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1013,6 +1023,19 @@ impl EventKind {
                 generation,
             } => format!(
                 "DescriptorObjectRecorded descriptor={descriptor} queue={queue}@{queue_generation} slot={slot} access={} length={length} generation={generation}",
+                access.as_str()
+            ),
+            Self::DmaBufferObjectRecorded {
+                dma_buffer,
+                descriptor,
+                descriptor_generation,
+                resource,
+                resource_generation,
+                access,
+                length,
+                generation,
+            } => format!(
+                "DmaBufferObjectRecorded dma_buffer={dma_buffer} descriptor={descriptor}@{descriptor_generation} resource={resource}@{resource_generation} access={} length={length} generation={generation}",
                 access.as_str()
             ),
             Self::RuntimeActivationResumed {

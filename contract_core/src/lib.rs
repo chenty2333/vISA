@@ -89,6 +89,7 @@ pub enum ObjectKind {
     DeviceObject,
     QueueObject,
     DescriptorObject,
+    DmaBufferObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -143,6 +144,7 @@ impl ObjectKind {
             Self::DeviceObject => "device-object",
             Self::QueueObject => "queue-object",
             Self::DescriptorObject => "descriptor-object",
+            Self::DmaBufferObject => "dma-buffer-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -357,6 +359,7 @@ typed_ref!(SmpScalingBenchmarkRef, ObjectKind::SmpScalingBenchmark);
 typed_ref!(DeviceObjectRef, ObjectKind::DeviceObject);
 typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
 typed_ref!(DescriptorObjectRef, ObjectKind::DescriptorObject);
+typed_ref!(DmaBufferObjectRef, ObjectKind::DmaBufferObject);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1627,6 +1630,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("descriptor object root/count mismatch"));
     }
+    if roots.dma_buffer_object_roots.len() != package.semantic.dma_buffer_object_count
+        || package.semantic.dma_buffer_objects.len() != package.semantic.dma_buffer_object_count
+    {
+        return Err(ContractError::new("dma buffer object root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2172,6 +2180,7 @@ mod tests {
                 device_object_count: 0,
                 queue_object_count: 0,
                 descriptor_object_count: 0,
+                dma_buffer_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2235,6 +2244,7 @@ mod tests {
                 device_objects: Vec::new(),
                 queue_objects: Vec::new(),
                 descriptor_objects: Vec::new(),
+                dma_buffer_objects: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3027,6 +3037,31 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_dma_buffer_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.dma_buffer_object_count = 1;
+        package
+            .semantic
+            .dma_buffer_objects
+            .push(artifact_manifest::DmaBufferObjectManifest {
+                id: 20,
+                descriptor: 19,
+                descriptor_generation: 1,
+                resource: 21,
+                resource_generation: 1,
+                access: "read-write".to_owned(),
+                length: 2048,
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 56,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "dma buffer object root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3519,6 +3554,8 @@ mod tests {
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();
         assert!(DescriptorObjectRef::try_from_ref(descriptor_object).is_ok());
+        let dma_buffer_object = ObjectRef::new(ObjectKind::DmaBufferObject, 20, 1).unwrap();
+        assert!(DmaBufferObjectRef::try_from_ref(dma_buffer_object).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

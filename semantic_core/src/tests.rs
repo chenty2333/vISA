@@ -1701,6 +1701,241 @@ fn io_runtime_i2_rejects_stale_out_of_bounds_or_duplicate_descriptor() {
 }
 
 #[test]
+fn io_runtime_i3_dma_buffer_object_records_descriptor_and_resource_identity() {
+    let mut graph = SemanticGraph::new();
+    let device_resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let device_resource_generation = graph.resource_handle(device_resource).unwrap().generation;
+    let dma_resource = graph.register_resource(ResourceKind::DmaBuffer, None, "dma:fake-io0-rx0");
+    let dma_resource_generation = graph.resource_handle(dma_resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        device_resource,
+        device_resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "device object harness",
+    ));
+    assert!(graph.record_queue_object_with_id(
+        501,
+        "fake-io0-rx",
+        QueueObjectRole::Rx,
+        0,
+        64,
+        401,
+        1,
+        "queue object harness",
+    ));
+    assert!(graph.record_descriptor_object_with_id(
+        601,
+        501,
+        1,
+        0,
+        DescriptorObjectAccess::ReadWrite,
+        2048,
+        "descriptor object harness",
+    ));
+    let cursor_before = graph.event_log().cursor();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i3-test",
+        SemanticCommand::RecordDmaBufferObject {
+            dma_buffer: 701,
+            descriptor: 601,
+            descriptor_generation: 1,
+            resource: dma_resource,
+            resource_generation: dma_resource_generation,
+            access: DmaBufferObjectAccess::ReadWrite,
+            length: 2048,
+            note: "dma buffer object harness".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.dma_buffer_objects().len(), 1);
+    let dma_buffer = &graph.dma_buffer_objects()[0];
+    assert_eq!(dma_buffer.id, 701);
+    assert_eq!(dma_buffer.descriptor, 601);
+    assert_eq!(dma_buffer.descriptor_generation, 1);
+    assert_eq!(dma_buffer.resource, dma_resource);
+    assert_eq!(dma_buffer.resource_generation, dma_resource_generation);
+    assert_eq!(dma_buffer.access, DmaBufferObjectAccess::ReadWrite);
+    assert_eq!(dma_buffer.length, 2048);
+    assert_eq!(dma_buffer.state, DmaBufferObjectState::Registered);
+    assert!(dma_buffer.recorded_at_event > cursor_before);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "DmaBufferObjectRecorded dma_buffer=701 descriptor=601@1 resource={dma_resource}@{dma_resource_generation} access=read-write length=2048 generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn io_runtime_i3_rejects_stale_wrong_resource_or_duplicate_dma_buffer() {
+    let mut graph = SemanticGraph::new();
+    let device_resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let device_resource_generation = graph.resource_handle(device_resource).unwrap().generation;
+    let dma_resource = graph.register_resource(ResourceKind::DmaBuffer, None, "dma:fake-io0-rx0");
+    let dma_resource_generation = graph.resource_handle(dma_resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        device_resource,
+        device_resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "device object harness",
+    ));
+    assert!(graph.record_queue_object_with_id(
+        501,
+        "fake-io0-rx",
+        QueueObjectRole::Rx,
+        0,
+        64,
+        401,
+        1,
+        "queue object harness",
+    ));
+    assert!(graph.record_descriptor_object_with_id(
+        601,
+        501,
+        1,
+        0,
+        DescriptorObjectAccess::ReadWrite,
+        2048,
+        "descriptor object harness",
+    ));
+
+    let stale_descriptor = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i3-test",
+        SemanticCommand::RecordDmaBufferObject {
+            dma_buffer: 701,
+            descriptor: 601,
+            descriptor_generation: 2,
+            resource: dma_resource,
+            resource_generation: dma_resource_generation,
+            access: DmaBufferObjectAccess::ReadWrite,
+            length: 2048,
+            note: "stale descriptor generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_descriptor.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_descriptor.violations,
+        vec!["dma buffer object descriptor generation is missing or inactive".to_string()]
+    );
+
+    let wrong_resource = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i3-test",
+        SemanticCommand::RecordDmaBufferObject {
+            dma_buffer: 701,
+            descriptor: 601,
+            descriptor_generation: 1,
+            resource: device_resource,
+            resource_generation: device_resource_generation,
+            access: DmaBufferObjectAccess::ReadWrite,
+            length: 2048,
+            note: "non-dma resource must reject".to_string(),
+        },
+    ));
+    assert_eq!(wrong_resource.status, CommandStatus::Rejected);
+    assert_eq!(
+        wrong_resource.violations,
+        vec!["dma buffer object resource kind is not dma-buffer".to_string()]
+    );
+
+    let stale_resource = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "i3-test",
+        SemanticCommand::RecordDmaBufferObject {
+            dma_buffer: 701,
+            descriptor: 601,
+            descriptor_generation: 1,
+            resource: dma_resource,
+            resource_generation: dma_resource_generation + 1,
+            access: DmaBufferObjectAccess::ReadWrite,
+            length: 2048,
+            note: "stale resource generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_resource.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_resource.violations,
+        vec!["dma buffer object resource generation mismatch".to_string()]
+    );
+
+    let length_exceeds = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "i3-test",
+        SemanticCommand::RecordDmaBufferObject {
+            dma_buffer: 701,
+            descriptor: 601,
+            descriptor_generation: 1,
+            resource: dma_resource,
+            resource_generation: dma_resource_generation,
+            access: DmaBufferObjectAccess::ReadWrite,
+            length: 4096,
+            note: "length exceeds descriptor must reject".to_string(),
+        },
+    ));
+    assert_eq!(length_exceeds.status, CommandStatus::Rejected);
+    assert_eq!(
+        length_exceeds.violations,
+        vec!["dma buffer object length exceeds descriptor length".to_string()]
+    );
+
+    assert!(graph.record_dma_buffer_object_with_id(
+        701,
+        601,
+        1,
+        dma_resource,
+        dma_resource_generation,
+        DmaBufferObjectAccess::ReadWrite,
+        2048,
+        "dma buffer object harness",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "i3-test",
+        SemanticCommand::RecordDmaBufferObject {
+            dma_buffer: 702,
+            descriptor: 601,
+            descriptor_generation: 1,
+            resource: dma_resource,
+            resource_generation: dma_resource_generation,
+            access: DmaBufferObjectAccess::ReadOnly,
+            length: 128,
+            note: "duplicate descriptor buffer must reject".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["dma buffer object descriptor already has a buffer".to_string()]
+    );
+
+    graph.corrupt_dma_buffer_object_resource_generation_for_test(701, dma_resource_generation + 1);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::DmaBufferObjectMissingResource {
+            dma_buffer: 701,
+            resource: dma_resource,
+        })
+    );
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

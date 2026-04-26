@@ -14,16 +14,16 @@ use artifact_manifest::{
     CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
     CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
     CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceObjectManifest,
-    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IpiEventManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
-    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
-    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    DmaBufferObjectManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IpiEventManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
+    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -43,13 +43,14 @@ use semantic_core::{
     CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
     CodePublisher, CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot,
     ContractObjectKind, ContractObjectRef, ContractViolation, DescriptorObjectAccess,
-    EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration,
-    FrontendKind, HartState, HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec,
-    HostcallTraceRecord, IpiEventKind, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
-    MigrationObjectRecord, PackageReplayValidator, QueueObjectRole, ReplayPackageValidationState,
-    ResourceKind, RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
-    SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
-    StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact,
+    ExternalObjectDeclaration, FrontendKind, HartState, HostcallCategory, HostcallFrame,
+    HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind, ManagedStoreRecord,
+    MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord, PackageReplayValidator,
+    QueueObjectRole, ReplayPackageValidationState, ResourceKind, RestartPolicy, RuntimeMode,
+    SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind,
+    SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState,
+    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
     TombstoneRecord, TrapSurfaceState, VerifiedArtifact, memory_class_policies,
     validate_contract_graph,
@@ -364,6 +365,12 @@ fn record_preemptive_runtime_context_evidence(
         .resource_handle(io_device_resource)
         .map(|handle| handle.generation)
         .ok_or("i0 device resource handle is missing")?;
+    let io_dma_buffer_resource =
+        semantic.register_resource(ResourceKind::DmaBuffer, None, "dma:fake-io0-rx0");
+    let io_dma_buffer_resource_generation = semantic
+        .resource_handle(io_dma_buffer_resource)
+        .map(|handle| handle.generation)
+        .ok_or("i3 dma buffer resource handle is missing")?;
     // The P8 cleanup command moves the store through Cleaning and Dead, bumping
     // the semantic generation once for each transition before S13 validates it.
     let cleanup_result_store_generation = cleanup_store_generation + 2;
@@ -1135,6 +1142,20 @@ fn record_preemptive_runtime_context_evidence(
                 access: DescriptorObjectAccess::ReadWrite,
                 length: 2048,
                 note: "i2-record-descriptor-object-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            103,
+            "target-executor-i3",
+            SemanticCommand::RecordDmaBufferObject {
+                dma_buffer: 9911,
+                descriptor: 9901,
+                descriptor_generation: 1,
+                resource: io_dma_buffer_resource,
+                resource_generation: io_dma_buffer_resource_generation,
+                access: DmaBufferObjectAccess::ReadWrite,
+                length: 2048,
+                note: "i3-record-dma-buffer-object-harness".to_owned(),
             },
         ),
     ];
@@ -2172,6 +2193,7 @@ fn demo_migration_package(
             device_object_count: semantic.device_object_count(),
             queue_object_count: semantic.queue_object_count(),
             descriptor_object_count: semantic.descriptor_object_count(),
+            dma_buffer_object_count: semantic.dma_buffer_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2322,6 +2344,11 @@ fn demo_migration_package(
                 .descriptor_objects()
                 .iter()
                 .map(descriptor_object_manifest)
+                .collect(),
+            dma_buffer_objects: semantic
+                .dma_buffer_objects()
+                .iter()
+                .map(dma_buffer_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2854,6 +2881,24 @@ fn semantic_roots(
                     descriptor.length,
                     descriptor.state.as_str(),
                     descriptor.generation
+                )
+            })
+            .collect(),
+        dma_buffer_object_roots: semantic
+            .dma_buffer_objects()
+            .iter()
+            .map(|dma_buffer| {
+                format!(
+                    "dma-buffer-object id={} descriptor={}@{} resource={}@{} access={} length={} state={} generation={}",
+                    dma_buffer.id,
+                    dma_buffer.descriptor,
+                    dma_buffer.descriptor_generation,
+                    dma_buffer.resource,
+                    dma_buffer.resource_generation,
+                    dma_buffer.access.as_str(),
+                    dma_buffer.length,
+                    dma_buffer.state.as_str(),
+                    dma_buffer.generation
                 )
             })
             .collect(),
@@ -4020,6 +4065,24 @@ fn descriptor_object_manifest(
         state: descriptor.state.as_str().to_owned(),
         recorded_at_event: descriptor.recorded_at_event,
         note: descriptor.note.clone(),
+    }
+}
+
+fn dma_buffer_object_manifest(
+    dma_buffer: &semantic_core::DmaBufferObjectRecord,
+) -> DmaBufferObjectManifest {
+    DmaBufferObjectManifest {
+        id: dma_buffer.id,
+        descriptor: dma_buffer.descriptor,
+        descriptor_generation: dma_buffer.descriptor_generation,
+        resource: dma_buffer.resource,
+        resource_generation: dma_buffer.resource_generation,
+        access: dma_buffer.access.as_str().to_owned(),
+        length: dma_buffer.length,
+        generation: dma_buffer.generation,
+        state: dma_buffer.state.as_str().to_owned(),
+        recorded_at_event: dma_buffer.recorded_at_event,
+        note: dma_buffer.note.clone(),
     }
 }
 

@@ -731,6 +731,31 @@ impl DescriptorObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DmaBufferObjectRecord {
+    pub id: DmaBufferObjectId,
+    pub descriptor: DescriptorObjectId,
+    pub descriptor_generation: Generation,
+    pub resource: ResourceId,
+    pub resource_generation: Generation,
+    pub access: DmaBufferObjectAccess,
+    pub length: u32,
+    pub generation: Generation,
+    pub state: DmaBufferObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl DmaBufferObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::DmaBufferObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,
