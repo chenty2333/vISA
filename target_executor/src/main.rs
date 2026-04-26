@@ -381,6 +381,17 @@ fn record_preemptive_runtime_context_evidence(
             },
         ),
         CommandEnvelope::new(
+            10_001,
+            "target-executor-s3",
+            SemanticCommand::BindRunnableQueueOwner {
+                queue: 9001,
+                queue_generation: 1,
+                hart: 1,
+                hart_generation: 2,
+                note: "s3-bootstrap-queue-owned-by-boot-hart".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
             11,
             "target-executor-p0",
             SemanticCommand::CreateRuntimeActivation {
@@ -430,6 +441,17 @@ fn record_preemptive_runtime_context_evidence(
             SemanticCommand::CreateRunnableQueue {
                 queue: 9002,
                 label: "timer-target-runnable-queue".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            20_001,
+            "target-executor-s3",
+            SemanticCommand::BindRunnableQueueOwner {
+                queue: 9002,
+                queue_generation: 1,
+                hart: 1,
+                hart_generation: 2,
+                note: "s3-timer-queue-owned-by-boot-hart".to_owned(),
             },
         ),
         CommandEnvelope::new(
@@ -530,7 +552,7 @@ fn record_preemptive_runtime_context_evidence(
             SemanticCommand::RecordSchedulerDecision {
                 decision: 9001,
                 queue: 9002,
-                queue_generation: 1,
+                queue_generation: 2,
                 selected_activation: 9002,
                 selected_activation_generation: 4,
                 reason: "runnable-available".to_owned(),
@@ -608,6 +630,17 @@ fn record_preemptive_runtime_context_evidence(
             SemanticCommand::CreateRunnableQueue {
                 queue: 9003,
                 label: "cleanup-target-runnable-queue".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            80_001,
+            "target-executor-s3",
+            SemanticCommand::BindRunnableQueueOwner {
+                queue: 9003,
+                queue_generation: 1,
+                hart: 1,
+                hart_generation: 4,
+                note: "s3-cleanup-queue-owned-by-boot-hart-after-preempt".to_owned(),
             },
         ),
         CommandEnvelope::new(
@@ -2664,6 +2697,8 @@ fn runnable_queue_manifest(queue: &semantic_core::RunnableQueueRecord) -> Runnab
         label: queue.label.clone(),
         generation: queue.generation,
         state: queue.state.as_str().to_owned(),
+        owner_hart: queue.owner_hart,
+        owner_hart_generation: queue.owner_hart_generation,
         entries: queue
             .entries
             .iter()

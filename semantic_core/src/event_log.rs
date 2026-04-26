@@ -59,6 +59,13 @@ pub enum EventKind {
         label: String,
         generation: Generation,
     },
+    RunnableQueueOwnerBound {
+        queue: RunnableQueueId,
+        hart: HartId,
+        hart_generation: Generation,
+        generation: Generation,
+        note: String,
+    },
     RunnableQueued {
         queue: RunnableQueueId,
         activation: ActivationId,
@@ -571,6 +578,15 @@ impl EventKind {
             } => {
                 format!("RunnableQueueCreated queue={queue} label={label} generation={generation}")
             }
+            Self::RunnableQueueOwnerBound {
+                queue,
+                hart,
+                hart_generation,
+                generation,
+                note,
+            } => format!(
+                "RunnableQueueOwnerBound queue={queue} hart={hart}@{hart_generation} generation={generation} note={note}"
+            ),
             Self::RunnableQueued {
                 queue,
                 activation,

@@ -327,6 +327,24 @@ pub enum SemanticInvariantError {
     InactiveRunnableQueueHasEntries {
         queue: RunnableQueueId,
     },
+    RunnableQueueOwnerFieldMismatch {
+        queue: RunnableQueueId,
+    },
+    RunnableQueueOwnerMissingHart {
+        queue: RunnableQueueId,
+        hart: HartId,
+    },
+    RunnableQueueOwnerHartGenerationMismatch {
+        queue: RunnableQueueId,
+        hart: HartId,
+        expected: Generation,
+        actual: Generation,
+    },
+    RunnableQueueOwnerHartUnavailable {
+        queue: RunnableQueueId,
+        hart: HartId,
+        state: HartState,
+    },
     RunnableQueueReferencesMissingActivation {
         queue: RunnableQueueId,
         activation: ActivationId,

@@ -43,6 +43,13 @@ pub enum SemanticCommand {
         queue: RunnableQueueId,
         label: String,
     },
+    BindRunnableQueueOwner {
+        queue: RunnableQueueId,
+        queue_generation: Generation,
+        hart: HartId,
+        hart_generation: Generation,
+        note: String,
+    },
     EnqueueRunnable {
         queue: RunnableQueueId,
         activation: ActivationId,
@@ -310,6 +317,7 @@ impl SemanticCommand {
             Self::ClearHartCurrentActivation { .. } => "clear-hart-current-activation",
             Self::CreateRuntimeActivation { .. } => "create-runtime-activation",
             Self::CreateRunnableQueue { .. } => "create-runnable-queue",
+            Self::BindRunnableQueueOwner { .. } => "bind-runnable-queue-owner",
             Self::EnqueueRunnable { .. } => "enqueue-runnable",
             Self::DequeueRunnable { .. } => "dequeue-runnable",
             Self::CreateActivationContext { .. } => "create-activation-context",
@@ -611,6 +619,45 @@ impl SemanticGraph {
                 } else {
                     Ok(())
                 }
+            }
+            SemanticCommand::BindRunnableQueueOwner {
+                queue,
+                queue_generation,
+                hart,
+                hart_generation,
+                ..
+            } => {
+                let Some(queue_record) = self.runnable_queues.iter().find(|record| {
+                    record.id == *queue
+                        && record.generation == *queue_generation
+                        && record.state == RunnableQueueState::Active
+                }) else {
+                    return Err(CommandError::precondition(
+                        "runnable queue generation is missing or inactive",
+                    ));
+                };
+                if queue_record.owner_hart == Some(*hart)
+                    && queue_record.owner_hart_generation == Some(*hart_generation)
+                {
+                    return Err(CommandError::precondition(
+                        "runnable queue owner is already bound",
+                    ));
+                }
+                if !queue_record.entries.is_empty() {
+                    return Err(CommandError::precondition(
+                        "runnable queue owner cannot change while entries are live",
+                    ));
+                }
+                let Some(_hart_record) = self.harts.iter().find(|record| {
+                    record.id == *hart
+                        && record.generation == *hart_generation
+                        && !matches!(record.state, HartState::Offline | HartState::Faulted)
+                }) else {
+                    return Err(CommandError::precondition(
+                        "runnable queue owner hart generation is missing or unavailable",
+                    ));
+                };
+                Ok(())
             }
             SemanticCommand::EnqueueRunnable {
                 queue,
@@ -1631,6 +1678,19 @@ impl SemanticGraph {
             SemanticCommand::CreateRunnableQueue { queue, label } => {
                 self.create_runnable_queue_with_id(queue, &label)
             }
+            SemanticCommand::BindRunnableQueueOwner {
+                queue,
+                queue_generation,
+                hart,
+                hart_generation,
+                note,
+            } => self.bind_runnable_queue_owner(
+                queue,
+                queue_generation,
+                hart,
+                hart_generation,
+                &note,
+            ),
             SemanticCommand::EnqueueRunnable {
                 queue,
                 activation,

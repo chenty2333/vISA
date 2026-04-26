@@ -711,6 +711,14 @@ fn runtime_activation_view_v1(activation: &RuntimeActivationRecordManifest) -> s
 }
 
 fn runnable_queue_view_v1(queue: &RunnableQueueManifest) -> serde_json::Value {
+    let owner_hart = match (queue.owner_hart, queue.owner_hart_generation) {
+        (Some(id), Some(generation)) => serde_json::json!({
+            "kind": "hart",
+            "id": id,
+            "generation": generation,
+        }),
+        _ => serde_json::Value::Null,
+    };
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
         "kind": "runnable-queue",
@@ -718,7 +726,7 @@ fn runnable_queue_view_v1(queue: &RunnableQueueManifest) -> serde_json::Value {
         "generation": queue.generation,
         "state": queue.state,
         "owner": {
-            "scheduler": 1,
+            "hart": owner_hart,
         },
         "references": {
             "entries": queue.entries.iter().map(|entry| serde_json::json!({
@@ -1157,6 +1165,8 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "id": queue.id,
                 "generation": queue.generation,
                 "entries": queue.entries.len(),
+                "owner_hart": queue.owner_hart,
+                "owner_hart_generation": queue.owner_hart_generation,
             })).collect::<Vec<_>>(),
             "activation_contexts": package.semantic.activation_contexts.iter().map(|context| serde_json::json!({
                 "id": context.id,
@@ -2626,6 +2636,16 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
     for queue in &package.semantic.runnable_queues {
         if queue.state != "active" {
             continue;
+        }
+        if let (Some(hart), Some(hart_generation)) = (queue.owner_hart, queue.owner_hart_generation)
+        {
+            edges.push(graph_edge(
+                object_ref_json("hart", u64::from(hart), hart_generation),
+                object_ref_json("runnable-queue", queue.id, queue.generation),
+                "owns-runnable-queue",
+                "historical",
+                None,
+            ));
         }
         for entry in &queue.entries {
             edges.push(graph_edge(
@@ -5009,6 +5029,8 @@ mod tests {
                 label: "main-rq".to_owned(),
                 generation: 1,
                 state: "active".to_owned(),
+                owner_hart: Some(1),
+                owner_hart_generation: Some(2),
                 entries: vec![artifact_manifest::RunnableQueueEntryManifest {
                     activation: 11,
                     activation_generation: 2,
@@ -5292,6 +5314,10 @@ mod tests {
             "TimerInterruptRecorded"
         );
         assert_eq!(hart_event["references"]["activation"]["id"], 11);
+        let queue = runnable_queue_view_v1(&package.semantic.runnable_queues[0]);
+        assert_eq!(queue["kind"], "runnable-queue");
+        assert_eq!(queue["owner"]["hart"]["id"], 1);
+        assert_eq!(queue["owner"]["hart"]["generation"], 2);
         let preemption = preemption_view_v1(&package.semantic.preemptions[0]);
         assert_eq!(preemption["kind"], "preemption");
         assert_eq!(
@@ -5357,6 +5383,11 @@ mod tests {
         assert_eq!(scheduler["references"]["harts"][0]["hardware_id"], 0);
         assert_eq!(scheduler["last_transition"]["hart_count"], 1);
         assert_eq!(scheduler["references"]["queues"][0]["entries"], 1);
+        assert_eq!(scheduler["references"]["queues"][0]["owner_hart"], 1);
+        assert_eq!(
+            scheduler["references"]["queues"][0]["owner_hart_generation"],
+            2
+        );
         assert_eq!(scheduler["references"]["preemptions"][0]["activation"], 11);
         assert_eq!(
             scheduler["references"]["scheduler_decisions"][0]["selected_activation_generation"],

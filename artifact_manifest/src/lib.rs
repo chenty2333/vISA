@@ -592,6 +592,10 @@ pub struct RunnableQueueManifest {
     pub generation: u64,
     pub state: String,
     #[serde(default)]
+    pub owner_hart: Option<u32>,
+    #[serde(default)]
+    pub owner_hart_generation: Option<u64>,
+    #[serde(default)]
     pub entries: Vec<RunnableQueueEntryManifest>,
 }
 

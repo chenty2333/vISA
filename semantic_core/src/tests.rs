@@ -1963,6 +1963,141 @@ fn smp_runtime_s2_invariants_reject_timer_without_hart_event_attribution() {
 }
 
 #[test]
+fn smp_runtime_s3_binds_runnable_queue_to_owner_hart_generation() {
+    let mut graph = SemanticGraph::new();
+    let hart_generation = register_idle_test_hart(&mut graph);
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "hart0-rq"));
+
+    let bound = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s3-test",
+        SemanticCommand::BindRunnableQueueOwner {
+            queue: 1,
+            queue_generation: 1,
+            hart: 1,
+            hart_generation,
+            note: "hart0 owns queue".to_string(),
+        },
+    ));
+
+    assert_eq!(bound.status, CommandStatus::Applied);
+    assert_eq!(graph.runnable_queues()[0].generation, 2);
+    assert_eq!(graph.runnable_queues()[0].owner_hart, Some(1));
+    assert_eq!(
+        graph.runnable_queues()[0].owner_hart_generation,
+        Some(hart_generation)
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "RunnableQueueOwnerBound queue=1 hart=1@2 generation=2 note=hart0 owns queue"
+    );
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert_eq!(
+        graph.runtime_activations()[0].runnable_queue_generation,
+        Some(2)
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s3_rejects_stale_hart_generation_and_live_rebinding() {
+    let mut graph = SemanticGraph::new();
+    let hart_generation = register_idle_test_hart(&mut graph);
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "hart0-rq"));
+
+    let stale_owner = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s3-test",
+        SemanticCommand::BindRunnableQueueOwner {
+            queue: 1,
+            queue_generation: 1,
+            hart: 1,
+            hart_generation: 99,
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_owner.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("runnable queue owner hart generation is missing or unavailable".to_string());
+    assert_eq!(stale_owner.violations, expected);
+    assert_eq!(graph.runnable_queues()[0].generation, 1);
+
+    let bound = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s3-test",
+        SemanticCommand::BindRunnableQueueOwner {
+            queue: 1,
+            queue_generation: 1,
+            hart: 1,
+            hart_generation,
+            note: "hart0 owns queue".to_string(),
+        },
+    ));
+    assert_eq!(bound.status, CommandStatus::Applied);
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "created"));
+    assert!(graph.set_hart_state(2, 1, HartState::Idle, "ready", "idle"));
+
+    let live_rebind = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "s3-test",
+        SemanticCommand::BindRunnableQueueOwner {
+            queue: 1,
+            queue_generation: 2,
+            hart: 2,
+            hart_generation: 2,
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(live_rebind.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("runnable queue owner cannot change while entries are live".to_string());
+    assert_eq!(live_rebind.violations, expected);
+    assert_eq!(graph.runnable_queues()[0].owner_hart, Some(1));
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s3_invariants_reject_bad_queue_owner_generation() {
+    let mut graph = SemanticGraph::new();
+    let hart_generation = register_idle_test_hart(&mut graph);
+    assert!(graph.create_runnable_queue_with_id(1, "hart0-rq"));
+    assert!(graph.bind_runnable_queue_owner(1, 1, 1, hart_generation, "owner"));
+
+    graph.corrupt_runnable_queue_owner_for_test(1, Some(1), Some(99));
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::RunnableQueueOwnerHartGenerationMismatch {
+                queue: 1,
+                hart: 1,
+                expected: 99,
+                actual: 2,
+            }
+        )
+    );
+}
+
+#[test]
+fn smp_runtime_s3_invariants_reject_partial_queue_owner_ref() {
+    let mut graph = SemanticGraph::new();
+    register_idle_test_hart(&mut graph);
+    assert!(graph.create_runnable_queue_with_id(1, "hart0-rq"));
+
+    graph.corrupt_runnable_queue_owner_for_test(1, Some(1), None);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::RunnableQueueOwnerFieldMismatch { queue: 1 })
+    );
+}
+
+#[test]
 fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let mut graph = SemanticGraph::new();
     graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");

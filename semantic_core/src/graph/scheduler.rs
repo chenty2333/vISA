@@ -103,6 +103,8 @@ impl SemanticGraph {
             label: label.to_string(),
             generation: 1,
             state: RunnableQueueState::Active,
+            owner_hart: None,
+            owner_hart_generation: None,
             entries: Vec::new(),
         });
         self.event_log.push(
@@ -111,6 +113,57 @@ impl SemanticGraph {
                 queue,
                 label: label.to_string(),
                 generation: 1,
+            },
+        );
+        true
+    }
+
+    pub fn bind_runnable_queue_owner(
+        &mut self,
+        queue: RunnableQueueId,
+        queue_generation: Generation,
+        hart: HartId,
+        hart_generation: Generation,
+        note: &str,
+    ) -> bool {
+        let Some(queue_index) = self.runnable_queues.iter().position(|record| {
+            record.id == queue
+                && record.generation == queue_generation
+                && record.state == RunnableQueueState::Active
+        }) else {
+            return false;
+        };
+        if self.runnable_queues[queue_index].owner_hart == Some(hart)
+            && self.runnable_queues[queue_index].owner_hart_generation == Some(hart_generation)
+        {
+            return false;
+        }
+        if !self.runnable_queues[queue_index].entries.is_empty() {
+            return false;
+        }
+        let Some(hart_record) = self
+            .harts
+            .iter()
+            .find(|record| record.id == hart && record.generation == hart_generation)
+        else {
+            return false;
+        };
+        if matches!(hart_record.state, HartState::Offline | HartState::Faulted) {
+            return false;
+        }
+
+        self.runnable_queues[queue_index].owner_hart = Some(hart);
+        self.runnable_queues[queue_index].owner_hart_generation = Some(hart_generation);
+        self.runnable_queues[queue_index].generation += 1;
+        let generation = self.runnable_queues[queue_index].generation;
+        self.event_log.push(
+            "scheduler",
+            EventKind::RunnableQueueOwnerBound {
+                queue,
+                hart,
+                hart_generation,
+                generation,
+                note: note.to_string(),
             },
         );
         true
@@ -790,6 +843,23 @@ impl SemanticGraph {
     }
 
     #[cfg(test)]
+    pub(crate) fn corrupt_runnable_queue_owner_for_test(
+        &mut self,
+        queue: RunnableQueueId,
+        owner_hart: Option<HartId>,
+        owner_hart_generation: Option<Generation>,
+    ) {
+        if let Some(record) = self
+            .runnable_queues
+            .iter_mut()
+            .find(|record| record.id == queue)
+        {
+            record.owner_hart = owner_hart;
+            record.owner_hart_generation = owner_hart_generation;
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_preemption_timer_generation_for_test(
         &mut self,
         preemption: PreemptionId,
@@ -912,6 +982,40 @@ impl SemanticGraph {
                 return Err(SemanticInvariantError::InactiveRunnableQueueHasEntries {
                     queue: queue.id,
                 });
+            }
+            match (queue.owner_hart, queue.owner_hart_generation) {
+                (Some(hart), Some(hart_generation)) => {
+                    let Some(hart_record) = self.harts.iter().find(|record| record.id == hart)
+                    else {
+                        return Err(SemanticInvariantError::RunnableQueueOwnerMissingHart {
+                            queue: queue.id,
+                            hart,
+                        });
+                    };
+                    if hart_record.generation < hart_generation {
+                        return Err(
+                            SemanticInvariantError::RunnableQueueOwnerHartGenerationMismatch {
+                                queue: queue.id,
+                                hart,
+                                expected: hart_generation,
+                                actual: hart_record.generation,
+                            },
+                        );
+                    }
+                    if matches!(hart_record.state, HartState::Offline | HartState::Faulted) {
+                        return Err(SemanticInvariantError::RunnableQueueOwnerHartUnavailable {
+                            queue: queue.id,
+                            hart,
+                            state: hart_record.state,
+                        });
+                    }
+                }
+                (None, None) => {}
+                _ => {
+                    return Err(SemanticInvariantError::RunnableQueueOwnerFieldMismatch {
+                        queue: queue.id,
+                    });
+                }
             }
             for entry in &queue.entries {
                 let Some(activation) = self

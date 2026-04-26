@@ -81,6 +81,8 @@ pub struct RunnableQueueRecord {
     pub label: String,
     pub generation: Generation,
     pub state: RunnableQueueState,
+    pub owner_hart: Option<HartId>,
+    pub owner_hart_generation: Option<Generation>,
     pub entries: Vec<RunnableQueueEntry>,
 }
 
