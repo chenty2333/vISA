@@ -38,6 +38,14 @@ pub enum SemanticCommand {
         flags: u64,
         note: String,
     },
+    RecordTimerInterrupt {
+        interrupt: TimerInterruptId,
+        timer_epoch: u64,
+        hart: u32,
+        target_activation: Option<ActivationId>,
+        target_activation_generation: Option<Generation>,
+        note: String,
+    },
     GrantCapability {
         subject: String,
         debug_object_label: String,
@@ -192,6 +200,7 @@ impl SemanticCommand {
             Self::DequeueRunnable { .. } => "dequeue-runnable",
             Self::CreateActivationContext { .. } => "create-activation-context",
             Self::CaptureSavedContext { .. } => "capture-saved-context",
+            Self::RecordTimerInterrupt { .. } => "record-timer-interrupt",
             Self::GrantCapability { .. } => "grant-capability",
             Self::RevokeCapability { .. } => "revoke-capability",
             Self::CreateWait { .. } => "create-wait",
@@ -522,6 +531,65 @@ impl SemanticGraph {
                     }
                 }
             }
+            SemanticCommand::RecordTimerInterrupt {
+                interrupt,
+                timer_epoch,
+                target_activation,
+                target_activation_generation,
+                ..
+            } => {
+                if *interrupt == 0 {
+                    Err(CommandError::precondition(
+                        "timer interrupt id=0 is invalid",
+                    ))
+                } else if *timer_epoch == 0 {
+                    Err(CommandError::precondition(
+                        "timer interrupt epoch=0 is invalid",
+                    ))
+                } else if self
+                    .timer_interrupts
+                    .iter()
+                    .any(|record| record.id == *interrupt || record.timer_epoch == *timer_epoch)
+                {
+                    Err(CommandError::precondition("timer interrupt already exists"))
+                } else if let Some(previous) = self
+                    .timer_interrupts
+                    .iter()
+                    .map(|record| record.timer_epoch)
+                    .max()
+                    && *timer_epoch <= previous
+                {
+                    Err(CommandError::precondition(
+                        "timer interrupt epoch must be monotonic",
+                    ))
+                } else if let Some(activation) = target_activation {
+                    let Some(generation) = target_activation_generation else {
+                        return Err(CommandError::precondition(
+                            "timer interrupt target activation generation is required",
+                        ));
+                    };
+                    if self.runtime_activations.iter().any(|record| {
+                        record.id == *activation
+                            && record.generation == *generation
+                            && !matches!(
+                                record.state,
+                                RuntimeActivationState::Dead | RuntimeActivationState::Exited
+                            )
+                    }) {
+                        Ok(())
+                    } else {
+                        Err(CommandError::precondition(
+                            "timer interrupt target activation generation is missing or inactive",
+                        ))
+                    }
+                } else if target_activation_generation.is_some() {
+                    Err(CommandError::precondition(
+                        "timer interrupt target activation is required",
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
             SemanticCommand::GrantCapability { operations, .. } if operations.is_empty() => Err(
                 CommandError::precondition("grant-capability requires at least one operation"),
             ),
@@ -700,6 +768,21 @@ impl SemanticGraph {
                 pc,
                 sp,
                 flags,
+                &note,
+            ),
+            SemanticCommand::RecordTimerInterrupt {
+                interrupt,
+                timer_epoch,
+                hart,
+                target_activation,
+                target_activation_generation,
+                note,
+            } => self.record_timer_interrupt_with_id(
+                interrupt,
+                timer_epoch,
+                hart,
+                target_activation,
+                target_activation_generation,
                 &note,
             ),
             SemanticCommand::GrantCapability {

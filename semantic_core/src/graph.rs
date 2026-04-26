@@ -11,6 +11,7 @@ pub struct SemanticGraph {
     runnable_queues: Vec<RunnableQueueRecord>,
     activation_contexts: Vec<ActivationContextRecord>,
     saved_contexts: Vec<SavedContextRecord>,
+    timer_interrupts: Vec<TimerInterruptRecord>,
     resources: Vec<ResourceRecord>,
     authority_bindings: Vec<AuthorityBindingRecord>,
     waits: Vec<WaitRecord>,
@@ -29,6 +30,7 @@ pub struct SemanticGraph {
     next_runnable_queue_id: RunnableQueueId,
     next_activation_context_id: ActivationContextId,
     next_saved_context_id: SavedContextId,
+    next_timer_interrupt_id: TimerInterruptId,
     next_authority_id: AuthorityId,
     next_fault_domain_id: FaultDomainId,
     next_store_id: StoreId,
@@ -53,6 +55,7 @@ mod snapshot;
 mod store;
 mod substrate;
 mod task;
+mod timer;
 mod transaction;
 mod wait;
 
@@ -69,6 +72,7 @@ impl SemanticGraph {
             runnable_queues: Vec::new(),
             activation_contexts: Vec::new(),
             saved_contexts: Vec::new(),
+            timer_interrupts: Vec::new(),
             resources: Vec::new(),
             authority_bindings: Vec::new(),
             waits: Vec::new(),
@@ -87,6 +91,7 @@ impl SemanticGraph {
             next_runnable_queue_id: 1,
             next_activation_context_id: 1,
             next_saved_context_id: 1,
+            next_timer_interrupt_id: 1,
             next_authority_id: 1,
             next_fault_domain_id: 1,
             next_store_id: 1,

@@ -56,6 +56,14 @@ pub enum EventKind {
         reason: SavedContextReason,
         generation: Generation,
     },
+    TimerInterruptRecorded {
+        interrupt: TimerInterruptId,
+        timer_epoch: u64,
+        hart: u32,
+        target_activation: Option<ActivationId>,
+        target_activation_generation: Option<Generation>,
+        generation: Generation,
+    },
     ResourceCreated {
         resource: ResourceId,
         kind: ResourceKind,
@@ -446,6 +454,22 @@ impl EventKind {
             } => format!(
                 "SavedContextCaptured saved_context={saved_context} context={context}@{context_generation} activation={activation}@{activation_generation} reason={} generation={generation}",
                 reason.as_str()
+            ),
+            Self::TimerInterruptRecorded {
+                interrupt,
+                timer_epoch,
+                hart,
+                target_activation,
+                target_activation_generation,
+                generation,
+            } => format!(
+                "TimerInterruptRecorded interrupt={interrupt} epoch={timer_epoch} hart={hart} target={}@{} generation={generation}",
+                target_activation
+                    .map(|activation| activation.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                target_activation_generation
+                    .map(|generation| generation.to_string())
+                    .unwrap_or_else(|| "none".to_string())
             ),
             Self::ResourceCreated {
                 resource,

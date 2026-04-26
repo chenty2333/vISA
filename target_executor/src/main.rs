@@ -19,8 +19,8 @@ use artifact_manifest::{
     SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
     SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
     TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
-    TargetTrapMetadataManifest, TaskRecordManifest, TombstoneManifest, TrapRecordManifest,
-    WaitRecordManifest,
+    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
+    TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -31,9 +31,9 @@ use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, AuthorityObjectRef, BoundaryKind,
     BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass,
     CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
-    CodePublisher, CommandEnvelope, CommandResult, ContractGraphSnapshot, ContractObjectKind,
-    ContractObjectRef, ContractViolation, EntrypointState, EventKind, EventRecord,
-    ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HostcallCategory,
+    CodePublisher, CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot,
+    ContractObjectKind, ContractObjectRef, ContractViolation, EntrypointState, EventKind,
+    EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HostcallCategory,
     HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, ManagedStoreRecord,
     MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord, PackageReplayValidator,
     ReplayPackageValidationState, RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand,
@@ -97,7 +97,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     semantic.ensure_task(1, FrontendKind::Supervisor, "target-executor-bootstrap");
     semantic.set_task_state(1, TaskState::Running);
-    record_preemptive_runtime_context_evidence(&mut semantic);
+    record_preemptive_runtime_context_evidence(&mut semantic)?;
     publish_host_boundary_status(&mut semantic, &manifest);
 
     for entry in &plan.modules {
@@ -329,8 +329,11 @@ fn record_command_surface_evidence(semantic: &mut SemanticGraph) {
     let _ = semantic.apply_envelope(command);
 }
 
-fn record_preemptive_runtime_context_evidence(semantic: &mut SemanticGraph) {
+fn record_preemptive_runtime_context_evidence(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
     semantic.ensure_task(9001, FrontendKind::LinuxElf, "p0-preemptive-demo-task");
+    semantic.ensure_task(9002, FrontendKind::LinuxElf, "p2-timer-demo-task");
     let commands = [
         CommandEnvelope::new(
             10,
@@ -384,10 +387,70 @@ fn record_preemptive_runtime_context_evidence(semantic: &mut SemanticGraph) {
                 note: "p1-initial-context-harness".to_owned(),
             },
         ),
+        CommandEnvelope::new(
+            20,
+            "target-executor-p2",
+            SemanticCommand::CreateRunnableQueue {
+                queue: 9002,
+                label: "timer-target-runnable-queue".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            21,
+            "target-executor-p2",
+            SemanticCommand::CreateRuntimeActivation {
+                activation: 9002,
+                owner_task: 9002,
+                owner_task_generation: 1,
+                owner_store: None,
+                owner_store_generation: None,
+                code_object: None,
+            },
+        ),
+        CommandEnvelope::new(
+            22,
+            "target-executor-p2",
+            SemanticCommand::EnqueueRunnable {
+                queue: 9002,
+                activation: 9002,
+                activation_generation: 1,
+            },
+        ),
+        CommandEnvelope::new(
+            23,
+            "target-executor-p2",
+            SemanticCommand::DequeueRunnable {
+                queue: 9002,
+                activation: 9002,
+            },
+        ),
+        CommandEnvelope::new(
+            24,
+            "target-executor-p2",
+            SemanticCommand::RecordTimerInterrupt {
+                interrupt: 9001,
+                timer_epoch: 1,
+                hart: 0,
+                target_activation: Some(9002),
+                target_activation_generation: Some(3),
+                note: "p2-timer-interrupt-harness".to_owned(),
+            },
+        ),
     ];
     for command in commands {
-        let _ = semantic.apply_envelope(command);
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "preemptive runtime evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
     }
+    Ok(())
 }
 
 fn record_interface_boundary_evidence(semantic: &mut SemanticGraph) {
@@ -1383,6 +1446,7 @@ fn demo_migration_package(
             runnable_queue_count: semantic.runnable_queue_count(),
             activation_context_count: semantic.activation_context_count(),
             saved_context_count: semantic.saved_context_count(),
+            timer_interrupt_count: semantic.timer_interrupt_count(),
             resource_count: semantic.resource_count(),
             authority_count: semantic.authority_count(),
             active_authority_count: semantic.active_authority_count(),
@@ -1438,6 +1502,11 @@ fn demo_migration_package(
                 .iter()
                 .map(saved_context_manifest)
                 .collect(),
+            timer_interrupts: semantic
+                .timer_interrupts()
+                .iter()
+                .map(timer_interrupt_manifest)
+                .collect(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
             capability_records: target_v1.capability_records.clone(),
@@ -1460,7 +1529,7 @@ fn demo_migration_package(
         },
         logical_capabilities,
         substrate_boundary: SubstrateBoundaryManifest {
-            timer_epoch: 0,
+            timer_epoch: semantic.timer_epoch(),
             pending_irq_causes: 0,
             pending_dma_completions: 0,
             active_dmw_lease_count: 0,
@@ -1590,6 +1659,28 @@ fn semantic_roots(
                     saved.pc,
                     saved.sp,
                     saved.generation
+                )
+            })
+            .collect(),
+        timer_interrupt_roots: semantic
+            .timer_interrupts()
+            .iter()
+            .map(|interrupt| {
+                format!(
+                    "timer-interrupt id={} epoch={} hart={} target={}@{} state={} generation={}",
+                    interrupt.id,
+                    interrupt.timer_epoch,
+                    interrupt.hart,
+                    interrupt
+                        .target_activation
+                        .map(|activation| activation.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    interrupt
+                        .target_activation_generation
+                        .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    interrupt.state.as_str(),
+                    interrupt.generation
                 )
             })
             .collect(),
@@ -2124,6 +2215,24 @@ fn saved_context_manifest(saved: &semantic_core::SavedContextRecord) -> SavedCon
         integer_registers: saved.integer_registers,
         saved_at_event: saved.saved_at_event,
         note: saved.note.clone(),
+    }
+}
+
+fn timer_interrupt_manifest(
+    interrupt: &semantic_core::TimerInterruptRecord,
+) -> TimerInterruptManifest {
+    TimerInterruptManifest {
+        id: interrupt.id,
+        timer_epoch: interrupt.timer_epoch,
+        hart: interrupt.hart,
+        target_activation: interrupt.target_activation,
+        target_activation_generation: interrupt.target_activation_generation,
+        target_task: interrupt.target_task.map(u64::from),
+        target_task_generation: interrupt.target_task_generation,
+        generation: interrupt.generation,
+        state: interrupt.state.as_str().to_owned(),
+        recorded_at_event: interrupt.recorded_at_event,
+        note: interrupt.note.clone(),
     }
 }
 

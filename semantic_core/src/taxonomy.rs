@@ -133,6 +133,25 @@ impl SavedContextReason {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimerInterruptState {
+    Recorded,
+    Delivered,
+    Acknowledged,
+    Dropped,
+}
+
+impl TimerInterruptState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Delivered => "delivered",
+            Self::Acknowledged => "acknowledged",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
 impl TaskState {
     pub const fn as_str(self) -> &'static str {
         match self {

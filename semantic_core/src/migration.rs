@@ -336,6 +336,25 @@ pub enum SemanticInvariantError {
         saved_context: SavedContextId,
         task: TaskId,
     },
+    TimerInterruptEpochNonMonotonic {
+        interrupt: TimerInterruptId,
+        timer_epoch: u64,
+    },
+    TimerInterruptMissingActivationGeneration {
+        interrupt: TimerInterruptId,
+    },
+    TimerInterruptMissingActivation {
+        interrupt: TimerInterruptId,
+        activation: ActivationId,
+    },
+    TimerInterruptTargetsDeadActivation {
+        interrupt: TimerInterruptId,
+        activation: ActivationId,
+    },
+    TimerInterruptTargetTaskMismatch {
+        interrupt: TimerInterruptId,
+        activation: ActivationId,
+    },
     StoreReferencesMissingFaultDomain {
         store: StoreId,
         fault_domain: FaultDomainId,

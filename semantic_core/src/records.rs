@@ -118,6 +118,27 @@ impl SavedContextRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TimerInterruptRecord {
+    pub id: TimerInterruptId,
+    pub timer_epoch: u64,
+    pub hart: u32,
+    pub target_activation: Option<ActivationId>,
+    pub target_activation_generation: Option<Generation>,
+    pub target_task: Option<TaskId>,
+    pub target_task_generation: Option<Generation>,
+    pub generation: Generation,
+    pub state: TimerInterruptState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl TimerInterruptRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::TimerInterrupt, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceRecord {
     pub id: ResourceId,
     pub label: String,

@@ -1926,6 +1926,97 @@ fn preemptive_runtime_p1_invariants_reject_context_saved_generation_leak() {
     );
 }
 
+#[test]
+fn preemptive_runtime_p2_timer_interrupt_records_event_and_passes_invariants() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(graph.dequeue_runnable_activation(1, 11));
+
+    let timer = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p2-test",
+        SemanticCommand::RecordTimerInterrupt {
+            interrupt: 5,
+            timer_epoch: 1,
+            hart: 0,
+            target_activation: Some(11),
+            target_activation_generation: Some(3),
+            note: "timer tick".to_string(),
+        },
+    ));
+    assert_eq!(timer.status, CommandStatus::Applied);
+    assert_eq!(graph.timer_interrupts()[0].timer_epoch, 1);
+    assert_eq!(graph.timer_epoch(), 1);
+    assert_eq!(graph.timer_interrupts()[0].target_task, Some(7));
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "TimerInterruptRecorded interrupt=5 epoch=1 hart=0 target=11@3 generation=1"
+    );
+}
+
+#[test]
+fn preemptive_runtime_p2_rejects_stale_target_and_non_monotonic_epoch() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p2-test",
+        SemanticCommand::RecordTimerInterrupt {
+            interrupt: 5,
+            timer_epoch: 1,
+            hart: 0,
+            target_activation: Some(11),
+            target_activation_generation: Some(99),
+            note: "stale target".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    assert!(graph.timer_interrupts().is_empty());
+
+    assert!(graph.record_timer_interrupt_with_id(5, 1, 0, Some(11), Some(1), "first tick"));
+    assert!(graph.record_timer_interrupt_with_id(6, 3, 0, Some(11), Some(1), "third tick"));
+    let non_monotonic = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p2-test",
+        SemanticCommand::RecordTimerInterrupt {
+            interrupt: 7,
+            timer_epoch: 2,
+            hart: 0,
+            target_activation: Some(11),
+            target_activation_generation: Some(1),
+            note: "old epoch".to_string(),
+        },
+    ));
+    assert_eq!(non_monotonic.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("timer interrupt epoch must be monotonic".to_string());
+    assert_eq!(non_monotonic.violations, expected);
+}
+
+#[test]
+fn preemptive_runtime_p2_invariants_reject_timer_epoch_regression() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.record_timer_interrupt_with_id(5, 1, 0, Some(11), Some(1), "first tick"));
+    assert!(graph.record_timer_interrupt_with_id(6, 2, 0, Some(11), Some(1), "second tick"));
+    graph.corrupt_timer_interrupt_epoch_for_test(6, 1);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::TimerInterruptEpochNonMonotonic {
+            interrupt: 6,
+            timer_epoch: 1,
+        })
+    );
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,
