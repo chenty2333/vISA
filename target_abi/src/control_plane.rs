@@ -23,7 +23,6 @@ pub enum ControlPlaneError {
     InvalidCursorInteger,
     InvalidCursorStream,
     NewlineInFrame,
-    FrameExceedsHardLimit,
     PanicRecordMissing,
 }
 
@@ -158,7 +157,20 @@ pub fn write_jsonl_frame(
     write_jsonl_frame_inner(&mut counter, frame).map_err(|_| ControlPlaneError::BufferTooSmall)?;
     let estimated_len = counter.len;
     if estimated_len > OSCTL_JSONL_HARD_MAX_LINE {
-        return Err(ControlPlaneError::FrameExceedsHardLimit);
+        let mut writer = SliceWriter::new(out);
+        write_truncated_frame(
+            &mut writer,
+            frame.seq,
+            frame.kind,
+            estimated_len,
+            OSCTL_JSONL_HARD_MAX_LINE,
+        )
+        .map_err(|_| ControlPlaneError::BufferTooSmall)?;
+        return Ok(JsonlWriteOutcome {
+            bytes_written: writer.len(),
+            cursor_advanced: false,
+            truncated: true,
+        });
     }
     if estimated_len > normal_limit {
         let mut writer = SliceWriter::new(out);
@@ -691,6 +703,39 @@ mod tests {
         assert!(result.truncated);
         assert!(line.contains(r#""kind":"truncated-frame-v1""#));
         assert!(line.contains(r#""original_kind":"event-log-view-v1""#));
+        assert_eq!(
+            line.as_bytes()
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn jsonl_hard_limit_overflow_emits_truncated_frame() {
+        let cursor = OsctlCursorV1::new(17, OsctlStreamV1::EventLog, 42, 900, 12);
+        let mut payload = vec![b' '; OSCTL_JSONL_HARD_MAX_LINE + 1];
+        payload[0] = b'{';
+        payload[1] = b'}';
+        let frame = JsonlFrameRefV1 {
+            seq: 44,
+            epoch: 17,
+            kind: "event-log-view-v1",
+            cursor,
+            flags: &[],
+            payload_json: &payload,
+        };
+        let mut out = [0u8; 512];
+
+        let result =
+            write_jsonl_frame(frame, &mut out, OSCTL_JSONL_NORMAL_MAX_LINE).expect("truncated");
+        let line = core::str::from_utf8(&out[..result.bytes_written]).unwrap();
+
+        assert!(!result.cursor_advanced);
+        assert!(result.truncated);
+        assert!(line.contains(r#""kind":"truncated-frame-v1""#));
+        assert!(line.contains(r#""limit":65536"#));
         assert_eq!(
             line.as_bytes()
                 .iter()

@@ -289,6 +289,8 @@ pub enum TargetArtifactError {
     MissingRequiredSection(SectionKindV1),
     HashUnavailable,
     HashMismatch,
+    ManifestHashMismatch,
+    SectionHashMismatch(SectionKindV1),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -330,6 +332,7 @@ impl<'a> TargetArtifactImage<'a> {
     fn validate(&self) -> Result<(), TargetArtifactError> {
         validate_header(self.bytes, &self.header)?;
         let mut required_seen: u16 = 0;
+        let mut manifest_section = None;
 
         for section in self.sections() {
             let section = section?;
@@ -340,6 +343,10 @@ impl<'a> TargetArtifactImage<'a> {
                 }
                 required_seen |= bit;
             }
+            if section.kind == SectionKindV1::Manifest {
+                manifest_section = Some(section);
+            }
+            verify_section_payload_hash(self.bytes, &section)?;
         }
 
         for required in REQUIRED_SECTIONS {
@@ -351,6 +358,10 @@ impl<'a> TargetArtifactImage<'a> {
             }
         }
 
+        let manifest_section = manifest_section.ok_or(
+            TargetArtifactError::MissingRequiredSection(SectionKindV1::Manifest),
+        )?;
+        verify_manifest_hash(self.bytes, &self.header, &manifest_section)?;
         verify_canonical_zero_field_image_hash(self.bytes)?;
         Ok(())
     }
@@ -530,6 +541,63 @@ fn validate_section(
     Ok(())
 }
 
+fn section_payload<'a>(
+    bytes: &'a [u8],
+    section: &TargetSectionHeaderV1,
+) -> Result<&'a [u8], TargetArtifactError> {
+    let offset =
+        usize::try_from(section.offset).map_err(|_| TargetArtifactError::SectionOutOfBounds)?;
+    let len = usize::try_from(section.len).map_err(|_| TargetArtifactError::SectionOutOfBounds)?;
+    let end = checked_add(offset, len, TargetArtifactError::SectionOutOfBounds)?;
+    bytes
+        .get(offset..end)
+        .ok_or(TargetArtifactError::SectionOutOfBounds)
+}
+
+fn verify_section_payload_hash(
+    bytes: &[u8],
+    section: &TargetSectionHeaderV1,
+) -> Result<(), TargetArtifactError> {
+    let payload = section_payload(bytes, section)?;
+    #[cfg(not(feature = "hash"))]
+    {
+        let _ = payload;
+        return Err(TargetArtifactError::HashUnavailable);
+    }
+
+    #[cfg(feature = "hash")]
+    {
+        let digest: [u8; 32] = Sha256::digest(payload).into();
+        if digest != section.hash {
+            return Err(TargetArtifactError::SectionHashMismatch(section.kind));
+        }
+        Ok(())
+    }
+}
+
+fn verify_manifest_hash(
+    bytes: &[u8],
+    header: &TargetArtifactHeaderV1,
+    section: &TargetSectionHeaderV1,
+) -> Result<(), TargetArtifactError> {
+    let payload = section_payload(bytes, section)?;
+    #[cfg(not(feature = "hash"))]
+    {
+        let _ = header;
+        let _ = payload;
+        return Err(TargetArtifactError::HashUnavailable);
+    }
+
+    #[cfg(feature = "hash")]
+    {
+        let digest: [u8; 32] = Sha256::digest(payload).into();
+        if digest != header.manifest_hash {
+            return Err(TargetArtifactError::ManifestHashMismatch);
+        }
+        Ok(())
+    }
+}
+
 fn required_section_bit(kind: SectionKindV1) -> Option<u16> {
     REQUIRED_SECTIONS
         .iter()
@@ -696,6 +764,48 @@ mod tests {
     }
 
     #[test]
+    fn reject_section_hash_mismatch() {
+        let mut image = fake_image(&REQUIRED_SECTIONS);
+        let (start, _) = section_payload_range(&image, SectionKindV1::CodeObject);
+        image[start] ^= 0x5a;
+        refresh_image_hash(&mut image);
+
+        assert_eq!(
+            TargetArtifactImage::parse(&image),
+            Err(TargetArtifactError::SectionHashMismatch(
+                SectionKindV1::CodeObject
+            ))
+        );
+    }
+
+    #[test]
+    fn reject_manifest_hash_mismatch() {
+        let mut image = fake_image(&REQUIRED_SECTIONS);
+        image[MANIFEST_HASH_OFF] ^= 0xa5;
+        refresh_image_hash(&mut image);
+
+        assert_eq!(
+            TargetArtifactImage::parse(&image),
+            Err(TargetArtifactError::ManifestHashMismatch)
+        );
+    }
+
+    #[test]
+    fn signature_payload_change_requires_signature_section_hash() {
+        let mut image = fake_image(&REQUIRED_SECTIONS);
+        let (start, _) = section_payload_range(&image, SectionKindV1::Signature);
+        image[start] ^= 0x5a;
+        refresh_image_hash(&mut image);
+
+        assert_eq!(
+            TargetArtifactImage::parse(&image),
+            Err(TargetArtifactError::SectionHashMismatch(
+                SectionKindV1::Signature
+            ))
+        );
+    }
+
+    #[test]
     fn reject_duplicate_required_sections() {
         let kinds = [
             SectionKindV1::Manifest,
@@ -739,8 +849,35 @@ mod tests {
                 .expect("write section");
         }
 
+        let mut header = TargetArtifactHeaderV1::parse(&image).expect("header");
+        if let Some((manifest_start, manifest_end)) =
+            optional_section_payload_range(&image, SectionKindV1::Manifest)
+        {
+            header.manifest_hash = Sha256::digest(&image[manifest_start..manifest_end]).into();
+            header.write_to(&mut image).expect("write manifest hash");
+        }
         refresh_image_hash(&mut image);
         image
+    }
+
+    fn section_payload_range(image: &[u8], kind: SectionKindV1) -> (usize, usize) {
+        optional_section_payload_range(image, kind).expect("section payload")
+    }
+
+    fn optional_section_payload_range(image: &[u8], kind: SectionKindV1) -> Option<(usize, usize)> {
+        let header = TargetArtifactHeaderV1::parse(image).expect("header");
+        for index in 0..header.section_count as usize {
+            let section_off = TARGET_ARTIFACT_HEADER_LEN + index * TARGET_SECTION_HEADER_LEN;
+            let section = TargetSectionHeaderV1::parse(
+                &image[section_off..section_off + TARGET_SECTION_HEADER_LEN],
+            )
+            .expect("section");
+            if section.kind == kind {
+                let start = section.offset as usize;
+                return Some((start, start + section.len as usize));
+            }
+        }
+        None
     }
 
     fn refresh_image_hash(image: &mut [u8]) {
