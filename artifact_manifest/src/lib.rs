@@ -281,6 +281,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub device_capability_count: usize,
     #[serde(default)]
+    pub driver_store_binding_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -413,6 +415,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub device_capabilities: Vec<DeviceCapabilityManifest>,
     #[serde(default)]
+    pub driver_store_bindings: Vec<DriverStoreBindingManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -524,6 +528,8 @@ pub struct SemanticRootSetManifest {
     pub irq_event_roots: Vec<String>,
     #[serde(default)]
     pub device_capability_roots: Vec<String>,
+    #[serde(default)]
+    pub driver_store_binding_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1278,6 +1284,23 @@ pub struct DeviceCapabilityManifest {
     pub handle_slot: u32,
     pub handle_generation: u32,
     pub handle_tag: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct DriverStoreBindingManifest {
+    pub id: u64,
+    pub driver_store: u64,
+    pub driver_store_generation: u64,
+    pub device: u64,
+    pub device_generation: u64,
+    pub device_capability: u64,
+    pub device_capability_generation: u64,
+    pub capability: u64,
+    pub capability_generation: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

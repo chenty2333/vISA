@@ -857,6 +857,33 @@ impl DeviceCapabilityRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DriverStoreBindingRecord {
+    pub id: DriverStoreBindingId,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub device_capability: DeviceCapabilityId,
+    pub device_capability_generation: Generation,
+    pub capability: CapabilityId,
+    pub capability_generation: Generation,
+    pub generation: Generation,
+    pub state: DriverStoreBindingState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl DriverStoreBindingRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::DriverStoreBinding,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

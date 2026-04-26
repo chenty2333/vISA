@@ -1,0 +1,130 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "I8-driver-store-binding",
+  "name": "golden_i8_driver_store_binding",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md",
+    "references/specs/substrate-api-v0/01-authority-traits.md"
+  ],
+  "no_goals": [
+    "real device probe or bind",
+    "real MMIO/DMA/IRQ operation",
+    "virtio driver implementation",
+    "network or block vertical implementation"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "record-device-capability",
+        "device_capability": "device-capability:9951@1",
+        "target": "device-object:9701@1",
+        "class": "device",
+        "operation": "probe",
+        "driver_store": "store:2@2",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "bind-driver-store",
+        "binding": "driver-store-binding:9961@1",
+        "driver_store": "store:2@2",
+        "device": "device-object:9701@1",
+        "device_capability": "device-capability:9951@1",
+        "capability": "capability:1@1",
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "bind-driver-store",
+        "device_capability": "device-capability:9951@2",
+        "expected": "rejected",
+        "violation": "driver store binding device capability generation is missing or inactive"
+      },
+      {
+        "id": 4,
+        "command": "bind-driver-store",
+        "device": "device-object:9701@2",
+        "expected": "rejected",
+        "violation": "driver store binding device generation is missing or inactive"
+      },
+      {
+        "id": 5,
+        "command": "bind-driver-store",
+        "device_capability": "device-capability:mmio-class",
+        "expected": "rejected",
+        "violation": "driver store binding device capability does not authorize binding"
+      },
+      {
+        "id": 6,
+        "command": "bind-driver-store",
+        "device": "device-object:9701@1",
+        "expected": "rejected",
+        "violation": "driver store binding device already has an active driver"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "DeviceCapabilityRecorded",
+      "device_capability": "device-capability:9951@1",
+      "driver_store": "store:2@2",
+      "target": "device-object:9701@1"
+    },
+    {
+      "kind": "DriverStoreBound",
+      "binding": "driver-store-binding:9961@1",
+      "driver_store": "store:2@2",
+      "device": "device-object:9701@1",
+      "device_capability": "device-capability:9951@1"
+    }
+  ],
+  "expected": {
+    "views": {
+      "driver-store-binding": {
+        "count": 1,
+        "id": 9961,
+        "generation": 1,
+        "state": "bound",
+        "driver_store": "store:2@2",
+        "device": "device-object:9701@1",
+        "device_capability": "device-capability:9951@1",
+        "capability": "capability:1@1"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph-history": {
+        "edges": [
+          "driver-store-binding:9961@1 --driver-store-binding-store--> store:2@2",
+          "driver-store-binding:9961@1 --driver-store-binding-device--> device-object:9701@1",
+          "driver-store-binding:9961@1 --driver-store-binding-device-capability--> device-capability:9951@1",
+          "driver-store-binding:9961@1 --driver-store-binding-ledger--> capability:1@1"
+        ]
+      }
+    },
+    "invariants": [
+      "DriverStoreBinding must carry exact driver Store generation",
+      "DriverStoreBinding must carry exact DeviceObject generation",
+      "DriverStoreBinding must be backed by an active DeviceCapability generation",
+      "Wrong capability class or stale generation cannot bind a driver Store",
+      "A device generation cannot have two active driver Store bindings"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "io_runtime_i8_driver_store_binding_records_exact_driver_and_device_identity",
+      "io_runtime_i8_rejects_stale_wrong_or_duplicate_driver_store_binding",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "semantic_roots_reject_driver_store_binding_root_mismatch"
+    ],
+    "osctl_json_view": "driver-store-binding list --json"
+  }
+}

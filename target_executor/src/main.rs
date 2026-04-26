@@ -14,7 +14,7 @@ use artifact_manifest::{
     CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
     CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
     CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
-    DeviceObjectManifest, DmaBufferObjectManifest, GuestStateManifest,
+    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
     InterfaceEventManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
     MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
@@ -1363,6 +1363,30 @@ fn record_preemptive_runtime_context_evidence(
             .into());
         }
     }
+    let i8_result = semantic.apply_envelope(CommandEnvelope::new(
+        111,
+        "target-executor-i8",
+        SemanticCommand::BindDriverStore {
+            binding: 9961,
+            driver_store: io_driver_store,
+            driver_store_generation: io_driver_store_generation,
+            device: 9701,
+            device_generation: 1,
+            device_capability: 9951,
+            device_capability_generation: 1,
+            note: "i8-bind-driver-store-to-device-harness".to_owned(),
+        },
+    ));
+    if i8_result.status != CommandStatus::Applied {
+        return Err(format!(
+            "preemptive runtime evidence command {} ({}) failed: status={} violations={:?}",
+            i8_result.command_id,
+            i8_result.command,
+            i8_result.status.as_str(),
+            i8_result.violations
+        )
+        .into());
+    }
     Ok(())
 }
 
@@ -2389,6 +2413,7 @@ fn demo_migration_package(
             irq_line_object_count: semantic.irq_line_object_count(),
             irq_event_count: semantic.irq_event_count(),
             device_capability_count: semantic.device_capability_count(),
+            driver_store_binding_count: semantic.driver_store_binding_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2564,6 +2589,11 @@ fn demo_migration_package(
                 .device_capabilities()
                 .iter()
                 .map(device_capability_manifest)
+                .collect(),
+            driver_store_bindings: semantic
+                .driver_store_bindings()
+                .iter()
+                .map(driver_store_binding_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -3192,6 +3222,26 @@ fn semantic_roots(
                     device_capability.capability_generation,
                     device_capability.state.as_str(),
                     device_capability.generation
+                )
+            })
+            .collect(),
+        driver_store_binding_roots: semantic
+            .driver_store_bindings()
+            .iter()
+            .map(|binding| {
+                format!(
+                    "driver-store-binding id={} driver_store={}@{} device={}@{} device_capability={}@{} capability={}@{} state={} generation={}",
+                    binding.id,
+                    binding.driver_store,
+                    binding.driver_store_generation,
+                    binding.device,
+                    binding.device_generation,
+                    binding.device_capability,
+                    binding.device_capability_generation,
+                    binding.capability,
+                    binding.capability_generation,
+                    binding.state.as_str(),
+                    binding.generation
                 )
             })
             .collect(),
@@ -4455,6 +4505,26 @@ fn device_capability_manifest(
         state: device_capability.state.as_str().to_owned(),
         recorded_at_event: device_capability.recorded_at_event,
         note: device_capability.note.clone(),
+    }
+}
+
+fn driver_store_binding_manifest(
+    binding: &semantic_core::DriverStoreBindingRecord,
+) -> DriverStoreBindingManifest {
+    DriverStoreBindingManifest {
+        id: binding.id,
+        driver_store: binding.driver_store,
+        driver_store_generation: binding.driver_store_generation,
+        device: binding.device,
+        device_generation: binding.device_generation,
+        device_capability: binding.device_capability,
+        device_capability_generation: binding.device_capability_generation,
+        capability: binding.capability,
+        capability_generation: binding.capability_generation,
+        generation: binding.generation,
+        state: binding.state.as_str().to_owned(),
+        recorded_at_event: binding.recorded_at_event,
+        note: binding.note.clone(),
     }
 }
 

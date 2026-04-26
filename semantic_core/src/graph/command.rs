@@ -323,6 +323,16 @@ pub enum SemanticCommand {
         handle: CapabilityHandle,
         note: String,
     },
+    BindDriverStore {
+        binding: DriverStoreBindingId,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        device_capability: DeviceCapabilityId,
+        device_capability_generation: Generation,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -558,6 +568,7 @@ impl SemanticCommand {
             Self::RecordIrqLineObject { .. } => "record-irq-line-object",
             Self::RecordIrqEvent { .. } => "record-irq-event",
             Self::RecordDeviceCapability { .. } => "record-device-capability",
+            Self::BindDriverStore { .. } => "bind-driver-store",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1823,6 +1834,26 @@ impl SemanticGraph {
                 )
                 .map(|_| ())
                 .map_err(CommandError::precondition),
+            SemanticCommand::BindDriverStore {
+                binding,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                device_capability,
+                device_capability_generation,
+                ..
+            } => self
+                .validate_driver_store_binding(
+                    *binding,
+                    *driver_store,
+                    *driver_store_generation,
+                    *device,
+                    *device_generation,
+                    *device_capability,
+                    *device_capability_generation,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2866,6 +2897,25 @@ impl SemanticGraph {
                 class,
                 &operation,
                 handle,
+                &note,
+            ),
+            SemanticCommand::BindDriverStore {
+                binding,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                device_capability,
+                device_capability_generation,
+                note,
+            } => self.record_driver_store_binding_with_id(
+                binding,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                device_capability,
+                device_capability_generation,
                 &note,
             ),
             SemanticCommand::ResumeActivation {

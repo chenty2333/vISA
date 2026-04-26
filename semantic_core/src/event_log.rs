@@ -338,6 +338,18 @@ pub enum EventKind {
         handle_generation: u32,
         generation: Generation,
     },
+    DriverStoreBound {
+        binding: DriverStoreBindingId,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        device_capability: DeviceCapabilityId,
+        device_capability_generation: Generation,
+        capability: CapabilityId,
+        capability_generation: Generation,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1146,6 +1158,20 @@ impl EventKind {
                 "DeviceCapabilityRecorded device_capability={device_capability} driver_store={driver_store}@{driver_store_generation} target={} class={} operation={operation} capability={capability}@{capability_generation} handle_slot={handle_slot} handle_generation={handle_generation} generation={generation}",
                 target.summary(),
                 class.as_str()
+            ),
+            Self::DriverStoreBound {
+                binding,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                device_capability,
+                device_capability_generation,
+                capability,
+                capability_generation,
+                generation,
+            } => format!(
+                "DriverStoreBound binding={binding} driver_store={driver_store}@{driver_store_generation} device={device}@{device_generation} device_capability={device_capability}@{device_capability_generation} capability={capability}@{capability_generation} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

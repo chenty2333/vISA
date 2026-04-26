@@ -910,6 +910,28 @@ pub enum SemanticInvariantError {
     DeviceCapabilityMissingEvent {
         device_capability: DeviceCapabilityId,
     },
+    DriverStoreBindingInvalid {
+        binding: DriverStoreBindingId,
+    },
+    DriverStoreBindingMissingStore {
+        binding: DriverStoreBindingId,
+        store: StoreId,
+    },
+    DriverStoreBindingMissingDevice {
+        binding: DriverStoreBindingId,
+        device: DeviceObjectId,
+    },
+    DriverStoreBindingMissingCapabilityEvidence {
+        binding: DriverStoreBindingId,
+        device_capability: DeviceCapabilityId,
+    },
+    DriverStoreBindingDuplicateDevice {
+        binding: DriverStoreBindingId,
+        device: DeviceObjectId,
+    },
+    DriverStoreBindingMissingEvent {
+        binding: DriverStoreBindingId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

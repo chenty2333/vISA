@@ -1409,6 +1409,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::IrqLineObject
             | ContractObjectKind::IrqEvent
             | ContractObjectKind::DeviceCapability
+            | ContractObjectKind::DriverStoreBinding
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

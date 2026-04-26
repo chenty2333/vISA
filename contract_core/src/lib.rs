@@ -94,6 +94,7 @@ pub enum ObjectKind {
     IrqLineObject,
     IrqEvent,
     DeviceCapability,
+    DriverStoreBinding,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -153,6 +154,7 @@ impl ObjectKind {
             Self::IrqLineObject => "irq-line-object",
             Self::IrqEvent => "irq-event",
             Self::DeviceCapability => "device-capability",
+            Self::DriverStoreBinding => "driver-store-binding",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -372,6 +374,7 @@ typed_ref!(MmioRegionObjectRef, ObjectKind::MmioRegionObject);
 typed_ref!(IrqLineObjectRef, ObjectKind::IrqLineObject);
 typed_ref!(IrqEventRef, ObjectKind::IrqEvent);
 typed_ref!(DeviceCapabilityRef, ObjectKind::DeviceCapability);
+typed_ref!(DriverStoreBindingRef, ObjectKind::DriverStoreBinding);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1667,6 +1670,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("device capability root/count mismatch"));
     }
+    if roots.driver_store_binding_roots.len() != package.semantic.driver_store_binding_count
+        || package.semantic.driver_store_bindings.len()
+            != package.semantic.driver_store_binding_count
+    {
+        return Err(ContractError::new(
+            "driver store binding root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2217,6 +2228,7 @@ mod tests {
                 irq_line_object_count: 0,
                 irq_event_count: 0,
                 device_capability_count: 0,
+                driver_store_binding_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2285,6 +2297,7 @@ mod tests {
                 irq_line_objects: Vec::new(),
                 irq_events: Vec::new(),
                 device_capabilities: Vec::new(),
+                driver_store_bindings: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3215,6 +3228,32 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_driver_store_binding_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.driver_store_binding_count = 1;
+        package.semantic.driver_store_bindings.push(
+            artifact_manifest::DriverStoreBindingManifest {
+                id: 25,
+                driver_store: 2,
+                driver_store_generation: 2,
+                device: 17,
+                device_generation: 1,
+                device_capability: 24,
+                device_capability_generation: 1,
+                capability: 7,
+                capability_generation: 1,
+                generation: 1,
+                state: "bound".to_owned(),
+                recorded_at_event: 61,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "driver store binding root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3717,6 +3756,8 @@ mod tests {
         assert!(IrqEventRef::try_from_ref(irq_event).is_ok());
         let device_capability = ObjectRef::new(ObjectKind::DeviceCapability, 24, 1).unwrap();
         assert!(DeviceCapabilityRef::try_from_ref(device_capability).is_ok());
+        let driver_binding = ObjectRef::new(ObjectKind::DriverStoreBinding, 25, 1).unwrap();
+        assert!(DriverStoreBindingRef::try_from_ref(driver_binding).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

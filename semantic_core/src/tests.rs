@@ -2971,6 +2971,228 @@ fn io_runtime_i7_rejects_label_only_stale_revoked_or_duplicate_capability() {
     );
 }
 
+fn record_i8_device_probe_capability(
+    graph: &mut SemanticGraph,
+    driver_store: StoreId,
+    driver_store_generation: Generation,
+    device: ContractObjectRef,
+    id: DeviceCapabilityId,
+) -> DeviceCapabilityId {
+    let cap = graph.grant_capability_with_authority_ref(
+        "driver.fake-io0",
+        "device.fake-io0",
+        AuthorityObjectRef::internal(CapabilityClass::Device, device),
+        &["probe"],
+        "store",
+        "i8-test",
+        true,
+    );
+    let handle = graph
+        .capabilities()
+        .record(cap)
+        .and_then(|record| record.store_local_handle(vec!["probe".to_string()]))
+        .unwrap();
+    assert!(graph.record_device_capability_with_id(
+        id,
+        driver_store,
+        driver_store_generation,
+        device,
+        CapabilityClass::Device,
+        "probe",
+        handle,
+        "device probe capability",
+    ));
+    id
+}
+
+#[test]
+fn io_runtime_i8_driver_store_binding_records_exact_driver_and_device_identity() {
+    let (mut graph, driver_store, driver_store_generation, device, _mmio, _dma, _irq) =
+        setup_i7_device_capability_graph();
+    let device_capability = record_i8_device_probe_capability(
+        &mut graph,
+        driver_store,
+        driver_store_generation,
+        device,
+        1201,
+    );
+    let cursor_before = graph.event_log().cursor();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i8-test",
+        SemanticCommand::BindDriverStore {
+            binding: 1202,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            device_capability,
+            device_capability_generation: 1,
+            note: "driver store binding harness".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.driver_store_bindings().len(), 1);
+    let binding = &graph.driver_store_bindings()[0];
+    assert_eq!(binding.id, 1202);
+    assert_eq!(binding.driver_store, driver_store);
+    assert_eq!(binding.driver_store_generation, driver_store_generation);
+    assert_eq!(binding.device, 401);
+    assert_eq!(binding.device_generation, 1);
+    assert_eq!(binding.device_capability, device_capability);
+    assert_eq!(binding.device_capability_generation, 1);
+    assert_eq!(binding.state, DriverStoreBindingState::Bound);
+    assert!(binding.recorded_at_event > cursor_before);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "DriverStoreBound binding=1202 driver_store={driver_store}@{driver_store_generation} device=401@1 device_capability=1201@1 capability={}@1 generation=1",
+            binding.capability
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn io_runtime_i8_rejects_stale_wrong_or_duplicate_driver_store_binding() {
+    let (mut graph, driver_store, driver_store_generation, device, mmio, _dma, _irq) =
+        setup_i7_device_capability_graph();
+    let device_capability = record_i8_device_probe_capability(
+        &mut graph,
+        driver_store,
+        driver_store_generation,
+        device,
+        1201,
+    );
+
+    let stale_device_capability = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i8-test",
+        SemanticCommand::BindDriverStore {
+            binding: 1202,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            device_capability,
+            device_capability_generation: 2,
+            note: "stale device capability generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_device_capability.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_device_capability.violations,
+        vec![
+            "driver store binding device capability generation is missing or inactive".to_string()
+        ]
+    );
+
+    let stale_device = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i8-test",
+        SemanticCommand::BindDriverStore {
+            binding: 1202,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 2,
+            device_capability,
+            device_capability_generation: 1,
+            note: "stale device generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_device.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_device.violations,
+        vec!["driver store binding device generation is missing or inactive".to_string()]
+    );
+
+    let wrong_class_cap = graph.grant_capability_with_authority_ref(
+        "driver.fake-io0",
+        "mmio.fake-io0.regs",
+        AuthorityObjectRef::internal(CapabilityClass::MmioRegion, mmio),
+        &["write32"],
+        "store",
+        "i8-test",
+        true,
+    );
+    let wrong_class_handle = graph
+        .capabilities()
+        .record(wrong_class_cap)
+        .and_then(|record| record.store_local_handle(vec!["write32".to_string()]))
+        .unwrap();
+    assert!(graph.record_device_capability_with_id(
+        1203,
+        driver_store,
+        driver_store_generation,
+        mmio,
+        CapabilityClass::MmioRegion,
+        "write32",
+        wrong_class_handle,
+        "wrong-class capability",
+    ));
+    let wrong_class = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "i8-test",
+        SemanticCommand::BindDriverStore {
+            binding: 1202,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            device_capability: 1203,
+            device_capability_generation: 1,
+            note: "wrong target/class capability must reject".to_string(),
+        },
+    ));
+    assert_eq!(wrong_class.status, CommandStatus::Rejected);
+    assert_eq!(
+        wrong_class.violations,
+        vec!["driver store binding device capability does not authorize binding".to_string()]
+    );
+
+    assert!(graph.record_driver_store_binding_with_id(
+        1202,
+        driver_store,
+        driver_store_generation,
+        401,
+        1,
+        device_capability,
+        1,
+        "first binding",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "i8-test",
+        SemanticCommand::BindDriverStore {
+            binding: 1204,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            device_capability,
+            device_capability_generation: 1,
+            note: "duplicate active binding must reject".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["driver store binding device already has an active driver".to_string()]
+    );
+
+    graph.corrupt_driver_store_binding_device_generation_for_test(1202, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::DriverStoreBindingMissingDevice {
+            binding: 1202,
+            device: 401,
+        })
+    );
+}
+
 #[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();

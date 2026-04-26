@@ -610,6 +610,21 @@ impl DeviceCapabilityState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DriverStoreBindingState {
+    Bound,
+    Released,
+}
+
+impl DriverStoreBindingState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bound => "bound",
+            Self::Released => "released",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,
