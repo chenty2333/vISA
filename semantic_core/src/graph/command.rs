@@ -333,6 +333,33 @@ pub enum SemanticCommand {
         device_capability_generation: Generation,
         note: String,
     },
+    RecordIoWait {
+        io_wait: IoWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        driver_binding: DriverStoreBindingId,
+        driver_binding_generation: Generation,
+        blocker: ContractObjectRef,
+        note: String,
+    },
+    ResolveIoWait {
+        io_wait: IoWaitId,
+        io_wait_generation: Generation,
+        irq_event: IrqEventId,
+        irq_event_generation: Generation,
+        note: String,
+    },
+    CancelIoWait {
+        io_wait: IoWaitId,
+        io_wait_generation: Generation,
+        errno: i32,
+        reason: WaitCancelReason,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -569,6 +596,9 @@ impl SemanticCommand {
             Self::RecordIrqEvent { .. } => "record-irq-event",
             Self::RecordDeviceCapability { .. } => "record-device-capability",
             Self::BindDriverStore { .. } => "bind-driver-store",
+            Self::RecordIoWait { .. } => "record-io-wait",
+            Self::ResolveIoWait { .. } => "resolve-io-wait",
+            Self::CancelIoWait { .. } => "cancel-io-wait",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1854,6 +1884,115 @@ impl SemanticGraph {
                     *device_capability_generation,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordIoWait {
+                io_wait,
+                wait,
+                wait_generation,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                driver_binding,
+                driver_binding_generation,
+                blocker,
+                ..
+            } => self
+                .validate_io_wait(
+                    *io_wait,
+                    *wait,
+                    *wait_generation,
+                    *driver_store,
+                    *driver_store_generation,
+                    *device,
+                    *device_generation,
+                    *driver_binding,
+                    *driver_binding_generation,
+                    *blocker,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::ResolveIoWait {
+                io_wait,
+                io_wait_generation,
+                irq_event,
+                irq_event_generation,
+                ..
+            } => {
+                let Some(record) = self.io_waits.iter().find(|record| {
+                    record.id == *io_wait
+                        && record.generation == *io_wait_generation
+                        && record.state == IoWaitState::Pending
+                }) else {
+                    return Err(CommandError::precondition(
+                        "io wait generation is missing or not pending",
+                    ));
+                };
+                let Some(irq_record) = self.irq_events.iter().find(|irq| {
+                    irq.id == *irq_event
+                        && irq.generation == *irq_event_generation
+                        && irq.state == IrqEventState::Recorded
+                }) else {
+                    return Err(CommandError::precondition(
+                        "io wait irq event generation is missing",
+                    ));
+                };
+                if record.blocker.kind == ContractObjectKind::IrqLineObject
+                    && (record.blocker.id != irq_record.irq_line
+                        || record.blocker.generation != irq_record.irq_line_generation)
+                {
+                    return Err(CommandError::precondition(
+                        "io wait irq line attribution mismatch",
+                    ));
+                }
+                if !self.waits.iter().any(|wait| {
+                    wait.id == record.wait
+                        && wait.generation == record.wait_generation
+                        && wait.state == WaitState::Pending
+                }) {
+                    return Err(CommandError::precondition(
+                        "io wait token generation is missing or not pending",
+                    ));
+                }
+                if irq_record.device == record.device
+                    && irq_record.device_generation == record.device_generation
+                    && irq_record.driver_store == record.driver_store
+                    && irq_record.driver_store_generation == record.driver_store_generation
+                {
+                    Ok(())
+                } else {
+                    Err(CommandError::precondition(
+                        "io wait irq event attribution mismatch",
+                    ))
+                }
+            }
+            SemanticCommand::CancelIoWait {
+                io_wait,
+                io_wait_generation,
+                reason,
+                ..
+            } => {
+                if !matches!(
+                    reason,
+                    WaitCancelReason::DeviceFault
+                        | WaitCancelReason::CapabilityRevoked
+                        | WaitCancelReason::ResourceDropped
+                        | WaitCancelReason::GenerationMismatch
+                ) {
+                    return Err(CommandError::precondition(
+                        "io wait cancellation reason is not an io reason",
+                    ));
+                }
+                if self.io_waits.iter().any(|record| {
+                    record.id == *io_wait
+                        && record.generation == *io_wait_generation
+                        && record.state == IoWaitState::Pending
+                }) {
+                    Ok(())
+                } else {
+                    Err(CommandError::precondition(
+                        "io wait generation is missing or not pending",
+                    ))
+                }
+            }
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2918,6 +3057,51 @@ impl SemanticGraph {
                 device_capability_generation,
                 &note,
             ),
+            SemanticCommand::RecordIoWait {
+                io_wait,
+                wait,
+                wait_generation,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                driver_binding,
+                driver_binding_generation,
+                blocker,
+                note,
+            } => self.record_io_wait_with_id(
+                io_wait,
+                wait,
+                wait_generation,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                driver_binding,
+                driver_binding_generation,
+                blocker,
+                &note,
+            ),
+            SemanticCommand::ResolveIoWait {
+                io_wait,
+                io_wait_generation,
+                irq_event,
+                irq_event_generation,
+                note,
+            } => self.resolve_io_wait_with_irq_event(
+                io_wait,
+                io_wait_generation,
+                irq_event,
+                irq_event_generation,
+                &note,
+            ),
+            SemanticCommand::CancelIoWait {
+                io_wait,
+                io_wait_generation,
+                errno,
+                reason,
+                note,
+            } => self.cancel_io_wait(io_wait, io_wait_generation, errno, reason, &note),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,

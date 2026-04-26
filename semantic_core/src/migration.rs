@@ -932,6 +932,37 @@ pub enum SemanticInvariantError {
     DriverStoreBindingMissingEvent {
         binding: DriverStoreBindingId,
     },
+    IoWaitInvalid {
+        io_wait: IoWaitId,
+    },
+    IoWaitMissingWait {
+        io_wait: IoWaitId,
+        wait: WaitId,
+    },
+    IoWaitMissingStore {
+        io_wait: IoWaitId,
+        store: StoreId,
+    },
+    IoWaitMissingDevice {
+        io_wait: IoWaitId,
+        device: DeviceObjectId,
+    },
+    IoWaitMissingDriverBinding {
+        io_wait: IoWaitId,
+        binding: DriverStoreBindingId,
+    },
+    IoWaitMissingBlocker {
+        io_wait: IoWaitId,
+        blocker: ContractObjectRef,
+    },
+    IoWaitDuplicateWait {
+        io_wait: IoWaitId,
+        wait: WaitId,
+    },
+    IoWaitMissingEvent {
+        io_wait: IoWaitId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

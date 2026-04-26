@@ -884,6 +884,34 @@ impl DriverStoreBindingRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IoWaitRecord {
+    pub id: IoWaitId,
+    pub wait: WaitId,
+    pub wait_generation: Generation,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub driver_binding: DriverStoreBindingId,
+    pub driver_binding_generation: Generation,
+    pub blocker: ContractObjectRef,
+    pub generation: Generation,
+    pub state: IoWaitState,
+    pub created_at_event: EventId,
+    pub completed_at_event: Option<EventId>,
+    pub completion_irq_event: Option<IrqEventId>,
+    pub completion_irq_event_generation: Option<Generation>,
+    pub cancel_reason: Option<WaitCancelReason>,
+    pub note: String,
+}
+
+impl IoWaitRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::IoWait, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

@@ -350,6 +350,34 @@ pub enum EventKind {
         capability_generation: Generation,
         generation: Generation,
     },
+    IoWaitCreated {
+        io_wait: IoWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        driver_binding: DriverStoreBindingId,
+        driver_binding_generation: Generation,
+        blocker: ContractObjectRef,
+        generation: Generation,
+    },
+    IoWaitResolved {
+        io_wait: IoWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        irq_event: IrqEventId,
+        irq_event_generation: Generation,
+        generation: Generation,
+    },
+    IoWaitCancelled {
+        io_wait: IoWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        reason: WaitCancelReason,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1172,6 +1200,42 @@ impl EventKind {
                 generation,
             } => format!(
                 "DriverStoreBound binding={binding} driver_store={driver_store}@{driver_store_generation} device={device}@{device_generation} device_capability={device_capability}@{device_capability_generation} capability={capability}@{capability_generation} generation={generation}"
+            ),
+            Self::IoWaitCreated {
+                io_wait,
+                wait,
+                wait_generation,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                driver_binding,
+                driver_binding_generation,
+                blocker,
+                generation,
+            } => format!(
+                "IoWaitCreated io_wait={io_wait} wait={wait}@{wait_generation} driver_store={driver_store}@{driver_store_generation} device={device}@{device_generation} driver_binding={driver_binding}@{driver_binding_generation} blocker={} generation={generation}",
+                blocker.summary()
+            ),
+            Self::IoWaitResolved {
+                io_wait,
+                wait,
+                wait_generation,
+                irq_event,
+                irq_event_generation,
+                generation,
+            } => format!(
+                "IoWaitResolved io_wait={io_wait} wait={wait}@{wait_generation} irq_event={irq_event}@{irq_event_generation} generation={generation}"
+            ),
+            Self::IoWaitCancelled {
+                io_wait,
+                wait,
+                wait_generation,
+                reason,
+                generation,
+            } => format!(
+                "IoWaitCancelled io_wait={io_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
+                reason.as_str()
             ),
             Self::RuntimeActivationResumed {
                 resume,

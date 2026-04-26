@@ -3193,6 +3193,380 @@ fn io_runtime_i8_rejects_stale_wrong_or_duplicate_driver_store_binding() {
     );
 }
 
+fn setup_i9_io_wait_graph() -> (
+    SemanticGraph,
+    StoreId,
+    Generation,
+    ContractObjectRef,
+    ContractObjectRef,
+    DriverStoreBindingId,
+) {
+    let (mut graph, driver_store, driver_store_generation, device, _mmio, _dma, irq) =
+        setup_i7_device_capability_graph();
+    let device_capability = record_i8_device_probe_capability(
+        &mut graph,
+        driver_store,
+        driver_store_generation,
+        device,
+        1301,
+    );
+    assert!(graph.record_driver_store_binding_with_id(
+        1302,
+        driver_store,
+        driver_store_generation,
+        401,
+        1,
+        device_capability,
+        1,
+        "i9 binding harness",
+    ));
+    (
+        graph,
+        driver_store,
+        driver_store_generation,
+        device,
+        irq,
+        1302,
+    )
+}
+
+#[test]
+fn io_runtime_i9_io_wait_resolves_from_irq_event_with_exact_generations() {
+    let (mut graph, driver_store, driver_store_generation, _device, irq, binding) =
+        setup_i9_io_wait_graph();
+
+    let create_wait = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i9-test",
+        SemanticCommand::CreateWait {
+            wait: 1303,
+            owner_task: None,
+            owner_store: Some(driver_store),
+            owner_store_generation: Some(driver_store_generation),
+            kind: SemanticWaitKind::DeviceIrq,
+            generation: 1,
+            blockers: vec![irq],
+            deadline: None,
+            restart_policy: RestartPolicy::InternalOnly,
+            saved_context: Some("driver.fake-io0:rx-irq".to_string()),
+        },
+    ));
+    assert_eq!(create_wait.status, CommandStatus::Applied);
+
+    let record_io_wait = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i9-test",
+        SemanticCommand::RecordIoWait {
+            io_wait: 1304,
+            wait: 1303,
+            wait_generation: 1,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            blocker: irq,
+            note: "io wait blocks on fake irq line".to_string(),
+        },
+    ));
+    assert_eq!(record_io_wait.status, CommandStatus::Applied);
+    let index = graph.wait_index();
+    assert!(index.by_resource.contains(&(irq, 1303)));
+    assert!(
+        index
+            .by_store
+            .contains(&(driver_store, driver_store_generation, 1303))
+    );
+
+    assert_eq!(graph.io_waits().len(), 1);
+    assert_eq!(graph.io_waits()[0].state, IoWaitState::Pending);
+    assert!(graph.record_irq_event_with_id(
+        1305,
+        901,
+        1,
+        401,
+        1,
+        driver_store,
+        driver_store_generation,
+        2,
+        "fake irq resolves io wait",
+    ));
+    let resolve = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "i9-test",
+        SemanticCommand::ResolveIoWait {
+            io_wait: 1304,
+            io_wait_generation: 1,
+            irq_event: 1305,
+            irq_event_generation: 1,
+            note: "fake irq event resolves wait".to_string(),
+        },
+    ));
+    assert_eq!(resolve.status, CommandStatus::Applied);
+    let wait = graph
+        .wait_records()
+        .iter()
+        .find(|wait| wait.id == 1303)
+        .unwrap();
+    assert_eq!(wait.state, WaitState::Resolved);
+    assert_eq!(graph.io_waits()[0].state, IoWaitState::Resolved);
+    assert_eq!(graph.io_waits()[0].completion_irq_event, Some(1305));
+    assert_eq!(graph.io_waits()[0].completion_irq_event_generation, Some(1));
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "IoWaitResolved io_wait=1304 wait=1303@1 irq_event=1305@1 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn io_runtime_i9_rejects_stale_waits_and_cancels_device_faults() {
+    let (mut graph, driver_store, driver_store_generation, _device, irq, binding) =
+        setup_i9_io_wait_graph();
+    assert!(
+        graph
+            .apply(SemanticCommand::CreateWait {
+                wait: 1310,
+                owner_task: None,
+                owner_store: Some(driver_store),
+                owner_store_generation: Some(driver_store_generation),
+                kind: SemanticWaitKind::DeviceIrq,
+                generation: 1,
+                blockers: vec![irq],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: None,
+            })
+            .is_ok()
+    );
+
+    let stale_wait_generation = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i9-test",
+        SemanticCommand::RecordIoWait {
+            io_wait: 1311,
+            wait: 1310,
+            wait_generation: 2,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            blocker: irq,
+            note: "stale wait generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_wait_generation.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_wait_generation.violations,
+        vec!["io wait token generation is missing or not pending".to_string()]
+    );
+
+    let stale_device_generation = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i9-test",
+        SemanticCommand::RecordIoWait {
+            io_wait: 1311,
+            wait: 1310,
+            wait_generation: 1,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 2,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            blocker: irq,
+            note: "stale device generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_device_generation.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_device_generation.violations,
+        vec!["io wait device generation is missing or inactive".to_string()]
+    );
+
+    let other_device_resource = graph.register_resource(ResourceKind::Device, None, "device:other");
+    let other_device_resource_generation = graph
+        .resource_handle(other_device_resource)
+        .unwrap()
+        .generation;
+    let other_dma_resource = graph.register_resource(ResourceKind::DmaBuffer, None, "dma:other");
+    let other_dma_resource_generation = graph
+        .resource_handle(other_dma_resource)
+        .unwrap()
+        .generation;
+    assert!(graph.record_device_object_with_id(
+        402,
+        "other-io",
+        "fake-device",
+        other_device_resource,
+        other_device_resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "other-io-v1",
+        "other device object",
+    ));
+    assert!(graph.record_queue_object_with_id(
+        502,
+        "other-io-rx",
+        QueueObjectRole::Rx,
+        0,
+        64,
+        402,
+        1,
+        "other queue object",
+    ));
+    assert!(graph.record_descriptor_object_with_id(
+        602,
+        502,
+        1,
+        0,
+        DescriptorObjectAccess::ReadWrite,
+        2048,
+        "other descriptor object",
+    ));
+    assert!(graph.record_dma_buffer_object_with_id(
+        702,
+        602,
+        1,
+        other_dma_resource,
+        other_dma_resource_generation,
+        DmaBufferObjectAccess::ReadWrite,
+        2048,
+        "other dma buffer object",
+    ));
+    let wrong_device_dma = ContractObjectRef::new(ContractObjectKind::DmaBufferObject, 702, 1);
+    assert!(
+        graph
+            .apply(SemanticCommand::CreateWait {
+                wait: 1313,
+                owner_task: None,
+                owner_store: Some(driver_store),
+                owner_store_generation: Some(driver_store_generation),
+                kind: SemanticWaitKind::DeviceIrq,
+                generation: 1,
+                blockers: vec![wrong_device_dma],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: None,
+            })
+            .is_ok()
+    );
+    let wrong_dma_device = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "i9-test",
+        SemanticCommand::RecordIoWait {
+            io_wait: 1311,
+            wait: 1313,
+            wait_generation: 1,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            blocker: wrong_device_dma,
+            note: "dma blocker from another device must reject".to_string(),
+        },
+    ));
+    assert_eq!(wrong_dma_device.status, CommandStatus::Rejected);
+    assert_eq!(
+        wrong_dma_device.violations,
+        vec!["io wait blocker generation is missing or inactive".to_string()]
+    );
+
+    assert!(graph.record_io_wait_with_id(
+        1311,
+        1310,
+        1,
+        driver_store,
+        driver_store_generation,
+        401,
+        1,
+        binding,
+        1,
+        irq,
+        "pending io wait",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "i9-test",
+        SemanticCommand::RecordIoWait {
+            io_wait: 1312,
+            wait: 1310,
+            wait_generation: 1,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            blocker: irq,
+            note: "duplicate pending io wait must reject".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["io wait token already has a pending io wait".to_string()]
+    );
+
+    let wrong_reason = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "i9-test",
+        SemanticCommand::CancelIoWait {
+            io_wait: 1311,
+            io_wait_generation: 1,
+            errno: 110,
+            reason: WaitCancelReason::Timeout,
+            note: "timeout is not an io fault reason".to_string(),
+        },
+    ));
+    assert_eq!(wrong_reason.status, CommandStatus::Rejected);
+    assert_eq!(
+        wrong_reason.violations,
+        vec!["io wait cancellation reason is not an io reason".to_string()]
+    );
+
+    let cancel = graph.apply_envelope(CommandEnvelope::new(
+        6,
+        "i9-test",
+        SemanticCommand::CancelIoWait {
+            io_wait: 1311,
+            io_wait_generation: 1,
+            errno: 5,
+            reason: WaitCancelReason::DeviceFault,
+            note: "fake device fault cancels io wait".to_string(),
+        },
+    ));
+    assert_eq!(cancel.status, CommandStatus::Applied);
+    let wait = graph
+        .wait_records()
+        .iter()
+        .find(|wait| wait.id == 1310)
+        .unwrap();
+    assert_eq!(wait.state, WaitState::Cancelled);
+    assert_eq!(wait.cancel_reason, Some(WaitCancelReason::DeviceFault));
+    assert_eq!(graph.io_waits()[0].state, IoWaitState::Cancelled);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "IoWaitCancelled io_wait=1311 wait=1310@1 reason=device-fault generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+
+    graph.corrupt_io_wait_blocker_generation_for_test(1311, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::IoWaitMissingBlocker {
+            io_wait: 1311,
+            blocker: ContractObjectRef::new(ContractObjectKind::IrqLineObject, 901, 2),
+        })
+    );
+}
+
 #[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();

@@ -13,8 +13,8 @@ use artifact_manifest::{
     ContractObjectRefManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
     DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
     DriverStoreBindingManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
     RemotePreemptManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
     SavedContextManifest, SchedulerDecisionManifest, SmpCleanupQuiescenceManifest,
@@ -270,6 +270,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "io-capability"
         | "driver-store-binding"
         | "driver-binding"
+        | "io-wait"
+        | "io-wait-token"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -440,7 +442,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -664,6 +666,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "irq-event" => "irq-event",
         "device-capability" | "io-capability" => "device-capability",
         "driver-store-binding" | "driver-binding" => "driver-store-binding",
+        "io-wait" | "io-wait-token" => "io-wait",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2009,6 +2012,76 @@ fn driver_store_binding_view_v1(binding: &DriverStoreBindingManifest) -> serde_j
     })
 }
 
+fn io_wait_view_v1(io_wait: &IoWaitManifest) -> serde_json::Value {
+    let completion_irq_event = match (
+        io_wait.completion_irq_event,
+        io_wait.completion_irq_event_generation,
+    ) {
+        (Some(irq_event), Some(irq_event_generation)) => {
+            object_ref_json("irq-event", irq_event, irq_event_generation)
+        }
+        _ => serde_json::Value::Null,
+    };
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "io-wait",
+        "id": io_wait.id,
+        "generation": io_wait.generation,
+        "state": io_wait.state,
+        "owner": {
+            "driver_store": object_ref_json(
+                "store",
+                io_wait.driver_store,
+                io_wait.driver_store_generation
+            ),
+            "device": object_ref_json(
+                "device",
+                io_wait.device,
+                io_wait.device_generation
+            ),
+        },
+        "references": {
+            "wait": object_ref_json(
+                "wait-token",
+                io_wait.wait,
+                io_wait.wait_generation
+            ),
+            "driver_store": object_ref_json(
+                "store",
+                io_wait.driver_store,
+                io_wait.driver_store_generation
+            ),
+            "device": object_ref_json(
+                "device",
+                io_wait.device,
+                io_wait.device_generation
+            ),
+            "driver_binding": object_ref_json(
+                "driver-store-binding",
+                io_wait.driver_binding,
+                io_wait.driver_binding_generation
+            ),
+            "blocker": object_ref_manifest_json(&io_wait.blocker),
+            "completion_irq_event": completion_irq_event,
+            "created_event": {
+                "id": io_wait.created_at_event,
+            },
+            "completed_event": io_wait.completed_at_event.map(|id| serde_json::json!({ "id": id })),
+        },
+        "cancel_reason": io_wait.cancel_reason,
+        "note": io_wait.note,
+        "last_transition": {
+            "created_at_event": io_wait.created_at_event,
+            "completed_at_event": io_wait.completed_at_event,
+            "wait_generation": io_wait.wait_generation,
+            "driver_store_generation": io_wait.driver_store_generation,
+            "device_generation": io_wait.device_generation,
+            "driver_binding_generation": io_wait.driver_binding_generation,
+        },
+        "last_error": io_wait.cancel_reason,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -3042,6 +3115,12 @@ fn stable_views_for_kind(
             .iter()
             .map(driver_store_binding_view_v1)
             .collect()),
+        "io-wait" | "io-wait-token" => Ok(package
+            .semantic
+            .io_waits
+            .iter()
+            .map(io_wait_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -3688,7 +3767,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -3721,6 +3800,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.irq_event_count,
             package.semantic.device_capability_count,
             package.semantic.driver_store_binding_count,
+            package.semantic.io_wait_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -3853,7 +3933,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} descriptor_roots={} dma_buffer_roots={} mmio_region_roots={} irq_line_roots={} irq_event_roots={} device_capability_roots={} driver_store_binding_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} descriptor_roots={} dma_buffer_roots={} mmio_region_roots={} irq_line_roots={} irq_event_roots={} device_capability_roots={} driver_store_binding_roots={} io_wait_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -3903,6 +3983,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.irq_event_roots.len(),
         package.semantic.roots.device_capability_roots.len(),
         package.semantic.roots.driver_store_binding_roots.len(),
+        package.semantic.roots.io_wait_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -3991,6 +4072,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         "driver-store-binding",
         &package.semantic.roots.driver_store_binding_roots,
     );
+    print_roots("io-wait", &package.semantic.roots.io_wait_roots);
     print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
@@ -4431,6 +4513,55 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "driver-store-binding-ledger",
             "live",
             Some(binding.recorded_at_event),
+        ));
+    }
+    for io_wait in &package.semantic.io_waits {
+        if io_wait.state != "pending" {
+            continue;
+        }
+        let from = object_ref_json("io-wait", io_wait.id, io_wait.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("wait-token", io_wait.wait, io_wait.wait_generation),
+            "io-wait-token",
+            "live",
+            Some(io_wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "store",
+                io_wait.driver_store,
+                io_wait.driver_store_generation,
+            ),
+            "io-wait-driver-store",
+            "live",
+            Some(io_wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("device", io_wait.device, io_wait.device_generation),
+            "io-wait-device",
+            "live",
+            Some(io_wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "driver-store-binding",
+                io_wait.driver_binding,
+                io_wait.driver_binding_generation,
+            ),
+            "io-wait-driver-binding",
+            "live",
+            Some(io_wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_manifest_json(&io_wait.blocker),
+            "io-wait-blocker",
+            "live",
+            Some(io_wait.created_at_event),
         ));
     }
     for wait in &package.semantic.wait_records {
@@ -5353,6 +5484,64 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "live",
             Some(binding.recorded_at_event),
         ));
+    }
+    for io_wait in &package.semantic.io_waits {
+        let from = object_ref_json("io-wait", io_wait.id, io_wait.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("wait-token", io_wait.wait, io_wait.wait_generation),
+            "io-wait-token",
+            "historical",
+            Some(io_wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "store",
+                io_wait.driver_store,
+                io_wait.driver_store_generation,
+            ),
+            "io-wait-driver-store",
+            "historical",
+            Some(io_wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("device", io_wait.device, io_wait.device_generation),
+            "io-wait-device",
+            "historical",
+            Some(io_wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "driver-store-binding",
+                io_wait.driver_binding,
+                io_wait.driver_binding_generation,
+            ),
+            "io-wait-driver-binding",
+            "historical",
+            Some(io_wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_manifest_json(&io_wait.blocker),
+            "io-wait-blocker",
+            "historical",
+            Some(io_wait.created_at_event),
+        ));
+        if let (Some(irq_event), Some(irq_event_generation)) = (
+            io_wait.completion_irq_event,
+            io_wait.completion_irq_event_generation,
+        ) {
+            edges.push(graph_edge(
+                from,
+                object_ref_json("irq-event", irq_event, irq_event_generation),
+                "io-wait-completion-irq",
+                "historical",
+                io_wait.completed_at_event,
+            ));
+        }
     }
     for resume in &package.semantic.activation_resumes {
         let from = object_ref_json("activation-resume", resume.id, resume.generation);
@@ -6780,7 +6969,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -6812,6 +7001,7 @@ fn replay_until(
         package.semantic.roots.irq_event_roots.len(),
         package.semantic.roots.device_capability_roots.len(),
         package.semantic.roots.driver_store_binding_roots.len(),
+        package.semantic.roots.io_wait_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -6891,6 +7081,9 @@ fn replay_until(
     }
     for binding in &package.semantic.roots.driver_store_binding_roots {
         println!("replay driver-store-binding {binding}");
+    }
+    for io_wait in &package.semantic.roots.io_wait_roots {
+        println!("replay io-wait {io_wait}");
     }
     Ok(())
 }
@@ -6997,6 +7190,10 @@ fn print_replay_json(
     roots.insert(
         "driver_store_bindings".to_owned(),
         serde_json::json!(package.semantic.roots.driver_store_binding_roots.len()),
+    );
+    roots.insert(
+        "io_waits".to_owned(),
+        serde_json::json!(package.semantic.roots.io_wait_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -7342,7 +7539,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -7385,6 +7582,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.irq_event_count,
         package.semantic.device_capability_count,
         package.semantic.driver_store_binding_count,
+        package.semantic.io_wait_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -7757,6 +7955,11 @@ mod tests {
         package.semantic.mmio_region_object_count = 1;
         package.semantic.irq_line_object_count = 1;
         package.semantic.irq_event_count = 1;
+        package.semantic.device_capability_count = 2;
+        package.semantic.driver_store_binding_count = 1;
+        package.semantic.io_wait_count = 1;
+        package.semantic.wait_token_count = 1;
+        package.semantic.wait_record_count = 1;
         package.semantic.activation_resume_count = 1;
         package.semantic.activation_wait_count = 1;
         package.semantic.activation_cleanup_count = 1;
@@ -8472,6 +8675,49 @@ mod tests {
                 recorded_at_event: 38,
                 note: "driver store binding".to_owned(),
             });
+        package.semantic.wait_records.push(WaitRecordManifest {
+            id: 45,
+            owner_task: None,
+            owner_task_generation: None,
+            owner_store: Some(1),
+            owner_store_generation: Some(2),
+            kind: "device-irq".to_owned(),
+            generation: 1,
+            state: "resolved".to_owned(),
+            blockers: vec![ContractObjectRefManifest {
+                kind: "irq-line-object".to_owned(),
+                id: 40,
+                generation: 1,
+            }],
+            deadline: None,
+            cancel_reason: None,
+            restart_policy: "internal-only".to_owned(),
+            saved_context: Some("fake-io0:rx-irq".to_owned()),
+        });
+        package.semantic.io_waits.push(IoWaitManifest {
+            id: 46,
+            wait: 45,
+            wait_generation: 1,
+            driver_store: 1,
+            driver_store_generation: 2,
+            device: 35,
+            device_generation: 1,
+            driver_binding: 44,
+            driver_binding_generation: 1,
+            blocker: ContractObjectRefManifest {
+                kind: "irq-line-object".to_owned(),
+                id: 40,
+                generation: 1,
+            },
+            generation: 1,
+            state: "resolved".to_owned(),
+            created_at_event: 39,
+            completed_at_event: Some(40),
+            completion_irq_event: Some(41),
+            completion_irq_event_generation: Some(1),
+            cancel_reason: None,
+            note: "io wait".to_owned(),
+        });
         package
             .semantic
             .activation_resumes
@@ -8841,6 +9087,13 @@ mod tests {
         assert_eq!(binding["owner"]["device"]["id"], 35);
         assert_eq!(binding["references"]["device_capability"]["id"], 43);
         assert_eq!(binding["references"]["capability"]["generation"], 1);
+        let io_wait = io_wait_view_v1(&package.semantic.io_waits[0]);
+        assert_eq!(io_wait["kind"], "io-wait");
+        assert_eq!(io_wait["owner"]["driver_store"]["generation"], 2);
+        assert_eq!(io_wait["references"]["wait"]["id"], 45);
+        assert_eq!(io_wait["references"]["blocker"]["kind"], "irq-line-object");
+        assert_eq!(io_wait["references"]["completion_irq_event"]["id"], 41);
+        assert_eq!(io_wait["last_transition"]["completed_at_event"], 40);
         let resume = activation_resume_view_v1(&package.semantic.activation_resumes[0]);
         assert_eq!(resume["kind"], "activation-resume");
         assert_eq!(resume["references"]["activation"]["generation_before"], 3);

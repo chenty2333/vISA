@@ -1,0 +1,171 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "I9-io-wait-token-integration",
+  "phase": "Phase 3 IO Semantic Core",
+  "status": "pass",
+  "scope": [
+    "Add IoWait as the tenth IO semantic core evidence object",
+    "Bridge exact WaitToken generation, driver Store generation, DeviceObject generation, DriverStoreBinding generation, and blocker ObjectRef",
+    "Resolve an IO wait through a fake IRQ event only when IRQ, device, and driver Store attribution match",
+    "Cancel IO waits through explicit IO fault reasons without hidden scheduler sleep",
+    "Expose IoWait through semantic package roots/counts, target_executor host-validation output, osctl ViewV1, replay roots, and graph edges",
+    "Reject stale WaitToken generations, stale DeviceObject generations, duplicate pending IO waits, wrong cancellation reasons, and blockers attached to another device"
+  ],
+  "no_goals": [
+    "Real IRQ scheduler integration",
+    "Real device backend interrupt delivery",
+    "Real MMIO/DMA/IRQ access",
+    "Virtio driver implementation",
+    "Network or block vertical implementation"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_wait.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/io/golden_i9_io_wait_token_integration.trace.json",
+    "tests/reports/checkpoints/i9_io_wait_token_integration.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/io/golden_i9_io_wait_token_integration.trace.json",
+    "tests/reports/checkpoints/i9_io_wait_token_integration.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "DmaBufferObject blockers are verified through DMA buffer -> descriptor -> queue -> device before they can bridge an IO wait",
+      "IoWait uses exact generation refs for WaitToken, driver Store, DeviceObject, DriverStoreBinding, IRQ event, and blocker",
+      "Resolved IO waits are emitted as historical graph evidence and do not leave live graph edges",
+      "osctl uses an explicit IoWait ViewV1 and avoids fabricating generation 0 for absent completion IRQ refs",
+      "I9 stays semantic-only and does not introduce a real IRQ scheduler or backend device state"
+    ],
+    "residual_notes": [
+      "I10 should make store/driver cleanup cancel pending IO waits and release IO-owned resources",
+      "I11 should add IO fault injection over the wait/capability/binding lifecycle",
+      "Network and block verticals should consume IoWait instead of inventing subsystem-local blocking objects"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core io_runtime_i9",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core io_wait",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- io-wait list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python package/io-wait/graph assertions",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/io/golden_i9_io_wait_token_integration.trace.json",
+    "osctl_views": [
+      "osctl io-wait list --json <migration.json>",
+      "osctl graph --history --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "io_wait_roots",
+      "wait_roots",
+      "driver_store_binding_roots",
+      "irq_event_roots",
+      "device_object_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 290,
+      "io_wait_count": 1,
+      "io_waits": [
+        "io-wait:9963@1"
+      ],
+      "wait": "wait-token:9962@1",
+      "driver_store": "store:2@2",
+      "device": "device-object:9701@1",
+      "driver_binding": "driver-store-binding:9961@1",
+      "blocker": "irq-line-object:9931@1",
+      "completion_irq_event": "irq-event:9964@1"
+    }
+  },
+  "residual_gaps": [
+    "I10 IO cleanup transaction remains unimplemented"
+  ],
+  "next_checkpoint": "I10-io-cleanup-transaction"
+}

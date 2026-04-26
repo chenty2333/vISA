@@ -283,6 +283,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub driver_store_binding_count: usize,
     #[serde(default)]
+    pub io_wait_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -417,6 +419,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub driver_store_bindings: Vec<DriverStoreBindingManifest>,
     #[serde(default)]
+    pub io_waits: Vec<IoWaitManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -530,6 +534,8 @@ pub struct SemanticRootSetManifest {
     pub device_capability_roots: Vec<String>,
     #[serde(default)]
     pub driver_store_binding_roots: Vec<String>,
+    #[serde(default)]
+    pub io_wait_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1304,6 +1310,32 @@ pub struct DriverStoreBindingManifest {
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IoWaitManifest {
+    pub id: u64,
+    pub wait: u64,
+    pub wait_generation: u64,
+    pub driver_store: u64,
+    pub driver_store_generation: u64,
+    pub device: u64,
+    pub device_generation: u64,
+    pub driver_binding: u64,
+    pub driver_binding_generation: u64,
+    pub blocker: ContractObjectRefManifest,
+    pub generation: u64,
+    pub state: String,
+    pub created_at_event: u64,
+    #[serde(default)]
+    pub completed_at_event: Option<u64>,
+    #[serde(default)]
+    pub completion_irq_event: Option<u64>,
+    #[serde(default)]
+    pub completion_irq_event_generation: Option<u64>,
+    #[serde(default)]
+    pub cancel_reason: Option<String>,
     pub note: String,
 }
 

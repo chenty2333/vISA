@@ -16,11 +16,11 @@ use artifact_manifest::{
     CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
     DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    MmioRegionObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    InterfaceEventManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -1387,6 +1387,80 @@ fn record_preemptive_runtime_context_evidence(
         )
         .into());
     }
+    let i9_commands = [
+        CommandEnvelope::new(
+            112,
+            "target-executor-i9",
+            SemanticCommand::CreateWait {
+                wait: 9962,
+                owner_task: None,
+                owner_store: Some(io_driver_store),
+                owner_store_generation: Some(io_driver_store_generation),
+                kind: SemanticWaitKind::DeviceIrq,
+                generation: 1,
+                blockers: vec![irq_ref],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: Some("i9-fake-irq-wait".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            113,
+            "target-executor-i9",
+            SemanticCommand::RecordIoWait {
+                io_wait: 9963,
+                wait: 9962,
+                wait_generation: 1,
+                driver_store: io_driver_store,
+                driver_store_generation: io_driver_store_generation,
+                device: 9701,
+                device_generation: 1,
+                driver_binding: 9961,
+                driver_binding_generation: 1,
+                blocker: irq_ref,
+                note: "i9-io-wait-token-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            114,
+            "target-executor-i9",
+            SemanticCommand::RecordIrqEvent {
+                irq_event: 9964,
+                irq_line: 9931,
+                irq_line_generation: 1,
+                device: 9701,
+                device_generation: 1,
+                driver_store: io_driver_store,
+                driver_store_generation: io_driver_store_generation,
+                sequence: 2,
+                note: "i9-fake-irq-event-resolves-wait".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            115,
+            "target-executor-i9",
+            SemanticCommand::ResolveIoWait {
+                io_wait: 9963,
+                io_wait_generation: 1,
+                irq_event: 9964,
+                irq_event_generation: 1,
+                note: "i9-fake-irq-resolved-io-wait".to_owned(),
+            },
+        ),
+    ];
+    for command in i9_commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "preemptive runtime evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
     Ok(())
 }
 
@@ -2414,6 +2488,7 @@ fn demo_migration_package(
             irq_event_count: semantic.irq_event_count(),
             device_capability_count: semantic.device_capability_count(),
             driver_store_binding_count: semantic.driver_store_binding_count(),
+            io_wait_count: semantic.io_wait_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2595,6 +2670,7 @@ fn demo_migration_package(
                 .iter()
                 .map(driver_store_binding_manifest)
                 .collect(),
+            io_waits: semantic.io_waits().iter().map(io_wait_manifest).collect(),
             activation_resumes: semantic
                 .activation_resumes()
                 .iter()
@@ -3242,6 +3318,27 @@ fn semantic_roots(
                     binding.capability_generation,
                     binding.state.as_str(),
                     binding.generation
+                )
+            })
+            .collect(),
+        io_wait_roots: semantic
+            .io_waits()
+            .iter()
+            .map(|io_wait| {
+                format!(
+                    "io-wait id={} wait={}@{} driver_store={}@{} device={}@{} binding={}@{} blocker={} state={} generation={}",
+                    io_wait.id,
+                    io_wait.wait,
+                    io_wait.wait_generation,
+                    io_wait.driver_store,
+                    io_wait.driver_store_generation,
+                    io_wait.device,
+                    io_wait.device_generation,
+                    io_wait.driver_binding,
+                    io_wait.driver_binding_generation,
+                    io_wait.blocker.summary(),
+                    io_wait.state.as_str(),
+                    io_wait.generation
                 )
             })
             .collect(),
@@ -4525,6 +4622,31 @@ fn driver_store_binding_manifest(
         state: binding.state.as_str().to_owned(),
         recorded_at_event: binding.recorded_at_event,
         note: binding.note.clone(),
+    }
+}
+
+fn io_wait_manifest(io_wait: &semantic_core::IoWaitRecord) -> IoWaitManifest {
+    IoWaitManifest {
+        id: io_wait.id,
+        wait: io_wait.wait,
+        wait_generation: io_wait.wait_generation,
+        driver_store: io_wait.driver_store,
+        driver_store_generation: io_wait.driver_store_generation,
+        device: io_wait.device,
+        device_generation: io_wait.device_generation,
+        driver_binding: io_wait.driver_binding,
+        driver_binding_generation: io_wait.driver_binding_generation,
+        blocker: contract_object_ref_manifest(io_wait.blocker),
+        generation: io_wait.generation,
+        state: io_wait.state.as_str().to_owned(),
+        created_at_event: io_wait.created_at_event,
+        completed_at_event: io_wait.completed_at_event,
+        completion_irq_event: io_wait.completion_irq_event,
+        completion_irq_event_generation: io_wait.completion_irq_event_generation,
+        cancel_reason: io_wait
+            .cancel_reason
+            .map(|reason| reason.as_str().to_owned()),
+        note: io_wait.note.clone(),
     }
 }
 

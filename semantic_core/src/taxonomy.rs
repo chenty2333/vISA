@@ -625,6 +625,23 @@ impl DriverStoreBindingState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IoWaitState {
+    Pending,
+    Resolved,
+    Cancelled,
+}
+
+impl IoWaitState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Resolved => "resolved",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,
