@@ -285,6 +285,16 @@ pub enum SemanticCommand {
         depth: u32,
         note: String,
     },
+    RecordPacketDescriptorObject {
+        packet_descriptor: PacketDescriptorObjectId,
+        packet_queue: PacketQueueObjectId,
+        packet_queue_generation: Generation,
+        packet_buffer: PacketBufferObjectId,
+        packet_buffer_generation: Generation,
+        slot: u16,
+        length: u32,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -654,6 +664,7 @@ impl SemanticCommand {
             Self::RecordPacketDeviceObject { .. } => "record-packet-device-object",
             Self::RecordPacketBufferObject { .. } => "record-packet-buffer-object",
             Self::RecordPacketQueueObject { .. } => "record-packet-queue-object",
+            Self::RecordPacketDescriptorObject { .. } => "record-packet-descriptor-object",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -1852,6 +1863,26 @@ impl SemanticGraph {
                     *role,
                     *queue_index,
                     *depth,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordPacketDescriptorObject {
+                packet_descriptor,
+                packet_queue,
+                packet_queue_generation,
+                packet_buffer,
+                packet_buffer_generation,
+                slot,
+                length,
+                ..
+            } => self
+                .validate_packet_descriptor_object(
+                    *packet_descriptor,
+                    *packet_queue,
+                    *packet_queue_generation,
+                    *packet_buffer,
+                    *packet_buffer_generation,
+                    *slot,
+                    *length,
                 )
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
@@ -3152,6 +3183,25 @@ impl SemanticGraph {
                 role,
                 queue_index,
                 depth,
+                &note,
+            ),
+            SemanticCommand::RecordPacketDescriptorObject {
+                packet_descriptor,
+                packet_queue,
+                packet_queue_generation,
+                packet_buffer,
+                packet_buffer_generation,
+                slot,
+                length,
+                note,
+            } => self.record_packet_descriptor_object_with_id(
+                packet_descriptor,
+                packet_queue,
+                packet_queue_generation,
+                packet_buffer,
+                packet_buffer_generation,
+                slot,
+                length,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

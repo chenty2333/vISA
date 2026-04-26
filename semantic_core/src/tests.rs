@@ -4785,6 +4785,310 @@ fn network_runtime_n2_invariants_reject_packet_queue_generation_leak() {
     );
 }
 
+fn setup_n3_packet_descriptor_graph() -> SemanticGraph {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::PacketDevice, None, "packet-device:net2");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1540,
+        "virtio-net2",
+        "packet-device",
+        resource,
+        resource_generation,
+        "fake-net-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-net-v1",
+        "n3 backing device",
+    ));
+    assert!(graph.record_packet_device_object_with_id(
+        1541,
+        "net2",
+        1540,
+        1,
+        1500,
+        4,
+        4,
+        [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+        2,
+        512,
+        "n3 packet device",
+    ));
+    assert!(graph.record_packet_buffer_object_with_id(
+        1542,
+        1541,
+        1,
+        PacketBufferDirection::Rx,
+        2,
+        512,
+        0,
+        1,
+        PacketBufferObjectState::Allocated,
+        "n3 rx packet buffer",
+    ));
+    assert!(graph.record_packet_buffer_object_with_id(
+        1543,
+        1541,
+        1,
+        PacketBufferDirection::Tx,
+        2,
+        512,
+        64,
+        2,
+        PacketBufferObjectState::Filled,
+        "n3 tx packet buffer",
+    ));
+    assert!(graph.record_packet_queue_object_with_id(
+        1544,
+        "net2-rx0",
+        1541,
+        1,
+        PacketQueueRole::Rx,
+        0,
+        4,
+        "n3 rx queue",
+    ));
+    assert!(graph.record_packet_queue_object_with_id(
+        1545,
+        "net2-tx0",
+        1541,
+        1,
+        PacketQueueRole::Tx,
+        0,
+        4,
+        "n3 tx queue",
+    ));
+    graph
+}
+
+#[test]
+fn network_runtime_n3_packet_descriptors_record_queue_and_buffer_identity() {
+    let mut graph = setup_n3_packet_descriptor_graph();
+    let rx = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n3-test",
+        SemanticCommand::RecordPacketDescriptorObject {
+            packet_descriptor: 1546,
+            packet_queue: 1544,
+            packet_queue_generation: 1,
+            packet_buffer: 1542,
+            packet_buffer_generation: 1,
+            slot: 0,
+            length: 512,
+            note: "n3 rx packet descriptor".to_string(),
+        },
+    ));
+    let tx = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n3-test",
+        SemanticCommand::RecordPacketDescriptorObject {
+            packet_descriptor: 1547,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            packet_buffer: 1543,
+            packet_buffer_generation: 1,
+            slot: 0,
+            length: 64,
+            note: "n3 tx packet descriptor".to_string(),
+        },
+    ));
+
+    assert_eq!(rx.status, CommandStatus::Applied);
+    assert_eq!(tx.status, CommandStatus::Applied);
+    assert_eq!(graph.packet_descriptor_object_count(), 2);
+    let rx_descriptor = &graph.packet_descriptors()[0];
+    assert_eq!(
+        rx_descriptor.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::PacketDescriptorObject, 1546, 1)
+    );
+    assert_eq!(rx_descriptor.packet_queue, 1544);
+    assert_eq!(rx_descriptor.packet_queue_generation, 1);
+    assert_eq!(rx_descriptor.packet_buffer, 1542);
+    assert_eq!(rx_descriptor.packet_buffer_generation, 1);
+    assert_eq!(rx_descriptor.slot, 0);
+    assert_eq!(rx_descriptor.length, 512);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "PacketDescriptorObjectRecorded packet_descriptor=1547 packet_queue=1545@1 packet_buffer=1543@1 slot=0 length=64 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn network_runtime_n3_rejects_stale_duplicate_mismatch_and_overlength_descriptor() {
+    let mut graph = setup_n3_packet_descriptor_graph();
+
+    let stale_queue = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n3-test",
+        SemanticCommand::RecordPacketDescriptorObject {
+            packet_descriptor: 1546,
+            packet_queue: 1544,
+            packet_queue_generation: 2,
+            packet_buffer: 1542,
+            packet_buffer_generation: 1,
+            slot: 0,
+            length: 512,
+            note: "n3 stale queue".to_string(),
+        },
+    ));
+    assert_eq!(stale_queue.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_queue.violations,
+        vec!["packet descriptor object queue generation is missing or inactive".to_string()]
+    );
+
+    let role_mismatch = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n3-test",
+        SemanticCommand::RecordPacketDescriptorObject {
+            packet_descriptor: 1546,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            packet_buffer: 1542,
+            packet_buffer_generation: 1,
+            slot: 0,
+            length: 512,
+            note: "n3 role mismatch".to_string(),
+        },
+    ));
+    assert_eq!(role_mismatch.status, CommandStatus::Rejected);
+    assert_eq!(
+        role_mismatch.violations,
+        vec!["packet descriptor object queue role and buffer direction mismatch".to_string()]
+    );
+
+    let tx_overlength = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "n3-test",
+        SemanticCommand::RecordPacketDescriptorObject {
+            packet_descriptor: 1546,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            packet_buffer: 1543,
+            packet_buffer_generation: 1,
+            slot: 0,
+            length: 65,
+            note: "n3 tx overlength".to_string(),
+        },
+    ));
+    assert_eq!(tx_overlength.status, CommandStatus::Rejected);
+    assert_eq!(
+        tx_overlength.violations,
+        vec!["tx packet descriptor length exceeds packet payload".to_string()]
+    );
+
+    assert!(graph.record_packet_descriptor_object_with_id(
+        1546,
+        1544,
+        1,
+        1542,
+        1,
+        0,
+        512,
+        "n3 first rx descriptor",
+    ));
+    assert!(graph.record_packet_buffer_object_with_id(
+        1548,
+        1541,
+        1,
+        PacketBufferDirection::Rx,
+        2,
+        512,
+        0,
+        3,
+        PacketBufferObjectState::Allocated,
+        "n3 second rx packet buffer",
+    ));
+
+    let duplicate_slot = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "n3-test",
+        SemanticCommand::RecordPacketDescriptorObject {
+            packet_descriptor: 1549,
+            packet_queue: 1544,
+            packet_queue_generation: 1,
+            packet_buffer: 1548,
+            packet_buffer_generation: 1,
+            slot: 0,
+            length: 512,
+            note: "n3 duplicate slot".to_string(),
+        },
+    ));
+    assert_eq!(duplicate_slot.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate_slot.violations,
+        vec![
+            "packet descriptor object slot already exists for packet queue generation".to_string()
+        ]
+    );
+
+    let duplicate_buffer = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "n3-test",
+        SemanticCommand::RecordPacketDescriptorObject {
+            packet_descriptor: 1550,
+            packet_queue: 1544,
+            packet_queue_generation: 1,
+            packet_buffer: 1542,
+            packet_buffer_generation: 1,
+            slot: 1,
+            length: 512,
+            note: "n3 duplicate buffer".to_string(),
+        },
+    ));
+    assert_eq!(duplicate_buffer.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate_buffer.violations,
+        vec!["packet descriptor object packet buffer already has a descriptor".to_string()]
+    );
+}
+
+#[test]
+fn network_runtime_n3_invariants_reject_packet_descriptor_generation_leaks() {
+    let mut graph = setup_n3_packet_descriptor_graph();
+    assert!(graph.record_packet_descriptor_object_with_id(
+        1546,
+        1544,
+        1,
+        1542,
+        1,
+        0,
+        512,
+        "n3 invariant packet descriptor",
+    ));
+    graph.corrupt_packet_descriptor_queue_generation_for_test(1546, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::PacketDescriptorObjectMissingQueue {
+            packet_descriptor: 1546,
+            packet_queue: 1544,
+        })
+    );
+
+    let mut graph = setup_n3_packet_descriptor_graph();
+    assert!(graph.record_packet_descriptor_object_with_id(
+        1546,
+        1544,
+        1,
+        1542,
+        1,
+        0,
+        512,
+        "n3 invariant packet descriptor",
+    ));
+    graph.corrupt_packet_descriptor_buffer_generation_for_test(1546, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::PacketDescriptorObjectMissingBuffer {
+                packet_descriptor: 1546,
+                packet_buffer: 1542,
+            }
+        )
+    );
+}
+
 #[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();

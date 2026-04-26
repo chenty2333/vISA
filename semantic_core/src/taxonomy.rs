@@ -852,6 +852,21 @@ impl PacketQueueObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacketDescriptorObjectState {
+    Registered,
+    Retired,
+}
+
+impl PacketDescriptorObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Registered => "registered",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

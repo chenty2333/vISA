@@ -21,13 +21,14 @@ use artifact_manifest::{
     IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
     MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
     MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    PacketBufferObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
-    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
+    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
+    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -1609,6 +1610,20 @@ fn record_preemptive_runtime_context_evidence(
                 note: "n2-record-tx-packet-queue-object-harness".to_owned(),
             },
         ),
+        CommandEnvelope::new(
+            125,
+            "target-executor-n3",
+            SemanticCommand::RecordPacketDescriptorObject {
+                packet_descriptor: 10_006,
+                packet_queue: 10_004,
+                packet_queue_generation: 1,
+                packet_buffer: 10_003,
+                packet_buffer_generation: 1,
+                slot: 0,
+                length: 64,
+                note: "n3-record-rx-packet-descriptor-object-harness".to_owned(),
+            },
+        ),
     ];
     for command in io_evidence_commands {
         let result = semantic.apply_envelope(command);
@@ -2657,6 +2672,7 @@ fn demo_migration_package(
             packet_device_object_count: semantic.packet_device_object_count(),
             packet_buffer_object_count: semantic.packet_buffer_object_count(),
             packet_queue_object_count: semantic.packet_queue_object_count(),
+            packet_descriptor_object_count: semantic.packet_descriptor_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2868,6 +2884,11 @@ fn demo_migration_package(
                 .packet_queue_objects()
                 .iter()
                 .map(packet_queue_object_manifest)
+                .collect(),
+            packet_descriptors: semantic
+                .packet_descriptors()
+                .iter()
+                .map(packet_descriptor_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -3657,6 +3678,24 @@ fn semantic_roots(
                     packet_queue.depth,
                     packet_queue.state.as_str(),
                     packet_queue.generation
+                )
+            })
+            .collect(),
+        packet_descriptor_object_roots: semantic
+            .packet_descriptors()
+            .iter()
+            .map(|packet_descriptor| {
+                format!(
+                    "packet-descriptor-object id={} packet_queue={}@{} packet_buffer={}@{} slot={} length={} state={} generation={}",
+                    packet_descriptor.id,
+                    packet_descriptor.packet_queue,
+                    packet_descriptor.packet_queue_generation,
+                    packet_descriptor.packet_buffer,
+                    packet_descriptor.packet_buffer_generation,
+                    packet_descriptor.slot,
+                    packet_descriptor.length,
+                    packet_descriptor.state.as_str(),
+                    packet_descriptor.generation
                 )
             })
             .collect(),
@@ -5146,6 +5185,24 @@ fn packet_queue_object_manifest(
         state: packet_queue.state.as_str().to_owned(),
         recorded_at_event: packet_queue.recorded_at_event,
         note: packet_queue.note.clone(),
+    }
+}
+
+fn packet_descriptor_object_manifest(
+    packet_descriptor: &semantic_core::PacketDescriptorObjectRecord,
+) -> PacketDescriptorObjectManifest {
+    PacketDescriptorObjectManifest {
+        id: packet_descriptor.id,
+        packet_queue: packet_descriptor.packet_queue,
+        packet_queue_generation: packet_descriptor.packet_queue_generation,
+        packet_buffer: packet_descriptor.packet_buffer,
+        packet_buffer_generation: packet_descriptor.packet_buffer_generation,
+        slot: packet_descriptor.slot,
+        length: packet_descriptor.length,
+        generation: packet_descriptor.generation,
+        state: packet_descriptor.state.as_str().to_owned(),
+        recorded_at_event: packet_descriptor.recorded_at_event,
+        note: packet_descriptor.note.clone(),
     }
 }
 

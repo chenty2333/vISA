@@ -43,6 +43,7 @@ pub struct SemanticGraph {
     packet_device_objects: Vec<PacketDeviceObjectRecord>,
     packet_buffer_objects: Vec<PacketBufferObjectRecord>,
     packet_queue_objects: Vec<PacketQueueObjectRecord>,
+    packet_descriptors: Vec<PacketDescriptorObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -97,6 +98,7 @@ pub struct SemanticGraph {
     next_packet_device_object_id: PacketDeviceObjectId,
     next_packet_buffer_object_id: PacketBufferObjectId,
     next_packet_queue_object_id: PacketQueueObjectId,
+    next_packet_descriptor_object_id: PacketDescriptorObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -139,6 +141,7 @@ mod latency;
 mod mmio_region_object;
 mod network;
 mod packet_buffer_object;
+mod packet_descriptor_object;
 mod packet_device_object;
 mod packet_queue_object;
 mod query;
@@ -207,6 +210,7 @@ impl SemanticGraph {
             packet_device_objects: Vec::new(),
             packet_buffer_objects: Vec::new(),
             packet_queue_objects: Vec::new(),
+            packet_descriptors: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -261,6 +265,7 @@ impl SemanticGraph {
             next_packet_device_object_id: 1,
             next_packet_buffer_object_id: 1,
             next_packet_queue_object_id: 1,
+            next_packet_descriptor_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

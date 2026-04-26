@@ -104,6 +104,7 @@ impl SemanticGraph {
         self.check_packet_device_object_invariants()?;
         self.check_packet_buffer_object_invariants()?;
         self.check_packet_queue_object_invariants()?;
+        self.check_packet_descriptor_object_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;

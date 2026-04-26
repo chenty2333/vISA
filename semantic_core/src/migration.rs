@@ -1056,6 +1056,29 @@ pub enum SemanticInvariantError {
     PacketQueueObjectMissingEvent {
         packet_queue: PacketQueueObjectId,
     },
+    PacketDescriptorObjectInvalid {
+        packet_descriptor: PacketDescriptorObjectId,
+    },
+    PacketDescriptorObjectMissingQueue {
+        packet_descriptor: PacketDescriptorObjectId,
+        packet_queue: PacketQueueObjectId,
+    },
+    PacketDescriptorObjectMissingBuffer {
+        packet_descriptor: PacketDescriptorObjectId,
+        packet_buffer: PacketBufferObjectId,
+    },
+    PacketDescriptorObjectDuplicateSlot {
+        packet_descriptor: PacketDescriptorObjectId,
+        packet_queue: PacketQueueObjectId,
+        slot: u16,
+    },
+    PacketDescriptorObjectDuplicateBuffer {
+        packet_descriptor: PacketDescriptorObjectId,
+        packet_buffer: PacketBufferObjectId,
+    },
+    PacketDescriptorObjectMissingEvent {
+        packet_descriptor: PacketDescriptorObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

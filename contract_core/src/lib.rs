@@ -102,6 +102,7 @@ pub enum ObjectKind {
     PacketDeviceObject,
     PacketBufferObject,
     PacketQueueObject,
+    PacketDescriptorObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -169,6 +170,7 @@ impl ObjectKind {
             Self::PacketDeviceObject => "packet-device-object",
             Self::PacketBufferObject => "packet-buffer-object",
             Self::PacketQueueObject => "packet-queue-object",
+            Self::PacketDescriptorObject => "packet-descriptor-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -396,6 +398,10 @@ typed_ref!(IoValidationReportRef, ObjectKind::IoValidationReport);
 typed_ref!(PacketDeviceObjectRef, ObjectKind::PacketDeviceObject);
 typed_ref!(PacketBufferObjectRef, ObjectKind::PacketBufferObject);
 typed_ref!(PacketQueueObjectRef, ObjectKind::PacketQueueObject);
+typed_ref!(
+    PacketDescriptorObjectRef,
+    ObjectKind::PacketDescriptorObject
+);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1745,6 +1751,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "packet queue object root/count mismatch",
         ));
     }
+    if roots.packet_descriptor_object_roots.len() != package.semantic.packet_descriptor_object_count
+        || package.semantic.packet_descriptors.len()
+            != package.semantic.packet_descriptor_object_count
+    {
+        return Err(ContractError::new(
+            "packet descriptor object root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2303,6 +2317,7 @@ mod tests {
                 packet_device_object_count: 0,
                 packet_buffer_object_count: 0,
                 packet_queue_object_count: 0,
+                packet_descriptor_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2379,6 +2394,7 @@ mod tests {
                 packet_device_objects: Vec::new(),
                 packet_buffer_objects: Vec::new(),
                 packet_queue_objects: Vec::new(),
+                packet_descriptors: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3548,6 +3564,33 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_packet_descriptor_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.packet_descriptor_object_count = 1;
+        package.semantic.packet_descriptors.push(
+            artifact_manifest::PacketDescriptorObjectManifest {
+                id: 34,
+                packet_queue: 33,
+                packet_queue_generation: 1,
+                packet_buffer: 31,
+                packet_buffer_generation: 1,
+                slot: 0,
+                length: 64,
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 70,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "packet descriptor object root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -4042,6 +4085,9 @@ mod tests {
         assert!(PacketBufferObjectRef::try_from_ref(packet_buffer_object).is_ok());
         let packet_queue_object = ObjectRef::new(ObjectKind::PacketQueueObject, 32, 1).unwrap();
         assert!(PacketQueueObjectRef::try_from_ref(packet_queue_object).is_ok());
+        let packet_descriptor_object =
+            ObjectRef::new(ObjectKind::PacketDescriptorObject, 33, 1).unwrap();
+        assert!(PacketDescriptorObjectRef::try_from_ref(packet_descriptor_object).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();
