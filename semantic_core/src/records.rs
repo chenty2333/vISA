@@ -100,6 +100,8 @@ pub struct SavedContextRecord {
     pub activation_generation: Generation,
     pub owner_task: TaskId,
     pub owner_task_generation: Generation,
+    pub source_preemption: Option<PreemptionId>,
+    pub source_preemption_generation: Option<Generation>,
     pub generation: Generation,
     pub state: SavedContextState,
     pub reason: SavedContextReason,

@@ -449,6 +449,20 @@ fn record_preemptive_runtime_context_evidence(
                 note: "p3-preempt-activation-harness".to_owned(),
             },
         ),
+        CommandEnvelope::new(
+            40,
+            "target-executor-p4",
+            SemanticCommand::SavePreemptedContext {
+                context: 9002,
+                saved_context: 9002,
+                preemption: 9001,
+                preemption_generation: 1,
+                pc: 0x2000,
+                sp: 0x9000,
+                flags: 0,
+                note: "p4-save-preempted-context-harness".to_owned(),
+            },
+        ),
     ];
     for command in commands {
         let result = semantic.apply_envelope(command);
@@ -2244,6 +2258,8 @@ fn saved_context_manifest(saved: &semantic_core::SavedContextRecord) -> SavedCon
         activation_generation: saved.activation_generation,
         owner_task: u64::from(saved.owner_task),
         owner_task_generation: saved.owner_task_generation,
+        source_preemption: saved.source_preemption,
+        source_preemption_generation: saved.source_preemption_generation,
         generation: saved.generation,
         state: saved.state.as_str().to_owned(),
         reason: saved.reason.as_str().to_owned(),

@@ -2134,6 +2134,108 @@ fn preemptive_runtime_p3_invariants_reject_preemption_timer_generation_leak() {
     );
 }
 
+fn p4_preempted_activation() -> SemanticGraph {
+    let mut graph = p3_running_activation_with_timer();
+    assert!(graph.preempt_running_activation_with_id(6, 11, 3, 5, 1, 1, "timer preempt"));
+    graph
+}
+
+#[test]
+fn preemptive_runtime_p4_save_preempted_context_captures_timer_frame() {
+    let mut graph = p4_preempted_activation();
+
+    let save = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p4-test",
+        SemanticCommand::SavePreemptedContext {
+            context: 12,
+            saved_context: 13,
+            preemption: 6,
+            preemption_generation: 1,
+            pc: 0x2000,
+            sp: 0x9000,
+            flags: 0,
+            note: "timer frame".to_string(),
+        },
+    ));
+    assert_eq!(save.status, CommandStatus::Applied);
+    assert_eq!(graph.activation_contexts()[0].activation, 11);
+    assert_eq!(graph.activation_contexts()[0].activation_generation, 4);
+    assert_eq!(graph.activation_contexts()[0].generation, 2);
+    assert_eq!(
+        graph.saved_contexts()[0].reason,
+        SavedContextReason::TimerPreempt
+    );
+    assert_eq!(graph.saved_contexts()[0].pc, 0x2000);
+    assert_eq!(graph.saved_contexts()[0].sp, 0x9000);
+    assert_eq!(graph.saved_contexts()[0].source_preemption, Some(6));
+    assert_eq!(
+        graph.saved_contexts()[0].source_preemption_generation,
+        Some(1)
+    );
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "SavedContextCaptured saved_context=13 context=12@2 activation=11@4 reason=timer-preempt generation=1"
+    );
+}
+
+#[test]
+fn preemptive_runtime_p4_rejects_missing_preemption_and_empty_frame() {
+    let mut graph = p4_preempted_activation();
+    let missing = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p4-test",
+        SemanticCommand::SavePreemptedContext {
+            context: 12,
+            saved_context: 13,
+            preemption: 99,
+            preemption_generation: 1,
+            pc: 0x2000,
+            sp: 0x9000,
+            flags: 0,
+            note: "missing".to_string(),
+        },
+    ));
+    assert_eq!(missing.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("preemption generation is missing".to_string());
+    assert_eq!(missing.violations, expected);
+    assert!(graph.activation_contexts().is_empty());
+    assert!(graph.saved_contexts().is_empty());
+
+    let empty_frame = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p4-test",
+        SemanticCommand::SavePreemptedContext {
+            context: 12,
+            saved_context: 13,
+            preemption: 6,
+            preemption_generation: 1,
+            pc: 0,
+            sp: 0x9000,
+            flags: 0,
+            note: "empty".to_string(),
+        },
+    ));
+    assert_eq!(empty_frame.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("preempted context requires nonzero pc and sp".to_string());
+    assert_eq!(empty_frame.violations, expected);
+}
+
+#[test]
+fn preemptive_runtime_p4_invariants_reject_saved_context_preemption_generation_leak() {
+    let mut graph = p4_preempted_activation();
+    assert!(graph.save_preempted_context_with_ids(12, 13, 6, 1, 0x2000, 0x9000, 0, "timer"));
+    graph.clear_saved_context_source_preemption_generation_for_test(13);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::SavedContextMissingPreemptionGeneration { saved_context: 13 })
+    );
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

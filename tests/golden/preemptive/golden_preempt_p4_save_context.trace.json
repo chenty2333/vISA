@@ -1,0 +1,119 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "P4-save-context-path",
+  "name": "golden_preempt_p4_save_context",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real timer IRQ delivery",
+    "real register save path",
+    "ResumeActivation command",
+    "SchedulerDecision object",
+    "SMP scheduler"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "create-runtime-activation",
+        "activation": "activation:11@1",
+        "owner_task": "task:7@1"
+      },
+      {
+        "id": 2,
+        "command": "enqueue-runnable",
+        "activation": "activation:11@2",
+        "queue": "runnable-queue:1@1"
+      },
+      {
+        "id": 3,
+        "command": "dequeue-runnable",
+        "activation": "activation:11@3",
+        "queue": "runnable-queue:1@1"
+      },
+      {
+        "id": 4,
+        "command": "record-timer-interrupt",
+        "timer_interrupt": "timer-interrupt:5@1",
+        "target_activation": "activation:11@3"
+      },
+      {
+        "id": 5,
+        "command": "preempt-activation",
+        "preemption": "preemption:6@1",
+        "activation_before": "activation:11@3",
+        "activation_after": "activation:11@4",
+        "timer_interrupt": "timer-interrupt:5@1",
+        "queue": "runnable-queue:1@1"
+      },
+      {
+        "id": 6,
+        "command": "save-preempted-context",
+        "activation_context": "activation-context:12@2",
+        "saved_context": "saved-context:13@1",
+        "source_preemption": "preemption:6@1",
+        "activation": "activation:11@4",
+        "pc": 8192,
+        "sp": 36864
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "ActivationContextCreated",
+      "activation_context": "activation-context:12@2",
+      "activation": "activation:11@4"
+    },
+    {
+      "kind": "SavedContextCaptured",
+      "saved_context": "saved-context:13@1",
+      "activation_context": "activation-context:12@2",
+      "activation": "activation:11@4",
+      "reason": "timer-preempt",
+      "source_preemption": "preemption:6@1"
+    }
+  ],
+  "expected": {
+    "views": {
+      "activation_context": {
+        "kind": "activation-context",
+        "id": 12,
+        "generation": 2,
+        "state": "saved",
+        "activation": "activation:11@4",
+        "current_saved_context": "saved-context:13@1"
+      },
+      "saved_context": {
+        "kind": "saved-context",
+        "id": 13,
+        "generation": 1,
+        "state": "captured",
+        "reason": "timer-preempt",
+        "activation": "activation:11@4",
+        "activation_context": "activation-context:12@2",
+        "source_preemption": "preemption:6@1",
+        "pc": 8192,
+        "sp": 36864
+      }
+    },
+    "invariants": [
+      "SavePreemptedContext requires an applied preemption with exact generation",
+      "saved context attribution points to the post-preemption activation generation",
+      "source preemption is historical attribution and not live ownership",
+      "empty machine frame pc or sp is rejected",
+      "P4 does not implement ResumeActivation or SchedulerDecision"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "preemptive_runtime_p4_save_preempted_context_captures_timer_frame",
+      "preemptive_runtime_p4_rejects_missing_preemption_and_empty_frame",
+      "preemptive_runtime_p4_invariants_reject_saved_context_preemption_generation_leak",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state"
+    ]
+  }
+}

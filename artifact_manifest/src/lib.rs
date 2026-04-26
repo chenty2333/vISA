@@ -554,6 +554,10 @@ pub struct SavedContextManifest {
     pub activation_generation: u64,
     pub owner_task: u64,
     pub owner_task_generation: u64,
+    #[serde(default)]
+    pub source_preemption: Option<u64>,
+    #[serde(default)]
+    pub source_preemption_generation: Option<u64>,
     pub generation: u64,
     pub state: String,
     pub reason: String,

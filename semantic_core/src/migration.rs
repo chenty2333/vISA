@@ -336,6 +336,17 @@ pub enum SemanticInvariantError {
         saved_context: SavedContextId,
         task: TaskId,
     },
+    SavedContextMissingPreemption {
+        saved_context: SavedContextId,
+        preemption: PreemptionId,
+    },
+    SavedContextMissingPreemptionGeneration {
+        saved_context: SavedContextId,
+    },
+    SavedContextPreemptionMismatch {
+        saved_context: SavedContextId,
+        preemption: PreemptionId,
+    },
     TimerInterruptEpochNonMonotonic {
         interrupt: TimerInterruptId,
         timer_epoch: u64,

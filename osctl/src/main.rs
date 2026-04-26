@@ -720,6 +720,10 @@ fn saved_context_view_v1(saved: &SavedContextManifest) -> serde_json::Value {
                 "id": saved.activation,
                 "generation": saved.activation_generation,
             },
+            "source_preemption": saved.source_preemption.map(|id| serde_json::json!({
+                "id": id,
+                "generation": saved.source_preemption_generation,
+            })),
         },
         "machine_frame": {
             "pc": saved.pc,
@@ -2385,6 +2389,19 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "historical",
             Some(preemption.preempted_at_event),
         ));
+    }
+    for saved in &package.semantic.saved_contexts {
+        if let (Some(preemption), Some(preemption_generation)) =
+            (saved.source_preemption, saved.source_preemption_generation)
+        {
+            edges.push(graph_edge(
+                object_ref_json("saved-context", saved.id, saved.generation),
+                object_ref_json("preemption", preemption, preemption_generation),
+                "captured-from-preemption",
+                "historical",
+                Some(saved.saved_at_event),
+            ));
+        }
     }
     for trap in &package.semantic.trap_records {
         let from = object_ref_json("trap", trap.id, trap.generation);
@@ -4193,15 +4210,17 @@ mod tests {
             activation_generation: 2,
             owner_task: 7,
             owner_task_generation: 1,
+            source_preemption: Some(15),
+            source_preemption_generation: Some(1),
             generation: 1,
             state: "captured".to_owned(),
-            reason: "initial".to_owned(),
+            reason: "timer-preempt".to_owned(),
             pc: 0x1000,
             sp: 0x8000,
             flags: 0,
             integer_registers: 33,
             saved_at_event: 10,
-            note: "initial frame".to_owned(),
+            note: "preempted frame".to_owned(),
         });
         package
             .semantic
@@ -4242,8 +4261,11 @@ mod tests {
         );
         let saved = saved_context_view_v1(&package.semantic.saved_contexts[0]);
         assert_eq!(saved["kind"], "saved-context");
+        assert_eq!(saved["reason"], "timer-preempt");
         assert_eq!(saved["machine_frame"]["integer_registers"], 33);
         assert_eq!(saved["references"]["activation_context"]["generation"], 2);
+        assert_eq!(saved["references"]["source_preemption"]["id"], 15);
+        assert_eq!(saved["references"]["source_preemption"]["generation"], 1);
         let timer = timer_interrupt_view_v1(&package.semantic.timer_interrupts[0]);
         assert_eq!(timer["kind"], "timer-interrupt");
         assert_eq!(timer["owner"]["timer_epoch"], 3);
@@ -4319,6 +4341,15 @@ mod tests {
                 .any(|edge| edge["from"]["kind"] == "preemption"
                     && edge["to"]["kind"] == "activation"
                     && edge["to"]["generation"] == 3
+                    && edge["mode"] == "historical")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "saved-context"
+                    && edge["to"]["kind"] == "preemption"
+                    && edge["to"]["generation"] == 1
+                    && edge["relation"] == "captured-from-preemption"
                     && edge["mode"] == "historical")
         );
     }

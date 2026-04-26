@@ -38,6 +38,16 @@ pub enum SemanticCommand {
         flags: u64,
         note: String,
     },
+    SavePreemptedContext {
+        context: ActivationContextId,
+        saved_context: SavedContextId,
+        preemption: PreemptionId,
+        preemption_generation: Generation,
+        pc: u64,
+        sp: u64,
+        flags: u64,
+        note: String,
+    },
     RecordTimerInterrupt {
         interrupt: TimerInterruptId,
         timer_epoch: u64,
@@ -209,6 +219,7 @@ impl SemanticCommand {
             Self::DequeueRunnable { .. } => "dequeue-runnable",
             Self::CreateActivationContext { .. } => "create-activation-context",
             Self::CaptureSavedContext { .. } => "capture-saved-context",
+            Self::SavePreemptedContext { .. } => "save-preempted-context",
             Self::RecordTimerInterrupt { .. } => "record-timer-interrupt",
             Self::PreemptActivation { .. } => "preempt-activation",
             Self::GrantCapability { .. } => "grant-capability",
@@ -536,6 +547,96 @@ impl SemanticGraph {
                         Err(CommandError::precondition(
                             "activation context already has saved context",
                         ))
+                    } else {
+                        Ok(())
+                    }
+                }
+            }
+            SemanticCommand::SavePreemptedContext {
+                context,
+                saved_context,
+                preemption,
+                preemption_generation,
+                pc,
+                sp,
+                ..
+            } => {
+                if *context == 0 || *saved_context == 0 {
+                    Err(CommandError::precondition(
+                        "preempted context requires nonzero context ids",
+                    ))
+                } else if *pc == 0 || *sp == 0 {
+                    Err(CommandError::precondition(
+                        "preempted context requires nonzero pc and sp",
+                    ))
+                } else if self
+                    .activation_contexts
+                    .iter()
+                    .any(|record| record.id == *context)
+                {
+                    Err(CommandError::precondition(
+                        "activation context already exists",
+                    ))
+                } else if self
+                    .saved_contexts
+                    .iter()
+                    .any(|record| record.id == *saved_context)
+                {
+                    Err(CommandError::precondition("saved context already exists"))
+                } else {
+                    let Some(preemption_record) = self.preemptions.iter().find(|record| {
+                        record.id == *preemption
+                            && record.generation == *preemption_generation
+                            && record.state == PreemptionState::Applied
+                    }) else {
+                        return Err(CommandError::precondition(
+                            "preemption generation is missing",
+                        ));
+                    };
+                    let Some(activation) = self.runtime_activations.iter().find(|record| {
+                        record.id == preemption_record.activation
+                            && record.generation == preemption_record.activation_generation_after
+                            && !matches!(
+                                record.state,
+                                RuntimeActivationState::Dead | RuntimeActivationState::Exited
+                            )
+                    }) else {
+                        return Err(CommandError::precondition(
+                            "preempted activation generation is missing or dead",
+                        ));
+                    };
+                    if self.activation_contexts.iter().any(|record| {
+                        record.activation == activation.id
+                            && record.state != ActivationContextState::Dropped
+                    }) {
+                        Err(CommandError::precondition(
+                            "activation already has live context",
+                        ))
+                    } else if !self.tasks.iter().any(|task| {
+                        task.id == activation.owner_task
+                            && task.generation == activation.owner_task_generation
+                    }) {
+                        Err(CommandError::precondition(
+                            "preempted activation owner task generation is missing",
+                        ))
+                    } else if let Some(store) = activation.owner_store {
+                        if let Some(generation) = activation.owner_store_generation {
+                            if self.stores.iter().any(|record| {
+                                record.id == store
+                                    && record.generation == generation
+                                    && record.state != StoreState::Dead
+                            }) {
+                                Ok(())
+                            } else {
+                                Err(CommandError::precondition(
+                                    "preempted activation owner store generation is missing or dead",
+                                ))
+                            }
+                        } else {
+                            Err(CommandError::precondition(
+                                "preempted activation owner store generation is required",
+                            ))
+                        }
                     } else {
                         Ok(())
                     }
@@ -872,6 +973,25 @@ impl SemanticGraph {
                 context,
                 context_generation,
                 reason,
+                pc,
+                sp,
+                flags,
+                &note,
+            ),
+            SemanticCommand::SavePreemptedContext {
+                context,
+                saved_context,
+                preemption,
+                preemption_generation,
+                pc,
+                sp,
+                flags,
+                note,
+            } => self.save_preempted_context_with_ids(
+                context,
+                saved_context,
+                preemption,
+                preemption_generation,
                 pc,
                 sp,
                 flags,
