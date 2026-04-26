@@ -185,7 +185,7 @@ fn register_store_semantics(semantic: &mut SemanticGraph, entry: &ValidatedArtif
         &entry.package,
         &entry.artifact_name,
         &entry.manifest_binding_hash,
-        &entry.cwasm_sha256,
+        &entry.target_artifact_sha256,
         &entry.abi_fingerprint,
         &entry.signature_scheme,
         &entry.signer,
@@ -828,6 +828,7 @@ fn target_artifact_image(
         &entry.artifact_name,
         &entry.role,
         &plan.artifact_profile,
+        &entry.target_artifact_sha256,
         &entry.abi_fingerprint,
         &entry.manifest_binding_hash,
         &entry.cwasm_sha256,
@@ -1037,6 +1038,7 @@ fn expected_target_artifacts(plan: &ValidatedArtifactPlan) -> Vec<ExpectedTarget
                 &entry.package,
                 &entry.artifact_name,
                 &plan.artifact_profile,
+                &entry.target_artifact_sha256,
                 &entry.abi_fingerprint,
                 &entry.manifest_binding_hash,
                 &entry.cwasm_sha256,
@@ -1388,11 +1390,12 @@ fn semantic_roots(
             .iter()
             .map(|artifact| {
                 format!(
-                    "target-artifact id={} package={} artifact={} profile={} abi={} hash={}",
+                    "target-artifact id={} package={} artifact={} profile={} artifact_hash={} abi={} code_hash={}",
                     artifact.id,
                     artifact.package,
                     artifact.artifact_name,
                     artifact.target_profile,
+                    artifact.artifact_hash,
                     artifact.abi_fingerprint,
                     artifact.code_hash
                 )
@@ -1651,6 +1654,7 @@ fn target_artifact_manifest(image: &TargetArtifactImage) -> TargetArtifactImageM
         role: image.role.clone(),
         kind: image.kind.as_str().to_owned(),
         target_profile: image.target_profile.clone(),
+        artifact_hash: image.artifact_hash.clone(),
         abi_fingerprint: image.abi_fingerprint.clone(),
         manifest_binding_hash: image.manifest_binding_hash.clone(),
         code_hash: image.code_hash.clone(),

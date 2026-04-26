@@ -520,6 +520,7 @@ pub struct TargetArtifactImage {
     pub role: String,
     pub kind: TargetArtifactKind,
     pub target_profile: String,
+    pub artifact_hash: String,
     pub abi_fingerprint: String,
     pub manifest_binding_hash: String,
     pub code_hash: String,
@@ -538,6 +539,7 @@ pub struct ExpectedTargetArtifact {
     pub package: String,
     pub artifact_name: String,
     pub target_profile: String,
+    pub artifact_hash: String,
     pub abi_fingerprint: String,
     pub manifest_binding_hash: String,
     pub code_hash: String,
@@ -548,6 +550,7 @@ impl ExpectedTargetArtifact {
         package: &str,
         artifact_name: &str,
         target_profile: &str,
+        artifact_hash: &str,
         abi_fingerprint: &str,
         manifest_binding_hash: &str,
         code_hash: &str,
@@ -556,6 +559,7 @@ impl ExpectedTargetArtifact {
             package: package.to_string(),
             artifact_name: artifact_name.to_string(),
             target_profile: target_profile.to_string(),
+            artifact_hash: artifact_hash.to_string(),
             abi_fingerprint: abi_fingerprint.to_string(),
             manifest_binding_hash: manifest_binding_hash.to_string(),
             code_hash: code_hash.to_string(),
@@ -571,6 +575,7 @@ impl TargetArtifactImage {
         artifact_name: &str,
         role: &str,
         target_profile: &str,
+        artifact_hash: &str,
         abi_fingerprint: &str,
         manifest_binding_hash: &str,
         code_hash: &str,
@@ -583,6 +588,7 @@ impl TargetArtifactImage {
             role: role.to_string(),
             kind: TargetArtifactKind::TargetArtifactImageV1,
             target_profile: target_profile.to_string(),
+            artifact_hash: artifact_hash.to_string(),
             abi_fingerprint: abi_fingerprint.to_string(),
             manifest_binding_hash: manifest_binding_hash.to_string(),
             code_hash: code_hash.to_string(),
@@ -599,12 +605,13 @@ impl TargetArtifactImage {
 
     pub fn summary(&self) -> String {
         format!(
-            "target-artifact id={} package={} artifact={} kind={} profile={} abi={} binding={} hash={} exports={} hostcalls={} caps={}",
+            "target-artifact id={} package={} artifact={} kind={} profile={} artifact_hash={} abi={} binding={} code_hash={} exports={} hostcalls={} caps={}",
             self.id,
             self.package,
             self.artifact_name,
             self.kind.as_str(),
             self.target_profile,
+            self.artifact_hash,
             self.abi_fingerprint,
             self.manifest_binding_hash,
             self.code_hash,
@@ -622,6 +629,7 @@ pub struct VerifiedArtifact {
     pub artifact_name: String,
     pub role: String,
     pub target_profile: String,
+    pub artifact_hash: String,
     pub abi_fingerprint: String,
     pub manifest_binding_hash: String,
     pub code_hash: String,
@@ -637,10 +645,11 @@ pub struct VerifiedArtifact {
 impl VerifiedArtifact {
     pub fn summary(&self) -> String {
         format!(
-            "verified-artifact id={} package={} profile={} abi={} binding={} hash={} generation={}",
+            "verified-artifact id={} package={} profile={} artifact_hash={} abi={} binding={} code_hash={} generation={}",
             self.artifact_id,
             self.package,
             self.target_profile,
+            self.artifact_hash,
             self.abi_fingerprint,
             self.manifest_binding_hash,
             self.code_hash,
@@ -653,6 +662,7 @@ impl VerifiedArtifact {
 pub enum ArtifactRegistryError {
     EmptyIdentity,
     EmptyManifestBinding,
+    EmptyArtifactHash,
     EmptyCodeHash,
     EmptyTargetProfile,
     EmptyAbiFingerprint,
@@ -661,6 +671,7 @@ pub enum ArtifactRegistryError {
     TargetProfileMismatch,
     AbiFingerprintMismatch,
     ManifestBindingMismatch,
+    ArtifactHashMismatch,
     CodeHashMismatch,
 }
 
@@ -669,6 +680,7 @@ impl ArtifactRegistryError {
         match self {
             Self::EmptyIdentity => "artifact identity is incomplete",
             Self::EmptyManifestBinding => "artifact manifest binding hash is empty",
+            Self::EmptyArtifactHash => "artifact hash is empty",
             Self::EmptyCodeHash => "artifact code hash is empty",
             Self::EmptyTargetProfile => "artifact target profile is empty",
             Self::EmptyAbiFingerprint => "artifact ABI fingerprint is empty",
@@ -681,6 +693,7 @@ impl ArtifactRegistryError {
             Self::ManifestBindingMismatch => {
                 "artifact manifest binding hash does not match expected policy"
             }
+            Self::ArtifactHashMismatch => "artifact hash does not match expected policy",
             Self::CodeHashMismatch => "artifact code hash does not match expected policy",
         }
     }
@@ -717,6 +730,9 @@ impl ArtifactRegistry {
         if image.manifest_binding_hash.is_empty() {
             return Err(ArtifactRegistryError::EmptyManifestBinding);
         }
+        if image.artifact_hash.is_empty() {
+            return Err(ArtifactRegistryError::EmptyArtifactHash);
+        }
         if image.code_hash.is_empty() {
             return Err(ArtifactRegistryError::EmptyCodeHash);
         }
@@ -748,6 +764,9 @@ impl ArtifactRegistry {
             if expected.manifest_binding_hash != image.manifest_binding_hash {
                 return Err(ArtifactRegistryError::ManifestBindingMismatch);
             }
+            if expected.artifact_hash != image.artifact_hash {
+                return Err(ArtifactRegistryError::ArtifactHashMismatch);
+            }
             if expected.code_hash != image.code_hash {
                 return Err(ArtifactRegistryError::CodeHashMismatch);
             }
@@ -758,6 +777,7 @@ impl ArtifactRegistry {
             artifact_name: image.artifact_name,
             role: image.role,
             target_profile: image.target_profile,
+            artifact_hash: image.artifact_hash,
             abi_fingerprint: image.abi_fingerprint,
             manifest_binding_hash: image.manifest_binding_hash,
             code_hash: image.code_hash,
@@ -4388,12 +4408,13 @@ mod tests {
         let mut image = TargetArtifactImage::new(
             1,
             "driver_virtio_net",
-            "driver_virtio_net.cwasm",
+            "driver_virtio_net.tart",
             "driver",
             "host-validation",
+            "artifact-hash-1",
             "abi-1",
             "binding-1",
-            "hash-1",
+            "code-hash-1",
             TargetMemoryPlan::new(16, 32, 64),
         );
         image.exports.push("vmos_service_entry".to_string());
@@ -4643,11 +4664,12 @@ mod tests {
     fn registry_policy_rejects_manifest_binding_and_hash_mismatch() {
         let expected = ExpectedTargetArtifact::new(
             "driver_virtio_net",
-            "driver_virtio_net.cwasm",
+            "driver_virtio_net.tart",
             "host-validation",
+            "artifact-hash-1",
             "abi-1",
             "binding-1",
-            "hash-1",
+            "code-hash-1",
         );
         let mut expected_list = Vec::new();
         expected_list.push(expected);
@@ -4659,14 +4681,34 @@ mod tests {
             Err(ArtifactRegistryError::CodeHashMismatch)
         );
 
+        let expected = ExpectedTargetArtifact::new(
+            "driver_virtio_net",
+            "driver_virtio_net.tart",
+            "host-validation",
+            "artifact-hash-1",
+            "abi-1",
+            "binding-1",
+            "code-hash-1",
+        );
+        let mut expected_list = Vec::new();
+        expected_list.push(expected);
+        let mut registry = ArtifactRegistry::with_expected(expected_list);
+        let mut bad = image();
+        bad.artifact_hash = "artifact-hash-2".to_string();
+        assert_eq!(
+            registry.verify(bad),
+            Err(ArtifactRegistryError::ArtifactHashMismatch)
+        );
+
         let mut expected_list = Vec::new();
         expected_list.push(ExpectedTargetArtifact::new(
             "driver_virtio_net",
-            "driver_virtio_net.cwasm",
+            "driver_virtio_net.tart",
             "host-validation",
+            "artifact-hash-1",
             "abi-1",
             "binding-1",
-            "hash-1",
+            "code-hash-1",
         ));
         let mut registry = ArtifactRegistry::with_expected(expected_list);
         let verified = registry.verify(image()).unwrap();

@@ -444,6 +444,8 @@ pub struct TargetArtifactImageManifest {
     pub role: String,
     pub kind: String,
     pub target_profile: String,
+    #[serde(default)]
+    pub artifact_hash: String,
     pub abi_fingerprint: String,
     pub manifest_binding_hash: String,
     pub code_hash: String,

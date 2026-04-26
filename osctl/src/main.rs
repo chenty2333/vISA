@@ -476,6 +476,7 @@ fn artifact_view_v1(artifact: &TargetArtifactImageManifest) -> serde_json::Value
         },
         "references": {
             "artifact_name": artifact.artifact_name,
+            "artifact_hash": artifact.artifact_hash,
             "manifest_binding_hash": artifact.manifest_binding_hash,
             "abi_fingerprint": artifact.abi_fingerprint,
             "code_hash": artifact.code_hash,
@@ -2015,13 +2016,14 @@ fn inspect_package_object(
             );
             for artifact in &package.semantic.target_artifacts {
                 let line = format!(
-                    "artifact id={} package={} name={} role={} kind={} profile={} abi={} binding={} hash={} exports={} hostcalls={} caps={}",
+                    "artifact id={} package={} name={} role={} kind={} profile={} artifact_hash={} abi={} binding={} code_hash={} exports={} hostcalls={} caps={}",
                     artifact.id,
                     artifact.package,
                     artifact.artifact_name,
                     artifact.role,
                     artifact.kind,
                     artifact.target_profile,
+                    artifact.artifact_hash,
                     artifact.abi_fingerprint,
                     artifact.manifest_binding_hash,
                     artifact.code_hash,
@@ -3512,8 +3514,9 @@ mod tests {
             package: "driver_virtio_net".to_owned(),
             artifact_name: "driver_virtio_net".to_owned(),
             role: "driver".to_owned(),
-            kind: "cwasm".to_owned(),
+            kind: "target-artifact-image-v1".to_owned(),
             target_profile: "host-validation".to_owned(),
+            artifact_hash: "artifact".to_owned(),
             abi_fingerprint: "abi".to_owned(),
             manifest_binding_hash: "binding".to_owned(),
             code_hash: "code".to_owned(),
@@ -3524,6 +3527,7 @@ mod tests {
         assert_eq!(artifact["schema"], VIEW_SCHEMA_V1);
         assert_eq!(artifact["kind"], "artifact");
         assert_eq!(artifact["state"], "verified");
+        assert_eq!(artifact["references"]["artifact_hash"], "artifact");
         assert_eq!(artifact["references"]["manifest_binding_hash"], "binding");
         assert_eq!(artifact["last_transition"]["payload_len"], 4096);
 

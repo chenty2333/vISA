@@ -395,7 +395,7 @@ fn artifact_verification_is_queryable_and_versioned() {
     assert_eq!(graph.artifact_verifications()[0].generation, 2);
     assert_eq!(
         graph.artifact_verifications()[0].summary(),
-        "artifact vfs_service name=vfs state=host-validated binding=binding-a cwasm=cwasm-a abi=abi-a signature=prototype-self-signed-sha256 signer=target_executor blocked=target-runtime-only-loader generation=2"
+        "artifact vfs_service name=vfs state=host-validated binding=binding-a artifact_hash=cwasm-a abi=abi-a signature=prototype-self-signed-sha256 signer=target_executor blocked=target-runtime-only-loader generation=2"
     );
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
@@ -447,7 +447,7 @@ fn store_activation_roots_and_handles_are_generation_checked() {
     );
     assert_eq!(
         graph.store_activations()[0].summary(),
-        "store-activation store=1 package=vfs_service binding=binding-a cwasm=cwasm-a code=published memory=verified hostcalls=not-linked traps=contract-declared entry=not-runnable blocked=hostcall-table-not-linked generation=2"
+        "store-activation store=1 package=vfs_service binding=binding-a code_hash=cwasm-a code=published memory=verified hostcalls=not-linked traps=contract-declared entry=not-runnable blocked=hostcall-table-not-linked generation=2"
     );
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),

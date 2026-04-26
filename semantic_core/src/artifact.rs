@@ -30,7 +30,7 @@ pub struct ArtifactVerificationRecord {
     pub package: String,
     pub artifact_name: String,
     pub manifest_binding_hash: String,
-    pub cwasm_sha256: String,
+    pub artifact_hash: String,
     pub abi_fingerprint: String,
     pub signature_profile: String,
     pub signer: String,
@@ -47,12 +47,12 @@ impl ArtifactVerificationRecord {
             .map(String::as_str)
             .unwrap_or("none");
         format!(
-            "artifact {} name={} state={} binding={} cwasm={} abi={} signature={} signer={} blocked={} generation={}",
+            "artifact {} name={} state={} binding={} artifact_hash={} abi={} signature={} signer={} blocked={} generation={}",
             self.package,
             self.artifact_name,
             self.state.as_str(),
             self.manifest_binding_hash,
-            self.cwasm_sha256,
+            self.artifact_hash,
             self.abi_fingerprint,
             self.signature_profile,
             self.signer,

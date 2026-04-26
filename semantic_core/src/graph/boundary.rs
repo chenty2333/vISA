@@ -71,7 +71,7 @@ impl SemanticGraph {
         package: &str,
         artifact_name: &str,
         manifest_binding_hash: &str,
-        cwasm_sha256: &str,
+        artifact_hash: &str,
         abi_fingerprint: &str,
         signature_profile: &str,
         signer: &str,
@@ -86,7 +86,7 @@ impl SemanticGraph {
             self.artifact_verifications[index].artifact_name = artifact_name.to_string();
             self.artifact_verifications[index].manifest_binding_hash =
                 manifest_binding_hash.to_string();
-            self.artifact_verifications[index].cwasm_sha256 = cwasm_sha256.to_string();
+            self.artifact_verifications[index].artifact_hash = artifact_hash.to_string();
             self.artifact_verifications[index].abi_fingerprint = abi_fingerprint.to_string();
             self.artifact_verifications[index].signature_profile = signature_profile.to_string();
             self.artifact_verifications[index].signer = signer.to_string();
@@ -117,7 +117,7 @@ impl SemanticGraph {
             package: package.to_string(),
             artifact_name: artifact_name.to_string(),
             manifest_binding_hash: manifest_binding_hash.to_string(),
-            cwasm_sha256: cwasm_sha256.to_string(),
+            artifact_hash: artifact_hash.to_string(),
             abi_fingerprint: abi_fingerprint.to_string(),
             signature_profile: signature_profile.to_string(),
             signer: signer.to_string(),
@@ -146,7 +146,7 @@ impl SemanticGraph {
         store: StoreId,
         package: &str,
         manifest_binding_hash: &str,
-        cwasm_sha256: &str,
+        code_hash: &str,
         code_publish_state: CodePublishState,
         memory_layout_state: MemoryLayoutState,
         hostcall_table_state: HostcallLinkState,
@@ -161,7 +161,7 @@ impl SemanticGraph {
         {
             self.store_activations[index].package = package.to_string();
             self.store_activations[index].manifest_binding_hash = manifest_binding_hash.to_string();
-            self.store_activations[index].cwasm_sha256 = cwasm_sha256.to_string();
+            self.store_activations[index].code_hash = code_hash.to_string();
             self.store_activations[index].code_publish_state = code_publish_state;
             self.store_activations[index].memory_layout_state = memory_layout_state;
             self.store_activations[index].hostcall_table_state = hostcall_table_state;
@@ -195,7 +195,7 @@ impl SemanticGraph {
             store,
             package,
             manifest_binding_hash,
-            cwasm_sha256,
+            code_hash,
             code_publish_state,
             memory_layout_state,
             hostcall_table_state,
