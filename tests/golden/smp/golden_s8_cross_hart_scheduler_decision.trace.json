@@ -1,0 +1,124 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "S8-cross-hart-scheduler-decision",
+  "name": "golden_s8_cross_hart_scheduler_decision",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "activation migration",
+    "remote park",
+    "stop-the-world safe point",
+    "SMP code publish barrier",
+    "real hardware IPI delivery",
+    "target-side execution"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "record-scheduler-decision",
+        "scheduler_decision": "scheduler-decision:41@1",
+        "queue": "runnable-queue:2@2",
+        "selected_activation": "activation:11@4",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "record-cross-hart-scheduler-decision",
+        "cross_decision": "cross-hart-scheduler-decision:51@1",
+        "scheduler_decision": "scheduler-decision:41@1",
+        "deciding_hart": "hart:1@2",
+        "target_hart": "hart:2@4",
+        "queue": "runnable-queue:2@2",
+        "selected_activation": "activation:11@4",
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "record-cross-hart-scheduler-decision",
+        "target_hart": "hart:2@3",
+        "expected": "rejected",
+        "violation": "cross-hart scheduler decision target hart generation is missing"
+      },
+      {
+        "id": 4,
+        "command": "record-cross-hart-scheduler-decision",
+        "deciding_hart": "hart:2@4",
+        "target_hart": "hart:2@4",
+        "expected": "rejected",
+        "violation": "cross-hart scheduler decision requires distinct harts"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "CrossHartSchedulerDecisionRecorded",
+      "cross_decision": "cross-hart-scheduler-decision:51@1",
+      "scheduler_decision": "scheduler-decision:41@1",
+      "deciding_hart": "hart:1@2",
+      "target_hart": "hart:2@4",
+      "queue": "runnable-queue:2@2",
+      "selected_activation": "activation:11@4"
+    },
+    {
+      "kind": "HartEventAttribution",
+      "event_kind": "CrossHartSchedulerDecisionSourceRecorded",
+      "hart": "hart:1@2"
+    },
+    {
+      "kind": "HartEventAttribution",
+      "event_kind": "CrossHartSchedulerDecisionTargetRecorded",
+      "hart": "hart:2@4",
+      "activation": "activation:11@4"
+    }
+  ],
+  "expected": {
+    "views": {
+      "cross-hart-scheduler-decision": {
+        "id": 51,
+        "generation": 1,
+        "state": "recorded",
+        "scheduler_decision": "scheduler-decision:41@1",
+        "deciding_hart": "hart:1@2",
+        "target_hart": "hart:2@4",
+        "queue": "runnable-queue:2@2",
+        "selected_activation": "activation:11@4"
+      },
+      "scheduler": {
+        "scheduler_decision_count_delta": 1,
+        "cross_hart_scheduler_decision_count": 1,
+        "hart_event_attribution_count_delta": 2
+      },
+      "graph-history": {
+        "edges": [
+          "cross-hart-scheduler-decision:51@1 --extends-scheduler-decision--> scheduler-decision:41@1",
+          "cross-hart-scheduler-decision:51@1 --deciding-hart--> hart:1@2",
+          "cross-hart-scheduler-decision:51@1 --target-hart--> hart:2@4",
+          "cross-hart-scheduler-decision:51@1 --target-runnable-queue--> runnable-queue:2@2",
+          "cross-hart-scheduler-decision:51@1 --selected-activation--> activation:11@4"
+        ]
+      }
+    },
+    "invariants": [
+      "Cross-hart scheduler decision must reference an exact existing SchedulerDecision generation",
+      "Deciding and target harts must be distinct",
+      "Deciding and target hart generations must be exact at command time",
+      "Target runnable queue must be owned by the target hart identity",
+      "Cross-hart scheduler decision records source and target per-hart attribution",
+      "Cross-hart history edges remain historical after later target hart transitions"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "smp_runtime_s8_cross_hart_scheduler_decision_records_remote_choice",
+      "smp_runtime_s8_rejects_stale_target_and_same_hart_decision",
+      "smp_runtime_s8_history_still_requires_event_after_target_hart_advances",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "semantic_roots_reject_cross_hart_scheduler_decision_root_mismatch"
+    ]
+  }
+}

@@ -145,6 +145,17 @@ pub enum SemanticCommand {
         reason: String,
         note: String,
     },
+    RecordCrossHartSchedulerDecision {
+        cross_decision: CrossHartSchedulerDecisionId,
+        scheduler_decision: SchedulerDecisionId,
+        scheduler_decision_generation: Generation,
+        deciding_hart: HartId,
+        deciding_hart_generation: Generation,
+        target_hart: HartId,
+        target_hart_generation: Generation,
+        reason: String,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -363,6 +374,7 @@ impl SemanticCommand {
             Self::RemoteParkHart { .. } => "remote-park-hart",
             Self::PreemptActivation { .. } => "preempt-activation",
             Self::RecordSchedulerDecision { .. } => "record-scheduler-decision",
+            Self::RecordCrossHartSchedulerDecision { .. } => "record-cross-hart-scheduler-decision",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1283,6 +1295,28 @@ impl SemanticGraph {
                     }
                 }
             }
+            SemanticCommand::RecordCrossHartSchedulerDecision {
+                cross_decision,
+                scheduler_decision,
+                scheduler_decision_generation,
+                deciding_hart,
+                deciding_hart_generation,
+                target_hart,
+                target_hart_generation,
+                reason,
+                ..
+            } => self
+                .validate_cross_hart_scheduler_decision(
+                    *cross_decision,
+                    *scheduler_decision,
+                    *scheduler_decision_generation,
+                    *deciding_hart,
+                    *deciding_hart_generation,
+                    *target_hart,
+                    *target_hart_generation,
+                    reason,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -1986,6 +2020,27 @@ impl SemanticGraph {
                 queue_generation,
                 selected_activation,
                 selected_activation_generation,
+                &reason,
+                &note,
+            ),
+            SemanticCommand::RecordCrossHartSchedulerDecision {
+                cross_decision,
+                scheduler_decision,
+                scheduler_decision_generation,
+                deciding_hart,
+                deciding_hart_generation,
+                target_hart,
+                target_hart_generation,
+                reason,
+                note,
+            } => self.record_cross_hart_scheduler_decision_with_id(
+                cross_decision,
+                scheduler_decision,
+                scheduler_decision_generation,
+                deciding_hart,
+                deciding_hart_generation,
+                target_hart,
+                target_hart_generation,
                 &reason,
                 &note,
             ),

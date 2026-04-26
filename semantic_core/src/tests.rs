@@ -2780,6 +2780,154 @@ fn smp_runtime_s7_history_still_requires_event_after_hart_unparks() {
     );
 }
 
+fn s8_cross_hart_decision_graph() -> SemanticGraph {
+    let mut graph = s6_remote_preempt_graph();
+    assert!(graph.remote_preempt_activation_with_id(
+        31,
+        21,
+        1,
+        1,
+        2,
+        2,
+        3,
+        11,
+        3,
+        2,
+        "remote preempt activation",
+    ));
+    assert!(graph.record_scheduler_decision_with_id(
+        41,
+        2,
+        2,
+        11,
+        4,
+        "remote-runnable",
+        "cross-hart base scheduler decision",
+    ));
+    graph
+}
+
+#[test]
+fn smp_runtime_s8_cross_hart_scheduler_decision_records_remote_choice() {
+    let mut graph = s8_cross_hart_decision_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s8-test",
+        SemanticCommand::RecordCrossHartSchedulerDecision {
+            cross_decision: 51,
+            scheduler_decision: 41,
+            scheduler_decision_generation: 1,
+            deciding_hart: 1,
+            deciding_hart_generation: 2,
+            target_hart: 2,
+            target_hart_generation: 4,
+            reason: "remote-runnable-selected".to_string(),
+            note: "hart0 selects hart1 queue".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.cross_hart_scheduler_decisions().len(), 1);
+    let decision = &graph.cross_hart_scheduler_decisions()[0];
+    assert_eq!(decision.scheduler_decision, 41);
+    assert_eq!(decision.deciding_hart, 1);
+    assert_eq!(decision.target_hart, 2);
+    assert_eq!(decision.target_hart_generation, 4);
+    assert_eq!(decision.queue, 2);
+    assert_eq!(decision.queue_generation, 2);
+    assert_eq!(decision.queue_owner_hart_generation, 2);
+    assert_eq!(decision.selected_activation, 11);
+    assert_eq!(decision.selected_activation_generation, 4);
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == decision.decided_at_event
+            && record.hart == 1
+            && record.event_kind == "CrossHartSchedulerDecisionSourceRecorded"
+    }));
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == decision.decided_at_event
+            && record.hart == 2
+            && record.hart_generation == 4
+            && record.event_kind == "CrossHartSchedulerDecisionTargetRecorded"
+            && record.activation == Some(11)
+            && record.activation_generation == Some(4)
+    }));
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "CrossHartSchedulerDecisionRecorded cross_decision=51 decision=41@1 deciding_hart=1@2 target_hart=2@4 queue=2@2 activation=11@4 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s8_rejects_stale_target_and_same_hart_decision() {
+    let mut graph = s8_cross_hart_decision_graph();
+    let stale_target = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s8-test",
+        SemanticCommand::RecordCrossHartSchedulerDecision {
+            cross_decision: 51,
+            scheduler_decision: 41,
+            scheduler_decision_generation: 1,
+            deciding_hart: 1,
+            deciding_hart_generation: 2,
+            target_hart: 2,
+            target_hart_generation: 3,
+            reason: "remote-runnable-selected".to_string(),
+            note: "must reject stale target".to_string(),
+        },
+    ));
+    assert_eq!(stale_target.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("cross-hart scheduler decision target hart generation is missing".to_string());
+    assert_eq!(stale_target.violations, expected);
+
+    let same_hart = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s8-test",
+        SemanticCommand::RecordCrossHartSchedulerDecision {
+            cross_decision: 51,
+            scheduler_decision: 41,
+            scheduler_decision_generation: 1,
+            deciding_hart: 2,
+            deciding_hart_generation: 4,
+            target_hart: 2,
+            target_hart_generation: 4,
+            reason: "remote-runnable-selected".to_string(),
+            note: "must reject same hart".to_string(),
+        },
+    ));
+    assert_eq!(same_hart.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("cross-hart scheduler decision requires distinct harts".to_string());
+    assert_eq!(same_hart.violations, expected);
+    assert!(graph.cross_hart_scheduler_decisions().is_empty());
+}
+
+#[test]
+fn smp_runtime_s8_history_still_requires_event_after_target_hart_advances() {
+    let mut graph = s8_cross_hart_decision_graph();
+    assert!(graph.record_cross_hart_scheduler_decision_with_id(
+        51,
+        41,
+        1,
+        1,
+        2,
+        2,
+        4,
+        "remote-runnable-selected",
+        "hart0 selects hart1 queue",
+    ));
+    assert!(graph.set_hart_state(2, 4, HartState::Parked, "park after decision", "later park"));
+    assert!(graph.check_invariants().is_ok());
+
+    graph.corrupt_cross_hart_scheduler_decision_event_for_test(51, 999);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::CrossHartSchedulerDecisionMissingEvent { cross_decision: 51 })
+    );
+}
+
 #[test]
 fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let mut graph = SemanticGraph::new();

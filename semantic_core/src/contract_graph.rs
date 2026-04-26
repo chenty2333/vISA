@@ -1392,6 +1392,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::RemotePark
             | ContractObjectKind::Preemption
             | ContractObjectKind::SchedulerDecision
+            | ContractObjectKind::CrossHartSchedulerDecision
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

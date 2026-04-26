@@ -77,6 +77,7 @@ pub enum ObjectKind {
     RemotePark,
     Preemption,
     SchedulerDecision,
+    CrossHartSchedulerDecision,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -119,6 +120,7 @@ impl ObjectKind {
             Self::RemotePark => "remote-park",
             Self::Preemption => "preemption",
             Self::SchedulerDecision => "scheduler-decision",
+            Self::CrossHartSchedulerDecision => "cross-hart-scheduler-decision",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -315,6 +317,10 @@ typed_ref!(RemotePreemptRef, ObjectKind::RemotePreempt);
 typed_ref!(RemoteParkRef, ObjectKind::RemotePark);
 typed_ref!(PreemptionRef, ObjectKind::Preemption);
 typed_ref!(SchedulerDecisionRef, ObjectKind::SchedulerDecision);
+typed_ref!(
+    CrossHartSchedulerDecisionRef,
+    ObjectKind::CrossHartSchedulerDecision
+);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1502,6 +1508,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("scheduler decision root/count mismatch"));
     }
+    if roots.cross_hart_scheduler_decision_roots.len()
+        != package.semantic.cross_hart_scheduler_decision_count
+        || package.semantic.cross_hart_scheduler_decisions.len()
+            != package.semantic.cross_hart_scheduler_decision_count
+    {
+        return Err(ContractError::new(
+            "cross-hart scheduler decision root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2035,6 +2050,7 @@ mod tests {
                 remote_park_count: 0,
                 preemption_count: 0,
                 scheduler_decision_count: 0,
+                cross_hart_scheduler_decision_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2086,6 +2102,7 @@ mod tests {
                 remote_parks: Vec::new(),
                 preemptions: Vec::new(),
                 scheduler_decisions: Vec::new(),
+                cross_hart_scheduler_decisions: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -2408,6 +2425,39 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "scheduler decision root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_cross_hart_scheduler_decision_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.cross_hart_scheduler_decision_count = 1;
+        package.semantic.cross_hart_scheduler_decisions.push(
+            artifact_manifest::CrossHartSchedulerDecisionManifest {
+                id: 6,
+                scheduler_decision: 5,
+                scheduler_decision_generation: 1,
+                deciding_hart: 1,
+                deciding_hart_generation: 2,
+                target_hart: 2,
+                target_hart_generation: 4,
+                queue: 1,
+                queue_generation: 2,
+                queue_owner_hart_generation: 2,
+                selected_activation: 11,
+                selected_activation_generation: 4,
+                generation: 1,
+                state: "recorded".to_owned(),
+                decided_at_event: 8,
+                reason: "remote-runnable".to_owned(),
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "cross-hart scheduler decision root/count mismatch"
+        );
     }
 
     #[test]
@@ -2878,6 +2928,8 @@ mod tests {
         assert!(PreemptionRef::try_from_ref(preemption).is_ok());
         let decision = ObjectRef::new(ObjectKind::SchedulerDecision, 7, 1).unwrap();
         assert!(SchedulerDecisionRef::try_from_ref(decision).is_ok());
+        let cross_decision = ObjectRef::new(ObjectKind::CrossHartSchedulerDecision, 8, 1).unwrap();
+        assert!(CrossHartSchedulerDecisionRef::try_from_ref(cross_decision).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

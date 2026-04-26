@@ -584,6 +584,32 @@ pub enum SemanticInvariantError {
         decision: SchedulerDecisionId,
         task: TaskId,
     },
+    CrossHartSchedulerDecisionInvalid {
+        cross_decision: CrossHartSchedulerDecisionId,
+    },
+    CrossHartSchedulerDecisionMissingDecision {
+        cross_decision: CrossHartSchedulerDecisionId,
+        decision: SchedulerDecisionId,
+    },
+    CrossHartSchedulerDecisionMissingHart {
+        cross_decision: CrossHartSchedulerDecisionId,
+        hart: HartId,
+    },
+    CrossHartSchedulerDecisionHartGenerationMismatch {
+        cross_decision: CrossHartSchedulerDecisionId,
+        hart: HartId,
+    },
+    CrossHartSchedulerDecisionQueueOwnerMismatch {
+        cross_decision: CrossHartSchedulerDecisionId,
+        queue: RunnableQueueId,
+    },
+    CrossHartSchedulerDecisionMissingEvent {
+        cross_decision: CrossHartSchedulerDecisionId,
+    },
+    CrossHartSchedulerDecisionMissingHartEventAttribution {
+        cross_decision: CrossHartSchedulerDecisionId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

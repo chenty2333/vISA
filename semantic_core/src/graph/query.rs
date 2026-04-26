@@ -79,6 +79,7 @@ impl SemanticGraph {
         self.check_ipi_invariants()?;
         self.check_remote_preempt_invariants()?;
         self.check_remote_park_invariants()?;
+        self.check_cross_hart_scheduler_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;

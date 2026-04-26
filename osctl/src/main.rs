@@ -10,8 +10,8 @@ use artifact_manifest::{
     ActivationResumeManifest, ActivationWaitManifest, ArtifactBundleManifest,
     BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
     CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IpiEventManifest, MigrationPackageManifest,
+    CrossHartSchedulerDecisionManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IpiEventManifest, MigrationPackageManifest,
     PreemptionLatencySampleManifest, PreemptionManifest, RemoteParkManifest, RemotePreemptManifest,
     RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
     SchedulerDecisionManifest, StoreRecordManifest, SubstrateEventManifest,
@@ -230,6 +230,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "remote-park"
         | "preemption"
         | "scheduler-decision"
+        | "cross-hart-scheduler-decision"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -400,7 +401,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -604,6 +605,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "remote-park" => "remote-park",
         "preemption" => "preemption",
         "scheduler-decision" => "scheduler-decision",
+        "cross-hart-scheduler-decision" => "cross-hart-scheduler-decision",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -1088,6 +1090,53 @@ fn scheduler_decision_view_v1(decision: &SchedulerDecisionManifest) -> serde_jso
     })
 }
 
+fn cross_hart_scheduler_decision_view_v1(
+    decision: &CrossHartSchedulerDecisionManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "cross-hart-scheduler-decision",
+        "id": decision.id,
+        "generation": decision.generation,
+        "state": decision.state,
+        "owner": {
+            "scheduler": 1,
+            "deciding_hart": {
+                "id": decision.deciding_hart,
+                "generation": decision.deciding_hart_generation,
+            },
+            "target_hart": {
+                "id": decision.target_hart,
+                "generation": decision.target_hart_generation,
+            },
+        },
+        "references": {
+            "scheduler_decision": {
+                "id": decision.scheduler_decision,
+                "generation": decision.scheduler_decision_generation,
+            },
+            "queue": {
+                "id": decision.queue,
+                "generation": decision.queue_generation,
+                "owner_hart_generation": decision.queue_owner_hart_generation,
+            },
+            "selected_activation": {
+                "id": decision.selected_activation,
+                "generation": decision.selected_activation_generation,
+            },
+            "event": {
+                "id": decision.decided_at_event,
+            },
+        },
+        "reason": decision.reason,
+        "note": decision.note,
+        "last_transition": {
+            "decided_at_event": decision.decided_at_event,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -1409,6 +1458,20 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "queue": decision.queue,
                 "queue_generation": decision.queue_generation,
             })).collect::<Vec<_>>(),
+            "cross_hart_scheduler_decisions": package.semantic.cross_hart_scheduler_decisions.iter().map(|decision| serde_json::json!({
+                "id": decision.id,
+                "generation": decision.generation,
+                "scheduler_decision": decision.scheduler_decision,
+                "scheduler_decision_generation": decision.scheduler_decision_generation,
+                "deciding_hart": decision.deciding_hart,
+                "deciding_hart_generation": decision.deciding_hart_generation,
+                "target_hart": decision.target_hart,
+                "target_hart_generation": decision.target_hart_generation,
+                "queue": decision.queue,
+                "queue_generation": decision.queue_generation,
+                "selected_activation": decision.selected_activation,
+                "selected_activation_generation": decision.selected_activation_generation,
+            })).collect::<Vec<_>>(),
             "activation_resumes": package.semantic.activation_resumes.iter().map(|resume| serde_json::json!({
                 "id": resume.id,
                 "generation": resume.generation,
@@ -1461,6 +1524,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "hart_event_attribution_count": package.semantic.hart_event_attribution_count,
             "preemption_count": package.semantic.preemption_count,
             "scheduler_decision_count": package.semantic.scheduler_decision_count,
+            "cross_hart_scheduler_decision_count": package.semantic.cross_hart_scheduler_decision_count,
             "activation_resume_count": package.semantic.activation_resume_count,
             "activation_wait_count": package.semantic.activation_wait_count,
             "activation_cleanup_count": package.semantic.activation_cleanup_count,
@@ -1896,6 +1960,12 @@ fn stable_views_for_kind(
             .scheduler_decisions
             .iter()
             .map(scheduler_decision_view_v1)
+            .collect()),
+        "cross-hart-scheduler-decision" => Ok(package
+            .semantic
+            .cross_hart_scheduler_decisions
+            .iter()
+            .map(cross_hart_scheduler_decision_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -2543,7 +2613,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -2558,6 +2628,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.remote_park_count,
             package.semantic.preemption_count,
             package.semantic.scheduler_decision_count,
+            package.semantic.cross_hart_scheduler_decision_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -2690,7 +2761,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -2718,6 +2789,11 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.ipi_event_roots.len(),
         package.semantic.roots.remote_preempt_roots.len(),
         package.semantic.roots.remote_park_roots.len(),
+        package
+            .semantic
+            .roots
+            .cross_hart_scheduler_decision_roots
+            .len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -2745,6 +2821,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "scheduler-decision",
         &package.semantic.roots.scheduler_decision_roots,
+    );
+    print_roots(
+        "cross-hart-scheduler-decision",
+        &package.semantic.roots.cross_hart_scheduler_decision_roots,
     );
     print_roots(
         "activation-resume",
@@ -3359,6 +3439,64 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             from,
             object_ref_json("task", decision.owner_task, decision.owner_task_generation),
             "owned-by-task",
+            "historical",
+            Some(decision.decided_at_event),
+        ));
+    }
+    for decision in &package.semantic.cross_hart_scheduler_decisions {
+        let from = object_ref_json(
+            "cross-hart-scheduler-decision",
+            decision.id,
+            decision.generation,
+        );
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "scheduler-decision",
+                decision.scheduler_decision,
+                decision.scheduler_decision_generation,
+            ),
+            "extends-scheduler-decision",
+            "historical",
+            Some(decision.decided_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "hart",
+                decision.deciding_hart,
+                decision.deciding_hart_generation,
+            ),
+            "deciding-hart",
+            "historical",
+            Some(decision.decided_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "hart",
+                decision.target_hart,
+                decision.target_hart_generation,
+            ),
+            "target-hart",
+            "historical",
+            Some(decision.decided_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("runnable-queue", decision.queue, decision.queue_generation),
+            "target-runnable-queue",
+            "historical",
+            Some(decision.decided_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "activation",
+                decision.selected_activation,
+                decision.selected_activation_generation,
+            ),
+            "selected-activation",
             "historical",
             Some(decision.decided_at_event),
         ));
@@ -4888,6 +5026,7 @@ fn print_replay_json(
             "ipi_events": package.semantic.roots.ipi_event_roots.len(),
             "remote_preempts": package.semantic.roots.remote_preempt_roots.len(),
             "remote_parks": package.semantic.roots.remote_park_roots.len(),
+            "cross_hart_scheduler_decisions": package.semantic.roots.cross_hart_scheduler_decision_roots.len(),
             "resources": package.semantic.roots.resource_roots.len(),
             "authorities": package.semantic.roots.authority_roots.len(),
             "stores": package.semantic.roots.store_roots.len(),
@@ -4935,6 +5074,7 @@ fn print_replay_json(
             "ipi_event_roots": &package.semantic.roots.ipi_event_roots,
             "remote_preempt_roots": &package.semantic.roots.remote_preempt_roots,
             "remote_park_roots": &package.semantic.roots.remote_park_roots,
+            "cross_hart_scheduler_decision_roots": &package.semantic.roots.cross_hart_scheduler_decision_roots,
             "cleanup_roots": &package.semantic.roots.cleanup_roots,
             "activation_cleanup_roots": &package.semantic.roots.activation_cleanup_roots,
             "preemption_latency_roots": &package.semantic.roots.preemption_latency_roots,
@@ -4962,7 +5102,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -4987,6 +5127,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.ipi_event_count,
         package.semantic.remote_preempt_count,
         package.semantic.remote_park_count,
+        package.semantic.cross_hart_scheduler_decision_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -5343,6 +5484,7 @@ mod tests {
         package.semantic.remote_park_count = 1;
         package.semantic.preemption_count = 1;
         package.semantic.scheduler_decision_count = 1;
+        package.semantic.cross_hart_scheduler_decision_count = 1;
         package.semantic.activation_resume_count = 1;
         package.semantic.activation_wait_count = 1;
         package.semantic.activation_cleanup_count = 1;
@@ -5586,6 +5728,28 @@ mod tests {
             });
         package
             .semantic
+            .cross_hart_scheduler_decisions
+            .push(CrossHartSchedulerDecisionManifest {
+                id: 26,
+                scheduler_decision: 16,
+                scheduler_decision_generation: 1,
+                deciding_hart: 2,
+                deciding_hart_generation: 2,
+                target_hart: 1,
+                target_hart_generation: 2,
+                queue: 1,
+                queue_generation: 1,
+                queue_owner_hart_generation: 2,
+                selected_activation: 11,
+                selected_activation_generation: 3,
+                generation: 1,
+                state: "recorded".to_owned(),
+                decided_at_event: 20,
+                reason: "remote-runnable".to_owned(),
+                note: "cross hart decision".to_owned(),
+            });
+        package
+            .semantic
             .activation_resumes
             .push(ActivationResumeManifest {
                 id: 17,
@@ -5790,6 +5954,20 @@ mod tests {
         );
         assert_eq!(decision["references"]["queue"]["generation"], 1);
         assert_eq!(decision["reason"], "runnable-available");
+        let cross_decision = cross_hart_scheduler_decision_view_v1(
+            &package.semantic.cross_hart_scheduler_decisions[0],
+        );
+        assert_eq!(cross_decision["kind"], "cross-hart-scheduler-decision");
+        assert_eq!(cross_decision["owner"]["deciding_hart"]["id"], 2);
+        assert_eq!(cross_decision["owner"]["target_hart"]["id"], 1);
+        assert_eq!(
+            cross_decision["references"]["scheduler_decision"]["generation"],
+            1
+        );
+        assert_eq!(
+            cross_decision["references"]["queue"]["owner_hart_generation"],
+            2
+        );
         let resume = activation_resume_view_v1(&package.semantic.activation_resumes[0]);
         assert_eq!(resume["kind"], "activation-resume");
         assert_eq!(resume["references"]["activation"]["generation_before"], 3);
@@ -5868,6 +6046,14 @@ mod tests {
         );
         assert_eq!(scheduler["last_transition"]["preemption_count"], 1);
         assert_eq!(scheduler["last_transition"]["scheduler_decision_count"], 1);
+        assert_eq!(
+            scheduler["last_transition"]["cross_hart_scheduler_decision_count"],
+            1
+        );
+        assert_eq!(
+            scheduler["references"]["cross_hart_scheduler_decisions"][0]["target_hart"],
+            1
+        );
         assert_eq!(scheduler["last_transition"]["activation_resume_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_wait_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_cleanup_count"], 1);
@@ -5947,6 +6133,12 @@ mod tests {
                     && edge["relation"] == "selected"
                     && edge["mode"] == "historical")
         );
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"]
+            == "cross-hart-scheduler-decision"
+            && edge["to"]["kind"] == "hart"
+            && edge["to"]["id"] == 1
+            && edge["relation"] == "target-hart"
+            && edge["mode"] == "historical"));
         assert!(
             history_edges
                 .iter()

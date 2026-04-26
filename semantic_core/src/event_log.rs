@@ -157,6 +157,20 @@ pub enum EventKind {
         activation_generation: Generation,
         generation: Generation,
     },
+    CrossHartSchedulerDecisionRecorded {
+        cross_decision: CrossHartSchedulerDecisionId,
+        scheduler_decision: SchedulerDecisionId,
+        scheduler_decision_generation: Generation,
+        deciding_hart: HartId,
+        deciding_hart_generation: Generation,
+        target_hart: HartId,
+        target_hart_generation: Generation,
+        queue: RunnableQueueId,
+        queue_generation: Generation,
+        activation: ActivationId,
+        activation_generation: Generation,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -742,6 +756,22 @@ impl EventKind {
                 generation,
             } => format!(
                 "SchedulerDecisionRecorded decision={decision} queue={queue}@{queue_generation} activation={activation}@{activation_generation} generation={generation}"
+            ),
+            Self::CrossHartSchedulerDecisionRecorded {
+                cross_decision,
+                scheduler_decision,
+                scheduler_decision_generation,
+                deciding_hart,
+                deciding_hart_generation,
+                target_hart,
+                target_hart_generation,
+                queue,
+                queue_generation,
+                activation,
+                activation_generation,
+                generation,
+            } => format!(
+                "CrossHartSchedulerDecisionRecorded cross_decision={cross_decision} decision={scheduler_decision}@{scheduler_decision_generation} deciding_hart={deciding_hart}@{deciding_hart_generation} target_hart={target_hart}@{target_hart_generation} queue={queue}@{queue_generation} activation={activation}@{activation_generation} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

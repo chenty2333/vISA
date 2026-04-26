@@ -18,6 +18,7 @@ pub struct SemanticGraph {
     remote_parks: Vec<RemoteParkRecord>,
     preemptions: Vec<PreemptionRecord>,
     scheduler_decisions: Vec<SchedulerDecisionRecord>,
+    cross_hart_scheduler_decisions: Vec<CrossHartSchedulerDecisionRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -47,6 +48,7 @@ pub struct SemanticGraph {
     next_remote_park_id: RemoteParkId,
     next_preemption_id: PreemptionId,
     next_scheduler_decision_id: SchedulerDecisionId,
+    next_cross_hart_scheduler_decision_id: CrossHartSchedulerDecisionId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -68,6 +70,7 @@ mod capability;
 mod cleanup;
 mod command;
 mod context;
+mod cross_scheduler;
 mod hart;
 mod hart_event;
 mod interface;
@@ -107,6 +110,7 @@ impl SemanticGraph {
             remote_parks: Vec::new(),
             preemptions: Vec::new(),
             scheduler_decisions: Vec::new(),
+            cross_hart_scheduler_decisions: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -136,6 +140,7 @@ impl SemanticGraph {
             next_remote_park_id: 1,
             next_preemption_id: 1,
             next_scheduler_decision_id: 1,
+            next_cross_hart_scheduler_decision_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

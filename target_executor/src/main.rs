@@ -12,12 +12,12 @@ use artifact_manifest::{
     BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
     CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
-    ContractViolationManifest, GuestStateManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    IpiEventManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    RemoteParkManifest, RemotePreemptManifest, RequiredArtifactProfileManifest,
+    ContractViolationManifest, CrossHartSchedulerDecisionManifest, GuestStateManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IpiEventManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, RemoteParkManifest, RemotePreemptManifest, RequiredArtifactProfileManifest,
     RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
     SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
     SemanticSnapshotManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -498,6 +498,34 @@ fn record_preemptive_runtime_context_evidence(
                 activation_generation: 3,
                 queue: 9004,
                 note: "s6-remote-preempt-activation-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            9_005,
+            "target-executor-s8",
+            SemanticCommand::RecordSchedulerDecision {
+                decision: 9004,
+                queue: 9004,
+                queue_generation: 2,
+                selected_activation: 9004,
+                selected_activation_generation: 4,
+                reason: "s8-cross-hart-runnable".to_owned(),
+                note: "s8-cross-hart-base-decision-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            9_006,
+            "target-executor-s8",
+            SemanticCommand::RecordCrossHartSchedulerDecision {
+                cross_decision: 9001,
+                scheduler_decision: 9004,
+                scheduler_decision_generation: 1,
+                deciding_hart: 1,
+                deciding_hart_generation: 2,
+                target_hart: 2,
+                target_hart_generation: 4,
+                reason: "s8-remote-runnable-selected".to_owned(),
+                note: "s8-cross-hart-scheduler-decision-harness".to_owned(),
             },
         ),
         CommandEnvelope::new(
@@ -1890,6 +1918,7 @@ fn demo_migration_package(
             remote_park_count: semantic.remote_park_count(),
             preemption_count: semantic.preemption_count(),
             scheduler_decision_count: semantic.scheduler_decision_count(),
+            cross_hart_scheduler_decision_count: semantic.cross_hart_scheduler_decision_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -1980,6 +2009,11 @@ fn demo_migration_package(
                 .scheduler_decisions()
                 .iter()
                 .map(scheduler_decision_manifest)
+                .collect(),
+            cross_hart_scheduler_decisions: semantic
+                .cross_hart_scheduler_decisions()
+                .iter()
+                .map(cross_hart_scheduler_decision_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2290,6 +2324,28 @@ fn semantic_roots(
                 format!(
                     "scheduler-decision id={} queue={}@{} activation={}@{} state={} generation={}",
                     decision.id,
+                    decision.queue,
+                    decision.queue_generation,
+                    decision.selected_activation,
+                    decision.selected_activation_generation,
+                    decision.state.as_str(),
+                    decision.generation
+                )
+            })
+            .collect(),
+        cross_hart_scheduler_decision_roots: semantic
+            .cross_hart_scheduler_decisions()
+            .iter()
+            .map(|decision| {
+                format!(
+                    "cross-hart-scheduler-decision id={} decision={}@{} deciding_hart={}@{} target_hart={}@{} queue={}@{} activation={}@{} state={} generation={}",
+                    decision.id,
+                    decision.scheduler_decision,
+                    decision.scheduler_decision_generation,
+                    decision.deciding_hart,
+                    decision.deciding_hart_generation,
+                    decision.target_hart,
+                    decision.target_hart_generation,
                     decision.queue,
                     decision.queue_generation,
                     decision.selected_activation,
@@ -3118,6 +3174,30 @@ fn scheduler_decision_manifest(
         selected_activation_generation: decision.selected_activation_generation,
         owner_task: u64::from(decision.owner_task),
         owner_task_generation: decision.owner_task_generation,
+        generation: decision.generation,
+        state: decision.state.as_str().to_owned(),
+        decided_at_event: decision.decided_at_event,
+        reason: decision.reason.clone(),
+        note: decision.note.clone(),
+    }
+}
+
+fn cross_hart_scheduler_decision_manifest(
+    decision: &semantic_core::CrossHartSchedulerDecisionRecord,
+) -> CrossHartSchedulerDecisionManifest {
+    CrossHartSchedulerDecisionManifest {
+        id: decision.id,
+        scheduler_decision: decision.scheduler_decision,
+        scheduler_decision_generation: decision.scheduler_decision_generation,
+        deciding_hart: u64::from(decision.deciding_hart),
+        deciding_hart_generation: decision.deciding_hart_generation,
+        target_hart: u64::from(decision.target_hart),
+        target_hart_generation: decision.target_hart_generation,
+        queue: decision.queue,
+        queue_generation: decision.queue_generation,
+        queue_owner_hart_generation: decision.queue_owner_hart_generation,
+        selected_activation: decision.selected_activation,
+        selected_activation_generation: decision.selected_activation_generation,
         generation: decision.generation,
         state: decision.state.as_str().to_owned(),
         decided_at_event: decision.decided_at_event,

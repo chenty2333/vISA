@@ -321,6 +321,37 @@ impl SchedulerDecisionRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrossHartSchedulerDecisionRecord {
+    pub id: CrossHartSchedulerDecisionId,
+    pub scheduler_decision: SchedulerDecisionId,
+    pub scheduler_decision_generation: Generation,
+    pub deciding_hart: HartId,
+    pub deciding_hart_generation: Generation,
+    pub target_hart: HartId,
+    pub target_hart_generation: Generation,
+    pub queue: RunnableQueueId,
+    pub queue_generation: Generation,
+    pub queue_owner_hart_generation: Generation,
+    pub selected_activation: ActivationId,
+    pub selected_activation_generation: Generation,
+    pub generation: Generation,
+    pub state: CrossHartSchedulerDecisionState,
+    pub decided_at_event: EventId,
+    pub reason: String,
+    pub note: String,
+}
+
+impl CrossHartSchedulerDecisionRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::CrossHartSchedulerDecision,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,
