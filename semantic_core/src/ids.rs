@@ -4,6 +4,7 @@ pub type RunnableQueueId = u64;
 pub type ActivationContextId = u64;
 pub type SavedContextId = u64;
 pub type TimerInterruptId = u64;
+pub type IpiEventId = u64;
 pub type PreemptionId = u64;
 pub type SchedulerDecisionId = u64;
 pub type ActivationResumeId = u64;

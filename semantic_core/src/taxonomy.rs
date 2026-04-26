@@ -56,6 +56,38 @@ impl HartEventAttributionState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IpiEventKind {
+    SchedulerKick,
+    RescheduleHint,
+    Diagnostics,
+}
+
+impl IpiEventKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SchedulerKick => "scheduler-kick",
+            Self::RescheduleHint => "reschedule-hint",
+            Self::Diagnostics => "diagnostics",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IpiEventState {
+    Recorded,
+    Dropped,
+}
+
+impl IpiEventState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskState {
     Runnable,
     Running,

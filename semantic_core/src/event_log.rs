@@ -101,6 +101,15 @@ pub enum EventKind {
         target_activation_generation: Option<Generation>,
         generation: Generation,
     },
+    IpiEventRecorded {
+        ipi: IpiEventId,
+        source_hart: HartId,
+        source_hart_generation: Generation,
+        target_hart: HartId,
+        target_hart_generation: Generation,
+        kind: IpiEventKind,
+        generation: Generation,
+    },
     RuntimeActivationPreempted {
         preemption: PreemptionId,
         activation: ActivationId,
@@ -638,6 +647,18 @@ impl EventKind {
                 target_activation_generation
                     .map(|generation| generation.to_string())
                     .unwrap_or_else(|| "none".to_string())
+            ),
+            Self::IpiEventRecorded {
+                ipi,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation,
+                kind,
+                generation,
+            } => format!(
+                "IpiEventRecorded ipi={ipi} kind={} source_hart={source_hart}@{source_hart_generation} target_hart={target_hart}@{target_hart_generation} generation={generation}",
+                kind.as_str()
             ),
             Self::RuntimeActivationPreempted {
                 preemption,

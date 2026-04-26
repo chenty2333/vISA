@@ -1,0 +1,105 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "S5-ipi-event-model",
+  "name": "golden_s5_ipi_event_model",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "remote preempt",
+    "remote park",
+    "activation migration",
+    "cross-hart scheduler decision",
+    "stop-the-world safe point",
+    "real hardware IPI delivery"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "record-ipi-event",
+        "ipi": "ipi-event:21@1",
+        "source_hart": "hart:1@2",
+        "target_hart": "hart:2@2",
+        "kind": "scheduler-kick",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "record-ipi-event",
+        "source_hart": "hart:1@99",
+        "target_hart": "hart:2@2",
+        "expected": "rejected",
+        "violation": "ipi source hart generation is missing or inactive"
+      },
+      {
+        "id": 3,
+        "command": "record-ipi-event",
+        "source_hart": "hart:1@2",
+        "target_hart": "hart:1@2",
+        "expected": "rejected",
+        "violation": "ipi source and target harts must differ"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "IpiEventRecorded",
+      "ipi": "ipi-event:21@1",
+      "source_hart": "hart:1@2",
+      "target_hart": "hart:2@2"
+    },
+    {
+      "kind": "HartEventAttribution",
+      "event_kind": "IpiEventSourceRecorded",
+      "hart": "hart:1@2"
+    },
+    {
+      "kind": "HartEventAttribution",
+      "event_kind": "IpiEventTargetRecorded",
+      "hart": "hart:2@2"
+    }
+  ],
+  "expected": {
+    "views": {
+      "ipi-event": {
+        "id": 21,
+        "generation": 1,
+        "state": "recorded",
+        "source_hart": "hart:1@2",
+        "target_hart": "hart:2@2"
+      },
+      "scheduler": {
+        "ipi_event_count": 1,
+        "hart_event_attribution_count_delta": 2
+      },
+      "graph-history": {
+        "edges": [
+          "ipi-event:21@1 --ipi-source-hart--> hart:1@2",
+          "ipi-event:21@1 --ipi-target-hart--> hart:2@2"
+        ]
+      }
+    },
+    "invariants": [
+      "IPI source and target harts must be distinct",
+      "IPI source hart generation must match an online or idle/running HartRecord",
+      "IPI target hart generation must match an online or idle/running HartRecord",
+      "IPI creates source and target per-hart event attribution records",
+      "IPI event history edges are historical and do not imply current activation migration",
+      "Recorded IPI history remains valid if a hart later transitions offline"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "smp_runtime_s5_records_ipi_event_between_hart_generations",
+      "smp_runtime_s5_rejects_stale_or_self_target_ipi_event",
+      "smp_runtime_s5_invariants_reject_bad_ipi_target_generation",
+      "smp_runtime_s5_ipi_history_survives_later_hart_offline",
+      "smp_runtime_s5_invariants_require_source_and_target_attribution",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state"
+    ]
+  }
+}

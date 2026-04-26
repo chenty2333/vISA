@@ -14,16 +14,16 @@ use artifact_manifest::{
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
     ContractViolationManifest, GuestStateManifest, HartEventAttributionManifest,
     HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, RequiredArtifactProfileManifest,
-    RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
-    SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
-    SemanticSnapshotManifest, StoreRecordManifest, SubstrateBoundaryManifest,
-    SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
-    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
-    TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
-    WaitRecordManifest,
+    IpiEventManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
+    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
+    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
+    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
+    TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -38,7 +38,7 @@ use semantic_core::{
     ContractObjectKind, ContractObjectRef, ContractViolation, EntrypointState, EventKind,
     EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HartState,
     HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
-    ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
+    IpiEventKind, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
     PackageReplayValidator, ReplayPackageValidationState, RestartPolicy, RuntimeMode,
     SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind, SnapshotBarrierValidator,
     StoreRecord, StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec,
@@ -392,6 +392,20 @@ fn record_preemptive_runtime_context_evidence(
                 state: HartState::Idle,
                 reason: "secondary-scheduler-ready".to_owned(),
                 note: "s4-secondary-hart-idle-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            5,
+            "target-executor-s5",
+            SemanticCommand::RecordIpiEvent {
+                ipi: 9001,
+                source_hart: 1,
+                source_hart_generation: 2,
+                target_hart: 2,
+                target_hart_generation: 2,
+                kind: IpiEventKind::SchedulerKick,
+                reason: "s5-scheduler-kick".to_owned(),
+                note: "s5-ipi-event-model-harness".to_owned(),
             },
         ),
         CommandEnvelope::new(
@@ -1750,6 +1764,7 @@ fn demo_migration_package(
             activation_context_count: semantic.activation_context_count(),
             saved_context_count: semantic.saved_context_count(),
             timer_interrupt_count: semantic.timer_interrupt_count(),
+            ipi_event_count: semantic.ipi_event_count(),
             preemption_count: semantic.preemption_count(),
             scheduler_decision_count: semantic.scheduler_decision_count(),
             activation_resume_count: semantic.activation_resume_count(),
@@ -1817,6 +1832,11 @@ fn demo_migration_package(
                 .timer_interrupts()
                 .iter()
                 .map(timer_interrupt_manifest)
+                .collect(),
+            ipi_events: semantic
+                .ipi_events()
+                .iter()
+                .map(ipi_event_manifest)
                 .collect(),
             preemptions: semantic
                 .preemptions()
@@ -2047,6 +2067,23 @@ fn semantic_roots(
                         .unwrap_or_else(|| "none".to_owned()),
                     interrupt.state.as_str(),
                     interrupt.generation
+                )
+            })
+            .collect(),
+        ipi_event_roots: semantic
+            .ipi_events()
+            .iter()
+            .map(|ipi| {
+                format!(
+                    "ipi-event id={} kind={} source_hart={}@{} target_hart={}@{} state={} generation={}",
+                    ipi.id,
+                    ipi.kind.as_str(),
+                    ipi.source_hart,
+                    ipi.source_hart_generation,
+                    ipi.target_hart,
+                    ipi.target_hart_generation,
+                    ipi.state.as_str(),
+                    ipi.generation
                 )
             })
             .collect(),
@@ -2792,6 +2829,24 @@ fn timer_interrupt_manifest(
         state: interrupt.state.as_str().to_owned(),
         recorded_at_event: interrupt.recorded_at_event,
         note: interrupt.note.clone(),
+    }
+}
+
+fn ipi_event_manifest(ipi: &semantic_core::IpiEventRecord) -> IpiEventManifest {
+    IpiEventManifest {
+        id: ipi.id,
+        source_hart: u64::from(ipi.source_hart),
+        source_hart_generation: ipi.source_hart_generation,
+        source_hardware_hart: ipi.source_hardware_hart,
+        target_hart: u64::from(ipi.target_hart),
+        target_hart_generation: ipi.target_hart_generation,
+        target_hardware_hart: ipi.target_hardware_hart,
+        kind: ipi.kind.as_str().to_owned(),
+        generation: ipi.generation,
+        state: ipi.state.as_str().to_owned(),
+        recorded_at_event: ipi.recorded_at_event,
+        reason: ipi.reason.clone(),
+        note: ipi.note.clone(),
     }
 }
 

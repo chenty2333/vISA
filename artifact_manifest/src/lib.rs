@@ -237,6 +237,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub timer_interrupt_count: usize,
     #[serde(default)]
+    pub ipi_event_count: usize,
+    #[serde(default)]
     pub preemption_count: usize,
     #[serde(default)]
     pub scheduler_decision_count: usize,
@@ -329,6 +331,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub timer_interrupts: Vec<TimerInterruptManifest>,
     #[serde(default)]
+    pub ipi_events: Vec<IpiEventManifest>,
+    #[serde(default)]
     pub preemptions: Vec<PreemptionManifest>,
     #[serde(default)]
     pub scheduler_decisions: Vec<SchedulerDecisionManifest>,
@@ -400,6 +404,8 @@ pub struct SemanticRootSetManifest {
     pub saved_context_roots: Vec<String>,
     #[serde(default)]
     pub timer_interrupt_roots: Vec<String>,
+    #[serde(default)]
+    pub ipi_event_roots: Vec<String>,
     #[serde(default)]
     pub preemption_roots: Vec<String>,
     #[serde(default)]
@@ -659,6 +665,23 @@ pub struct TimerInterruptManifest {
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IpiEventManifest {
+    pub id: u64,
+    pub source_hart: u64,
+    pub source_hart_generation: u64,
+    pub source_hardware_hart: u32,
+    pub target_hart: u64,
+    pub target_hart_generation: u64,
+    pub target_hardware_hart: u32,
+    pub kind: String,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub reason: String,
     pub note: String,
 }
 

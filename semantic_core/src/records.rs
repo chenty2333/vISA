@@ -69,6 +69,29 @@ impl RuntimeActivationRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IpiEventRecord {
+    pub id: IpiEventId,
+    pub source_hart: HartId,
+    pub source_hart_generation: Generation,
+    pub source_hardware_hart: u32,
+    pub target_hart: HartId,
+    pub target_hart_generation: Generation,
+    pub target_hardware_hart: u32,
+    pub kind: IpiEventKind,
+    pub generation: Generation,
+    pub state: IpiEventState,
+    pub recorded_at_event: EventId,
+    pub reason: String,
+    pub note: String,
+}
+
+impl IpiEventRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::IpiEvent, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunnableQueueEntry {
     pub activation: ActivationId,
     pub activation_generation: Generation,

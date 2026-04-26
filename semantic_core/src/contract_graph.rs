@@ -1387,6 +1387,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::ActivationContext
             | ContractObjectKind::SavedContext
             | ContractObjectKind::TimerInterrupt
+            | ContractObjectKind::IpiEvent
             | ContractObjectKind::Preemption
             | ContractObjectKind::SchedulerDecision
             | ContractObjectKind::ActivationResume

@@ -465,6 +465,24 @@ pub enum SemanticInvariantError {
         interrupt: TimerInterruptId,
         activation: ActivationId,
     },
+    IpiEventInvalid {
+        ipi: IpiEventId,
+    },
+    IpiEventMissingHart {
+        ipi: IpiEventId,
+        hart: HartId,
+    },
+    IpiEventHartGenerationMismatch {
+        ipi: IpiEventId,
+        hart: HartId,
+    },
+    IpiEventMissingEvent {
+        ipi: IpiEventId,
+    },
+    IpiEventMissingHartEventAttribution {
+        ipi: IpiEventId,
+        event: EventId,
+    },
     PreemptionMissingTimerInterrupt {
         preemption: PreemptionId,
         interrupt: TimerInterruptId,

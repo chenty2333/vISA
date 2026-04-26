@@ -93,6 +93,16 @@ pub enum SemanticCommand {
         target_activation_generation: Option<Generation>,
         note: String,
     },
+    RecordIpiEvent {
+        ipi: IpiEventId,
+        source_hart: HartId,
+        source_hart_generation: Generation,
+        target_hart: HartId,
+        target_hart_generation: Generation,
+        kind: IpiEventKind,
+        reason: String,
+        note: String,
+    },
     PreemptActivation {
         preemption: PreemptionId,
         activation: ActivationId,
@@ -324,6 +334,7 @@ impl SemanticCommand {
             Self::CaptureSavedContext { .. } => "capture-saved-context",
             Self::SavePreemptedContext { .. } => "save-preempted-context",
             Self::RecordTimerInterrupt { .. } => "record-timer-interrupt",
+            Self::RecordIpiEvent { .. } => "record-ipi-event",
             Self::PreemptActivation { .. } => "preempt-activation",
             Self::RecordSchedulerDecision { .. } => "record-scheduler-decision",
             Self::ResumeActivation { .. } => "resume-activation",
@@ -993,6 +1004,45 @@ impl SemanticGraph {
                 } else if target_activation_generation.is_some() {
                     Err(CommandError::precondition(
                         "timer interrupt target activation is required",
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            SemanticCommand::RecordIpiEvent {
+                ipi,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation,
+                reason,
+                ..
+            } => {
+                if *ipi == 0 {
+                    Err(CommandError::precondition("ipi event id=0 is invalid"))
+                } else if reason.is_empty() {
+                    Err(CommandError::precondition("ipi event reason is empty"))
+                } else if source_hart == target_hart {
+                    Err(CommandError::precondition(
+                        "ipi source and target harts must differ",
+                    ))
+                } else if self.ipi_events.iter().any(|record| record.id == *ipi) {
+                    Err(CommandError::precondition("ipi event already exists"))
+                } else if !self.harts.iter().any(|record| {
+                    record.id == *source_hart
+                        && record.generation == *source_hart_generation
+                        && !matches!(record.state, HartState::Offline | HartState::Faulted)
+                }) {
+                    Err(CommandError::precondition(
+                        "ipi source hart generation is missing or inactive",
+                    ))
+                } else if !self.harts.iter().any(|record| {
+                    record.id == *target_hart
+                        && record.generation == *target_hart_generation
+                        && !matches!(record.state, HartState::Offline | HartState::Faulted)
+                }) {
+                    Err(CommandError::precondition(
+                        "ipi target hart generation is missing or inactive",
                     ))
                 } else {
                     Ok(())
@@ -1766,6 +1816,25 @@ impl SemanticGraph {
                 hart_generation,
                 target_activation,
                 target_activation_generation,
+                &note,
+            ),
+            SemanticCommand::RecordIpiEvent {
+                ipi,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation,
+                kind,
+                reason,
+                note,
+            } => self.record_ipi_event_with_id(
+                ipi,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation,
+                kind,
+                &reason,
                 &note,
             ),
             SemanticCommand::PreemptActivation {

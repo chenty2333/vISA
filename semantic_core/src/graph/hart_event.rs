@@ -40,10 +40,9 @@ impl SemanticGraph {
             || hart_generation == 0
             || event == 0
             || event_kind.is_empty()
-            || self
-                .hart_event_attributions
-                .iter()
-                .any(|record| record.id == attribution || record.event == event)
+            || self.hart_event_attributions.iter().any(|record| {
+                record.id == attribution || (record.hart == hart && record.event == event)
+            })
         {
             return false;
         }

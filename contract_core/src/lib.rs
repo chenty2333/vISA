@@ -72,6 +72,7 @@ pub enum ObjectKind {
     ActivationContext,
     SavedContext,
     TimerInterrupt,
+    IpiEvent,
     Preemption,
     SchedulerDecision,
     ActivationResume,
@@ -111,6 +112,7 @@ impl ObjectKind {
             Self::ActivationContext => "activation-context",
             Self::SavedContext => "saved-context",
             Self::TimerInterrupt => "timer-interrupt",
+            Self::IpiEvent => "ipi-event",
             Self::Preemption => "preemption",
             Self::SchedulerDecision => "scheduler-decision",
             Self::ActivationResume => "activation-resume",
@@ -304,6 +306,7 @@ typed_ref!(RunnableQueueRef, ObjectKind::RunnableQueue);
 typed_ref!(ActivationContextRef, ObjectKind::ActivationContext);
 typed_ref!(SavedContextRef, ObjectKind::SavedContext);
 typed_ref!(TimerInterruptRef, ObjectKind::TimerInterrupt);
+typed_ref!(IpiEventRef, ObjectKind::IpiEvent);
 typed_ref!(PreemptionRef, ObjectKind::Preemption);
 typed_ref!(SchedulerDecisionRef, ObjectKind::SchedulerDecision);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
@@ -1468,6 +1471,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("timer interrupt root/count mismatch"));
     }
+    if roots.ipi_event_roots.len() != package.semantic.ipi_event_count
+        || package.semantic.ipi_events.len() != package.semantic.ipi_event_count
+    {
+        return Err(ContractError::new("ipi event root/count mismatch"));
+    }
     if roots.preemption_roots.len() != package.semantic.preemption_count
         || package.semantic.preemptions.len() != package.semantic.preemption_count
     {
@@ -2006,6 +2014,7 @@ mod tests {
                 activation_context_count: 0,
                 saved_context_count: 0,
                 timer_interrupt_count: 0,
+                ipi_event_count: 0,
                 preemption_count: 0,
                 scheduler_decision_count: 0,
                 activation_resume_count: 0,
@@ -2054,6 +2063,7 @@ mod tests {
                 activation_contexts: Vec::new(),
                 saved_contexts: Vec::new(),
                 timer_interrupts: Vec::new(),
+                ipi_events: Vec::new(),
                 preemptions: Vec::new(),
                 scheduler_decisions: Vec::new(),
                 activation_resumes: Vec::new(),
@@ -2241,6 +2251,33 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "timer interrupt root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_ipi_event_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.ipi_event_count = 1;
+        package
+            .semantic
+            .ipi_events
+            .push(artifact_manifest::IpiEventManifest {
+                id: 4,
+                source_hart: 1,
+                source_hart_generation: 2,
+                source_hardware_hart: 0,
+                target_hart: 2,
+                target_hart_generation: 2,
+                target_hardware_hart: 1,
+                kind: "scheduler-kick".to_owned(),
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 5,
+                reason: "test".to_owned(),
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "ipi event root/count mismatch");
     }
 
     #[test]
@@ -2753,6 +2790,8 @@ mod tests {
         ));
         let timer = ObjectRef::new(ObjectKind::TimerInterrupt, 5, 1).unwrap();
         assert!(TimerInterruptRef::try_from_ref(timer).is_ok());
+        let ipi = ObjectRef::new(ObjectKind::IpiEvent, 6, 1).unwrap();
+        assert!(IpiEventRef::try_from_ref(ipi).is_ok());
         let preemption = ObjectRef::new(ObjectKind::Preemption, 6, 1).unwrap();
         assert!(PreemptionRef::try_from_ref(preemption).is_ok());
         let decision = ObjectRef::new(ObjectKind::SchedulerDecision, 7, 1).unwrap();

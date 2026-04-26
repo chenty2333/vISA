@@ -2206,6 +2206,175 @@ fn smp_runtime_s4_invariants_reject_duplicate_current_activation() {
 }
 
 #[test]
+fn smp_runtime_s5_records_ipi_event_between_hart_generations() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "created"));
+    assert!(graph.set_hart_state(2, 1, HartState::Idle, "ready", "idle"));
+
+    let ipi = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s5-test",
+        SemanticCommand::RecordIpiEvent {
+            ipi: 21,
+            source_hart: 1,
+            source_hart_generation: 2,
+            target_hart: 2,
+            target_hart_generation: 2,
+            kind: IpiEventKind::SchedulerKick,
+            reason: "scheduler kick".to_string(),
+            note: "hart0 kicks hart1".to_string(),
+        },
+    ));
+
+    assert_eq!(ipi.status, CommandStatus::Applied);
+    assert_eq!(graph.ipi_events().len(), 1);
+    assert_eq!(graph.ipi_events()[0].source_hardware_hart, 0);
+    assert_eq!(graph.ipi_events()[0].target_hardware_hart, 1);
+    assert_eq!(graph.hart_event_attributions().len(), 6);
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == graph.ipi_events()[0].recorded_at_event
+            && record.hart == 1
+            && record.hart_generation == 2
+            && record.event_kind == "IpiEventSourceRecorded"
+    }));
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == graph.ipi_events()[0].recorded_at_event
+            && record.hart == 2
+            && record.hart_generation == 2
+            && record.event_kind == "IpiEventTargetRecorded"
+    }));
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "IpiEventRecorded ipi=21 kind=scheduler-kick source_hart=1@2 target_hart=2@2 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s5_rejects_stale_or_self_target_ipi_event() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "created"));
+    assert!(graph.set_hart_state(2, 1, HartState::Idle, "ready", "idle"));
+
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s5-test",
+        SemanticCommand::RecordIpiEvent {
+            ipi: 21,
+            source_hart: 1,
+            source_hart_generation: 99,
+            target_hart: 2,
+            target_hart_generation: 2,
+            kind: IpiEventKind::SchedulerKick,
+            reason: "stale source".to_string(),
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("ipi source hart generation is missing or inactive".to_string());
+    assert_eq!(stale.violations, expected);
+
+    let self_target = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s5-test",
+        SemanticCommand::RecordIpiEvent {
+            ipi: 22,
+            source_hart: 1,
+            source_hart_generation: 2,
+            target_hart: 1,
+            target_hart_generation: 2,
+            kind: IpiEventKind::SchedulerKick,
+            reason: "self target".to_string(),
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(self_target.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("ipi source and target harts must differ".to_string());
+    assert_eq!(self_target.violations, expected);
+    assert!(graph.ipi_events().is_empty());
+}
+
+#[test]
+fn smp_runtime_s5_invariants_reject_bad_ipi_target_generation() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "created"));
+    assert!(graph.set_hart_state(2, 1, HartState::Idle, "ready", "idle"));
+    assert!(graph.record_ipi_event_with_id(
+        21,
+        1,
+        2,
+        2,
+        2,
+        IpiEventKind::SchedulerKick,
+        "scheduler kick",
+        "hart0 kicks hart1",
+    ));
+
+    graph.corrupt_ipi_event_target_generation_for_test(21, 99);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::IpiEventHartGenerationMismatch { ipi: 21, hart: 2 })
+    );
+}
+
+#[test]
+fn smp_runtime_s5_ipi_history_survives_later_hart_offline() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "created"));
+    assert!(graph.set_hart_state(2, 1, HartState::Idle, "ready", "idle"));
+    assert!(graph.record_ipi_event_with_id(
+        21,
+        1,
+        2,
+        2,
+        2,
+        IpiEventKind::SchedulerKick,
+        "scheduler kick",
+        "hart0 kicks hart1",
+    ));
+    assert!(graph.set_hart_state(2, 2, HartState::Offline, "parked", "offline after event"));
+
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s5_invariants_require_source_and_target_attribution() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "created"));
+    assert!(graph.set_hart_state(2, 1, HartState::Idle, "ready", "idle"));
+    assert!(graph.record_ipi_event_with_id(
+        21,
+        1,
+        2,
+        2,
+        2,
+        IpiEventKind::SchedulerKick,
+        "scheduler kick",
+        "hart0 kicks hart1",
+    ));
+    let event = graph.ipi_events()[0].recorded_at_event;
+    graph.clear_hart_event_attributions_for_test();
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::IpiEventMissingHartEventAttribution { ipi: 21, event })
+    );
+}
+
+#[test]
 fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let mut graph = SemanticGraph::new();
     graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");

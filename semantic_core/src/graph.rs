@@ -13,6 +13,7 @@ pub struct SemanticGraph {
     activation_contexts: Vec<ActivationContextRecord>,
     saved_contexts: Vec<SavedContextRecord>,
     timer_interrupts: Vec<TimerInterruptRecord>,
+    ipi_events: Vec<IpiEventRecord>,
     preemptions: Vec<PreemptionRecord>,
     scheduler_decisions: Vec<SchedulerDecisionRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
@@ -39,6 +40,7 @@ pub struct SemanticGraph {
     next_activation_context_id: ActivationContextId,
     next_saved_context_id: SavedContextId,
     next_timer_interrupt_id: TimerInterruptId,
+    next_ipi_event_id: IpiEventId,
     next_preemption_id: PreemptionId,
     next_scheduler_decision_id: SchedulerDecisionId,
     next_activation_resume_id: ActivationResumeId,
@@ -65,6 +67,7 @@ mod context;
 mod hart;
 mod hart_event;
 mod interface;
+mod ipi;
 mod latency;
 mod network;
 mod query;
@@ -93,6 +96,7 @@ impl SemanticGraph {
             activation_contexts: Vec::new(),
             saved_contexts: Vec::new(),
             timer_interrupts: Vec::new(),
+            ipi_events: Vec::new(),
             preemptions: Vec::new(),
             scheduler_decisions: Vec::new(),
             activation_resumes: Vec::new(),
@@ -119,6 +123,7 @@ impl SemanticGraph {
             next_activation_context_id: 1,
             next_saved_context_id: 1,
             next_timer_interrupt_id: 1,
+            next_ipi_event_id: 1,
             next_preemption_id: 1,
             next_scheduler_decision_id: 1,
             next_activation_resume_id: 1,
