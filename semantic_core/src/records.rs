@@ -416,6 +416,41 @@ impl SmpSafePointRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StopTheWorldRendezvousParticipantRecord {
+    pub hart: HartId,
+    pub hart_generation: Generation,
+    pub hardware_hart: u32,
+    pub hart_state: HartState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StopTheWorldRendezvousRecord {
+    pub id: StopTheWorldRendezvousId,
+    pub epoch: u64,
+    pub safe_point: SmpSafePointId,
+    pub safe_point_generation: Generation,
+    pub coordinator_hart: HartId,
+    pub coordinator_hart_generation: Generation,
+    pub participants: Vec<StopTheWorldRendezvousParticipantRecord>,
+    pub stop_new_activations: bool,
+    pub generation: Generation,
+    pub state: StopTheWorldRendezvousState,
+    pub completed_at_event: EventId,
+    pub reason: String,
+    pub note: String,
+}
+
+impl StopTheWorldRendezvousRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::StopTheWorldRendezvous,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

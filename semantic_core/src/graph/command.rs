@@ -179,6 +179,15 @@ pub enum SemanticCommand {
         reason: String,
         note: String,
     },
+    CompleteStopTheWorldRendezvous {
+        rendezvous: StopTheWorldRendezvousId,
+        epoch: u64,
+        safe_point: SmpSafePointId,
+        safe_point_generation: Generation,
+        stop_new_activations: bool,
+        reason: String,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -400,6 +409,7 @@ impl SemanticCommand {
             Self::RecordCrossHartSchedulerDecision { .. } => "record-cross-hart-scheduler-decision",
             Self::MigrateRunnableActivation { .. } => "migrate-runnable-activation",
             Self::RecordSmpSafePoint { .. } => "record-smp-safe-point",
+            Self::CompleteStopTheWorldRendezvous { .. } => "complete-stop-the-world-rendezvous",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1388,6 +1398,24 @@ impl SemanticGraph {
                     reason,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::CompleteStopTheWorldRendezvous {
+                rendezvous,
+                epoch,
+                safe_point,
+                safe_point_generation,
+                stop_new_activations,
+                reason,
+                ..
+            } => self
+                .validate_stop_the_world_rendezvous(
+                    *rendezvous,
+                    *epoch,
+                    *safe_point,
+                    *safe_point_generation,
+                    *stop_new_activations,
+                    reason,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2156,6 +2184,23 @@ impl SemanticGraph {
                 coordinator_hart,
                 coordinator_hart_generation,
                 participants,
+                &reason,
+                &note,
+            ),
+            SemanticCommand::CompleteStopTheWorldRendezvous {
+                rendezvous,
+                epoch,
+                safe_point,
+                safe_point_generation,
+                stop_new_activations,
+                reason,
+                note,
+            } => self.complete_stop_the_world_rendezvous_with_id(
+                rendezvous,
+                epoch,
+                safe_point,
+                safe_point_generation,
+                stop_new_activations,
                 &reason,
                 &note,
             ),

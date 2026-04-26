@@ -253,6 +253,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub smp_safe_point_count: usize,
     #[serde(default)]
+    pub stop_the_world_rendezvous_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -357,6 +359,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub smp_safe_points: Vec<SmpSafePointManifest>,
     #[serde(default)]
+    pub stop_the_world_rendezvous: Vec<StopTheWorldRendezvousManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -440,6 +444,8 @@ pub struct SemanticRootSetManifest {
     pub activation_migration_roots: Vec<String>,
     #[serde(default)]
     pub smp_safe_point_roots: Vec<String>,
+    #[serde(default)]
+    pub stop_the_world_rendezvous_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -873,6 +879,31 @@ pub struct SmpSafePointManifest {
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
+    pub reason: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct StopTheWorldRendezvousParticipantManifest {
+    pub hart: u64,
+    pub hart_generation: u64,
+    pub hardware_hart: u32,
+    pub hart_state: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct StopTheWorldRendezvousManifest {
+    pub id: u64,
+    pub epoch: u64,
+    pub safe_point: u64,
+    pub safe_point_generation: u64,
+    pub coordinator_hart: u64,
+    pub coordinator_hart_generation: u64,
+    pub participants: Vec<StopTheWorldRendezvousParticipantManifest>,
+    pub stop_new_activations: bool,
+    pub generation: u64,
+    pub state: String,
+    pub completed_at_event: u64,
     pub reason: String,
     pub note: String,
 }

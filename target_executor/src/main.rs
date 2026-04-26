@@ -22,10 +22,11 @@ use artifact_manifest::{
     RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
     SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
     SemanticSnapshotManifest, SmpSafePointManifest, SmpSafePointParticipantManifest,
-    StoreRecordManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
-    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
-    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TaskRecordManifest,
-    TimerInterruptManifest, TombstoneManifest, TrapRecordManifest, WaitRecordManifest,
+    StopTheWorldRendezvousManifest, StopTheWorldRendezvousParticipantManifest, StoreRecordManifest,
+    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
+    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
+    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
+    TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -577,6 +578,19 @@ fn record_preemptive_runtime_context_evidence(
                 participants: vec![(1, 2), (2, 4)],
                 reason: "s10-quiescent-boundary".to_owned(),
                 note: "s10-smp-safe-point-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            9_011,
+            "target-executor-s11",
+            SemanticCommand::CompleteStopTheWorldRendezvous {
+                rendezvous: 9101,
+                epoch: 1,
+                safe_point: 9001,
+                safe_point_generation: 1,
+                stop_new_activations: true,
+                reason: "s11-stop-the-world-code-publish-boundary".to_owned(),
+                note: "s11-stop-the-world-rendezvous-harness".to_owned(),
             },
         ),
         CommandEnvelope::new(
@@ -1972,6 +1986,7 @@ fn demo_migration_package(
             cross_hart_scheduler_decision_count: semantic.cross_hart_scheduler_decision_count(),
             activation_migration_count: semantic.activation_migration_count(),
             smp_safe_point_count: semantic.smp_safe_point_count(),
+            stop_the_world_rendezvous_count: semantic.stop_the_world_rendezvous_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2077,6 +2092,11 @@ fn demo_migration_package(
                 .smp_safe_points()
                 .iter()
                 .map(smp_safe_point_manifest)
+                .collect(),
+            stop_the_world_rendezvous: semantic
+                .stop_the_world_rendezvous()
+                .iter()
+                .map(stop_the_world_rendezvous_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2453,6 +2473,22 @@ fn semantic_roots(
                     safe_point.participants.len(),
                     safe_point.state.as_str(),
                     safe_point.generation
+                )
+            })
+            .collect(),
+        stop_the_world_rendezvous_roots: semantic
+            .stop_the_world_rendezvous()
+            .iter()
+            .map(|rendezvous| {
+                format!(
+                    "stop-the-world-rendezvous id={} epoch={} safe_point={}@{} participants={} state={} generation={}",
+                    rendezvous.id,
+                    rendezvous.epoch,
+                    rendezvous.safe_point,
+                    rendezvous.safe_point_generation,
+                    rendezvous.participants.len(),
+                    rendezvous.state.as_str(),
+                    rendezvous.generation
                 )
             })
             .collect(),
@@ -3357,6 +3393,35 @@ fn smp_safe_point_manifest(safe_point: &semantic_core::SmpSafePointRecord) -> Sm
         recorded_at_event: safe_point.recorded_at_event,
         reason: safe_point.reason.clone(),
         note: safe_point.note.clone(),
+    }
+}
+
+fn stop_the_world_rendezvous_manifest(
+    rendezvous: &semantic_core::StopTheWorldRendezvousRecord,
+) -> StopTheWorldRendezvousManifest {
+    StopTheWorldRendezvousManifest {
+        id: rendezvous.id,
+        epoch: rendezvous.epoch,
+        safe_point: rendezvous.safe_point,
+        safe_point_generation: rendezvous.safe_point_generation,
+        coordinator_hart: u64::from(rendezvous.coordinator_hart),
+        coordinator_hart_generation: rendezvous.coordinator_hart_generation,
+        participants: rendezvous
+            .participants
+            .iter()
+            .map(|participant| StopTheWorldRendezvousParticipantManifest {
+                hart: u64::from(participant.hart),
+                hart_generation: participant.hart_generation,
+                hardware_hart: participant.hardware_hart,
+                hart_state: participant.hart_state.as_str().to_owned(),
+            })
+            .collect(),
+        stop_new_activations: rendezvous.stop_new_activations,
+        generation: rendezvous.generation,
+        state: rendezvous.state.as_str().to_owned(),
+        completed_at_event: rendezvous.completed_at_event,
+        reason: rendezvous.reason.clone(),
+        note: rendezvous.note.clone(),
     }
 }
 

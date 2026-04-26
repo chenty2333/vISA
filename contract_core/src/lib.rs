@@ -80,6 +80,7 @@ pub enum ObjectKind {
     CrossHartSchedulerDecision,
     ActivationMigration,
     SmpSafePoint,
+    StopTheWorldRendezvous,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -125,6 +126,7 @@ impl ObjectKind {
             Self::CrossHartSchedulerDecision => "cross-hart-scheduler-decision",
             Self::ActivationMigration => "activation-migration",
             Self::SmpSafePoint => "smp-safe-point",
+            Self::StopTheWorldRendezvous => "stop-the-world-rendezvous",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -327,6 +329,10 @@ typed_ref!(
 );
 typed_ref!(ActivationMigrationRef, ObjectKind::ActivationMigration);
 typed_ref!(SmpSafePointRef, ObjectKind::SmpSafePoint);
+typed_ref!(
+    StopTheWorldRendezvousRef,
+    ObjectKind::StopTheWorldRendezvous
+);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1536,6 +1542,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("smp safe point root/count mismatch"));
     }
+    if roots.stop_the_world_rendezvous_roots.len()
+        != package.semantic.stop_the_world_rendezvous_count
+        || package.semantic.stop_the_world_rendezvous.len()
+            != package.semantic.stop_the_world_rendezvous_count
+    {
+        return Err(ContractError::new(
+            "stop-the-world rendezvous root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2072,6 +2087,7 @@ mod tests {
                 cross_hart_scheduler_decision_count: 0,
                 activation_migration_count: 0,
                 smp_safe_point_count: 0,
+                stop_the_world_rendezvous_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2126,6 +2142,7 @@ mod tests {
                 cross_hart_scheduler_decisions: Vec::new(),
                 activation_migrations: Vec::new(),
                 smp_safe_points: Vec::new(),
+                stop_the_world_rendezvous: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -2555,6 +2572,48 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "smp safe point root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_stop_the_world_rendezvous_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.stop_the_world_rendezvous_count = 1;
+        package.semantic.stop_the_world_rendezvous.push(
+            artifact_manifest::StopTheWorldRendezvousManifest {
+                id: 9,
+                epoch: 1,
+                safe_point: 8,
+                safe_point_generation: 1,
+                coordinator_hart: 1,
+                coordinator_hart_generation: 2,
+                participants: vec![
+                    artifact_manifest::StopTheWorldRendezvousParticipantManifest {
+                        hart: 1,
+                        hart_generation: 2,
+                        hardware_hart: 0,
+                        hart_state: "idle".to_owned(),
+                    },
+                    artifact_manifest::StopTheWorldRendezvousParticipantManifest {
+                        hart: 2,
+                        hart_generation: 4,
+                        hardware_hart: 1,
+                        hart_state: "idle".to_owned(),
+                    },
+                ],
+                stop_new_activations: true,
+                generation: 1,
+                state: "completed".to_owned(),
+                completed_at_event: 11,
+                reason: "stop-the-world".to_owned(),
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "stop-the-world rendezvous root/count mismatch"
+        );
     }
 
     #[test]
@@ -3031,6 +3090,8 @@ mod tests {
         assert!(ActivationMigrationRef::try_from_ref(migration).is_ok());
         let safe_point = ObjectRef::new(ObjectKind::SmpSafePoint, 10, 1).unwrap();
         assert!(SmpSafePointRef::try_from_ref(safe_point).is_ok());
+        let rendezvous = ObjectRef::new(ObjectKind::StopTheWorldRendezvous, 11, 1).unwrap();
+        assert!(StopTheWorldRendezvousRef::try_from_ref(rendezvous).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

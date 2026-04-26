@@ -193,6 +193,16 @@ pub enum EventKind {
         participant_count: u32,
         generation: Generation,
     },
+    StopTheWorldRendezvousCompleted {
+        rendezvous: StopTheWorldRendezvousId,
+        epoch: u64,
+        safe_point: SmpSafePointId,
+        safe_point_generation: Generation,
+        coordinator_hart: HartId,
+        coordinator_hart_generation: Generation,
+        participant_count: u32,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -820,6 +830,18 @@ impl EventKind {
                 generation,
             } => format!(
                 "SmpSafePointRecorded safe_point={safe_point} coordinator_hart={coordinator_hart}@{coordinator_hart_generation} participants={participant_count} generation={generation}"
+            ),
+            Self::StopTheWorldRendezvousCompleted {
+                rendezvous,
+                epoch,
+                safe_point,
+                safe_point_generation,
+                coordinator_hart,
+                coordinator_hart_generation,
+                participant_count,
+                generation,
+            } => format!(
+                "StopTheWorldRendezvousCompleted rendezvous={rendezvous} epoch={epoch} safe_point={safe_point}@{safe_point_generation} coordinator_hart={coordinator_hart}@{coordinator_hart_generation} participants={participant_count} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

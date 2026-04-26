@@ -15,8 +15,9 @@ use artifact_manifest::{
     MigrationPackageManifest, PreemptionLatencySampleManifest, PreemptionManifest,
     RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SmpSafePointManifest, StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest,
-    TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
+    SmpSafePointManifest, StopTheWorldRendezvousManifest, StoreRecordManifest,
+    SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
+    TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -234,6 +235,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "activation-migration"
         | "smp-safe-point"
         | "safepoint"
+        | "stop-the-world-rendezvous"
+        | "stop-the-world"
+        | "stw"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -404,7 +408,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -611,6 +615,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "cross-hart-scheduler-decision" => "cross-hart-scheduler-decision",
         "activation-migration" => "activation-migration",
         "smp-safe-point" | "safepoint" => "smp-safe-point",
+        "stop-the-world-rendezvous" | "stop-the-world" | "stw" => "stop-the-world-rendezvous",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -1229,6 +1234,51 @@ fn smp_safe_point_view_v1(safe_point: &SmpSafePointManifest) -> serde_json::Valu
     })
 }
 
+fn stop_the_world_rendezvous_view_v1(
+    rendezvous: &StopTheWorldRendezvousManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "stop-the-world-rendezvous",
+        "id": rendezvous.id,
+        "generation": rendezvous.generation,
+        "state": rendezvous.state,
+        "owner": {
+            "coordinator_hart": {
+                "id": rendezvous.coordinator_hart,
+                "generation": rendezvous.coordinator_hart_generation,
+            },
+        },
+        "references": {
+            "safe_point": {
+                "id": rendezvous.safe_point,
+                "generation": rendezvous.safe_point_generation,
+            },
+            "participants": rendezvous.participants.iter().map(|participant| serde_json::json!({
+                "hart": {
+                    "id": participant.hart,
+                    "generation": participant.hart_generation,
+                },
+                "hardware_hart": participant.hardware_hart,
+                "hart_state": participant.hart_state,
+            })).collect::<Vec<_>>(),
+            "event": {
+                "id": rendezvous.completed_at_event,
+            },
+        },
+        "epoch": rendezvous.epoch,
+        "stop_new_activations": rendezvous.stop_new_activations,
+        "reason": rendezvous.reason,
+        "note": rendezvous.note,
+        "last_transition": {
+            "completed_at_event": rendezvous.completed_at_event,
+            "participant_count": rendezvous.participants.len(),
+            "epoch": rendezvous.epoch,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -1587,6 +1637,17 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "participant_count": safe_point.participants.len(),
                 "state": safe_point.state,
             })).collect::<Vec<_>>(),
+            "stop_the_world_rendezvous": package.semantic.stop_the_world_rendezvous.iter().map(|rendezvous| serde_json::json!({
+                "id": rendezvous.id,
+                "generation": rendezvous.generation,
+                "epoch": rendezvous.epoch,
+                "safe_point": rendezvous.safe_point,
+                "safe_point_generation": rendezvous.safe_point_generation,
+                "coordinator_hart": rendezvous.coordinator_hart,
+                "coordinator_hart_generation": rendezvous.coordinator_hart_generation,
+                "participant_count": rendezvous.participants.len(),
+                "state": rendezvous.state,
+            })).collect::<Vec<_>>(),
             "activation_resumes": package.semantic.activation_resumes.iter().map(|resume| serde_json::json!({
                 "id": resume.id,
                 "generation": resume.generation,
@@ -1642,6 +1703,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "cross_hart_scheduler_decision_count": package.semantic.cross_hart_scheduler_decision_count,
             "activation_migration_count": package.semantic.activation_migration_count,
             "smp_safe_point_count": package.semantic.smp_safe_point_count,
+            "stop_the_world_rendezvous_count": package.semantic.stop_the_world_rendezvous_count,
             "activation_resume_count": package.semantic.activation_resume_count,
             "activation_wait_count": package.semantic.activation_wait_count,
             "activation_cleanup_count": package.semantic.activation_cleanup_count,
@@ -2095,6 +2157,12 @@ fn stable_views_for_kind(
             .smp_safe_points
             .iter()
             .map(smp_safe_point_view_v1)
+            .collect()),
+        "stop-the-world-rendezvous" | "stop-the-world" | "stw" => Ok(package
+            .semantic
+            .stop_the_world_rendezvous
+            .iter()
+            .map(stop_the_world_rendezvous_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -2742,7 +2810,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -2760,6 +2828,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.cross_hart_scheduler_decision_count,
             package.semantic.activation_migration_count,
             package.semantic.smp_safe_point_count,
+            package.semantic.stop_the_world_rendezvous_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -2892,7 +2961,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -2927,6 +2996,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
             .len(),
         package.semantic.roots.activation_migration_roots.len(),
         package.semantic.roots.smp_safe_point_roots.len(),
+        package.semantic.roots.stop_the_world_rendezvous_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -2966,6 +3036,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "smp-safe-point",
         &package.semantic.roots.smp_safe_point_roots,
+    );
+    print_roots(
+        "stop-the-world-rendezvous",
+        &package.semantic.roots.stop_the_world_rendezvous_roots,
     );
     print_roots(
         "activation-resume",
@@ -3731,6 +3805,44 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "participant-hart",
                 "historical",
                 Some(safe_point.recorded_at_event),
+            ));
+        }
+    }
+    for rendezvous in &package.semantic.stop_the_world_rendezvous {
+        let from = object_ref_json(
+            "stop-the-world-rendezvous",
+            rendezvous.id,
+            rendezvous.generation,
+        );
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "smp-safe-point",
+                rendezvous.safe_point,
+                rendezvous.safe_point_generation,
+            ),
+            "rendezvous-safe-point",
+            "historical",
+            Some(rendezvous.completed_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "hart",
+                rendezvous.coordinator_hart,
+                rendezvous.coordinator_hart_generation,
+            ),
+            "coordinator-hart",
+            "historical",
+            Some(rendezvous.completed_at_event),
+        ));
+        for participant in &rendezvous.participants {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("hart", participant.hart, participant.hart_generation),
+                "participant-hart",
+                "historical",
+                Some(rendezvous.completed_at_event),
             ));
         }
     }
@@ -5262,6 +5374,7 @@ fn print_replay_json(
             "cross_hart_scheduler_decisions": package.semantic.roots.cross_hart_scheduler_decision_roots.len(),
             "activation_migrations": package.semantic.roots.activation_migration_roots.len(),
             "smp_safe_points": package.semantic.roots.smp_safe_point_roots.len(),
+            "stop_the_world_rendezvous": package.semantic.roots.stop_the_world_rendezvous_roots.len(),
             "resources": package.semantic.roots.resource_roots.len(),
             "authorities": package.semantic.roots.authority_roots.len(),
             "stores": package.semantic.roots.store_roots.len(),
@@ -5312,6 +5425,7 @@ fn print_replay_json(
             "cross_hart_scheduler_decision_roots": &package.semantic.roots.cross_hart_scheduler_decision_roots,
             "activation_migration_roots": &package.semantic.roots.activation_migration_roots,
             "smp_safe_point_roots": &package.semantic.roots.smp_safe_point_roots,
+            "stop_the_world_rendezvous_roots": &package.semantic.roots.stop_the_world_rendezvous_roots,
             "cleanup_roots": &package.semantic.roots.cleanup_roots,
             "activation_cleanup_roots": &package.semantic.roots.activation_cleanup_roots,
             "preemption_latency_roots": &package.semantic.roots.preemption_latency_roots,
@@ -5339,7 +5453,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -5367,6 +5481,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.cross_hart_scheduler_decision_count,
         package.semantic.activation_migration_count,
         package.semantic.smp_safe_point_count,
+        package.semantic.stop_the_world_rendezvous_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -5726,6 +5841,7 @@ mod tests {
         package.semantic.cross_hart_scheduler_decision_count = 1;
         package.semantic.activation_migration_count = 1;
         package.semantic.smp_safe_point_count = 1;
+        package.semantic.stop_the_world_rendezvous_count = 1;
         package.semantic.activation_resume_count = 1;
         package.semantic.activation_wait_count = 1;
         package.semantic.activation_cleanup_count = 1;
@@ -6045,6 +6161,37 @@ mod tests {
         });
         package
             .semantic
+            .stop_the_world_rendezvous
+            .push(StopTheWorldRendezvousManifest {
+                id: 29,
+                epoch: 1,
+                safe_point: 28,
+                safe_point_generation: 1,
+                coordinator_hart: 1,
+                coordinator_hart_generation: 2,
+                participants: vec![
+                    artifact_manifest::StopTheWorldRendezvousParticipantManifest {
+                        hart: 1,
+                        hart_generation: 2,
+                        hardware_hart: 0,
+                        hart_state: "idle".to_owned(),
+                    },
+                    artifact_manifest::StopTheWorldRendezvousParticipantManifest {
+                        hart: 2,
+                        hart_generation: 2,
+                        hardware_hart: 1,
+                        hart_state: "parked".to_owned(),
+                    },
+                ],
+                stop_new_activations: true,
+                generation: 1,
+                state: "completed".to_owned(),
+                completed_at_event: 23,
+                reason: "code-publish-boundary".to_owned(),
+                note: "stop the world".to_owned(),
+            });
+        package
+            .semantic
             .activation_resumes
             .push(ActivationResumeManifest {
                 id: 17,
@@ -6278,6 +6425,16 @@ mod tests {
             2
         );
         assert_eq!(safe_point["last_transition"]["participant_count"], 2);
+        let rendezvous =
+            stop_the_world_rendezvous_view_v1(&package.semantic.stop_the_world_rendezvous[0]);
+        assert_eq!(rendezvous["kind"], "stop-the-world-rendezvous");
+        assert_eq!(rendezvous["epoch"], 1);
+        assert_eq!(rendezvous["references"]["safe_point"]["id"], 28);
+        assert_eq!(
+            rendezvous["references"]["participants"][1]["hart"]["generation"],
+            2
+        );
+        assert_eq!(rendezvous["stop_new_activations"], true);
         let resume = activation_resume_view_v1(&package.semantic.activation_resumes[0]);
         assert_eq!(resume["kind"], "activation-resume");
         assert_eq!(resume["references"]["activation"]["generation_before"], 3);
@@ -6376,6 +6533,14 @@ mod tests {
         assert_eq!(
             scheduler["references"]["smp_safe_points"][0]["participant_count"],
             2
+        );
+        assert_eq!(
+            scheduler["last_transition"]["stop_the_world_rendezvous_count"],
+            1
+        );
+        assert_eq!(
+            scheduler["references"]["stop_the_world_rendezvous"][0]["safe_point"],
+            28
         );
         assert_eq!(scheduler["last_transition"]["activation_resume_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_wait_count"], 1);
@@ -6489,6 +6654,18 @@ mod tests {
                     && edge["relation"] == "participant-hart"
                     && edge["mode"] == "historical")
         );
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"]
+            == "stop-the-world-rendezvous"
+            && edge["to"]["kind"] == "smp-safe-point"
+            && edge["to"]["id"] == 28
+            && edge["relation"] == "rendezvous-safe-point"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"]
+            == "stop-the-world-rendezvous"
+            && edge["to"]["kind"] == "hart"
+            && edge["to"]["id"] == 2
+            && edge["relation"] == "participant-hart"
+            && edge["mode"] == "historical"));
         assert!(
             history_edges
                 .iter()

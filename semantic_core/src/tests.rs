@@ -3279,6 +3279,163 @@ fn smp_runtime_s10_history_survives_later_hart_transition() {
     );
 }
 
+fn s11_stop_the_world_graph() -> SemanticGraph {
+    let mut graph = s10_smp_safe_point_graph();
+    assert!(graph.record_smp_safe_point_with_id(
+        71,
+        1,
+        2,
+        vec![(1, 2), (2, 4)],
+        "quiescent-boundary",
+        "record all harts quiesced",
+    ));
+    graph
+}
+
+#[test]
+fn smp_runtime_s11_stop_the_world_rendezvous_completes_from_safe_point() {
+    let mut graph = s11_stop_the_world_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s11-test",
+        SemanticCommand::CompleteStopTheWorldRendezvous {
+            rendezvous: 81,
+            epoch: 1,
+            safe_point: 71,
+            safe_point_generation: 1,
+            stop_new_activations: true,
+            reason: "code-publish-boundary".to_string(),
+            note: "all harts parked at activation boundary".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.stop_the_world_rendezvous().len(), 1);
+    let rendezvous = &graph.stop_the_world_rendezvous()[0];
+    assert_eq!(rendezvous.epoch, 1);
+    assert_eq!(rendezvous.safe_point, 71);
+    assert_eq!(rendezvous.safe_point_generation, 1);
+    assert!(rendezvous.stop_new_activations);
+    assert_eq!(rendezvous.coordinator_hart, 1);
+    assert_eq!(rendezvous.coordinator_hart_generation, 2);
+    assert_eq!(rendezvous.participants.len(), 2);
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == rendezvous.completed_at_event
+            && record.hart == 1
+            && record.hart_generation == 2
+            && record.event_kind == "StopTheWorldHartParked"
+    }));
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == rendezvous.completed_at_event
+            && record.hart == 2
+            && record.hart_generation == 4
+            && record.event_kind == "StopTheWorldHartParked"
+    }));
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "StopTheWorldRendezvousCompleted rendezvous=81 epoch=1 safe_point=71@1 coordinator_hart=1@2 participants=2 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s11_rejects_missing_stop_flag_stale_safe_point_and_hart() {
+    let mut graph = s11_stop_the_world_graph();
+    let missing_stop = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s11-test",
+        SemanticCommand::CompleteStopTheWorldRendezvous {
+            rendezvous: 81,
+            epoch: 1,
+            safe_point: 71,
+            safe_point_generation: 1,
+            stop_new_activations: false,
+            reason: "code-publish-boundary".to_string(),
+            note: "must stop new activations".to_string(),
+        },
+    ));
+    assert_eq!(missing_stop.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("stop-the-world rendezvous must stop new activations".to_string());
+    assert_eq!(missing_stop.violations, expected);
+    assert!(graph.stop_the_world_rendezvous().is_empty());
+
+    let stale_safe_point = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s11-test",
+        SemanticCommand::CompleteStopTheWorldRendezvous {
+            rendezvous: 81,
+            epoch: 1,
+            safe_point: 71,
+            safe_point_generation: 2,
+            stop_new_activations: true,
+            reason: "code-publish-boundary".to_string(),
+            note: "must reject stale safe point generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_safe_point.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("stop-the-world rendezvous safe point is missing".to_string());
+    assert_eq!(stale_safe_point.violations, expected);
+    assert!(graph.stop_the_world_rendezvous().is_empty());
+
+    let mut stale_hart = s11_stop_the_world_graph();
+    assert!(stale_hart.set_hart_state(
+        1,
+        2,
+        HartState::Booting,
+        "advance before rendezvous",
+        "not parked"
+    ));
+    let stale_participant = stale_hart.apply_envelope(CommandEnvelope::new(
+        3,
+        "s11-test",
+        SemanticCommand::CompleteStopTheWorldRendezvous {
+            rendezvous: 81,
+            epoch: 1,
+            safe_point: 71,
+            safe_point_generation: 1,
+            stop_new_activations: true,
+            reason: "code-publish-boundary".to_string(),
+            note: "safe point no longer covers current hart".to_string(),
+        },
+    ));
+    assert_eq!(stale_participant.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("stop-the-world rendezvous participant generation is stale".to_string());
+    assert_eq!(stale_participant.violations, expected);
+    assert!(stale_hart.stop_the_world_rendezvous().is_empty());
+}
+
+#[test]
+fn smp_runtime_s11_history_survives_later_hart_transition() {
+    let mut graph = s11_stop_the_world_graph();
+    assert!(graph.complete_stop_the_world_rendezvous_with_id(
+        81,
+        1,
+        71,
+        1,
+        true,
+        "code-publish-boundary",
+        "all harts parked at activation boundary",
+    ));
+    assert!(graph.set_hart_state(
+        2,
+        4,
+        HartState::Booting,
+        "advance after rendezvous",
+        "later"
+    ));
+    assert!(graph.check_invariants().is_ok());
+
+    graph.corrupt_stop_the_world_event_for_test(81, 999);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::StopTheWorldRendezvousMissingEvent { rendezvous: 81 })
+    );
+}
+
 #[test]
 fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let mut graph = SemanticGraph::new();

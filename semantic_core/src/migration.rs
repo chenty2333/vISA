@@ -666,6 +666,24 @@ pub enum SemanticInvariantError {
         safe_point: SmpSafePointId,
         event: EventId,
     },
+    StopTheWorldRendezvousInvalid {
+        rendezvous: StopTheWorldRendezvousId,
+    },
+    StopTheWorldRendezvousSafePointMissing {
+        rendezvous: StopTheWorldRendezvousId,
+        safe_point: SmpSafePointId,
+    },
+    StopTheWorldRendezvousParticipantMismatch {
+        rendezvous: StopTheWorldRendezvousId,
+        hart: HartId,
+    },
+    StopTheWorldRendezvousMissingEvent {
+        rendezvous: StopTheWorldRendezvousId,
+    },
+    StopTheWorldRendezvousMissingHartEventAttribution {
+        rendezvous: StopTheWorldRendezvousId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

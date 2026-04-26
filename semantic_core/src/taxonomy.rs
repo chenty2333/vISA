@@ -298,6 +298,21 @@ impl SmpSafePointState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StopTheWorldRendezvousState {
+    Completed,
+    Rejected,
+}
+
+impl StopTheWorldRendezvousState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,
