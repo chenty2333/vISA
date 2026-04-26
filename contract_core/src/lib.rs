@@ -78,6 +78,7 @@ pub enum ObjectKind {
     Preemption,
     SchedulerDecision,
     CrossHartSchedulerDecision,
+    ActivationMigration,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -121,6 +122,7 @@ impl ObjectKind {
             Self::Preemption => "preemption",
             Self::SchedulerDecision => "scheduler-decision",
             Self::CrossHartSchedulerDecision => "cross-hart-scheduler-decision",
+            Self::ActivationMigration => "activation-migration",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -321,6 +323,7 @@ typed_ref!(
     CrossHartSchedulerDecisionRef,
     ObjectKind::CrossHartSchedulerDecision
 );
+typed_ref!(ActivationMigrationRef, ObjectKind::ActivationMigration);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1517,6 +1520,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "cross-hart scheduler decision root/count mismatch",
         ));
     }
+    if roots.activation_migration_roots.len() != package.semantic.activation_migration_count
+        || package.semantic.activation_migrations.len()
+            != package.semantic.activation_migration_count
+    {
+        return Err(ContractError::new(
+            "activation migration root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2051,6 +2062,7 @@ mod tests {
                 preemption_count: 0,
                 scheduler_decision_count: 0,
                 cross_hart_scheduler_decision_count: 0,
+                activation_migration_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2103,6 +2115,7 @@ mod tests {
                 preemptions: Vec::new(),
                 scheduler_decisions: Vec::new(),
                 cross_hart_scheduler_decisions: Vec::new(),
+                activation_migrations: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -2458,6 +2471,40 @@ mod tests {
             err.to_string(),
             "cross-hart scheduler decision root/count mismatch"
         );
+    }
+
+    #[test]
+    fn semantic_roots_reject_activation_migration_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.activation_migration_count = 1;
+        package.semantic.activation_migrations.push(
+            artifact_manifest::ActivationMigrationManifest {
+                id: 7,
+                activation: 11,
+                activation_generation_before: 4,
+                activation_generation_after: 5,
+                owner_task: 7,
+                owner_task_generation: 1,
+                source_hart: 2,
+                source_hart_generation: 4,
+                target_hart: 1,
+                target_hart_generation: 2,
+                source_queue: 2,
+                source_queue_generation: 2,
+                source_queue_owner_hart_generation: 2,
+                target_queue: 3,
+                target_queue_generation: 2,
+                target_queue_owner_hart_generation: 2,
+                generation: 1,
+                state: "applied".to_owned(),
+                migrated_at_event: 9,
+                reason: "rebalance".to_owned(),
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "activation migration root/count mismatch");
     }
 
     #[test]
@@ -2930,6 +2977,8 @@ mod tests {
         assert!(SchedulerDecisionRef::try_from_ref(decision).is_ok());
         let cross_decision = ObjectRef::new(ObjectKind::CrossHartSchedulerDecision, 8, 1).unwrap();
         assert!(CrossHartSchedulerDecisionRef::try_from_ref(cross_decision).is_ok());
+        let migration = ObjectRef::new(ObjectKind::ActivationMigration, 9, 1).unwrap();
+        assert!(ActivationMigrationRef::try_from_ref(migration).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

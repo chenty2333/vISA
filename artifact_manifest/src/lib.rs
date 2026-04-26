@@ -249,6 +249,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub cross_hart_scheduler_decision_count: usize,
     #[serde(default)]
+    pub activation_migration_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -349,6 +351,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub cross_hart_scheduler_decisions: Vec<CrossHartSchedulerDecisionManifest>,
     #[serde(default)]
+    pub activation_migrations: Vec<ActivationMigrationManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -428,6 +432,8 @@ pub struct SemanticRootSetManifest {
     pub scheduler_decision_roots: Vec<String>,
     #[serde(default)]
     pub cross_hart_scheduler_decision_roots: Vec<String>,
+    #[serde(default)]
+    pub activation_migration_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -813,6 +819,31 @@ pub struct CrossHartSchedulerDecisionManifest {
     pub generation: u64,
     pub state: String,
     pub decided_at_event: u64,
+    pub reason: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ActivationMigrationManifest {
+    pub id: u64,
+    pub activation: u64,
+    pub activation_generation_before: u64,
+    pub activation_generation_after: u64,
+    pub owner_task: u64,
+    pub owner_task_generation: u64,
+    pub source_hart: u64,
+    pub source_hart_generation: u64,
+    pub target_hart: u64,
+    pub target_hart_generation: u64,
+    pub source_queue: u64,
+    pub source_queue_generation: u64,
+    pub source_queue_owner_hart_generation: u64,
+    pub target_queue: u64,
+    pub target_queue_generation: u64,
+    pub target_queue_owner_hart_generation: u64,
+    pub generation: u64,
+    pub state: String,
+    pub migrated_at_event: u64,
     pub reason: String,
     pub note: String,
 }

@@ -610,6 +610,40 @@ pub enum SemanticInvariantError {
         cross_decision: CrossHartSchedulerDecisionId,
         event: EventId,
     },
+    ActivationMigrationInvalid {
+        migration: ActivationMigrationId,
+    },
+    ActivationMigrationMissingHart {
+        migration: ActivationMigrationId,
+        hart: HartId,
+    },
+    ActivationMigrationHartGenerationMismatch {
+        migration: ActivationMigrationId,
+        hart: HartId,
+    },
+    ActivationMigrationMissingQueue {
+        migration: ActivationMigrationId,
+        queue: RunnableQueueId,
+    },
+    ActivationMigrationQueueOwnerMismatch {
+        migration: ActivationMigrationId,
+        queue: RunnableQueueId,
+    },
+    ActivationMigrationMissingActivation {
+        migration: ActivationMigrationId,
+        activation: ActivationId,
+    },
+    ActivationMigrationQueueEntryMismatch {
+        migration: ActivationMigrationId,
+        activation: ActivationId,
+    },
+    ActivationMigrationMissingEvent {
+        migration: ActivationMigrationId,
+    },
+    ActivationMigrationMissingHartEventAttribution {
+        migration: ActivationMigrationId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

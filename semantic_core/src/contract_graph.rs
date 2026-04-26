@@ -1393,6 +1393,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::Preemption
             | ContractObjectKind::SchedulerDecision
             | ContractObjectKind::CrossHartSchedulerDecision
+            | ContractObjectKind::ActivationMigration
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

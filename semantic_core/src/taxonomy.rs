@@ -268,6 +268,21 @@ impl CrossHartSchedulerDecisionState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivationMigrationState {
+    Applied,
+    Rejected,
+}
+
+impl ActivationMigrationState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

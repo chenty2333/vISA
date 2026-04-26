@@ -352,6 +352,41 @@ impl CrossHartSchedulerDecisionRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivationMigrationRecord {
+    pub id: ActivationMigrationId,
+    pub activation: ActivationId,
+    pub activation_generation_before: Generation,
+    pub activation_generation_after: Generation,
+    pub owner_task: TaskId,
+    pub owner_task_generation: Generation,
+    pub source_hart: HartId,
+    pub source_hart_generation: Generation,
+    pub target_hart: HartId,
+    pub target_hart_generation: Generation,
+    pub source_queue: RunnableQueueId,
+    pub source_queue_generation: Generation,
+    pub source_queue_owner_hart_generation: Generation,
+    pub target_queue: RunnableQueueId,
+    pub target_queue_generation: Generation,
+    pub target_queue_owner_hart_generation: Generation,
+    pub generation: Generation,
+    pub state: ActivationMigrationState,
+    pub migrated_at_event: EventId,
+    pub reason: String,
+    pub note: String,
+}
+
+impl ActivationMigrationRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::ActivationMigration,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

@@ -2928,6 +2928,200 @@ fn smp_runtime_s8_history_still_requires_event_after_target_hart_advances() {
     );
 }
 
+fn s9_activation_migration_graph() -> SemanticGraph {
+    let mut graph = s8_cross_hart_decision_graph();
+    assert!(graph.create_runnable_queue_with_id(3, "hart0-migration-rq"));
+    assert!(graph.bind_runnable_queue_owner(3, 1, 1, 2, "hart0 owns migration queue"));
+    graph
+}
+
+#[test]
+fn smp_runtime_s9_activation_migration_moves_runnable_between_hart_queues() {
+    let mut graph = s9_activation_migration_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s9-test",
+        SemanticCommand::MigrateRunnableActivation {
+            migration: 61,
+            activation: 11,
+            activation_generation: 4,
+            source_queue: 2,
+            source_queue_generation: 2,
+            target_queue: 3,
+            target_queue_generation: 2,
+            source_hart: 2,
+            source_hart_generation: 4,
+            target_hart: 1,
+            target_hart_generation: 2,
+            reason: "rebalance".to_string(),
+            note: "move runnable to hart0".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.activation_migrations().len(), 1);
+    let migration = &graph.activation_migrations()[0];
+    assert_eq!(migration.activation, 11);
+    assert_eq!(migration.activation_generation_before, 4);
+    assert_eq!(migration.activation_generation_after, 5);
+    assert_eq!(migration.source_queue, 2);
+    assert_eq!(migration.target_queue, 3);
+    let activation = graph
+        .runtime_activations()
+        .iter()
+        .find(|activation| activation.id == 11)
+        .unwrap();
+    assert_eq!(activation.generation, 5);
+    assert_eq!(activation.runnable_queue, Some(3));
+    let source_queue = graph
+        .runnable_queues()
+        .iter()
+        .find(|queue| queue.id == 2 && queue.generation == 2)
+        .unwrap();
+    assert!(
+        source_queue
+            .entries
+            .iter()
+            .all(|entry| entry.activation != 11)
+    );
+    let target_queue = graph
+        .runnable_queues()
+        .iter()
+        .find(|queue| queue.id == 3 && queue.generation == 2)
+        .unwrap();
+    assert!(
+        target_queue
+            .entries
+            .iter()
+            .any(|entry| entry.activation == 11 && entry.activation_generation == 5)
+    );
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == migration.migrated_at_event
+            && record.hart == 2
+            && record.event_kind == "ActivationMigrationSourceRecorded"
+            && record.activation_generation == Some(4)
+    }));
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == migration.migrated_at_event
+            && record.hart == 1
+            && record.event_kind == "ActivationMigrationTargetRecorded"
+            && record.activation_generation == Some(5)
+    }));
+    assert_eq!(
+        graph.event_log_tail(3)[0].kind.summary(),
+        "ActivationMigrated migration=61 activation=11@4->5 source_hart=2@4 target_hart=1@2 source_queue=2@2 target_queue=3@2 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s9_rejects_stale_activation_and_wrong_target_queue_owner() {
+    let mut graph = s9_activation_migration_graph();
+    let stale_activation = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s9-test",
+        SemanticCommand::MigrateRunnableActivation {
+            migration: 61,
+            activation: 11,
+            activation_generation: 3,
+            source_queue: 2,
+            source_queue_generation: 2,
+            target_queue: 3,
+            target_queue_generation: 2,
+            source_hart: 2,
+            source_hart_generation: 4,
+            target_hart: 1,
+            target_hart_generation: 2,
+            reason: "rebalance".to_string(),
+            note: "must reject stale activation".to_string(),
+        },
+    ));
+    assert_eq!(stale_activation.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("activation migration source queue entry is missing".to_string());
+    assert_eq!(stale_activation.violations, expected);
+
+    let same_hart = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s9-test",
+        SemanticCommand::MigrateRunnableActivation {
+            migration: 61,
+            activation: 11,
+            activation_generation: 4,
+            source_queue: 2,
+            source_queue_generation: 2,
+            target_queue: 3,
+            target_queue_generation: 2,
+            source_hart: 2,
+            source_hart_generation: 4,
+            target_hart: 2,
+            target_hart_generation: 4,
+            reason: "rebalance".to_string(),
+            note: "must reject wrong owner".to_string(),
+        },
+    ));
+    assert_eq!(same_hart.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("activation migration requires distinct harts".to_string());
+    assert_eq!(same_hart.violations, expected);
+
+    assert!(graph.create_runnable_queue_with_id(4, "wrong-target-owner-rq"));
+    assert!(graph.bind_runnable_queue_owner(4, 1, 2, 4, "hart1 owns wrong target queue"));
+    let wrong_owner = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "s9-test",
+        SemanticCommand::MigrateRunnableActivation {
+            migration: 62,
+            activation: 11,
+            activation_generation: 4,
+            source_queue: 2,
+            source_queue_generation: 2,
+            target_queue: 4,
+            target_queue_generation: 2,
+            source_hart: 2,
+            source_hart_generation: 4,
+            target_hart: 1,
+            target_hart_generation: 2,
+            reason: "rebalance".to_string(),
+            note: "must reject target queue owner mismatch".to_string(),
+        },
+    ));
+    assert_eq!(wrong_owner.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("activation migration target queue owner mismatch".to_string());
+    assert_eq!(wrong_owner.violations, expected);
+    assert!(graph.activation_migrations().is_empty());
+}
+
+#[test]
+fn smp_runtime_s9_history_still_requires_event_after_target_hart_advances() {
+    let mut graph = s9_activation_migration_graph();
+    assert!(graph.migrate_runnable_activation_with_id(
+        61,
+        11,
+        4,
+        2,
+        2,
+        3,
+        2,
+        2,
+        4,
+        1,
+        2,
+        "rebalance",
+        "move runnable to hart0",
+    ));
+    assert!(graph.set_hart_state(1, 2, HartState::Booting, "target advances", "later state"));
+    assert!(graph.check_invariants().is_ok());
+
+    graph.corrupt_activation_migration_event_for_test(61, 999);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::ActivationMigrationMissingEvent { migration: 61 })
+    );
+}
+
 #[test]
 fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let mut graph = SemanticGraph::new();

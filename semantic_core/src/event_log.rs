@@ -171,6 +171,21 @@ pub enum EventKind {
         activation_generation: Generation,
         generation: Generation,
     },
+    ActivationMigrated {
+        migration: ActivationMigrationId,
+        activation: ActivationId,
+        from_generation: Generation,
+        to_generation: Generation,
+        source_hart: HartId,
+        source_hart_generation: Generation,
+        target_hart: HartId,
+        target_hart_generation: Generation,
+        source_queue: RunnableQueueId,
+        source_queue_generation: Generation,
+        target_queue: RunnableQueueId,
+        target_queue_generation: Generation,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -772,6 +787,23 @@ impl EventKind {
                 generation,
             } => format!(
                 "CrossHartSchedulerDecisionRecorded cross_decision={cross_decision} decision={scheduler_decision}@{scheduler_decision_generation} deciding_hart={deciding_hart}@{deciding_hart_generation} target_hart={target_hart}@{target_hart_generation} queue={queue}@{queue_generation} activation={activation}@{activation_generation} generation={generation}"
+            ),
+            Self::ActivationMigrated {
+                migration,
+                activation,
+                from_generation,
+                to_generation,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation,
+                source_queue,
+                source_queue_generation,
+                target_queue,
+                target_queue_generation,
+                generation,
+            } => format!(
+                "ActivationMigrated migration={migration} activation={activation}@{from_generation}->{to_generation} source_hart={source_hart}@{source_hart_generation} target_hart={target_hart}@{target_hart_generation} source_queue={source_queue}@{source_queue_generation} target_queue={target_queue}@{target_queue_generation} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

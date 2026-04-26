@@ -1,0 +1,155 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "S9-activation-migration",
+  "phase": "Phase 2 Full SMP Runtime",
+  "status": "pass",
+  "scope": [
+    "Add a semantic activation migration object for moving a Runnable activation between hart-owned runnable queues",
+    "Require exact source and target hart generations plus exact source and target runnable queue generations at command time",
+    "Bump the activation generation during migration and record before/after activation references",
+    "Expose activation migration evidence through semantic package roots/counts, target_executor host-validation output, osctl ViewV1, scheduler view, and history graph edges"
+  ],
+  "no_goals": [
+    "SMP safe point",
+    "Stop-the-world rendezvous",
+    "SMP code publish barrier",
+    "Real context migration",
+    "Real hardware scheduler execution",
+    "Real target-side execution",
+    "NUMA or lock-free scheduler design"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/activation_migration.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/smp/golden_s9_activation_migration.trace.json",
+    "tests/reports/checkpoints/s9_activation_migration.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/smp/golden_s9_activation_migration.trace.json",
+    "tests/reports/checkpoints/s9_activation_migration.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "Activation migration is scoped to a semantic runnable-queue transfer and does not claim real context migration or safe point behavior",
+      "Command preflight requires exact activation, source queue, target queue, source hart, and target hart generations",
+      "Command preflight rejects target queue owner mismatches instead of trusting queue labels or insertion order",
+      "Migration records activation_generation_before and activation_generation_after instead of relying on current activation state",
+      "Migration emits ActivationMigrated, RunnableDequeued, and RunnableQueued evidence so queue state and history are independently auditable",
+      "Source and target hart attributions include exact activation generations before and after migration",
+      "osctl ViewV1 and history graph edges expose typed id/generation references instead of raw debug labels"
+    ],
+    "residual_notes": [
+      "S10 must define SMP safe points separately from migration evidence",
+      "S11 must define stop-the-world rendezvous separately from queue migration",
+      "This checkpoint does not attempt real activation context transfer or target-side execution"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core semantic_roots_reject_activation_migration_root_mismatch",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core smp_runtime_s9",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- activation-migration list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only && python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "python osctl activation-migration/scheduler/contract/history assertions",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/smp/golden_s9_activation_migration.trace.json",
+    "osctl_views": [
+      "osctl activation-migration list --json <migration.json>",
+      "osctl scheduler list --json <migration.json>",
+      "osctl graph --history --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "activation_migration_roots",
+      "runnable_queue_roots",
+      "hart_event_attribution_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 248,
+      "scheduler_decision_count": 2,
+      "cross_hart_scheduler_decision_count": 1,
+      "activation_migration_count": 1,
+      "remote_preempt_count": 1,
+      "remote_park_count": 1,
+      "hart_event_attribution_count": 23,
+      "hart_count": 2
+    }
+  },
+  "residual_gaps": [
+    "S10 SMP safe point remains unimplemented",
+    "S11 stop-the-world rendezvous remains unimplemented",
+    "S12 SMP code publish barrier remains unimplemented"
+  ],
+  "next_checkpoint": "S10-smp-safe-point"
+}

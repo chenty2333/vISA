@@ -10,6 +10,7 @@ pub type RemoteParkId = u64;
 pub type PreemptionId = u64;
 pub type SchedulerDecisionId = u64;
 pub type CrossHartSchedulerDecisionId = u64;
+pub type ActivationMigrationId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

@@ -7,17 +7,18 @@ mod runtime;
 
 use artifact_manifest::{
     ActivationCleanupManifest, ActivationCleanupStepManifest, ActivationContextManifest,
-    ActivationRecordManifest, ActivationResumeManifest, ActivationWaitManifest,
-    ArtifactBundleManifest, AuthorityObjectRefManifest, BoundaryValidationReportManifest,
-    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
-    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
-    ContractViolationManifest, CrossHartSchedulerDecisionManifest, GuestStateManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IpiEventManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, RemoteParkManifest, RemotePreemptManifest, RequiredArtifactProfileManifest,
+    ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
+    ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
+    BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
+    CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
+    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
+    CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
+    CrossHartSchedulerDecisionManifest, GuestStateManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    IpiEventManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    RemoteParkManifest, RemotePreemptManifest, RequiredArtifactProfileManifest,
     RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
     SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
     SemanticSnapshotManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -526,6 +527,44 @@ fn record_preemptive_runtime_context_evidence(
                 target_hart_generation: 4,
                 reason: "s8-remote-runnable-selected".to_owned(),
                 note: "s8-cross-hart-scheduler-decision-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            9_007,
+            "target-executor-s9",
+            SemanticCommand::CreateRunnableQueue {
+                queue: 9005,
+                label: "s9-migration-target-runnable-queue".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            9_008,
+            "target-executor-s9",
+            SemanticCommand::BindRunnableQueueOwner {
+                queue: 9005,
+                queue_generation: 1,
+                hart: 1,
+                hart_generation: 2,
+                note: "s9-target-queue-owned-by-boot-hart".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            9_009,
+            "target-executor-s9",
+            SemanticCommand::MigrateRunnableActivation {
+                migration: 9001,
+                activation: 9004,
+                activation_generation: 4,
+                source_queue: 9004,
+                source_queue_generation: 2,
+                target_queue: 9005,
+                target_queue_generation: 2,
+                source_hart: 2,
+                source_hart_generation: 4,
+                target_hart: 1,
+                target_hart_generation: 2,
+                reason: "s9-cross-hart-rebalance".to_owned(),
+                note: "s9-activation-migration-harness".to_owned(),
             },
         ),
         CommandEnvelope::new(
@@ -1919,6 +1958,7 @@ fn demo_migration_package(
             preemption_count: semantic.preemption_count(),
             scheduler_decision_count: semantic.scheduler_decision_count(),
             cross_hart_scheduler_decision_count: semantic.cross_hart_scheduler_decision_count(),
+            activation_migration_count: semantic.activation_migration_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2014,6 +2054,11 @@ fn demo_migration_package(
                 .cross_hart_scheduler_decisions()
                 .iter()
                 .map(cross_hart_scheduler_decision_manifest)
+                .collect(),
+            activation_migrations: semantic
+                .activation_migrations()
+                .iter()
+                .map(activation_migration_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2352,6 +2397,29 @@ fn semantic_roots(
                     decision.selected_activation_generation,
                     decision.state.as_str(),
                     decision.generation
+                )
+            })
+            .collect(),
+        activation_migration_roots: semantic
+            .activation_migrations()
+            .iter()
+            .map(|migration| {
+                format!(
+                    "activation-migration id={} activation={}@{}->{} source_hart={}@{} target_hart={}@{} source_queue={}@{} target_queue={}@{} state={} generation={}",
+                    migration.id,
+                    migration.activation,
+                    migration.activation_generation_before,
+                    migration.activation_generation_after,
+                    migration.source_hart,
+                    migration.source_hart_generation,
+                    migration.target_hart,
+                    migration.target_hart_generation,
+                    migration.source_queue,
+                    migration.source_queue_generation,
+                    migration.target_queue,
+                    migration.target_queue_generation,
+                    migration.state.as_str(),
+                    migration.generation
                 )
             })
             .collect(),
@@ -3203,6 +3271,34 @@ fn cross_hart_scheduler_decision_manifest(
         decided_at_event: decision.decided_at_event,
         reason: decision.reason.clone(),
         note: decision.note.clone(),
+    }
+}
+
+fn activation_migration_manifest(
+    migration: &semantic_core::ActivationMigrationRecord,
+) -> ActivationMigrationManifest {
+    ActivationMigrationManifest {
+        id: migration.id,
+        activation: migration.activation,
+        activation_generation_before: migration.activation_generation_before,
+        activation_generation_after: migration.activation_generation_after,
+        owner_task: u64::from(migration.owner_task),
+        owner_task_generation: migration.owner_task_generation,
+        source_hart: u64::from(migration.source_hart),
+        source_hart_generation: migration.source_hart_generation,
+        target_hart: u64::from(migration.target_hart),
+        target_hart_generation: migration.target_hart_generation,
+        source_queue: migration.source_queue,
+        source_queue_generation: migration.source_queue_generation,
+        source_queue_owner_hart_generation: migration.source_queue_owner_hart_generation,
+        target_queue: migration.target_queue,
+        target_queue_generation: migration.target_queue_generation,
+        target_queue_owner_hart_generation: migration.target_queue_owner_hart_generation,
+        generation: migration.generation,
+        state: migration.state.as_str().to_owned(),
+        migrated_at_event: migration.migrated_at_event,
+        reason: migration.reason.clone(),
+        note: migration.note.clone(),
     }
 }
 
