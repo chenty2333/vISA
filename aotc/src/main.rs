@@ -11,8 +11,9 @@ use artifact_manifest::{
 };
 use contract_core::{
     CODE_PAYLOAD_FORMAT_CWASM, RUNTIME_MODE_RESEARCH, TARGET_ARTIFACT_FORMAT_V1,
-    ValidatedArtifactEntry, build_validated_artifact_plan, expected_supervisor_contract,
-    manifest_binding_hash, module_abi_fingerprint,
+    ValidatedArtifactEntry, WASMTIME_COMPILATION_STRATEGY, WASMTIME_CRATE_VERSION,
+    build_validated_artifact_plan, canonical_wasmtime_config_fingerprint,
+    expected_supervisor_contract, manifest_binding_hash, module_abi_fingerprint,
 };
 use service_core::net_contract::{
     NETWORK_CONTRACT_ABI_VERSION, NETWORK_CONTRACT_VERSION, VIRTIO_NET0_MTU,
@@ -34,7 +35,6 @@ use wasmtime::{Config, Engine, ExternType, Instance, Module, Precompiled, Store,
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 const HOST_ARTIFACT_PROFILE: &str = "host-validation";
-const WASMTIME_CRATE_VERSION: &str = "43.0.1";
 
 fn main() {
     if let Err(err) = run() {
@@ -458,8 +458,10 @@ fn build_target_artifact_image(
                 "schema": "vmos-target-profile-requirements-v1",
                 "artifact_profile": input.profile,
                 "host_arch": env::consts::ARCH,
+                "target_arch": env::consts::ARCH,
                 "compiler_engine": SUPERVISOR_COMPILER_ENGINE,
                 "engine_version": WASMTIME_CRATE_VERSION,
+                "compilation_strategy": WASMTIME_COMPILATION_STRATEGY,
                 "execution_mode": SUPERVISOR_EXECUTION_MODE,
                 "target_artifact_format": TARGET_ARTIFACT_FORMAT_V1,
                 "code_payload_format": CODE_PAYLOAD_FORMAT_CWASM,
@@ -467,6 +469,10 @@ fn build_target_artifact_image(
                 "memory64": false,
                 "multi_memory": false,
                 "component_model": false,
+                "engine_config_fingerprint": canonical_wasmtime_config_fingerprint(
+                    env::consts::ARCH,
+                    env::consts::ARCH,
+                ),
             }))?,
         },
         TargetArtifactSectionPayload {

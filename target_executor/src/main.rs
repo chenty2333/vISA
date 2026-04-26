@@ -87,7 +87,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let migration_path = env::args().nth(2).map(PathBuf::from);
     let manifest = read_manifest(&artifact_root)?;
     let plan = validate_bundle_manifest(&manifest)?;
-    let executor = RuntimeOnlyExecutor::host_validation(workspace_root.clone())?;
+    let executor =
+        RuntimeOnlyExecutor::host_validation(workspace_root.clone(), &plan.artifact_profile)?;
     let mut semantic = SemanticGraph::with_runtime_mode(runtime_mode_from_plan(&plan));
     let mut stores = Vec::with_capacity(plan.module_count());
 

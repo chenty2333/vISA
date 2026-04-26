@@ -362,6 +362,8 @@ pub const RUNTIME_MODE_PRODUCTION: &str = "production";
 pub const RUNTIME_MODE_REPLAY: &str = "replay";
 pub const TARGET_ARTIFACT_FORMAT_V1: &str = "target-artifact-image-v1";
 pub const CODE_PAYLOAD_FORMAT_CWASM: &str = SUPERVISOR_CODE_PAYLOAD_FORMAT;
+pub const WASMTIME_CRATE_VERSION: &str = "43.0.1";
+pub const WASMTIME_COMPILATION_STRATEGY: &str = "cranelift";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedArtifactPlan {
@@ -939,6 +941,19 @@ pub fn normalized_code_payload_format(entry: &ModuleArtifactManifest) -> &str {
     } else {
         &entry.code_payload_format
     }
+}
+
+pub fn canonical_wasmtime_config_fingerprint(host_arch: &str, target_arch: &str) -> String {
+    let canonical = format!(
+        "engine={};engine_version={};host_arch={};target_arch={};strategy={};wasm_feature_profile={};memory64=false;multi_memory=false;component_model=false",
+        SUPERVISOR_COMPILER_ENGINE,
+        WASMTIME_CRATE_VERSION,
+        host_arch,
+        target_arch,
+        WASMTIME_COMPILATION_STRATEGY,
+        WASM_FEATURE_PROFILE,
+    );
+    hex::encode(Sha256::digest(canonical.as_bytes()))
 }
 
 fn manifest_entry_for_spec<'a>(
@@ -1661,6 +1676,20 @@ mod tests {
         SemanticSnapshotManifest, SignatureManifest, SubstrateAuthorityRequirementManifest,
         SubstrateBoundaryManifest, SubstrateEventManifest, TargetManifest,
     };
+
+    #[test]
+    fn wasmtime_config_fingerprint_is_stable_and_arch_sensitive() {
+        let host_fingerprint = canonical_wasmtime_config_fingerprint("x86_64", "x86_64");
+        assert_eq!(host_fingerprint.len(), 64);
+        assert_eq!(
+            host_fingerprint,
+            canonical_wasmtime_config_fingerprint("x86_64", "x86_64")
+        );
+        assert_ne!(
+            host_fingerprint,
+            canonical_wasmtime_config_fingerprint("x86_64", "riscv64")
+        );
+    }
 
     fn valid_manifest() -> ArtifactBundleManifest {
         let modules = SUPERVISOR_WASM_MODULES
