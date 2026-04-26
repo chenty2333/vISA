@@ -801,6 +801,20 @@ mod tests {
     }
 
     #[test]
+    fn reject_manifest_payload_tamper_even_when_section_hash_is_refreshed() {
+        let mut image = fake_image(&REQUIRED_SECTIONS);
+        let (start, _) = section_payload_range(&image, SectionKindV1::Manifest);
+        image[start] ^= 0x5a;
+        refresh_section_hash(&mut image, SectionKindV1::Manifest);
+        refresh_image_hash(&mut image);
+
+        assert_eq!(
+            TargetArtifactImage::parse(&image),
+            Err(TargetArtifactError::ManifestHashMismatch)
+        );
+    }
+
+    #[test]
     fn signature_payload_change_requires_signature_section_hash() {
         let mut image = fake_image(&REQUIRED_SECTIONS);
         let (start, _) = section_payload_range(&image, SectionKindV1::Signature);
@@ -813,6 +827,22 @@ mod tests {
                 SectionKindV1::Signature
             ))
         );
+    }
+
+    #[test]
+    fn signature_payload_can_change_canonical_hash_only_when_section_hash_tracks_it() {
+        let mut image = fake_image(&REQUIRED_SECTIONS);
+        let original_hash = canonical_zero_field_image_hash(&image).expect("canonical hash");
+        let (start, _) = section_payload_range(&image, SectionKindV1::Signature);
+        image[start] ^= 0x5a;
+        refresh_section_hash(&mut image, SectionKindV1::Signature);
+        refresh_image_hash(&mut image);
+
+        assert_eq!(
+            canonical_zero_field_image_hash(&image).expect("canonical hash after signature update"),
+            original_hash
+        );
+        TargetArtifactImage::parse(&image).expect("signature payload is outside image hash");
     }
 
     #[test]
@@ -894,5 +924,25 @@ mod tests {
         image[IMAGE_HASH_OFFSET..IMAGE_HASH_OFFSET + IMAGE_HASH_LEN].fill(0);
         let hash = canonical_zero_field_image_hash(image).expect("canonical image hash");
         image[IMAGE_HASH_OFFSET..IMAGE_HASH_OFFSET + IMAGE_HASH_LEN].copy_from_slice(&hash);
+    }
+
+    fn refresh_section_hash(image: &mut [u8], kind: SectionKindV1) {
+        let header = TargetArtifactHeaderV1::parse(image).expect("header");
+        for index in 0..header.section_count as usize {
+            let section_off = TARGET_ARTIFACT_HEADER_LEN + index * TARGET_SECTION_HEADER_LEN;
+            let section = TargetSectionHeaderV1::parse(
+                &image[section_off..section_off + TARGET_SECTION_HEADER_LEN],
+            )
+            .expect("section");
+            if section.kind == kind {
+                let start = section.offset as usize;
+                let end = start + section.len as usize;
+                let digest: [u8; 32] = Sha256::digest(&image[start..end]).into();
+                image[section_off + SECTION_HASH_OFFSET..section_off + SECTION_HASH_OFFSET + 32]
+                    .copy_from_slice(&digest);
+                return;
+            }
+        }
+        panic!("missing section {kind:?}");
     }
 }
