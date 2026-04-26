@@ -1376,6 +1376,9 @@ impl ContractGraphValidator {
             | ContractObjectKind::Resource
             | ContractObjectKind::FaultDomain
             | ContractObjectKind::MemoryObject
+            | ContractObjectKind::GuestAddressSpace
+            | ContractObjectKind::VmaRegion
+            | ContractObjectKind::PageObject
             | ContractObjectKind::EventLog
             | ContractObjectKind::Tombstone => None,
         }

@@ -82,6 +82,9 @@ pub enum ObjectKind {
     Hostcall,
     Cleanup,
     MemoryObject,
+    GuestAddressSpace,
+    VmaRegion,
+    PageObject,
     Tombstone,
     External,
 }
@@ -106,6 +109,9 @@ impl ObjectKind {
             Self::Hostcall => "hostcall",
             Self::Cleanup => "cleanup",
             Self::MemoryObject => "memory-object",
+            Self::GuestAddressSpace => "guest-address-space",
+            Self::VmaRegion => "vma-region",
+            Self::PageObject => "page-object",
             Self::Tombstone => "tombstone",
             Self::External => "external",
         }
@@ -274,6 +280,9 @@ typed_ref!(CodeObjectRef, ObjectKind::CodeObject);
 typed_ref!(ActivationRef, ObjectKind::Activation);
 typed_ref!(TrapRef, ObjectKind::Trap);
 typed_ref!(HostcallTraceRef, ObjectKind::Hostcall);
+typed_ref!(GuestAddressSpaceRef, ObjectKind::GuestAddressSpace);
+typed_ref!(VmaRegionRef, ObjectKind::VmaRegion);
+typed_ref!(PageObjectRef, ObjectKind::PageObject);
 typed_ref!(ExternalObjectRef, ObjectKind::External);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
