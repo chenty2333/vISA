@@ -259,6 +259,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub smp_cleanup_quiescence_count: usize,
     #[serde(default)]
+    pub smp_snapshot_barrier_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -369,6 +371,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub smp_cleanup_quiescence: Vec<SmpCleanupQuiescenceManifest>,
     #[serde(default)]
+    pub smp_snapshot_barriers: Vec<SmpSnapshotBarrierManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -458,6 +462,8 @@ pub struct SemanticRootSetManifest {
     pub smp_code_publish_barrier_roots: Vec<String>,
     #[serde(default)]
     pub smp_cleanup_quiescence_roots: Vec<String>,
+    #[serde(default)]
+    pub smp_snapshot_barrier_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -981,6 +987,43 @@ pub struct SmpCleanupQuiescenceManifest {
     pub no_pending_wait: bool,
     pub no_live_capability: bool,
     pub no_live_resource: bool,
+    pub generation: u64,
+    pub state: String,
+    pub validated_at_event: u64,
+    pub reason: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SmpSnapshotBarrierParticipantManifest {
+    pub hart: u64,
+    pub hart_generation: u64,
+    pub hardware_hart: u32,
+    pub hart_state: String,
+    pub event_log_cursor_observed: u64,
+    pub snapshot_safe: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SmpSnapshotBarrierManifest {
+    pub id: u64,
+    pub rendezvous: u64,
+    pub rendezvous_generation: u64,
+    pub rendezvous_epoch: u64,
+    pub event_log_cursor: u64,
+    pub participants: Vec<SmpSnapshotBarrierParticipantManifest>,
+    pub pending_wait_count: u32,
+    pub active_transaction_count: u32,
+    pub active_dmw_lease_count: u32,
+    pub active_nonconvertible_activation_count: u32,
+    pub in_flight_dma_count: u32,
+    pub unsealed_event_log: bool,
+    pub unflushed_trap_record_count: u32,
+    pub pending_cleanup_count: u32,
+    pub native_activation_stack_live: bool,
+    pub raw_dma_binding_count: u32,
+    pub raw_mmio_binding_count: u32,
+    pub snapshot_validation_ok: bool,
     pub generation: u64,
     pub state: String,
     pub validated_at_event: u64,

@@ -537,6 +537,53 @@ impl SmpCleanupQuiescenceRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmpSnapshotBarrierParticipantRecord {
+    pub hart: HartId,
+    pub hart_generation: Generation,
+    pub hardware_hart: u32,
+    pub hart_state: HartState,
+    pub event_log_cursor_observed: EventId,
+    pub snapshot_safe: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmpSnapshotBarrierRecord {
+    pub id: SmpSnapshotBarrierId,
+    pub rendezvous: StopTheWorldRendezvousId,
+    pub rendezvous_generation: Generation,
+    pub rendezvous_epoch: u64,
+    pub event_log_cursor: EventId,
+    pub participants: Vec<SmpSnapshotBarrierParticipantRecord>,
+    pub pending_wait_count: u32,
+    pub active_transaction_count: u32,
+    pub active_dmw_lease_count: u32,
+    pub active_nonconvertible_activation_count: u32,
+    pub in_flight_dma_count: u32,
+    pub unsealed_event_log: bool,
+    pub unflushed_trap_record_count: u32,
+    pub pending_cleanup_count: u32,
+    pub native_activation_stack_live: bool,
+    pub raw_dma_binding_count: u32,
+    pub raw_mmio_binding_count: u32,
+    pub snapshot_validation_ok: bool,
+    pub generation: Generation,
+    pub state: SmpSnapshotBarrierState,
+    pub validated_at_event: EventId,
+    pub reason: String,
+    pub note: String,
+}
+
+impl SmpSnapshotBarrierRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::SmpSnapshotBarrier,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

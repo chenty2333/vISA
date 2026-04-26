@@ -211,6 +211,14 @@ pub enum SemanticCommand {
         reason: String,
         note: String,
     },
+    ValidateSmpSnapshotBarrier {
+        barrier: SmpSnapshotBarrierId,
+        rendezvous: StopTheWorldRendezvousId,
+        rendezvous_generation: Generation,
+        snapshot_state: SnapshotBarrierValidationState,
+        reason: String,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -435,6 +443,7 @@ impl SemanticCommand {
             Self::CompleteStopTheWorldRendezvous { .. } => "complete-stop-the-world-rendezvous",
             Self::ValidateSmpCodePublishBarrier { .. } => "validate-smp-code-publish-barrier",
             Self::ValidateSmpCleanupQuiescence { .. } => "validate-smp-cleanup-quiescence",
+            Self::ValidateSmpSnapshotBarrier { .. } => "validate-smp-snapshot-barrier",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1487,6 +1496,22 @@ impl SemanticGraph {
                     reason,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::ValidateSmpSnapshotBarrier {
+                barrier,
+                rendezvous,
+                rendezvous_generation,
+                snapshot_state,
+                reason,
+                ..
+            } => self
+                .validate_smp_snapshot_barrier(
+                    *barrier,
+                    *rendezvous,
+                    *rendezvous_generation,
+                    snapshot_state,
+                    reason,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2316,6 +2341,21 @@ impl SemanticGraph {
                 store,
                 target_store_generation,
                 result_store_generation,
+                &reason,
+                &note,
+            ),
+            SemanticCommand::ValidateSmpSnapshotBarrier {
+                barrier,
+                rendezvous,
+                rendezvous_generation,
+                snapshot_state,
+                reason,
+                note,
+            } => self.validate_smp_snapshot_barrier_with_id(
+                barrier,
+                rendezvous,
+                rendezvous_generation,
+                snapshot_state,
                 &reason,
                 &note,
             ),

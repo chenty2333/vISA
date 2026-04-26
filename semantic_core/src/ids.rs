@@ -15,6 +15,7 @@ pub type SmpSafePointId = u64;
 pub type StopTheWorldRendezvousId = u64;
 pub type SmpCodePublishBarrierId = u64;
 pub type SmpCleanupQuiescenceId = u64;
+pub type SmpSnapshotBarrierId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

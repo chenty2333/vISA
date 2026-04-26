@@ -728,6 +728,27 @@ pub enum SemanticInvariantError {
         quiescence: SmpCleanupQuiescenceId,
         event: EventId,
     },
+    SmpSnapshotBarrierInvalid {
+        barrier: SmpSnapshotBarrierId,
+    },
+    SmpSnapshotBarrierRendezvousMissing {
+        barrier: SmpSnapshotBarrierId,
+        rendezvous: StopTheWorldRendezvousId,
+    },
+    SmpSnapshotBarrierParticipantMismatch {
+        barrier: SmpSnapshotBarrierId,
+        hart: HartId,
+    },
+    SmpSnapshotBarrierMissingEvent {
+        barrier: SmpSnapshotBarrierId,
+    },
+    SmpSnapshotBarrierMissingHartEventAttribution {
+        barrier: SmpSnapshotBarrierId,
+        event: EventId,
+    },
+    SmpSnapshotBarrierBoundaryViolation {
+        barrier: SmpSnapshotBarrierId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

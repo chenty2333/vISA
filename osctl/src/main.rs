@@ -16,9 +16,9 @@ use artifact_manifest::{
     RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
-    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
-    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
-    WaitRecordManifest,
+    SmpSnapshotBarrierManifest, StopTheWorldRendezvousManifest, StoreRecordManifest,
+    SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
+    TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -244,6 +244,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "publish-barrier"
         | "smp-cleanup-quiescence"
         | "cleanup-quiescence"
+        | "smp-snapshot-barrier"
+        | "snapshot-barrier"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -414,7 +416,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -626,6 +628,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
             "smp-code-publish-barrier"
         }
         "smp-cleanup-quiescence" | "cleanup-quiescence" => "smp-cleanup-quiescence",
+        "smp-snapshot-barrier" | "snapshot-barrier" => "smp-snapshot-barrier",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -1418,6 +1421,68 @@ fn smp_cleanup_quiescence_view_v1(quiescence: &SmpCleanupQuiescenceManifest) -> 
     })
 }
 
+fn smp_snapshot_barrier_view_v1(barrier: &SmpSnapshotBarrierManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "smp-snapshot-barrier",
+        "id": barrier.id,
+        "generation": barrier.generation,
+        "state": barrier.state,
+        "owner": {
+            "rendezvous": {
+                "id": barrier.rendezvous,
+                "generation": barrier.rendezvous_generation,
+                "epoch": barrier.rendezvous_epoch,
+            },
+        },
+        "references": {
+            "rendezvous": {
+                "kind": "stop-the-world-rendezvous",
+                "id": barrier.rendezvous,
+                "generation": barrier.rendezvous_generation,
+                "epoch": barrier.rendezvous_epoch,
+            },
+            "participants": barrier.participants.iter().map(|participant| serde_json::json!({
+                "hart": {
+                    "kind": "hart",
+                    "id": participant.hart,
+                    "generation": participant.hart_generation,
+                },
+                "hardware_hart": participant.hardware_hart,
+                "hart_state": participant.hart_state,
+                "event_log_cursor_observed": participant.event_log_cursor_observed,
+                "snapshot_safe": participant.snapshot_safe,
+            })).collect::<Vec<_>>(),
+            "event": {
+                "id": barrier.validated_at_event,
+            },
+        },
+        "postconditions": {
+            "snapshot_validation_ok": barrier.snapshot_validation_ok,
+            "pending_wait_count": barrier.pending_wait_count,
+            "active_transaction_count": barrier.active_transaction_count,
+            "active_dmw_lease_count": barrier.active_dmw_lease_count,
+            "active_nonconvertible_activation_count": barrier.active_nonconvertible_activation_count,
+            "in_flight_dma_count": barrier.in_flight_dma_count,
+            "unsealed_event_log": barrier.unsealed_event_log,
+            "unflushed_trap_record_count": barrier.unflushed_trap_record_count,
+            "pending_cleanup_count": barrier.pending_cleanup_count,
+            "native_activation_stack_live": barrier.native_activation_stack_live,
+            "raw_dma_binding_count": barrier.raw_dma_binding_count,
+            "raw_mmio_binding_count": barrier.raw_mmio_binding_count,
+        },
+        "reason": barrier.reason,
+        "note": barrier.note,
+        "last_transition": {
+            "event_log_cursor": barrier.event_log_cursor,
+            "validated_at_event": barrier.validated_at_event,
+            "participant_count": barrier.participants.len(),
+            "rendezvous_epoch": barrier.rendezvous_epoch,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -1812,6 +1877,17 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "participant_count": quiescence.participants.len(),
                 "state": quiescence.state,
             })).collect::<Vec<_>>(),
+            "smp_snapshot_barriers": package.semantic.smp_snapshot_barriers.iter().map(|barrier| serde_json::json!({
+                "id": barrier.id,
+                "generation": barrier.generation,
+                "rendezvous": barrier.rendezvous,
+                "rendezvous_generation": barrier.rendezvous_generation,
+                "rendezvous_epoch": barrier.rendezvous_epoch,
+                "event_log_cursor": barrier.event_log_cursor,
+                "participant_count": barrier.participants.len(),
+                "snapshot_validation_ok": barrier.snapshot_validation_ok,
+                "state": barrier.state,
+            })).collect::<Vec<_>>(),
             "activation_resumes": package.semantic.activation_resumes.iter().map(|resume| serde_json::json!({
                 "id": resume.id,
                 "generation": resume.generation,
@@ -1870,6 +1946,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "stop_the_world_rendezvous_count": package.semantic.stop_the_world_rendezvous_count,
             "smp_code_publish_barrier_count": package.semantic.smp_code_publish_barrier_count,
             "smp_cleanup_quiescence_count": package.semantic.smp_cleanup_quiescence_count,
+            "smp_snapshot_barrier_count": package.semantic.smp_snapshot_barrier_count,
             "activation_resume_count": package.semantic.activation_resume_count,
             "activation_wait_count": package.semantic.activation_wait_count,
             "activation_cleanup_count": package.semantic.activation_cleanup_count,
@@ -2341,6 +2418,12 @@ fn stable_views_for_kind(
             .smp_cleanup_quiescence
             .iter()
             .map(smp_cleanup_quiescence_view_v1)
+            .collect()),
+        "smp-snapshot-barrier" | "snapshot-barrier" => Ok(package
+            .semantic
+            .smp_snapshot_barriers
+            .iter()
+            .map(smp_snapshot_barrier_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -2988,7 +3071,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -3009,6 +3092,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.stop_the_world_rendezvous_count,
             package.semantic.smp_code_publish_barrier_count,
             package.semantic.smp_cleanup_quiescence_count,
+            package.semantic.smp_snapshot_barrier_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -3141,7 +3225,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -3179,6 +3263,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.stop_the_world_rendezvous_roots.len(),
         package.semantic.roots.smp_code_publish_barrier_roots.len(),
         package.semantic.roots.smp_cleanup_quiescence_roots.len(),
+        package.semantic.roots.smp_snapshot_barrier_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -3230,6 +3315,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "smp-cleanup-quiescence",
         &package.semantic.roots.smp_cleanup_quiescence_roots,
+    );
+    print_roots(
+        "smp-snapshot-barrier",
+        &package.semantic.roots.smp_snapshot_barrier_roots,
     );
     print_roots(
         "activation-resume",
@@ -4105,6 +4194,29 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "participant-hart",
                 "historical",
                 Some(quiescence.validated_at_event),
+            ));
+        }
+    }
+    for barrier in &package.semantic.smp_snapshot_barriers {
+        let from = object_ref_json("smp-snapshot-barrier", barrier.id, barrier.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "stop-the-world-rendezvous",
+                barrier.rendezvous,
+                barrier.rendezvous_generation,
+            ),
+            "snapshot-rendezvous",
+            "historical",
+            Some(barrier.validated_at_event),
+        ));
+        for participant in &barrier.participants {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("hart", participant.hart, participant.hart_generation),
+                "participant-hart",
+                "historical",
+                Some(barrier.validated_at_event),
             ));
         }
     }
@@ -5534,7 +5646,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -5554,6 +5666,7 @@ fn replay_until(
         package.semantic.roots.hostcall_trace_roots.len(),
         package.semantic.roots.migration_object_roots.len(),
         package.semantic.roots.smp_cleanup_quiescence_roots.len(),
+        package.semantic.roots.smp_snapshot_barrier_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -5598,6 +5711,9 @@ fn replay_until(
     for quiescence in &package.semantic.roots.smp_cleanup_quiescence_roots {
         println!("replay smp-cleanup-quiescence {quiescence}");
     }
+    for barrier in &package.semantic.roots.smp_snapshot_barrier_roots {
+        println!("replay smp-snapshot-barrier {barrier}");
+    }
     Ok(())
 }
 
@@ -5605,6 +5721,318 @@ fn print_replay_json(
     cursor: u64,
     package: &MigrationPackageManifest,
 ) -> Result<(), Box<dyn Error>> {
+    let mut roots = serde_json::Map::new();
+    roots.insert(
+        "tasks".to_owned(),
+        serde_json::json!(package.semantic.roots.task_roots.len()),
+    );
+    roots.insert(
+        "timer_interrupts".to_owned(),
+        serde_json::json!(package.semantic.roots.timer_interrupt_roots.len()),
+    );
+    roots.insert(
+        "ipi_events".to_owned(),
+        serde_json::json!(package.semantic.roots.ipi_event_roots.len()),
+    );
+    roots.insert(
+        "remote_preempts".to_owned(),
+        serde_json::json!(package.semantic.roots.remote_preempt_roots.len()),
+    );
+    roots.insert(
+        "remote_parks".to_owned(),
+        serde_json::json!(package.semantic.roots.remote_park_roots.len()),
+    );
+    roots.insert(
+        "cross_hart_scheduler_decisions".to_owned(),
+        serde_json::json!(
+            package
+                .semantic
+                .roots
+                .cross_hart_scheduler_decision_roots
+                .len()
+        ),
+    );
+    roots.insert(
+        "activation_migrations".to_owned(),
+        serde_json::json!(package.semantic.roots.activation_migration_roots.len()),
+    );
+    roots.insert(
+        "smp_safe_points".to_owned(),
+        serde_json::json!(package.semantic.roots.smp_safe_point_roots.len()),
+    );
+    roots.insert(
+        "stop_the_world_rendezvous".to_owned(),
+        serde_json::json!(package.semantic.roots.stop_the_world_rendezvous_roots.len()),
+    );
+    roots.insert(
+        "smp_code_publish_barriers".to_owned(),
+        serde_json::json!(package.semantic.roots.smp_code_publish_barrier_roots.len()),
+    );
+    roots.insert(
+        "smp_cleanup_quiescence".to_owned(),
+        serde_json::json!(package.semantic.roots.smp_cleanup_quiescence_roots.len()),
+    );
+    roots.insert(
+        "smp_snapshot_barriers".to_owned(),
+        serde_json::json!(package.semantic.roots.smp_snapshot_barrier_roots.len()),
+    );
+    roots.insert(
+        "resources".to_owned(),
+        serde_json::json!(package.semantic.roots.resource_roots.len()),
+    );
+    roots.insert(
+        "authorities".to_owned(),
+        serde_json::json!(package.semantic.roots.authority_roots.len()),
+    );
+    roots.insert(
+        "stores".to_owned(),
+        serde_json::json!(package.semantic.roots.store_roots.len()),
+    );
+    roots.insert(
+        "capabilities".to_owned(),
+        serde_json::json!(package.semantic.roots.capability_roots.len()),
+    );
+    roots.insert(
+        "target_stores".to_owned(),
+        serde_json::json!(package.semantic.roots.target_store_record_roots.len()),
+    );
+    roots.insert(
+        "target_capabilities".to_owned(),
+        serde_json::json!(package.semantic.roots.target_capability_record_roots.len()),
+    );
+    roots.insert(
+        "boundaries".to_owned(),
+        serde_json::json!(package.semantic.roots.boundary_roots.len()),
+    );
+    roots.insert(
+        "artifacts".to_owned(),
+        serde_json::json!(package.semantic.roots.artifact_verification_roots.len()),
+    );
+    roots.insert(
+        "activations".to_owned(),
+        serde_json::json!(package.semantic.roots.store_activation_roots.len()),
+    );
+    roots.insert(
+        "executor_transitions".to_owned(),
+        serde_json::json!(package.semantic.roots.executor_transition_roots.len()),
+    );
+    roots.insert(
+        "target_artifacts".to_owned(),
+        serde_json::json!(package.semantic.roots.target_artifact_roots.len()),
+    );
+    roots.insert(
+        "code_objects".to_owned(),
+        serde_json::json!(package.semantic.roots.code_object_roots.len()),
+    );
+    roots.insert(
+        "activation_records".to_owned(),
+        serde_json::json!(package.semantic.roots.activation_record_roots.len()),
+    );
+    roots.insert(
+        "traps".to_owned(),
+        serde_json::json!(package.semantic.roots.trap_roots.len()),
+    );
+    roots.insert(
+        "hostcalls".to_owned(),
+        serde_json::json!(package.semantic.roots.hostcall_trace_roots.len()),
+    );
+    roots.insert(
+        "migration_objects".to_owned(),
+        serde_json::json!(package.semantic.roots.migration_object_roots.len()),
+    );
+    roots.insert(
+        "tombstones".to_owned(),
+        serde_json::json!(package.semantic.roots.tombstone_roots.len()),
+    );
+    roots.insert(
+        "contract_violations".to_owned(),
+        serde_json::json!(package.semantic.roots.contract_violation_roots.len()),
+    );
+    roots.insert(
+        "cleanup".to_owned(),
+        serde_json::json!(package.semantic.roots.cleanup_roots.len()),
+    );
+    roots.insert(
+        "activation_cleanup".to_owned(),
+        serde_json::json!(package.semantic.roots.activation_cleanup_roots.len()),
+    );
+    roots.insert(
+        "preemption_latency".to_owned(),
+        serde_json::json!(package.semantic.roots.preemption_latency_roots.len()),
+    );
+    roots.insert(
+        "hart_event_attribution".to_owned(),
+        serde_json::json!(package.semantic.roots.hart_event_attribution_roots.len()),
+    );
+    roots.insert(
+        "memory_policies".to_owned(),
+        serde_json::json!(package.semantic.roots.memory_policy_roots.len()),
+    );
+    roots.insert(
+        "snapshot_validation".to_owned(),
+        serde_json::json!(package.semantic.roots.snapshot_validation_roots.len()),
+    );
+    roots.insert(
+        "replay_validation".to_owned(),
+        serde_json::json!(package.semantic.roots.replay_validation_roots.len()),
+    );
+    roots.insert(
+        "substrate_events".to_owned(),
+        serde_json::json!(package.semantic.roots.substrate_event_roots.len()),
+    );
+    roots.insert(
+        "command_results".to_owned(),
+        serde_json::json!(package.semantic.roots.command_result_roots.len()),
+    );
+    roots.insert(
+        "interface_events".to_owned(),
+        serde_json::json!(package.semantic.roots.interface_event_roots.len()),
+    );
+    roots.insert(
+        "event_tail".to_owned(),
+        serde_json::json!(package.semantic.roots.event_log_tail.len()),
+    );
+    roots.insert(
+        "boundary_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.boundary_roots),
+    );
+    roots.insert(
+        "artifact_verification_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.artifact_verification_roots),
+    );
+    roots.insert(
+        "store_activation_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.store_activation_roots),
+    );
+    roots.insert(
+        "executor_transition_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.executor_transition_roots),
+    );
+    roots.insert(
+        "target_artifact_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.target_artifact_roots),
+    );
+    roots.insert(
+        "target_store_record_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.target_store_record_roots),
+    );
+    roots.insert(
+        "target_capability_record_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.target_capability_record_roots),
+    );
+    roots.insert(
+        "code_object_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.code_object_roots),
+    );
+    roots.insert(
+        "activation_record_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.activation_record_roots),
+    );
+    roots.insert(
+        "trap_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.trap_roots),
+    );
+    roots.insert(
+        "hostcall_trace_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.hostcall_trace_roots),
+    );
+    roots.insert(
+        "migration_object_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.migration_object_roots),
+    );
+    roots.insert(
+        "tombstone_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.tombstone_roots),
+    );
+    roots.insert(
+        "contract_violation_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.contract_violation_roots),
+    );
+    roots.insert(
+        "timer_interrupt_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.timer_interrupt_roots),
+    );
+    roots.insert(
+        "ipi_event_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.ipi_event_roots),
+    );
+    roots.insert(
+        "remote_preempt_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.remote_preempt_roots),
+    );
+    roots.insert(
+        "remote_park_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.remote_park_roots),
+    );
+    roots.insert(
+        "cross_hart_scheduler_decision_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.cross_hart_scheduler_decision_roots),
+    );
+    roots.insert(
+        "activation_migration_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.activation_migration_roots),
+    );
+    roots.insert(
+        "smp_safe_point_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.smp_safe_point_roots),
+    );
+    roots.insert(
+        "stop_the_world_rendezvous_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.stop_the_world_rendezvous_roots),
+    );
+    roots.insert(
+        "smp_code_publish_barrier_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.smp_code_publish_barrier_roots),
+    );
+    roots.insert(
+        "smp_cleanup_quiescence_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.smp_cleanup_quiescence_roots),
+    );
+    roots.insert(
+        "smp_snapshot_barrier_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.smp_snapshot_barrier_roots),
+    );
+    roots.insert(
+        "cleanup_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.cleanup_roots),
+    );
+    roots.insert(
+        "activation_cleanup_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.activation_cleanup_roots),
+    );
+    roots.insert(
+        "preemption_latency_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.preemption_latency_roots),
+    );
+    roots.insert(
+        "hart_event_attribution_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.hart_event_attribution_roots),
+    );
+    roots.insert(
+        "memory_policy_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.memory_policy_roots),
+    );
+    roots.insert(
+        "snapshot_validation_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.snapshot_validation_roots),
+    );
+    roots.insert(
+        "replay_validation_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.replay_validation_roots),
+    );
+    roots.insert(
+        "substrate_event_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.substrate_event_roots),
+    );
+    roots.insert(
+        "command_result_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.command_result_roots),
+    );
+    roots.insert(
+        "interface_event_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.interface_event_roots),
+    );
+
     let value = serde_json::json!({
         "status": "accepted",
         "package": package.package_id,
@@ -5631,82 +6059,7 @@ fn print_replay_json(
             "active_packet_device_authority_count": package.substrate_boundary.active_packet_device_authority_count,
             "active_virtio_queue_authority_count": package.substrate_boundary.active_virtio_queue_authority_count
         },
-        "roots": {
-            "tasks": package.semantic.roots.task_roots.len(),
-            "timer_interrupts": package.semantic.roots.timer_interrupt_roots.len(),
-            "ipi_events": package.semantic.roots.ipi_event_roots.len(),
-            "remote_preempts": package.semantic.roots.remote_preempt_roots.len(),
-            "remote_parks": package.semantic.roots.remote_park_roots.len(),
-            "cross_hart_scheduler_decisions": package.semantic.roots.cross_hart_scheduler_decision_roots.len(),
-            "activation_migrations": package.semantic.roots.activation_migration_roots.len(),
-            "smp_safe_points": package.semantic.roots.smp_safe_point_roots.len(),
-            "stop_the_world_rendezvous": package.semantic.roots.stop_the_world_rendezvous_roots.len(),
-            "smp_code_publish_barriers": package.semantic.roots.smp_code_publish_barrier_roots.len(),
-            "smp_cleanup_quiescence": package.semantic.roots.smp_cleanup_quiescence_roots.len(),
-            "resources": package.semantic.roots.resource_roots.len(),
-            "authorities": package.semantic.roots.authority_roots.len(),
-            "stores": package.semantic.roots.store_roots.len(),
-            "capabilities": package.semantic.roots.capability_roots.len(),
-            "target_stores": package.semantic.roots.target_store_record_roots.len(),
-            "target_capabilities": package.semantic.roots.target_capability_record_roots.len(),
-            "boundaries": package.semantic.roots.boundary_roots.len(),
-            "artifacts": package.semantic.roots.artifact_verification_roots.len(),
-            "activations": package.semantic.roots.store_activation_roots.len(),
-            "executor_transitions": package.semantic.roots.executor_transition_roots.len(),
-            "target_artifacts": package.semantic.roots.target_artifact_roots.len(),
-            "code_objects": package.semantic.roots.code_object_roots.len(),
-            "activation_records": package.semantic.roots.activation_record_roots.len(),
-            "traps": package.semantic.roots.trap_roots.len(),
-            "hostcalls": package.semantic.roots.hostcall_trace_roots.len(),
-            "migration_objects": package.semantic.roots.migration_object_roots.len(),
-            "tombstones": package.semantic.roots.tombstone_roots.len(),
-            "contract_violations": package.semantic.roots.contract_violation_roots.len(),
-            "cleanup": package.semantic.roots.cleanup_roots.len(),
-            "activation_cleanup": package.semantic.roots.activation_cleanup_roots.len(),
-            "preemption_latency": package.semantic.roots.preemption_latency_roots.len(),
-            "hart_event_attribution": package.semantic.roots.hart_event_attribution_roots.len(),
-            "memory_policies": package.semantic.roots.memory_policy_roots.len(),
-            "snapshot_validation": package.semantic.roots.snapshot_validation_roots.len(),
-            "replay_validation": package.semantic.roots.replay_validation_roots.len(),
-            "substrate_events": package.semantic.roots.substrate_event_roots.len(),
-            "command_results": package.semantic.roots.command_result_roots.len(),
-            "interface_events": package.semantic.roots.interface_event_roots.len(),
-            "event_tail": package.semantic.roots.event_log_tail.len(),
-            "boundary_roots": &package.semantic.roots.boundary_roots,
-            "artifact_verification_roots": &package.semantic.roots.artifact_verification_roots,
-            "store_activation_roots": &package.semantic.roots.store_activation_roots,
-            "executor_transition_roots": &package.semantic.roots.executor_transition_roots,
-            "target_artifact_roots": &package.semantic.roots.target_artifact_roots,
-            "target_store_record_roots": &package.semantic.roots.target_store_record_roots,
-            "target_capability_record_roots": &package.semantic.roots.target_capability_record_roots,
-            "code_object_roots": &package.semantic.roots.code_object_roots,
-            "activation_record_roots": &package.semantic.roots.activation_record_roots,
-            "trap_roots": &package.semantic.roots.trap_roots,
-            "hostcall_trace_roots": &package.semantic.roots.hostcall_trace_roots,
-            "migration_object_roots": &package.semantic.roots.migration_object_roots,
-            "tombstone_roots": &package.semantic.roots.tombstone_roots,
-            "contract_violation_roots": &package.semantic.roots.contract_violation_roots,
-            "timer_interrupt_roots": &package.semantic.roots.timer_interrupt_roots,
-            "ipi_event_roots": &package.semantic.roots.ipi_event_roots,
-            "remote_preempt_roots": &package.semantic.roots.remote_preempt_roots,
-            "remote_park_roots": &package.semantic.roots.remote_park_roots,
-            "cross_hart_scheduler_decision_roots": &package.semantic.roots.cross_hart_scheduler_decision_roots,
-            "activation_migration_roots": &package.semantic.roots.activation_migration_roots,
-            "smp_safe_point_roots": &package.semantic.roots.smp_safe_point_roots,
-            "stop_the_world_rendezvous_roots": &package.semantic.roots.stop_the_world_rendezvous_roots,
-            "smp_code_publish_barrier_roots": &package.semantic.roots.smp_code_publish_barrier_roots,
-            "smp_cleanup_quiescence_roots": &package.semantic.roots.smp_cleanup_quiescence_roots,
-            "cleanup_roots": &package.semantic.roots.cleanup_roots,
-            "activation_cleanup_roots": &package.semantic.roots.activation_cleanup_roots,
-            "preemption_latency_roots": &package.semantic.roots.preemption_latency_roots,
-            "hart_event_attribution_roots": &package.semantic.roots.hart_event_attribution_roots,
-            "memory_policy_roots": &package.semantic.roots.memory_policy_roots,
-            "snapshot_validation_roots": &package.semantic.roots.snapshot_validation_roots,
-            "replay_validation_roots": &package.semantic.roots.replay_validation_roots,
-            "substrate_event_roots": &package.semantic.roots.substrate_event_roots,
-            "command_result_roots": &package.semantic.roots.command_result_roots,
-            "interface_event_roots": &package.semantic.roots.interface_event_roots
-        }
+        "roots": serde_json::Value::Object(roots)
     });
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
@@ -5723,7 +6076,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -5754,6 +6107,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.stop_the_world_rendezvous_count,
         package.semantic.smp_code_publish_barrier_count,
         package.semantic.smp_cleanup_quiescence_count,
+        package.semantic.smp_snapshot_barrier_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -6116,6 +6470,7 @@ mod tests {
         package.semantic.stop_the_world_rendezvous_count = 1;
         package.semantic.smp_code_publish_barrier_count = 1;
         package.semantic.smp_cleanup_quiescence_count = 1;
+        package.semantic.smp_snapshot_barrier_count = 1;
         package.semantic.activation_resume_count = 1;
         package.semantic.activation_wait_count = 1;
         package.semantic.activation_cleanup_count = 1;
@@ -6551,6 +6906,51 @@ mod tests {
             });
         package
             .semantic
+            .smp_snapshot_barriers
+            .push(SmpSnapshotBarrierManifest {
+                id: 32,
+                rendezvous: 29,
+                rendezvous_generation: 1,
+                rendezvous_epoch: 1,
+                event_log_cursor: 25,
+                participants: vec![
+                    artifact_manifest::SmpSnapshotBarrierParticipantManifest {
+                        hart: 1,
+                        hart_generation: 2,
+                        hardware_hart: 0,
+                        hart_state: "idle".to_owned(),
+                        event_log_cursor_observed: 25,
+                        snapshot_safe: true,
+                    },
+                    artifact_manifest::SmpSnapshotBarrierParticipantManifest {
+                        hart: 2,
+                        hart_generation: 2,
+                        hardware_hart: 1,
+                        hart_state: "parked".to_owned(),
+                        event_log_cursor_observed: 25,
+                        snapshot_safe: true,
+                    },
+                ],
+                pending_wait_count: 0,
+                active_transaction_count: 0,
+                active_dmw_lease_count: 0,
+                active_nonconvertible_activation_count: 0,
+                in_flight_dma_count: 0,
+                unsealed_event_log: false,
+                unflushed_trap_record_count: 0,
+                pending_cleanup_count: 0,
+                native_activation_stack_live: false,
+                raw_dma_binding_count: 0,
+                raw_mmio_binding_count: 0,
+                snapshot_validation_ok: true,
+                generation: 1,
+                state: "validated".to_owned(),
+                validated_at_event: 26,
+                reason: "smp-snapshot-barrier".to_owned(),
+                note: "snapshot barrier".to_owned(),
+            });
+        package
+            .semantic
             .activation_resumes
             .push(ActivationResumeManifest {
                 id: 17,
@@ -6816,6 +7216,19 @@ mod tests {
             quiescence["references"]["participants"][1]["quiesced"],
             true
         );
+        let snapshot_barrier =
+            smp_snapshot_barrier_view_v1(&package.semantic.smp_snapshot_barriers[0]);
+        assert_eq!(snapshot_barrier["kind"], "smp-snapshot-barrier");
+        assert_eq!(snapshot_barrier["references"]["rendezvous"]["id"], 29);
+        assert_eq!(snapshot_barrier["last_transition"]["event_log_cursor"], 25);
+        assert_eq!(
+            snapshot_barrier["references"]["participants"][1]["snapshot_safe"],
+            true
+        );
+        assert_eq!(
+            snapshot_barrier["postconditions"]["snapshot_validation_ok"],
+            true
+        );
         let resume = activation_resume_view_v1(&package.semantic.activation_resumes[0]);
         assert_eq!(resume["kind"], "activation-resume");
         assert_eq!(resume["references"]["activation"]["generation_before"], 3);
@@ -6938,6 +7351,14 @@ mod tests {
         assert_eq!(
             scheduler["references"]["smp_cleanup_quiescence"][0]["cleanup"],
             20
+        );
+        assert_eq!(
+            scheduler["last_transition"]["smp_snapshot_barrier_count"],
+            1
+        );
+        assert_eq!(
+            scheduler["references"]["smp_snapshot_barriers"][0]["rendezvous"],
+            29
         );
         assert_eq!(scheduler["last_transition"]["activation_resume_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_wait_count"], 1);
@@ -7091,6 +7512,15 @@ mod tests {
                     && edge["to"]["kind"] == "stop-the-world-rendezvous"
                     && edge["to"]["id"] == 29
                     && edge["relation"] == "cleanup-rendezvous"
+                    && edge["mode"] == "historical")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "smp-snapshot-barrier"
+                    && edge["to"]["kind"] == "stop-the-world-rendezvous"
+                    && edge["to"]["id"] == 29
+                    && edge["relation"] == "snapshot-rendezvous"
                     && edge["mode"] == "historical")
         );
         assert!(

@@ -24,7 +24,8 @@ use artifact_manifest::{
     SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
     SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
     SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
-    SmpSafePointParticipantManifest, StopTheWorldRendezvousManifest,
+    SmpSafePointParticipantManifest, SmpSnapshotBarrierManifest,
+    SmpSnapshotBarrierParticipantManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
     SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
     TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
@@ -46,10 +47,11 @@ use semantic_core::{
     HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
     IpiEventKind, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
     PackageReplayValidator, ReplayPackageValidationState, RestartPolicy, RuntimeMode,
-    SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind, SnapshotBarrierValidator,
-    StoreRecord, StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec,
-    TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata,
-    TaskState, TombstoneRecord, TrapSurfaceState, VerifiedArtifact, memory_class_policies,
+    SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind,
+    SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState,
+    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
+    TombstoneRecord, TrapSurfaceState, VerifiedArtifact, memory_class_policies,
     validate_contract_graph,
 };
 use substrate_api::{SubstrateEvent, SubstrateRequester};
@@ -1020,6 +1022,43 @@ fn record_preemptive_runtime_context_evidence(
                 result_store_generation: cleanup_result_store_generation,
                 reason: "s13-smp-cleanup-quiescence".to_owned(),
                 note: "s13-dead-store-cross-hart-quiescence-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            95,
+            "target-executor-s14",
+            SemanticCommand::RecordSmpSafePoint {
+                safe_point: 9401,
+                coordinator_hart: 1,
+                coordinator_hart_generation: 4,
+                participants: vec![(1, 4), (2, 5)],
+                reason: "s14-snapshot-barrier-boundary".to_owned(),
+                note: "s14-snapshot-safe-point-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            96,
+            "target-executor-s14",
+            SemanticCommand::CompleteStopTheWorldRendezvous {
+                rendezvous: 9401,
+                epoch: 3,
+                safe_point: 9401,
+                safe_point_generation: 1,
+                stop_new_activations: true,
+                reason: "s14-snapshot-barrier-rendezvous".to_owned(),
+                note: "s14-snapshot-rendezvous-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            97,
+            "target-executor-s14",
+            SemanticCommand::ValidateSmpSnapshotBarrier {
+                barrier: 9401,
+                rendezvous: 9401,
+                rendezvous_generation: 1,
+                snapshot_state: SnapshotBarrierValidationState::default(),
+                reason: "s14-smp-snapshot-barrier".to_owned(),
+                note: "s14-clean-snapshot-boundary-harness".to_owned(),
             },
         ),
     ];
@@ -2051,6 +2090,7 @@ fn demo_migration_package(
             stop_the_world_rendezvous_count: semantic.stop_the_world_rendezvous_count(),
             smp_code_publish_barrier_count: semantic.smp_code_publish_barrier_count(),
             smp_cleanup_quiescence_count: semantic.smp_cleanup_quiescence_count(),
+            smp_snapshot_barrier_count: semantic.smp_snapshot_barrier_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2171,6 +2211,11 @@ fn demo_migration_package(
                 .smp_cleanup_quiescence()
                 .iter()
                 .map(smp_cleanup_quiescence_manifest)
+                .collect(),
+            smp_snapshot_barriers: semantic
+                .smp_snapshot_barriers()
+                .iter()
+                .map(smp_snapshot_barrier_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2600,6 +2645,22 @@ fn semantic_roots(
                     quiescence.participants.len(),
                     quiescence.state.as_str(),
                     quiescence.generation
+                )
+            })
+            .collect(),
+        smp_snapshot_barrier_roots: semantic
+            .smp_snapshot_barriers()
+            .iter()
+            .map(|barrier| {
+                format!(
+                    "smp-snapshot-barrier id={} rendezvous={}@{} cursor={} participants={} state={} generation={}",
+                    barrier.id,
+                    barrier.rendezvous,
+                    barrier.rendezvous_generation,
+                    barrier.event_log_cursor,
+                    barrier.participants.len(),
+                    barrier.state.as_str(),
+                    barrier.generation
                 )
             })
             .collect(),
@@ -3607,6 +3668,47 @@ fn smp_cleanup_quiescence_manifest(
         validated_at_event: quiescence.validated_at_event,
         reason: quiescence.reason.clone(),
         note: quiescence.note.clone(),
+    }
+}
+
+fn smp_snapshot_barrier_manifest(
+    barrier: &semantic_core::SmpSnapshotBarrierRecord,
+) -> SmpSnapshotBarrierManifest {
+    SmpSnapshotBarrierManifest {
+        id: barrier.id,
+        rendezvous: barrier.rendezvous,
+        rendezvous_generation: barrier.rendezvous_generation,
+        rendezvous_epoch: barrier.rendezvous_epoch,
+        event_log_cursor: barrier.event_log_cursor,
+        participants: barrier
+            .participants
+            .iter()
+            .map(|participant| SmpSnapshotBarrierParticipantManifest {
+                hart: u64::from(participant.hart),
+                hart_generation: participant.hart_generation,
+                hardware_hart: participant.hardware_hart,
+                hart_state: participant.hart_state.as_str().to_owned(),
+                event_log_cursor_observed: participant.event_log_cursor_observed,
+                snapshot_safe: participant.snapshot_safe,
+            })
+            .collect(),
+        pending_wait_count: barrier.pending_wait_count,
+        active_transaction_count: barrier.active_transaction_count,
+        active_dmw_lease_count: barrier.active_dmw_lease_count,
+        active_nonconvertible_activation_count: barrier.active_nonconvertible_activation_count,
+        in_flight_dma_count: barrier.in_flight_dma_count,
+        unsealed_event_log: barrier.unsealed_event_log,
+        unflushed_trap_record_count: barrier.unflushed_trap_record_count,
+        pending_cleanup_count: barrier.pending_cleanup_count,
+        native_activation_stack_live: barrier.native_activation_stack_live,
+        raw_dma_binding_count: barrier.raw_dma_binding_count,
+        raw_mmio_binding_count: barrier.raw_mmio_binding_count,
+        snapshot_validation_ok: barrier.snapshot_validation_ok,
+        generation: barrier.generation,
+        state: barrier.state.as_str().to_owned(),
+        validated_at_event: barrier.validated_at_event,
+        reason: barrier.reason.clone(),
+        note: barrier.note.clone(),
     }
 }
 

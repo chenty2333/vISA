@@ -83,6 +83,7 @@ pub enum ObjectKind {
     StopTheWorldRendezvous,
     SmpCodePublishBarrier,
     SmpCleanupQuiescence,
+    SmpSnapshotBarrier,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -131,6 +132,7 @@ impl ObjectKind {
             Self::StopTheWorldRendezvous => "stop-the-world-rendezvous",
             Self::SmpCodePublishBarrier => "smp-code-publish-barrier",
             Self::SmpCleanupQuiescence => "smp-cleanup-quiescence",
+            Self::SmpSnapshotBarrier => "smp-snapshot-barrier",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -339,6 +341,7 @@ typed_ref!(
 );
 typed_ref!(SmpCodePublishBarrierRef, ObjectKind::SmpCodePublishBarrier);
 typed_ref!(SmpCleanupQuiescenceRef, ObjectKind::SmpCleanupQuiescence);
+typed_ref!(SmpSnapshotBarrierRef, ObjectKind::SmpSnapshotBarrier);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1573,6 +1576,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "smp cleanup quiescence root/count mismatch",
         ));
     }
+    if roots.smp_snapshot_barrier_roots.len() != package.semantic.smp_snapshot_barrier_count
+        || package.semantic.smp_snapshot_barriers.len()
+            != package.semantic.smp_snapshot_barrier_count
+    {
+        return Err(ContractError::new(
+            "smp snapshot barrier root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2112,6 +2123,7 @@ mod tests {
                 stop_the_world_rendezvous_count: 0,
                 smp_code_publish_barrier_count: 0,
                 smp_cleanup_quiescence_count: 0,
+                smp_snapshot_barrier_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2169,6 +2181,7 @@ mod tests {
                 stop_the_world_rendezvous: Vec::new(),
                 smp_code_publish_barriers: Vec::new(),
                 smp_cleanup_quiescence: Vec::new(),
+                smp_snapshot_barriers: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -2750,6 +2763,59 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_smp_snapshot_barrier_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.smp_snapshot_barrier_count = 1;
+        package.semantic.smp_snapshot_barriers.push(
+            artifact_manifest::SmpSnapshotBarrierManifest {
+                id: 12,
+                rendezvous: 9,
+                rendezvous_generation: 1,
+                rendezvous_epoch: 3,
+                event_log_cursor: 42,
+                participants: vec![
+                    artifact_manifest::SmpSnapshotBarrierParticipantManifest {
+                        hart: 1,
+                        hart_generation: 4,
+                        hardware_hart: 0,
+                        hart_state: "idle".to_owned(),
+                        event_log_cursor_observed: 42,
+                        snapshot_safe: true,
+                    },
+                    artifact_manifest::SmpSnapshotBarrierParticipantManifest {
+                        hart: 2,
+                        hart_generation: 5,
+                        hardware_hart: 1,
+                        hart_state: "parked".to_owned(),
+                        event_log_cursor_observed: 42,
+                        snapshot_safe: true,
+                    },
+                ],
+                pending_wait_count: 0,
+                active_transaction_count: 0,
+                active_dmw_lease_count: 0,
+                active_nonconvertible_activation_count: 0,
+                in_flight_dma_count: 0,
+                unsealed_event_log: false,
+                unflushed_trap_record_count: 0,
+                pending_cleanup_count: 0,
+                native_activation_stack_live: false,
+                raw_dma_binding_count: 0,
+                raw_mmio_binding_count: 0,
+                snapshot_validation_ok: true,
+                generation: 1,
+                state: "validated".to_owned(),
+                validated_at_event: 43,
+                reason: "smp-snapshot-barrier".to_owned(),
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "smp snapshot barrier root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3230,6 +3296,8 @@ mod tests {
         assert!(SmpCodePublishBarrierRef::try_from_ref(code_publish_barrier).is_ok());
         let cleanup_quiescence = ObjectRef::new(ObjectKind::SmpCleanupQuiescence, 13, 1).unwrap();
         assert!(SmpCleanupQuiescenceRef::try_from_ref(cleanup_quiescence).is_ok());
+        let snapshot_barrier = ObjectRef::new(ObjectKind::SmpSnapshotBarrier, 14, 1).unwrap();
+        assert!(SmpSnapshotBarrierRef::try_from_ref(snapshot_barrier).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

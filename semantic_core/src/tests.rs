@@ -5483,6 +5483,192 @@ fn smp_runtime_s13_history_survives_store_rebind_and_hart_transition() {
     );
 }
 
+fn s14_snapshot_barrier_graph() -> SemanticGraph {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "s14 hart0"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "scheduler-ready", "idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "s14 hart1"));
+    assert!(graph.set_hart_state(2, 1, HartState::Parked, "scheduler-ready", "parked"));
+    assert!(graph.record_smp_safe_point_with_id(
+        71,
+        1,
+        2,
+        vec![(1, 2), (2, 2)],
+        "snapshot-barrier-boundary",
+        "snapshot safe point"
+    ));
+    assert!(graph.complete_stop_the_world_rendezvous_with_id(
+        81,
+        3,
+        71,
+        1,
+        true,
+        "snapshot-barrier-rendezvous",
+        "all harts stopped for snapshot",
+    ));
+    graph
+}
+
+#[test]
+fn smp_runtime_s14_snapshot_barrier_validates_clean_rendezvous() {
+    let mut graph = s14_snapshot_barrier_graph();
+    let cursor_before = graph.event_log().cursor();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s14-test",
+        SemanticCommand::ValidateSmpSnapshotBarrier {
+            barrier: 101,
+            rendezvous: 81,
+            rendezvous_generation: 1,
+            snapshot_state: SnapshotBarrierValidationState::default(),
+            reason: "smp-snapshot-barrier".to_string(),
+            note: "snapshot barrier over stopped harts".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.smp_snapshot_barriers().len(), 1);
+    let barrier = &graph.smp_snapshot_barriers()[0];
+    assert_eq!(barrier.id, 101);
+    assert_eq!(barrier.rendezvous, 81);
+    assert_eq!(barrier.rendezvous_generation, 1);
+    assert_eq!(barrier.rendezvous_epoch, 3);
+    assert_eq!(barrier.event_log_cursor, cursor_before);
+    assert_eq!(barrier.participants.len(), 2);
+    assert!(barrier.snapshot_validation_ok);
+    assert!(barrier.participants.iter().all(|participant| {
+        participant.snapshot_safe && participant.event_log_cursor_observed == cursor_before
+    }));
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == barrier.validated_at_event
+            && record.hart == 1
+            && record.hart_generation == 2
+            && record.event_kind == "SmpSnapshotBarrierHartFrozen"
+    }));
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "SmpSnapshotBarrierValidated barrier=101 rendezvous=81@1 cursor={cursor_before} participants=2 generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s14_rejects_dirty_boundary_or_pending_wait() {
+    let mut dirty = s14_snapshot_barrier_graph();
+    let rejected = dirty.apply_envelope(CommandEnvelope::new(
+        1,
+        "s14-test",
+        SemanticCommand::ValidateSmpSnapshotBarrier {
+            barrier: 101,
+            rendezvous: 81,
+            rendezvous_generation: 1,
+            snapshot_state: SnapshotBarrierValidationState {
+                active_dmw_lease_count: 1,
+                ..SnapshotBarrierValidationState::default()
+            },
+            reason: "dirty-boundary".to_string(),
+            note: "reject active dmw lease".to_string(),
+        },
+    ));
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp snapshot barrier boundary state is not quiescent".to_string());
+    assert_eq!(rejected.violations, expected);
+
+    let (mut pending, _, _) = p8_pending_store_activation();
+    assert!(pending.register_hart_with_id(1, 0, "boot-hart0", true, "s14 hart0"));
+    assert!(pending.set_hart_state(1, 1, HartState::Idle, "scheduler-ready", "idle"));
+    assert!(pending.register_hart_with_id(2, 1, "hart1", false, "s14 hart1"));
+    assert!(pending.set_hart_state(2, 1, HartState::Parked, "scheduler-ready", "parked"));
+    assert!(pending.record_smp_safe_point_with_id(
+        71,
+        1,
+        2,
+        vec![(1, 2), (2, 2)],
+        "snapshot-barrier-boundary",
+        "snapshot safe point"
+    ));
+    assert!(pending.complete_stop_the_world_rendezvous_with_id(
+        81,
+        3,
+        71,
+        1,
+        true,
+        "snapshot-barrier-rendezvous",
+        "all harts stopped for snapshot",
+    ));
+    let wait_rejected = pending.apply_envelope(CommandEnvelope::new(
+        2,
+        "s14-test",
+        SemanticCommand::ValidateSmpSnapshotBarrier {
+            barrier: 101,
+            rendezvous: 81,
+            rendezvous_generation: 1,
+            snapshot_state: SnapshotBarrierValidationState::default(),
+            reason: "pending-wait".to_string(),
+            note: "reject pending wait".to_string(),
+        },
+    ));
+    assert_eq!(wait_rejected.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp snapshot barrier found pending wait".to_string());
+    assert_eq!(wait_rejected.violations, expected);
+}
+
+#[test]
+fn smp_runtime_s14_rejects_stale_rendezvous_generation() {
+    let mut graph = s14_snapshot_barrier_graph();
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s14-test",
+        SemanticCommand::ValidateSmpSnapshotBarrier {
+            barrier: 101,
+            rendezvous: 81,
+            rendezvous_generation: 2,
+            snapshot_state: SnapshotBarrierValidationState::default(),
+            reason: "stale-rendezvous".to_string(),
+            note: "reject stale rendezvous generation".to_string(),
+        },
+    ));
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp snapshot barrier rendezvous is missing".to_string());
+    assert_eq!(rejected.violations, expected);
+}
+
+#[test]
+fn smp_runtime_s14_history_survives_hart_transition() {
+    let mut graph = s14_snapshot_barrier_graph();
+    assert!(graph.validate_smp_snapshot_barrier_with_id(
+        101,
+        81,
+        1,
+        SnapshotBarrierValidationState::default(),
+        "smp-snapshot-barrier",
+        "snapshot barrier over stopped harts",
+    ));
+    let cursor = graph.smp_snapshot_barriers()[0].event_log_cursor;
+
+    assert!(graph.set_hart_state(
+        1,
+        2,
+        HartState::Booting,
+        "advance after snapshot barrier",
+        "later"
+    ));
+    assert!(graph.check_invariants().is_ok());
+
+    graph.corrupt_smp_snapshot_barrier_event_for_test(101, 999);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::SmpSnapshotBarrierMissingEvent { barrier: 101 })
+    );
+    assert_eq!(cursor, graph.smp_snapshot_barriers()[0].event_log_cursor);
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

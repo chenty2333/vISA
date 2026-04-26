@@ -24,6 +24,7 @@ pub struct SemanticGraph {
     stop_the_world_rendezvous: Vec<StopTheWorldRendezvousRecord>,
     smp_code_publish_barriers: Vec<SmpCodePublishBarrierRecord>,
     smp_cleanup_quiescence: Vec<SmpCleanupQuiescenceRecord>,
+    smp_snapshot_barriers: Vec<SmpSnapshotBarrierRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -59,6 +60,7 @@ pub struct SemanticGraph {
     next_stop_the_world_rendezvous_id: StopTheWorldRendezvousId,
     next_smp_code_publish_barrier_id: SmpCodePublishBarrierId,
     next_smp_cleanup_quiescence_id: SmpCleanupQuiescenceId,
+    next_smp_snapshot_barrier_id: SmpSnapshotBarrierId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -96,6 +98,7 @@ mod scheduler;
 mod smp_cleanup_quiescence;
 mod smp_code_publish;
 mod smp_safe_point;
+mod smp_snapshot_barrier;
 mod snapshot;
 mod stop_the_world;
 mod store;
@@ -131,6 +134,7 @@ impl SemanticGraph {
             stop_the_world_rendezvous: Vec::new(),
             smp_code_publish_barriers: Vec::new(),
             smp_cleanup_quiescence: Vec::new(),
+            smp_snapshot_barriers: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -166,6 +170,7 @@ impl SemanticGraph {
             next_stop_the_world_rendezvous_id: 1,
             next_smp_code_publish_barrier_id: 1,
             next_smp_cleanup_quiescence_id: 1,
+            next_smp_snapshot_barrier_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

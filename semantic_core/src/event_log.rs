@@ -224,6 +224,14 @@ pub enum EventKind {
         participant_count: u32,
         generation: Generation,
     },
+    SmpSnapshotBarrierValidated {
+        barrier: SmpSnapshotBarrierId,
+        rendezvous: StopTheWorldRendezvousId,
+        rendezvous_generation: Generation,
+        event_log_cursor: EventId,
+        participant_count: u32,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -888,6 +896,16 @@ impl EventKind {
                 generation,
             } => format!(
                 "SmpCleanupQuiescenceValidated quiescence={quiescence} cleanup={cleanup}@{cleanup_generation} store={store}@{target_store_generation}->{result_store_generation} rendezvous={rendezvous}@{rendezvous_generation} participants={participant_count} generation={generation}"
+            ),
+            Self::SmpSnapshotBarrierValidated {
+                barrier,
+                rendezvous,
+                rendezvous_generation,
+                event_log_cursor,
+                participant_count,
+                generation,
+            } => format!(
+                "SmpSnapshotBarrierValidated barrier={barrier} rendezvous={rendezvous}@{rendezvous_generation} cursor={event_log_cursor} participants={participant_count} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,
