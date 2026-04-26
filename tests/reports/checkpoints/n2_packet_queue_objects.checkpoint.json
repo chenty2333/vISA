@@ -1,0 +1,159 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "N2-tx-rx-queue-objects",
+  "phase": "Phase 4 Network Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add PacketQueueObject as the semantic RX/TX queue object for network vertical",
+    "Record PacketQueueObject through SemanticCommand::RecordPacketQueueObject",
+    "Require exact PacketDeviceObject generation",
+    "Validate role-specific depth against PacketDeviceObject rx/tx queue contract",
+    "Expose packet-queue roots/counts through semantic package, osctl ViewV1, graph, and replay roots"
+  ],
+  "no_goals": [
+    "PacketDescriptor",
+    "Queue enqueue/dequeue datapath",
+    "RX interrupt path",
+    "TX completion path",
+    "FakeNetBackend behavior",
+    "Real virtio-net backend",
+    "smoltcp integration"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/packet_queue_object.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/network/golden_n2_packet_queue_objects.trace.json",
+    "tests/reports/checkpoints/n2_packet_queue_objects.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/network/golden_n2_packet_queue_objects.trace.json",
+    "tests/reports/checkpoints/n2_packet_queue_objects.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "PacketQueueObject is separate from generic IO QueueObject so network queue semantics stay explicit",
+      "PacketQueueObject validates exact PacketDeviceObject generation before recording",
+      "PacketQueueObject rejects stale generation, duplicate role/index, and role-specific overdepth",
+      "PacketQueueObjectRecorded event captures role, index, depth, and generation",
+      "osctl exposes PacketQueueObject through stable ViewV1 rather than dumping internal structs"
+    ],
+    "residual_notes": [
+      "N3 still needs PacketDescriptor",
+      "N4 will introduce FakeNetBackend without making backend state semantic truth",
+      "N6-N9 will add RX/TX datapath and completion semantics"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core network_runtime_n2",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core packet_queue_object",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl packet_queue_view_v1_exposes_role_depth_and_packet_device_generation",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- packet-queue list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- replay --until 309 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/network/golden_n2_packet_queue_objects.trace.json",
+    "osctl_views": [
+      "osctl packet-queue list --json <migration.json>",
+      "osctl contract validate --json <migration.json>",
+      "osctl replay --until 309 --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "packet_queue_object_roots",
+      "packet_device_object_roots",
+      "device_object_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 309,
+      "packet_queue_object_count": 2,
+      "rx_queue": "packet-queue:10004@1",
+      "tx_queue": "packet-queue:10005@1",
+      "packet_device": "packet-device:10002@1",
+      "rx_depth": 4,
+      "tx_depth": 4
+    }
+  },
+  "residual_gaps": [
+    "Packet descriptors, fake backend, virtio backend, smoltcp adapter, sockets, and datapath are later Phase 4 checkpoints"
+  ],
+  "next_checkpoint": "N3-packet-descriptor"
+}

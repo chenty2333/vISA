@@ -652,6 +652,10 @@ impl SemanticGraph {
                 .packet_buffer_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::PacketQueueObject => self
+                .packet_queue_objects
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

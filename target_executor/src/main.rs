@@ -21,13 +21,13 @@ use artifact_manifest::{
     IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
     MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
     MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    PacketBufferObjectManifest, PacketDeviceObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
-    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
-    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    PacketBufferObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
+    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -52,8 +52,8 @@ use semantic_core::{
     HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind, IrqLinePolarity,
     IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
     MigrationObjectRecord, MmioRegionObjectAccess, PackageReplayValidator, PacketBufferDirection,
-    PacketBufferObjectState, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
-    RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
+    PacketBufferObjectState, PacketQueueRole, QueueObjectRole, ReplayPackageValidationState,
+    ResourceKind, RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
     SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
     StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
@@ -1581,6 +1581,34 @@ fn record_preemptive_runtime_context_evidence(
                 note: "n1-record-packet-buffer-object-harness".to_owned(),
             },
         ),
+        CommandEnvelope::new(
+            123,
+            "target-executor-n2",
+            SemanticCommand::RecordPacketQueueObject {
+                packet_queue: 10_004,
+                name: "net0-rx0".to_owned(),
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                role: PacketQueueRole::Rx,
+                queue_index: 0,
+                depth: VIRTIO_NET0_CONTRACT.rx_queue_depth,
+                note: "n2-record-rx-packet-queue-object-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            124,
+            "target-executor-n2",
+            SemanticCommand::RecordPacketQueueObject {
+                packet_queue: 10_005,
+                name: "net0-tx0".to_owned(),
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                role: PacketQueueRole::Tx,
+                queue_index: 0,
+                depth: VIRTIO_NET0_CONTRACT.tx_queue_depth,
+                note: "n2-record-tx-packet-queue-object-harness".to_owned(),
+            },
+        ),
     ];
     for command in io_evidence_commands {
         let result = semantic.apply_envelope(command);
@@ -2628,6 +2656,7 @@ fn demo_migration_package(
             io_validation_report_count: semantic.io_validation_report_count(),
             packet_device_object_count: semantic.packet_device_object_count(),
             packet_buffer_object_count: semantic.packet_buffer_object_count(),
+            packet_queue_object_count: semantic.packet_queue_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2834,6 +2863,11 @@ fn demo_migration_package(
                 .packet_buffer_objects()
                 .iter()
                 .map(packet_buffer_object_manifest)
+                .collect(),
+            packet_queue_objects: semantic
+                .packet_queue_objects()
+                .iter()
+                .map(packet_queue_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -3605,6 +3639,24 @@ fn semantic_roots(
                     packet_buffer.sequence,
                     packet_buffer.state.as_str(),
                     packet_buffer.generation
+                )
+            })
+            .collect(),
+        packet_queue_object_roots: semantic
+            .packet_queue_objects()
+            .iter()
+            .map(|packet_queue| {
+                format!(
+                    "packet-queue-object id={} name={} packet_device={}@{} role={} queue_index={} depth={} state={} generation={}",
+                    packet_queue.id,
+                    packet_queue.name,
+                    packet_queue.packet_device,
+                    packet_queue.packet_device_generation,
+                    packet_queue.role.as_str(),
+                    packet_queue.queue_index,
+                    packet_queue.depth,
+                    packet_queue.state.as_str(),
+                    packet_queue.generation
                 )
             })
             .collect(),
@@ -5076,6 +5128,24 @@ fn packet_buffer_object_manifest(
         state: packet_buffer.state.as_str().to_owned(),
         recorded_at_event: packet_buffer.recorded_at_event,
         note: packet_buffer.note.clone(),
+    }
+}
+
+fn packet_queue_object_manifest(
+    packet_queue: &semantic_core::PacketQueueObjectRecord,
+) -> PacketQueueObjectManifest {
+    PacketQueueObjectManifest {
+        id: packet_queue.id,
+        name: packet_queue.name.clone(),
+        packet_device: packet_queue.packet_device,
+        packet_device_generation: packet_queue.packet_device_generation,
+        role: packet_queue.role.as_str().to_owned(),
+        queue_index: packet_queue.queue_index,
+        depth: packet_queue.depth,
+        generation: packet_queue.generation,
+        state: packet_queue.state.as_str().to_owned(),
+        recorded_at_event: packet_queue.recorded_at_event,
+        note: packet_queue.note.clone(),
     }
 }
 

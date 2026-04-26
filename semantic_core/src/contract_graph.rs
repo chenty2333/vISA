@@ -1416,6 +1416,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::IoValidationReport
             | ContractObjectKind::PacketDeviceObject
             | ContractObjectKind::PacketBufferObject
+            | ContractObjectKind::PacketQueueObject
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

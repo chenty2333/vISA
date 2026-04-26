@@ -1075,6 +1075,31 @@ impl PacketBufferObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PacketQueueObjectRecord {
+    pub id: PacketQueueObjectId,
+    pub name: String,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub role: PacketQueueRole,
+    pub queue_index: u16,
+    pub depth: u32,
+    pub generation: Generation,
+    pub state: PacketQueueObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl PacketQueueObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::PacketQueueObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

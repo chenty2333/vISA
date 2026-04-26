@@ -275,6 +275,16 @@ pub enum SemanticCommand {
         state: PacketBufferObjectState,
         note: String,
     },
+    RecordPacketQueueObject {
+        packet_queue: PacketQueueObjectId,
+        name: String,
+        packet_device: PacketDeviceObjectId,
+        packet_device_generation: Generation,
+        role: PacketQueueRole,
+        queue_index: u16,
+        depth: u32,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -643,6 +653,7 @@ impl SemanticCommand {
             Self::RecordDeviceObject { .. } => "record-device-object",
             Self::RecordPacketDeviceObject { .. } => "record-packet-device-object",
             Self::RecordPacketBufferObject { .. } => "record-packet-buffer-object",
+            Self::RecordPacketQueueObject { .. } => "record-packet-queue-object",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -1821,6 +1832,26 @@ impl SemanticGraph {
                     *payload_len,
                     *sequence,
                     *state,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordPacketQueueObject {
+                packet_queue,
+                name,
+                packet_device,
+                packet_device_generation,
+                role,
+                queue_index,
+                depth,
+                ..
+            } => self
+                .validate_packet_queue_object(
+                    *packet_queue,
+                    name,
+                    *packet_device,
+                    *packet_device_generation,
+                    *role,
+                    *queue_index,
+                    *depth,
                 )
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
@@ -3102,6 +3133,25 @@ impl SemanticGraph {
                 payload_len,
                 sequence,
                 state,
+                &note,
+            ),
+            SemanticCommand::RecordPacketQueueObject {
+                packet_queue,
+                name,
+                packet_device,
+                packet_device_generation,
+                role,
+                queue_index,
+                depth,
+                note,
+            } => self.record_packet_queue_object_with_id(
+                packet_queue,
+                &name,
+                packet_device,
+                packet_device_generation,
+                role,
+                queue_index,
+                depth,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

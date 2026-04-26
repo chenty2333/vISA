@@ -33,6 +33,7 @@ pub type IoFaultInjectionId = u64;
 pub type IoValidationReportId = u64;
 pub type PacketDeviceObjectId = u64;
 pub type PacketBufferObjectId = u64;
+pub type PacketQueueObjectId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

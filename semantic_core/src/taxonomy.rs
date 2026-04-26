@@ -822,6 +822,36 @@ impl PacketBufferObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacketQueueRole {
+    Rx,
+    Tx,
+}
+
+impl PacketQueueRole {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rx => "rx",
+            Self::Tx => "tx",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacketQueueObjectState {
+    Registered,
+    Retired,
+}
+
+impl PacketQueueObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Registered => "registered",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

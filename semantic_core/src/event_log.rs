@@ -451,6 +451,15 @@ pub enum EventKind {
         state: PacketBufferObjectState,
         generation: Generation,
     },
+    PacketQueueObjectRecorded {
+        packet_queue: PacketQueueObjectId,
+        packet_device: PacketDeviceObjectId,
+        packet_device_generation: Generation,
+        role: PacketQueueRole,
+        queue_index: u16,
+        depth: u32,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1398,6 +1407,18 @@ impl EventKind {
                 "PacketBufferObjectRecorded packet_buffer={packet_buffer} packet_device={packet_device}@{packet_device_generation} direction={} frame_format_version={frame_format_version} capacity={capacity} payload_len={payload_len} sequence={sequence} state={} generation={generation}",
                 direction.as_str(),
                 state.as_str()
+            ),
+            Self::PacketQueueObjectRecorded {
+                packet_queue,
+                packet_device,
+                packet_device_generation,
+                role,
+                queue_index,
+                depth,
+                generation,
+            } => format!(
+                "PacketQueueObjectRecorded packet_queue={packet_queue} packet_device={packet_device}@{packet_device_generation} role={} queue_index={queue_index} depth={depth} generation={generation}",
+                role.as_str()
             ),
             Self::RuntimeActivationResumed {
                 resume,

@@ -295,6 +295,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub packet_buffer_object_count: usize,
     #[serde(default)]
+    pub packet_queue_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -441,6 +443,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub packet_buffer_objects: Vec<PacketBufferObjectManifest>,
     #[serde(default)]
+    pub packet_queue_objects: Vec<PacketQueueObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -566,6 +570,8 @@ pub struct SemanticRootSetManifest {
     pub packet_device_object_roots: Vec<String>,
     #[serde(default)]
     pub packet_buffer_object_roots: Vec<String>,
+    #[serde(default)]
+    pub packet_queue_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1489,6 +1495,21 @@ pub struct PacketBufferObjectManifest {
     pub capacity: u32,
     pub payload_len: u32,
     pub sequence: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct PacketQueueObjectManifest {
+    pub id: u64,
+    pub name: String,
+    pub packet_device: u64,
+    pub packet_device_generation: u64,
+    pub role: String,
+    pub queue_index: u16,
+    pub depth: u32,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
