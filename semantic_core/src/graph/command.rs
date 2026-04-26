@@ -74,6 +74,14 @@ pub enum SemanticCommand {
         reason: String,
         note: String,
     },
+    ResumeActivation {
+        resume: ActivationResumeId,
+        scheduler_decision: SchedulerDecisionId,
+        scheduler_decision_generation: Generation,
+        activation: ActivationId,
+        activation_generation: Generation,
+        note: String,
+    },
     GrantCapability {
         subject: String,
         debug_object_label: String,
@@ -232,6 +240,7 @@ impl SemanticCommand {
             Self::RecordTimerInterrupt { .. } => "record-timer-interrupt",
             Self::PreemptActivation { .. } => "preempt-activation",
             Self::RecordSchedulerDecision { .. } => "record-scheduler-decision",
+            Self::ResumeActivation { .. } => "resume-activation",
             Self::GrantCapability { .. } => "grant-capability",
             Self::RevokeCapability { .. } => "revoke-capability",
             Self::CreateWait { .. } => "create-wait",
@@ -874,6 +883,139 @@ impl SemanticGraph {
                     }
                 }
             }
+            SemanticCommand::ResumeActivation {
+                resume,
+                scheduler_decision,
+                scheduler_decision_generation,
+                activation,
+                activation_generation,
+                ..
+            } => {
+                if *resume == 0 {
+                    Err(CommandError::precondition(
+                        "activation resume id=0 is invalid",
+                    ))
+                } else if self
+                    .activation_resumes
+                    .iter()
+                    .any(|record| record.id == *resume)
+                {
+                    Err(CommandError::precondition(
+                        "activation resume already exists",
+                    ))
+                } else {
+                    let Some(decision) = self.scheduler_decisions.iter().find(|record| {
+                        record.id == *scheduler_decision
+                            && record.generation == *scheduler_decision_generation
+                            && record.state == SchedulerDecisionState::Recorded
+                            && record.selected_activation == *activation
+                            && record.selected_activation_generation == *activation_generation
+                    }) else {
+                        return Err(CommandError::precondition(
+                            "resume scheduler decision generation is missing or consumed",
+                        ));
+                    };
+                    let Some(queue) = self.runnable_queues.iter().find(|record| {
+                        record.id == decision.queue
+                            && record.generation == decision.queue_generation
+                            && record.state == RunnableQueueState::Active
+                    }) else {
+                        return Err(CommandError::precondition(
+                            "resume queue generation is missing or inactive",
+                        ));
+                    };
+                    if !queue.entries.iter().any(|entry| {
+                        entry.activation == *activation
+                            && entry.activation_generation == *activation_generation
+                    }) {
+                        return Err(CommandError::precondition(
+                            "resume activation is not queued",
+                        ));
+                    }
+                    let Some(record) = self.runtime_activations.iter().find(|record| {
+                        record.id == *activation
+                            && record.generation == *activation_generation
+                            && record.state == RuntimeActivationState::Runnable
+                            && record.runnable_queue == Some(decision.queue)
+                            && record.runnable_queue_generation == Some(decision.queue_generation)
+                    }) else {
+                        return Err(CommandError::precondition(
+                            "resume activation generation is not runnable",
+                        ));
+                    };
+                    if !self.tasks.iter().any(|task| {
+                        task.id == record.owner_task
+                            && task.generation == record.owner_task_generation
+                            && matches!(task.state, TaskState::Runnable | TaskState::Running)
+                    }) {
+                        return Err(CommandError::precondition(
+                            "resume owner task generation is missing or not runnable",
+                        ));
+                    }
+                    if let Some(store) = record.owner_store {
+                        let Some(generation) = record.owner_store_generation else {
+                            return Err(CommandError::precondition(
+                                "resume owner store generation is required",
+                            ));
+                        };
+                        if !self.stores.iter().any(|store_record| {
+                            store_record.id == store
+                                && store_record.generation == generation
+                                && store_record.state != StoreState::Dead
+                        }) {
+                            return Err(CommandError::precondition(
+                                "resume owner store generation is missing or dead",
+                            ));
+                        }
+                    }
+                    if let Some(code) = record.code_object
+                        && (code.kind != ContractObjectKind::CodeObject || code.generation == 0)
+                    {
+                        return Err(CommandError::precondition(
+                            "resume code object reference is invalid",
+                        ));
+                    }
+                    if let Some(context) = self.activation_contexts.iter().find(|context| {
+                        context.activation == *activation
+                            && context.activation_generation == *activation_generation
+                            && context.state != ActivationContextState::Dropped
+                    }) {
+                        if context.state != ActivationContextState::Saved {
+                            return Err(CommandError::precondition(
+                                "resume activation context is not saved",
+                            ));
+                        }
+                        match (
+                            context.current_saved_context,
+                            context.current_saved_context_generation,
+                        ) {
+                            (Some(saved), Some(saved_generation)) => {
+                                if !self.saved_contexts.iter().any(|saved_record| {
+                                    saved_record.id == saved
+                                        && saved_record.generation == saved_generation
+                                        && saved_record.context == context.id
+                                        && saved_record.context_generation == context.generation
+                                        && saved_record.activation == *activation
+                                        && saved_record.activation_generation
+                                            == *activation_generation
+                                        && saved_record.state == SavedContextState::Captured
+                                }) {
+                                    return Err(CommandError::precondition(
+                                        "resume saved context generation is missing",
+                                    ));
+                                }
+                            }
+                            (None, None) => {}
+                            _ => {
+                                return Err(CommandError::precondition(
+                                    "resume saved context generation is required",
+                                ));
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+            }
             SemanticCommand::GrantCapability { operations, .. } if operations.is_empty() => Err(
                 CommandError::precondition("grant-capability requires at least one operation"),
             ),
@@ -1120,6 +1262,21 @@ impl SemanticGraph {
                 selected_activation,
                 selected_activation_generation,
                 &reason,
+                &note,
+            ),
+            SemanticCommand::ResumeActivation {
+                resume,
+                scheduler_decision,
+                scheduler_decision_generation,
+                activation,
+                activation_generation,
+                note,
+            } => self.resume_activation_with_id(
+                resume,
+                scheduler_decision,
+                scheduler_decision_generation,
+                activation,
+                activation_generation,
                 &note,
             ),
             SemanticCommand::GrantCapability {

@@ -479,18 +479,39 @@ impl SemanticGraph {
                     saved_context: saved.id,
                 });
             }
-            if !self.activation_contexts.iter().any(|context| {
-                context.id == saved.context && context.generation == saved.context_generation
-            }) {
+            let historical_saved = matches!(
+                saved.state,
+                SavedContextState::Restored
+                    | SavedContextState::Superseded
+                    | SavedContextState::Dropped
+            );
+            let context_exists = if historical_saved {
+                self.activation_contexts.iter().any(|context| {
+                    context.id == saved.context && context.generation >= saved.context_generation
+                })
+            } else {
+                self.activation_contexts.iter().any(|context| {
+                    context.id == saved.context && context.generation == saved.context_generation
+                })
+            };
+            if !context_exists {
                 return Err(SemanticInvariantError::SavedContextMissingContext {
                     saved_context: saved.id,
                     context: saved.context,
                 });
             }
-            if !self.runtime_activations.iter().any(|activation| {
-                activation.id == saved.activation
-                    && activation.generation == saved.activation_generation
-            }) {
+            let activation_exists = if historical_saved {
+                self.runtime_activations.iter().any(|activation| {
+                    activation.id == saved.activation
+                        && activation.generation >= saved.activation_generation
+                })
+            } else {
+                self.runtime_activations.iter().any(|activation| {
+                    activation.id == saved.activation
+                        && activation.generation == saved.activation_generation
+                })
+            };
+            if !activation_exists {
                 return Err(SemanticInvariantError::SavedContextMissingActivation {
                     saved_context: saved.id,
                     activation: saved.activation,

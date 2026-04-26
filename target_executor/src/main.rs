@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 mod runtime;
 
 use artifact_manifest::{
-    ActivationContextManifest, ActivationRecordManifest, ArtifactBundleManifest,
-    AuthorityObjectRefManifest, BoundaryValidationReportManifest,
+    ActivationContextManifest, ActivationRecordManifest, ActivationResumeManifest,
+    ArtifactBundleManifest, AuthorityObjectRefManifest, BoundaryValidationReportManifest,
     BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
     CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
@@ -475,6 +475,18 @@ fn record_preemptive_runtime_context_evidence(
                 selected_activation_generation: 4,
                 reason: "runnable-available".to_owned(),
                 note: "p5-scheduler-decision-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            60,
+            "target-executor-p6",
+            SemanticCommand::ResumeActivation {
+                resume: 9001,
+                scheduler_decision: 9001,
+                scheduler_decision_generation: 1,
+                activation: 9002,
+                activation_generation: 4,
+                note: "p6-resume-activation-harness".to_owned(),
             },
         ),
     ];
@@ -1490,6 +1502,7 @@ fn demo_migration_package(
             timer_interrupt_count: semantic.timer_interrupt_count(),
             preemption_count: semantic.preemption_count(),
             scheduler_decision_count: semantic.scheduler_decision_count(),
+            activation_resume_count: semantic.activation_resume_count(),
             resource_count: semantic.resource_count(),
             authority_count: semantic.authority_count(),
             active_authority_count: semantic.active_authority_count(),
@@ -1559,6 +1572,11 @@ fn demo_migration_package(
                 .scheduler_decisions()
                 .iter()
                 .map(scheduler_decision_manifest)
+                .collect(),
+            activation_resumes: semantic
+                .activation_resumes()
+                .iter()
+                .map(activation_resume_manifest)
                 .collect(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
@@ -1769,6 +1787,23 @@ fn semantic_roots(
                     decision.selected_activation_generation,
                     decision.state.as_str(),
                     decision.generation
+                )
+            })
+            .collect(),
+        activation_resume_roots: semantic
+            .activation_resumes()
+            .iter()
+            .map(|resume| {
+                format!(
+                    "activation-resume id={} decision={}@{} activation={}@{}->{} state={} generation={}",
+                    resume.id,
+                    resume.scheduler_decision,
+                    resume.scheduler_decision_generation,
+                    resume.activation,
+                    resume.activation_generation_before,
+                    resume.activation_generation_after,
+                    resume.state.as_str(),
+                    resume.generation
                 )
             })
             .collect(),
@@ -2359,6 +2394,32 @@ fn scheduler_decision_manifest(
         decided_at_event: decision.decided_at_event,
         reason: decision.reason.clone(),
         note: decision.note.clone(),
+    }
+}
+
+fn activation_resume_manifest(
+    resume: &semantic_core::ActivationResumeRecord,
+) -> ActivationResumeManifest {
+    ActivationResumeManifest {
+        id: resume.id,
+        scheduler_decision: resume.scheduler_decision,
+        scheduler_decision_generation: resume.scheduler_decision_generation,
+        activation: resume.activation,
+        activation_generation_before: resume.activation_generation_before,
+        activation_generation_after: resume.activation_generation_after,
+        owner_task: u64::from(resume.owner_task),
+        owner_task_generation: resume.owner_task_generation,
+        queue: resume.queue,
+        queue_generation: resume.queue_generation,
+        context: resume.context,
+        context_generation_before: resume.context_generation_before,
+        context_generation_after: resume.context_generation_after,
+        saved_context: resume.saved_context,
+        saved_context_generation: resume.saved_context_generation,
+        generation: resume.generation,
+        state: resume.state.as_str().to_owned(),
+        resumed_at_event: resume.resumed_at_event,
+        note: resume.note.clone(),
     }
 }
 

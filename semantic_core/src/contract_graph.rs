@@ -1379,6 +1379,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::TimerInterrupt
             | ContractObjectKind::Preemption
             | ContractObjectKind::SchedulerDecision
+            | ContractObjectKind::ActivationResume
             | ContractObjectKind::Resource
             | ContractObjectKind::FaultDomain
             | ContractObjectKind::MemoryObject

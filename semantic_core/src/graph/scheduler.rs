@@ -485,11 +485,11 @@ impl SemanticGraph {
         };
         let owner_task = activation.owner_task;
         let owner_task_generation = activation.owner_task_generation;
-        if !self
-            .tasks
-            .iter()
-            .any(|task| task.id == owner_task && task.generation == owner_task_generation)
-        {
+        if !self.tasks.iter().any(|task| {
+            task.id == owner_task
+                && task.generation == owner_task_generation
+                && matches!(task.state, TaskState::Runnable | TaskState::Running)
+        }) {
             return false;
         }
 
@@ -522,6 +522,221 @@ impl SemanticGraph {
         true
     }
 
+    pub fn resume_activation_with_id(
+        &mut self,
+        resume: ActivationResumeId,
+        decision: SchedulerDecisionId,
+        decision_generation: Generation,
+        activation: ActivationId,
+        activation_generation: Generation,
+        note: &str,
+    ) -> bool {
+        if resume == 0
+            || self
+                .activation_resumes
+                .iter()
+                .any(|record| record.id == resume)
+        {
+            return false;
+        }
+        let Some(decision_index) = self.scheduler_decisions.iter().position(|record| {
+            record.id == decision
+                && record.generation == decision_generation
+                && record.state == SchedulerDecisionState::Recorded
+                && record.selected_activation == activation
+                && record.selected_activation_generation == activation_generation
+        }) else {
+            return false;
+        };
+        let queue = self.scheduler_decisions[decision_index].queue;
+        let queue_generation = self.scheduler_decisions[decision_index].queue_generation;
+        let owner_task = self.scheduler_decisions[decision_index].owner_task;
+        let owner_task_generation = self.scheduler_decisions[decision_index].owner_task_generation;
+        let Some(queue_index) = self.runnable_queues.iter().position(|record| {
+            record.id == queue
+                && record.generation == queue_generation
+                && record.state == RunnableQueueState::Active
+        }) else {
+            return false;
+        };
+        let Some(entry_index) =
+            self.runnable_queues[queue_index]
+                .entries
+                .iter()
+                .position(|entry| {
+                    entry.activation == activation
+                        && entry.activation_generation == activation_generation
+                })
+        else {
+            return false;
+        };
+        let Some(activation_index) = self.runtime_activations.iter().position(|record| {
+            record.id == activation
+                && record.generation == activation_generation
+                && record.state == RuntimeActivationState::Runnable
+                && record.runnable_queue == Some(queue)
+                && record.runnable_queue_generation == Some(queue_generation)
+        }) else {
+            return false;
+        };
+        if !self.tasks.iter().any(|task| {
+            task.id == owner_task
+                && task.generation == owner_task_generation
+                && matches!(task.state, TaskState::Runnable | TaskState::Running)
+        }) {
+            return false;
+        }
+        if let Some(store) = self.runtime_activations[activation_index].owner_store {
+            let Some(generation) =
+                self.runtime_activations[activation_index].owner_store_generation
+            else {
+                return false;
+            };
+            if !self.stores.iter().any(|record| {
+                record.id == store
+                    && record.generation == generation
+                    && record.state != StoreState::Dead
+            }) {
+                return false;
+            }
+        }
+        if let Some(code) = self.runtime_activations[activation_index].code_object
+            && (code.kind != ContractObjectKind::CodeObject || code.generation == 0)
+        {
+            return false;
+        }
+
+        let context_index = self.activation_contexts.iter().position(|record| {
+            record.activation == activation
+                && record.activation_generation == activation_generation
+                && record.state != ActivationContextState::Dropped
+        });
+        let saved_index = if let Some(context_index) = context_index {
+            let context = &self.activation_contexts[context_index];
+            if context.state != ActivationContextState::Saved {
+                return false;
+            }
+            match (
+                context.current_saved_context,
+                context.current_saved_context_generation,
+            ) {
+                (Some(saved), Some(saved_generation)) => {
+                    let Some(saved_index) = self.saved_contexts.iter().position(|record| {
+                        record.id == saved
+                            && record.generation == saved_generation
+                            && record.context == context.id
+                            && record.context_generation == context.generation
+                            && record.activation == activation
+                            && record.activation_generation == activation_generation
+                            && record.state == SavedContextState::Captured
+                    }) else {
+                        return false;
+                    };
+                    Some(saved_index)
+                }
+                (None, None) => None,
+                _ => return false,
+            }
+        } else {
+            None
+        };
+
+        self.next_activation_resume_id = self.next_activation_resume_id.max(resume + 1);
+        let entry = self.runnable_queues[queue_index]
+            .entries
+            .remove(entry_index);
+        let from = self.runtime_activations[activation_index].state;
+        self.runtime_activations[activation_index].state = RuntimeActivationState::Running;
+        self.runtime_activations[activation_index].generation += 1;
+        self.runtime_activations[activation_index].runnable_queue = None;
+        self.runtime_activations[activation_index].runnable_queue_generation = None;
+        let activation_generation_after = self.runtime_activations[activation_index].generation;
+        let dequeued_event = self.event_log.push(
+            "scheduler",
+            EventKind::RunnableDequeued {
+                queue,
+                activation,
+                activation_generation: entry.activation_generation,
+            },
+        );
+        let state_event = self.event_log.push(
+            "scheduler",
+            EventKind::RuntimeActivationStateChanged {
+                activation,
+                from,
+                to: RuntimeActivationState::Running,
+                generation: activation_generation_after,
+            },
+        );
+
+        let mut context_ref = None;
+        let mut context_generation_before = None;
+        let mut context_generation_after = None;
+        if let Some(context_index) = context_index {
+            context_ref = Some(self.activation_contexts[context_index].id);
+            context_generation_before = Some(self.activation_contexts[context_index].generation);
+            self.activation_contexts[context_index].generation += 1;
+            self.activation_contexts[context_index].activation_generation =
+                activation_generation_after;
+            self.activation_contexts[context_index].state = ActivationContextState::Current;
+            self.activation_contexts[context_index].current_saved_context = None;
+            self.activation_contexts[context_index].current_saved_context_generation = None;
+            context_generation_after = Some(self.activation_contexts[context_index].generation);
+        }
+
+        let mut saved_context = None;
+        let mut saved_context_generation = None;
+        if let Some(saved_index) = saved_index {
+            self.saved_contexts[saved_index].generation += 1;
+            self.saved_contexts[saved_index].state = SavedContextState::Restored;
+            saved_context = Some(self.saved_contexts[saved_index].id);
+            saved_context_generation = Some(self.saved_contexts[saved_index].generation);
+        }
+
+        let resumed_event = self.event_log.push(
+            "scheduler",
+            EventKind::RuntimeActivationResumed {
+                resume,
+                decision,
+                decision_generation,
+                activation,
+                from_generation: activation_generation,
+                to_generation: activation_generation_after,
+                queue,
+                queue_generation,
+                generation: 1,
+            },
+        );
+        let last_event = resumed_event.max(state_event).max(dequeued_event);
+        self.runtime_activations[activation_index].last_event = Some(last_event);
+        if let Some(context_index) = context_index {
+            self.activation_contexts[context_index].last_event = Some(resumed_event);
+        }
+        self.scheduler_decisions[decision_index].state = SchedulerDecisionState::Superseded;
+        self.activation_resumes.push(ActivationResumeRecord {
+            id: resume,
+            scheduler_decision: decision,
+            scheduler_decision_generation: decision_generation,
+            activation,
+            activation_generation_before: activation_generation,
+            activation_generation_after,
+            owner_task,
+            owner_task_generation,
+            queue,
+            queue_generation,
+            context: context_ref,
+            context_generation_before,
+            context_generation_after,
+            saved_context,
+            saved_context_generation,
+            generation: 1,
+            state: ActivationResumeState::Applied,
+            resumed_at_event: resumed_event,
+            note: note.to_string(),
+        });
+        true
+    }
+
     pub fn runtime_activations(&self) -> &[RuntimeActivationRecord] {
         &self.runtime_activations
     }
@@ -538,6 +753,10 @@ impl SemanticGraph {
         &self.scheduler_decisions
     }
 
+    pub fn activation_resumes(&self) -> &[ActivationResumeRecord] {
+        &self.activation_resumes
+    }
+
     pub fn runtime_activation_count(&self) -> usize {
         self.runtime_activations.len()
     }
@@ -552,6 +771,10 @@ impl SemanticGraph {
 
     pub fn scheduler_decision_count(&self) -> usize {
         self.scheduler_decisions.len()
+    }
+
+    pub fn activation_resume_count(&self) -> usize {
+        self.activation_resumes.len()
     }
 
     #[cfg(test)]
@@ -593,6 +816,21 @@ impl SemanticGraph {
             .find(|record| record.id == decision)
         {
             record.selected_activation_generation = generation;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_activation_resume_after_generation_for_test(
+        &mut self,
+        resume: ActivationResumeId,
+        generation: Generation,
+    ) {
+        if let Some(record) = self
+            .activation_resumes
+            .iter_mut()
+            .find(|record| record.id == resume)
+        {
+            record.activation_generation_after = generation;
         }
     }
 
@@ -857,6 +1095,92 @@ impl SemanticGraph {
                         activation: decision.selected_activation,
                     },
                 );
+            }
+        }
+
+        for resume in &self.activation_resumes {
+            if resume.state == ActivationResumeState::Dropped {
+                continue;
+            }
+            let Some(decision) = self.scheduler_decisions.iter().find(|record| {
+                record.id == resume.scheduler_decision
+                    && record.generation == resume.scheduler_decision_generation
+                    && record.state != SchedulerDecisionState::Dropped
+            }) else {
+                return Err(SemanticInvariantError::ActivationResumeMissingDecision {
+                    resume: resume.id,
+                    decision: resume.scheduler_decision,
+                });
+            };
+            if decision.selected_activation != resume.activation
+                || decision.selected_activation_generation != resume.activation_generation_before
+                || decision.queue != resume.queue
+                || decision.queue_generation != resume.queue_generation
+            {
+                return Err(SemanticInvariantError::ActivationResumeMissingDecision {
+                    resume: resume.id,
+                    decision: resume.scheduler_decision,
+                });
+            }
+            if !self.tasks.iter().any(|task| {
+                task.id == resume.owner_task
+                    && task.generation == resume.owner_task_generation
+                    && matches!(task.state, TaskState::Runnable | TaskState::Running)
+            }) {
+                return Err(SemanticInvariantError::ActivationResumeMissingTask {
+                    resume: resume.id,
+                    task: resume.owner_task,
+                });
+            }
+            let was_queued_at_resume_generation = self.event_log.events.iter().any(|event| {
+                matches!(
+                    &event.kind,
+                    EventKind::RunnableQueued {
+                        queue,
+                        activation,
+                        activation_generation,
+                    } if *queue == resume.queue
+                        && *activation == resume.activation
+                        && *activation_generation == resume.activation_generation_before
+                )
+            });
+            if !was_queued_at_resume_generation {
+                return Err(SemanticInvariantError::ActivationResumeQueueEntryMismatch {
+                    resume: resume.id,
+                    activation: resume.activation,
+                });
+            }
+            if resume.activation_generation_after != resume.activation_generation_before + 1 {
+                return Err(SemanticInvariantError::ActivationResumeMissingActivation {
+                    resume: resume.id,
+                    activation: resume.activation,
+                });
+            }
+            let Some(activation) = self
+                .runtime_activations
+                .iter()
+                .find(|record| record.id == resume.activation)
+            else {
+                return Err(SemanticInvariantError::ActivationResumeMissingActivation {
+                    resume: resume.id,
+                    activation: resume.activation,
+                });
+            };
+            if activation.generation < resume.activation_generation_after {
+                return Err(SemanticInvariantError::ActivationResumeMissingActivation {
+                    resume: resume.id,
+                    activation: resume.activation,
+                });
+            }
+            if activation.generation == resume.activation_generation_after
+                && (activation.state != RuntimeActivationState::Running
+                    || activation.runnable_queue.is_some()
+                    || activation.runnable_queue_generation.is_some())
+            {
+                return Err(SemanticInvariantError::ActivationResumeMissingActivation {
+                    resume: resume.id,
+                    activation: resume.activation,
+                });
             }
         }
 

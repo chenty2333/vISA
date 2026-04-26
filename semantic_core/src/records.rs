@@ -189,6 +189,39 @@ impl SchedulerDecisionRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivationResumeRecord {
+    pub id: ActivationResumeId,
+    pub scheduler_decision: SchedulerDecisionId,
+    pub scheduler_decision_generation: Generation,
+    pub activation: ActivationId,
+    pub activation_generation_before: Generation,
+    pub activation_generation_after: Generation,
+    pub owner_task: TaskId,
+    pub owner_task_generation: Generation,
+    pub queue: RunnableQueueId,
+    pub queue_generation: Generation,
+    pub context: Option<ActivationContextId>,
+    pub context_generation_before: Option<Generation>,
+    pub context_generation_after: Option<Generation>,
+    pub saved_context: Option<SavedContextId>,
+    pub saved_context_generation: Option<Generation>,
+    pub generation: Generation,
+    pub state: ActivationResumeState,
+    pub resumed_at_event: EventId,
+    pub note: String,
+}
+
+impl ActivationResumeRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::ActivationResume,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceRecord {
     pub id: ResourceId,
     pub label: String,

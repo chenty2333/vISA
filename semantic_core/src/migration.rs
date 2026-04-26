@@ -403,6 +403,22 @@ pub enum SemanticInvariantError {
         decision: SchedulerDecisionId,
         task: TaskId,
     },
+    ActivationResumeMissingDecision {
+        resume: ActivationResumeId,
+        decision: SchedulerDecisionId,
+    },
+    ActivationResumeMissingActivation {
+        resume: ActivationResumeId,
+        activation: ActivationId,
+    },
+    ActivationResumeQueueEntryMismatch {
+        resume: ActivationResumeId,
+        activation: ActivationId,
+    },
+    ActivationResumeMissingTask {
+        resume: ActivationResumeId,
+        task: TaskId,
+    },
     StoreReferencesMissingFaultDomain {
         store: StoreId,
         fault_domain: FaultDomainId,

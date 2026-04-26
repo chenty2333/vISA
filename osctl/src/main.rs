@@ -6,10 +6,11 @@ use std::fs;
 use std::path::Path;
 
 use artifact_manifest::{
-    ActivationContextManifest, ActivationRecordManifest, ArtifactBundleManifest,
-    BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
-    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest, HostcallTraceManifest,
-    InterfaceEventManifest, MigrationPackageManifest, PreemptionManifest, RunnableQueueManifest,
+    ActivationContextManifest, ActivationRecordManifest, ActivationResumeManifest,
+    ArtifactBundleManifest, BoundaryValidationReportManifest, CapabilityRecordManifest,
+    CleanupTransactionManifest, CodeObjectManifest, CommandResultManifest,
+    ContractObjectRefManifest, HostcallTraceManifest, InterfaceEventManifest,
+    MigrationPackageManifest, PreemptionManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
     TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
@@ -208,9 +209,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         "task" | "store" | "cap" | "capability" | "wait" | "cleanup" | "command" | "scheduler"
         | "runtime-activation" | "runnable-queue" | "activation-context" | "saved-context"
-        | "timer-interrupt" | "preemption" | "scheduler-decision" | "context" => {
-            handle_view_command(&command, args.collect())
-        }
+        | "timer-interrupt" | "preemption" | "scheduler-decision" | "activation-resume"
+        | "context" => handle_view_command(&command, args.collect()),
         "state" => {
             let Some(path) = args.next() else {
                 return Err("state requires a manifest/package JSON path".into());
@@ -374,7 +374,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler-decision|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler-decision|activation-resume|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -574,6 +574,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "timer-interrupt" => "timer-interrupt",
         "preemption" => "preemption",
         "scheduler-decision" => "scheduler-decision",
+        "activation-resume" => "activation-resume",
         "scheduler" => "scheduler",
         "runnable-queue" => "runnable-queue",
         "cap" | "capability" => "capability",
@@ -834,6 +835,50 @@ fn scheduler_decision_view_v1(decision: &SchedulerDecisionManifest) -> serde_jso
     })
 }
 
+fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "activation-resume",
+        "id": resume.id,
+        "generation": resume.generation,
+        "state": resume.state,
+        "owner": {
+            "scheduler": 1,
+            "task": resume.owner_task,
+            "task_generation": resume.owner_task_generation,
+        },
+        "references": {
+            "scheduler_decision": {
+                "id": resume.scheduler_decision,
+                "generation": resume.scheduler_decision_generation,
+            },
+            "activation": {
+                "id": resume.activation,
+                "generation_before": resume.activation_generation_before,
+                "generation_after": resume.activation_generation_after,
+            },
+            "queue": {
+                "id": resume.queue,
+                "generation": resume.queue_generation,
+            },
+            "activation_context": resume.context.map(|id| serde_json::json!({
+                "id": id,
+                "generation_before": resume.context_generation_before,
+                "generation_after": resume.context_generation_after,
+            })),
+            "saved_context": resume.saved_context.map(|id| serde_json::json!({
+                "id": id,
+                "generation": resume.saved_context_generation,
+            })),
+        },
+        "note": resume.note,
+        "last_transition": {
+            "resumed_at_event": resume.resumed_at_event,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -894,6 +939,14 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "queue": decision.queue,
                 "queue_generation": decision.queue_generation,
             })).collect::<Vec<_>>(),
+            "activation_resumes": package.semantic.activation_resumes.iter().map(|resume| serde_json::json!({
+                "id": resume.id,
+                "generation": resume.generation,
+                "scheduler_decision": resume.scheduler_decision,
+                "scheduler_decision_generation": resume.scheduler_decision_generation,
+                "activation": resume.activation,
+                "activation_generation_after": resume.activation_generation_after,
+            })).collect::<Vec<_>>(),
         },
         "last_transition": {
             "scheduler_decision_cursor": package.substrate_boundary.scheduler_decision_cursor,
@@ -906,6 +959,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "timer_interrupt_count": package.semantic.timer_interrupt_count,
             "preemption_count": package.semantic.preemption_count,
             "scheduler_decision_count": package.semantic.scheduler_decision_count,
+            "activation_resume_count": package.semantic.activation_resume_count,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -1312,6 +1366,12 @@ fn stable_views_for_kind(
             .scheduler_decisions
             .iter()
             .map(scheduler_decision_view_v1)
+            .collect()),
+        "activation-resume" => Ok(package
+            .semantic
+            .activation_resumes
+            .iter()
+            .map(activation_resume_view_v1)
             .collect()),
         "store" => Ok(package
             .semantic
@@ -1929,7 +1989,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} scheduler_decisions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} scheduler_decisions={} activation_resumes={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.task_count,
@@ -1940,6 +2000,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.timer_interrupt_count,
             package.semantic.preemption_count,
             package.semantic.scheduler_decision_count,
+            package.semantic.activation_resume_count,
             package.semantic.resource_count,
             package.semantic.store_count,
             package.semantic.capability_count,
@@ -2067,7 +2128,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={}",
+        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} activation_resume_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.task_roots.len(),
@@ -2089,7 +2150,8 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.hostcall_trace_roots.len(),
         package.semantic.roots.migration_object_roots.len(),
         package.semantic.roots.tombstone_roots.len(),
-        package.semantic.roots.contract_violation_roots.len()
+        package.semantic.roots.contract_violation_roots.len(),
+        package.semantic.roots.activation_resume_roots.len()
     );
     print_roots("task", &package.semantic.roots.task_roots);
     print_roots(
@@ -2105,6 +2167,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "scheduler-decision",
         &package.semantic.roots.scheduler_decision_roots,
+    );
+    print_roots(
+        "activation-resume",
+        &package.semantic.roots.activation_resume_roots,
     );
     print_roots("resource", &package.semantic.roots.resource_roots);
     print_roots("authority", &package.semantic.roots.authority_roots);
@@ -2248,7 +2314,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         }
     }
     for saved in &package.semantic.saved_contexts {
-        if saved.state == "dropped" {
+        if saved.state != "captured" {
             continue;
         }
         edges.push(graph_edge(
@@ -2482,6 +2548,70 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "historical",
             Some(decision.decided_at_event),
         ));
+    }
+    for resume in &package.semantic.activation_resumes {
+        let from = object_ref_json("activation-resume", resume.id, resume.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "scheduler-decision",
+                resume.scheduler_decision,
+                resume.scheduler_decision_generation,
+            ),
+            "consumed-decision",
+            "historical",
+            Some(resume.resumed_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "activation",
+                resume.activation,
+                resume.activation_generation_before,
+            ),
+            "resumed-from",
+            "historical",
+            Some(resume.resumed_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "activation",
+                resume.activation,
+                resume.activation_generation_after,
+            ),
+            "resumed-to",
+            "historical",
+            Some(resume.resumed_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("runnable-queue", resume.queue, resume.queue_generation),
+            "dequeued-from",
+            "historical",
+            Some(resume.resumed_at_event),
+        ));
+        if let (Some(context), Some(generation)) = (resume.context, resume.context_generation_after)
+        {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("activation-context", context, generation),
+                "restored-context",
+                "historical",
+                Some(resume.resumed_at_event),
+            ));
+        }
+        if let (Some(saved), Some(generation)) =
+            (resume.saved_context, resume.saved_context_generation)
+        {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("saved-context", saved, generation),
+                "restored-saved-context",
+                "historical",
+                Some(resume.resumed_at_event),
+            ));
+        }
     }
     for trap in &package.semantic.trap_records {
         let from = object_ref_json("trap", trap.id, trap.generation);
@@ -4225,6 +4355,7 @@ mod tests {
         package.semantic.timer_interrupt_count = 1;
         package.semantic.preemption_count = 1;
         package.semantic.scheduler_decision_count = 1;
+        package.semantic.activation_resume_count = 1;
         package.substrate_boundary.timer_epoch = 3;
         package.semantic.task_records.push(TaskRecordManifest {
             id: 7,
@@ -4350,6 +4481,30 @@ mod tests {
                 reason: "runnable-available".to_owned(),
                 note: "select activation".to_owned(),
             });
+        package
+            .semantic
+            .activation_resumes
+            .push(ActivationResumeManifest {
+                id: 17,
+                scheduler_decision: 16,
+                scheduler_decision_generation: 1,
+                activation: 11,
+                activation_generation_before: 3,
+                activation_generation_after: 4,
+                owner_task: 7,
+                owner_task_generation: 1,
+                queue: 1,
+                queue_generation: 1,
+                context: Some(12),
+                context_generation_before: Some(2),
+                context_generation_after: Some(3),
+                saved_context: Some(13),
+                saved_context_generation: Some(2),
+                generation: 1,
+                state: "applied".to_owned(),
+                resumed_at_event: 14,
+                note: "resume activation".to_owned(),
+            });
         let context = activation_context_view_v1(&package.semantic.activation_contexts[0]);
         assert_eq!(context["kind"], "activation-context");
         assert_eq!(context["references"]["activation"]["generation"], 2);
@@ -4387,6 +4542,12 @@ mod tests {
         );
         assert_eq!(decision["references"]["queue"]["generation"], 1);
         assert_eq!(decision["reason"], "runnable-available");
+        let resume = activation_resume_view_v1(&package.semantic.activation_resumes[0]);
+        assert_eq!(resume["kind"], "activation-resume");
+        assert_eq!(resume["references"]["activation"]["generation_before"], 3);
+        assert_eq!(resume["references"]["activation"]["generation_after"], 4);
+        assert_eq!(resume["references"]["scheduler_decision"]["generation"], 1);
+        assert_eq!(resume["references"]["saved_context"]["generation"], 2);
         let scheduler = scheduler_view_v1(&package);
         assert_eq!(scheduler["kind"], "scheduler");
         assert_eq!(scheduler["references"]["queues"][0]["entries"], 1);
@@ -4400,6 +4561,7 @@ mod tests {
         assert_eq!(scheduler["last_transition"]["timer_interrupt_count"], 1);
         assert_eq!(scheduler["last_transition"]["preemption_count"], 1);
         assert_eq!(scheduler["last_transition"]["scheduler_decision_count"], 1);
+        assert_eq!(scheduler["last_transition"]["activation_resume_count"], 1);
         assert_eq!(scheduler["last_transition"]["timer_epoch"], 3);
         assert_eq!(
             scheduler["last_transition"]["scheduler_decision_cursor"],
@@ -4470,6 +4632,15 @@ mod tests {
                     && edge["to"]["kind"] == "activation"
                     && edge["to"]["generation"] == 3
                     && edge["relation"] == "selected"
+                    && edge["mode"] == "historical")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "activation-resume"
+                    && edge["to"]["kind"] == "activation"
+                    && edge["to"]["generation"] == 4
+                    && edge["relation"] == "resumed-to"
                     && edge["mode"] == "historical")
         );
     }

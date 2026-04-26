@@ -83,6 +83,17 @@ pub enum EventKind {
         activation_generation: Generation,
         generation: Generation,
     },
+    RuntimeActivationResumed {
+        resume: ActivationResumeId,
+        decision: SchedulerDecisionId,
+        decision_generation: Generation,
+        activation: ActivationId,
+        from_generation: Generation,
+        to_generation: Generation,
+        queue: RunnableQueueId,
+        queue_generation: Generation,
+        generation: Generation,
+    },
     ResourceCreated {
         resource: ResourceId,
         kind: ResourceKind,
@@ -512,6 +523,19 @@ impl EventKind {
                 generation,
             } => format!(
                 "SchedulerDecisionRecorded decision={decision} queue={queue}@{queue_generation} activation={activation}@{activation_generation} generation={generation}"
+            ),
+            Self::RuntimeActivationResumed {
+                resume,
+                decision,
+                decision_generation,
+                activation,
+                from_generation,
+                to_generation,
+                queue,
+                queue_generation,
+                generation,
+            } => format!(
+                "RuntimeActivationResumed resume={resume} decision={decision}@{decision_generation} activation={activation}@{from_generation}->{to_generation} queue={queue}@{queue_generation} generation={generation}"
             ),
             Self::ResourceCreated {
                 resource,

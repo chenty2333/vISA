@@ -2371,6 +2371,189 @@ fn preemptive_runtime_p5_invariants_reject_decision_generation_leak() {
     );
 }
 
+fn p6_decided_preempted_activation() -> SemanticGraph {
+    let mut graph = p5_preempted_activation_with_saved_context();
+    assert!(graph.record_scheduler_decision_with_id(
+        14,
+        1,
+        1,
+        11,
+        4,
+        "runnable-available",
+        "choose"
+    ));
+    graph
+}
+
+#[test]
+fn preemptive_runtime_p6_resume_activation_consumes_decision_and_restores_context() {
+    let mut graph = p6_decided_preempted_activation();
+
+    let resume = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p6-test",
+        SemanticCommand::ResumeActivation {
+            resume: 15,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 1,
+            activation: 11,
+            activation_generation: 4,
+            note: "resume selected activation".to_string(),
+        },
+    ));
+
+    assert_eq!(resume.status, CommandStatus::Applied);
+    assert_eq!(graph.activation_resumes().len(), 1);
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Running
+    );
+    assert_eq!(graph.runtime_activations()[0].generation, 5);
+    assert!(graph.runnable_queues()[0].entries.is_empty());
+    assert_eq!(
+        graph.scheduler_decisions()[0].state,
+        SchedulerDecisionState::Superseded
+    );
+    assert_eq!(graph.activation_contexts()[0].generation, 3);
+    assert_eq!(graph.activation_contexts()[0].activation_generation, 5);
+    assert_eq!(
+        graph.activation_contexts()[0].state,
+        ActivationContextState::Current
+    );
+    assert!(
+        graph.activation_contexts()[0]
+            .current_saved_context
+            .is_none()
+    );
+    assert_eq!(graph.saved_contexts()[0].generation, 2);
+    assert_eq!(graph.saved_contexts()[0].state, SavedContextState::Restored);
+    assert_eq!(graph.saved_contexts()[0].activation_generation, 4);
+    assert_eq!(
+        graph.activation_resumes()[0].activation_generation_before,
+        4
+    );
+    assert_eq!(graph.activation_resumes()[0].activation_generation_after, 5);
+    assert_eq!(graph.activation_resumes()[0].context, Some(12));
+    assert_eq!(
+        graph.activation_resumes()[0].context_generation_before,
+        Some(2)
+    );
+    assert_eq!(
+        graph.activation_resumes()[0].context_generation_after,
+        Some(3)
+    );
+    assert_eq!(graph.activation_resumes()[0].saved_context, Some(13));
+    assert_eq!(
+        graph.activation_resumes()[0].saved_context_generation,
+        Some(2)
+    );
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "RuntimeActivationResumed resume=15 decision=14@1 activation=11@4->5 queue=1@1 generation=1"
+    );
+}
+
+#[test]
+fn preemptive_runtime_p6_rejects_stale_decision_and_dead_store_resume() {
+    let mut graph = p6_decided_preempted_activation();
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p6-test",
+        SemanticCommand::ResumeActivation {
+            resume: 15,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 2,
+            activation: 11,
+            activation_generation: 4,
+            note: "stale decision".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("resume scheduler decision generation is missing or consumed".to_string());
+    assert_eq!(stale.violations, expected);
+    assert!(graph.activation_resumes().is_empty());
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Runnable
+    );
+
+    let mut dead_store_graph = SemanticGraph::new();
+    dead_store_graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    let store = dead_store_graph.register_store("driver", "driver.cwasm", "driver", "restartable");
+    assert!(dead_store_graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(dead_store_graph.create_runtime_activation_with_id(
+        11,
+        7,
+        1,
+        Some(store),
+        Some(1),
+        None
+    ));
+    assert!(dead_store_graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(dead_store_graph.record_scheduler_decision_with_id(
+        14,
+        1,
+        1,
+        11,
+        2,
+        "runnable-available",
+        "choose"
+    ));
+    dead_store_graph.set_store_state(store, StoreState::Dead);
+    let rejected = dead_store_graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p6-test",
+        SemanticCommand::ResumeActivation {
+            resume: 15,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 1,
+            activation: 11,
+            activation_generation: 2,
+            note: "dead store".to_string(),
+        },
+    ));
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("resume owner store generation is missing or dead".to_string());
+    assert_eq!(rejected.violations, expected);
+
+    let mut faulted_task_graph = p6_decided_preempted_activation();
+    faulted_task_graph.set_task_state(7, TaskState::Faulted);
+    let rejected = faulted_task_graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "p6-test",
+        SemanticCommand::ResumeActivation {
+            resume: 15,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 1,
+            activation: 11,
+            activation_generation: 4,
+            note: "faulted task".to_string(),
+        },
+    ));
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("resume owner task generation is missing or not runnable".to_string());
+    assert_eq!(rejected.violations, expected);
+}
+
+#[test]
+fn preemptive_runtime_p6_invariants_reject_resume_generation_leak() {
+    let mut graph = p6_decided_preempted_activation();
+    assert!(graph.resume_activation_with_id(15, 14, 1, 11, 4, "resume"));
+    graph.corrupt_activation_resume_after_generation_for_test(15, 7);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::ActivationResumeMissingActivation {
+            resume: 15,
+            activation: 11,
+        })
+    );
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

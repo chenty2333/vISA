@@ -73,6 +73,7 @@ pub enum ObjectKind {
     TimerInterrupt,
     Preemption,
     SchedulerDecision,
+    ActivationResume,
     Resource,
     Capability,
     WaitToken,
@@ -106,6 +107,7 @@ impl ObjectKind {
             Self::TimerInterrupt => "timer-interrupt",
             Self::Preemption => "preemption",
             Self::SchedulerDecision => "scheduler-decision",
+            Self::ActivationResume => "activation-resume",
             Self::Resource => "resource",
             Self::Capability => "capability",
             Self::WaitToken => "wait-token",
@@ -293,6 +295,7 @@ typed_ref!(SavedContextRef, ObjectKind::SavedContext);
 typed_ref!(TimerInterruptRef, ObjectKind::TimerInterrupt);
 typed_ref!(PreemptionRef, ObjectKind::Preemption);
 typed_ref!(SchedulerDecisionRef, ObjectKind::SchedulerDecision);
+typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(FaultDomainRef, ObjectKind::FaultDomain);
 typed_ref!(ArtifactRef, ObjectKind::Artifact);
 typed_ref!(CodeObjectRef, ObjectKind::CodeObject);
@@ -1455,6 +1458,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("scheduler decision root/count mismatch"));
     }
+    if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
+        || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
+    {
+        return Err(ContractError::new("activation resume root/count mismatch"));
+    }
     if roots.resource_roots.len() != package.semantic.resource_count {
         return Err(ContractError::new("resource root/count mismatch"));
     }
@@ -1955,6 +1963,7 @@ mod tests {
                 timer_interrupt_count: 0,
                 preemption_count: 0,
                 scheduler_decision_count: 0,
+                activation_resume_count: 0,
                 resource_count: 0,
                 authority_count: 0,
                 active_authority_count: 0,
@@ -1997,6 +2006,7 @@ mod tests {
                 timer_interrupts: Vec::new(),
                 preemptions: Vec::new(),
                 scheduler_decisions: Vec::new(),
+                activation_resumes: Vec::new(),
                 code_objects: Vec::new(),
                 store_records: Vec::new(),
                 capability_records: Vec::new(),
@@ -2227,6 +2237,39 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "scheduler decision root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_activation_resume_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.activation_resume_count = 1;
+        package
+            .semantic
+            .activation_resumes
+            .push(artifact_manifest::ActivationResumeManifest {
+                id: 6,
+                scheduler_decision: 5,
+                scheduler_decision_generation: 1,
+                activation: 11,
+                activation_generation_before: 4,
+                activation_generation_after: 5,
+                owner_task: 7,
+                owner_task_generation: 1,
+                queue: 1,
+                queue_generation: 1,
+                context: None,
+                context_generation_before: None,
+                context_generation_after: None,
+                saved_context: None,
+                saved_context_generation: None,
+                generation: 1,
+                state: "applied".to_owned(),
+                resumed_at_event: 8,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "activation resume root/count mismatch");
     }
 
     #[test]
@@ -2492,6 +2535,8 @@ mod tests {
         assert!(PreemptionRef::try_from_ref(preemption).is_ok());
         let decision = ObjectRef::new(ObjectKind::SchedulerDecision, 7, 1).unwrap();
         assert!(SchedulerDecisionRef::try_from_ref(decision).is_ok());
+        let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
+        assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
     }
 
     #[test]
