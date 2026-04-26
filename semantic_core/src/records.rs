@@ -630,6 +630,39 @@ impl SmpStressRunRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmpScalingBenchmarkRecord {
+    pub id: SmpScalingBenchmarkId,
+    pub scenario: String,
+    pub stress_run: SmpStressRunId,
+    pub stress_run_generation: Generation,
+    pub hart_count: u32,
+    pub workload_units: u64,
+    pub baseline_single_hart_nanos: u64,
+    pub measured_smp_nanos: u64,
+    pub budget_nanos: u64,
+    pub speedup_milli: u64,
+    pub efficiency_milli: u64,
+    pub event_log_cursor: EventId,
+    pub stress_safe_point_count: u32,
+    pub stress_rendezvous_count: u32,
+    pub stress_property_failures: u32,
+    pub generation: Generation,
+    pub state: SmpScalingBenchmarkState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl SmpScalingBenchmarkRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::SmpScalingBenchmark,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

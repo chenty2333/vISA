@@ -227,6 +227,17 @@ pub enum SemanticCommand {
         reason: String,
         note: String,
     },
+    RecordSmpScalingBenchmark {
+        benchmark: SmpScalingBenchmarkId,
+        scenario: String,
+        stress_run: SmpStressRunId,
+        stress_run_generation: Generation,
+        workload_units: u64,
+        baseline_single_hart_nanos: u64,
+        measured_smp_nanos: u64,
+        budget_nanos: u64,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -453,6 +464,7 @@ impl SemanticCommand {
             Self::ValidateSmpCleanupQuiescence { .. } => "validate-smp-cleanup-quiescence",
             Self::ValidateSmpSnapshotBarrier { .. } => "validate-smp-snapshot-barrier",
             Self::RecordSmpStressRun { .. } => "record-smp-stress-run",
+            Self::RecordSmpScalingBenchmark { .. } => "record-smp-scaling-benchmark",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1531,6 +1543,28 @@ impl SemanticGraph {
             } => self
                 .validate_smp_stress_run(*run, scenario, *iterations, *invariant_checks, reason)
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordSmpScalingBenchmark {
+                benchmark,
+                scenario,
+                stress_run,
+                stress_run_generation,
+                workload_units,
+                baseline_single_hart_nanos,
+                measured_smp_nanos,
+                budget_nanos,
+                ..
+            } => self
+                .validate_smp_scaling_benchmark(
+                    *benchmark,
+                    scenario,
+                    *stress_run,
+                    *stress_run_generation,
+                    *workload_units,
+                    *baseline_single_hart_nanos,
+                    *measured_smp_nanos,
+                    *budget_nanos,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2391,6 +2425,27 @@ impl SemanticGraph {
                 iterations,
                 invariant_checks,
                 &reason,
+                &note,
+            ),
+            SemanticCommand::RecordSmpScalingBenchmark {
+                benchmark,
+                scenario,
+                stress_run,
+                stress_run_generation,
+                workload_units,
+                baseline_single_hart_nanos,
+                measured_smp_nanos,
+                budget_nanos,
+                note,
+            } => self.record_smp_scaling_benchmark_with_id(
+                benchmark,
+                &scenario,
+                stress_run,
+                stress_run_generation,
+                workload_units,
+                baseline_single_hart_nanos,
+                measured_smp_nanos,
+                budget_nanos,
                 &note,
             ),
             SemanticCommand::ResumeActivation {

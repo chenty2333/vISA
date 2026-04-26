@@ -85,6 +85,7 @@ pub enum ObjectKind {
     SmpCleanupQuiescence,
     SmpSnapshotBarrier,
     SmpStressRun,
+    SmpScalingBenchmark,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -135,6 +136,7 @@ impl ObjectKind {
             Self::SmpCleanupQuiescence => "smp-cleanup-quiescence",
             Self::SmpSnapshotBarrier => "smp-snapshot-barrier",
             Self::SmpStressRun => "smp-stress-run",
+            Self::SmpScalingBenchmark => "smp-scaling-benchmark",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -345,6 +347,7 @@ typed_ref!(SmpCodePublishBarrierRef, ObjectKind::SmpCodePublishBarrier);
 typed_ref!(SmpCleanupQuiescenceRef, ObjectKind::SmpCleanupQuiescence);
 typed_ref!(SmpSnapshotBarrierRef, ObjectKind::SmpSnapshotBarrier);
 typed_ref!(SmpStressRunRef, ObjectKind::SmpStressRun);
+typed_ref!(SmpScalingBenchmarkRef, ObjectKind::SmpScalingBenchmark);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1592,6 +1595,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("smp stress run root/count mismatch"));
     }
+    if roots.smp_scaling_benchmark_roots.len() != package.semantic.smp_scaling_benchmark_count
+        || package.semantic.smp_scaling_benchmarks.len()
+            != package.semantic.smp_scaling_benchmark_count
+    {
+        return Err(ContractError::new(
+            "smp scaling benchmark root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2133,6 +2144,7 @@ mod tests {
                 smp_cleanup_quiescence_count: 0,
                 smp_snapshot_barrier_count: 0,
                 smp_stress_run_count: 0,
+                smp_scaling_benchmark_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2192,6 +2204,7 @@ mod tests {
                 smp_cleanup_quiescence: Vec::new(),
                 smp_snapshot_barriers: Vec::new(),
                 smp_stress_runs: Vec::new(),
+                smp_scaling_benchmarks: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -2876,6 +2889,38 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_smp_scaling_benchmark_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.smp_scaling_benchmark_count = 1;
+        package.semantic.smp_scaling_benchmarks.push(
+            artifact_manifest::SmpScalingBenchmarkManifest {
+                id: 16,
+                scenario: "smp-scaling".to_owned(),
+                stress_run: 15,
+                stress_run_generation: 1,
+                hart_count: 2,
+                workload_units: 6,
+                baseline_single_hart_nanos: 120_000,
+                measured_smp_nanos: 72_000,
+                budget_nanos: 90_000,
+                speedup_milli: 1_666,
+                efficiency_milli: 833,
+                event_log_cursor: 51,
+                stress_safe_point_count: 3,
+                stress_rendezvous_count: 3,
+                stress_property_failures: 0,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 52,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "smp scaling benchmark root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3360,6 +3405,8 @@ mod tests {
         assert!(SmpSnapshotBarrierRef::try_from_ref(snapshot_barrier).is_ok());
         let stress_run = ObjectRef::new(ObjectKind::SmpStressRun, 15, 1).unwrap();
         assert!(SmpStressRunRef::try_from_ref(stress_run).is_ok());
+        let scaling_benchmark = ObjectRef::new(ObjectKind::SmpScalingBenchmark, 16, 1).unwrap();
+        assert!(SmpScalingBenchmarkRef::try_from_ref(scaling_benchmark).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

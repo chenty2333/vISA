@@ -373,6 +373,21 @@ impl SmpStressRunState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmpScalingBenchmarkState {
+    Recorded,
+    Rejected,
+}
+
+impl SmpScalingBenchmarkState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

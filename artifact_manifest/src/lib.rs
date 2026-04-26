@@ -263,6 +263,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub smp_stress_run_count: usize,
     #[serde(default)]
+    pub smp_scaling_benchmark_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -377,6 +379,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub smp_stress_runs: Vec<SmpStressRunManifest>,
     #[serde(default)]
+    pub smp_scaling_benchmarks: Vec<SmpScalingBenchmarkManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -470,6 +474,8 @@ pub struct SemanticRootSetManifest {
     pub smp_snapshot_barrier_roots: Vec<String>,
     #[serde(default)]
     pub smp_stress_run_roots: Vec<String>,
+    #[serde(default)]
+    pub smp_scaling_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1074,6 +1080,29 @@ pub struct SmpStressRunManifest {
     pub state: String,
     pub recorded_at_event: u64,
     pub reason: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SmpScalingBenchmarkManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub stress_run: u64,
+    pub stress_run_generation: u64,
+    pub hart_count: u32,
+    pub workload_units: u64,
+    pub baseline_single_hart_nanos: u64,
+    pub measured_smp_nanos: u64,
+    pub budget_nanos: u64,
+    pub speedup_milli: u64,
+    pub efficiency_milli: u64,
+    pub event_log_cursor: u64,
+    pub stress_safe_point_count: u32,
+    pub stress_rendezvous_count: u32,
+    pub stress_property_failures: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
     pub note: String,
 }
 

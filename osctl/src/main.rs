@@ -16,9 +16,10 @@ use artifact_manifest::{
     RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
-    SmpSnapshotBarrierManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
-    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
-    TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
+    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
+    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
+    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -248,6 +249,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "snapshot-barrier"
         | "smp-stress-run"
         | "smp-stress"
+        | "smp-scaling-benchmark"
+        | "smp-scaling"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -418,7 +421,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -632,6 +635,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "smp-cleanup-quiescence" | "cleanup-quiescence" => "smp-cleanup-quiescence",
         "smp-snapshot-barrier" | "snapshot-barrier" => "smp-snapshot-barrier",
         "smp-stress-run" | "smp-stress" => "smp-stress-run",
+        "smp-scaling-benchmark" | "smp-scaling" => "smp-scaling-benchmark",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -1535,6 +1539,47 @@ fn smp_stress_run_view_v1(run: &SmpStressRunManifest) -> serde_json::Value {
     })
 }
 
+fn smp_scaling_benchmark_view_v1(benchmark: &SmpScalingBenchmarkManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "smp-scaling-benchmark",
+        "id": benchmark.id,
+        "generation": benchmark.generation,
+        "state": benchmark.state,
+        "owner": {
+            "scenario": benchmark.scenario,
+        },
+        "references": {
+            "stress_run": object_ref_json("smp-stress-run", benchmark.stress_run, benchmark.stress_run_generation),
+            "event": {
+                "id": benchmark.recorded_at_event,
+            },
+        },
+        "metrics": {
+            "hart_count": benchmark.hart_count,
+            "workload_units": benchmark.workload_units,
+            "baseline_single_hart_nanos": benchmark.baseline_single_hart_nanos,
+            "measured_smp_nanos": benchmark.measured_smp_nanos,
+            "budget_nanos": benchmark.budget_nanos,
+            "speedup_milli": benchmark.speedup_milli,
+            "efficiency_milli": benchmark.efficiency_milli,
+        },
+        "coverage": {
+            "stress_safe_points": benchmark.stress_safe_point_count,
+            "stress_rendezvous": benchmark.stress_rendezvous_count,
+            "stress_property_failures": benchmark.stress_property_failures,
+        },
+        "note": benchmark.note,
+        "last_transition": {
+            "event_log_cursor": benchmark.event_log_cursor,
+            "recorded_at_event": benchmark.recorded_at_event,
+            "scenario": benchmark.scenario,
+            "within_budget": benchmark.measured_smp_nanos <= benchmark.budget_nanos,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -1951,6 +1996,18 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "property_failures": run.property_failures,
                 "state": run.state,
             })).collect::<Vec<_>>(),
+            "smp_scaling_benchmarks": package.semantic.smp_scaling_benchmarks.iter().map(|benchmark| serde_json::json!({
+                "id": benchmark.id,
+                "generation": benchmark.generation,
+                "scenario": benchmark.scenario,
+                "stress_run": object_ref_json("smp-stress-run", benchmark.stress_run, benchmark.stress_run_generation),
+                "hart_count": benchmark.hart_count,
+                "workload_units": benchmark.workload_units,
+                "measured_smp_nanos": benchmark.measured_smp_nanos,
+                "speedup_milli": benchmark.speedup_milli,
+                "efficiency_milli": benchmark.efficiency_milli,
+                "state": benchmark.state,
+            })).collect::<Vec<_>>(),
             "activation_resumes": package.semantic.activation_resumes.iter().map(|resume| serde_json::json!({
                 "id": resume.id,
                 "generation": resume.generation,
@@ -2011,6 +2068,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "smp_cleanup_quiescence_count": package.semantic.smp_cleanup_quiescence_count,
             "smp_snapshot_barrier_count": package.semantic.smp_snapshot_barrier_count,
             "smp_stress_run_count": package.semantic.smp_stress_run_count,
+            "smp_scaling_benchmark_count": package.semantic.smp_scaling_benchmark_count,
             "activation_resume_count": package.semantic.activation_resume_count,
             "activation_wait_count": package.semantic.activation_wait_count,
             "activation_cleanup_count": package.semantic.activation_cleanup_count,
@@ -2494,6 +2552,12 @@ fn stable_views_for_kind(
             .smp_stress_runs
             .iter()
             .map(smp_stress_run_view_v1)
+            .collect()),
+        "smp-scaling-benchmark" | "smp-scaling" => Ok(package
+            .semantic
+            .smp_scaling_benchmarks
+            .iter()
+            .map(smp_scaling_benchmark_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -3141,7 +3205,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -3164,6 +3228,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.smp_cleanup_quiescence_count,
             package.semantic.smp_snapshot_barrier_count,
             package.semantic.smp_stress_run_count,
+            package.semantic.smp_scaling_benchmark_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -3296,7 +3361,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -3336,6 +3401,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.smp_cleanup_quiescence_roots.len(),
         package.semantic.roots.smp_snapshot_barrier_roots.len(),
         package.semantic.roots.smp_stress_run_roots.len(),
+        package.semantic.roots.smp_scaling_benchmark_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -3395,6 +3461,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "smp-stress-run",
         &package.semantic.roots.smp_stress_run_roots,
+    );
+    print_roots(
+        "smp-scaling-benchmark",
+        &package.semantic.roots.smp_scaling_benchmark_roots,
     );
     print_roots(
         "activation-resume",
@@ -4357,6 +4427,19 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 Some(run.recorded_at_event),
             ));
         }
+    }
+    for benchmark in &package.semantic.smp_scaling_benchmarks {
+        edges.push(graph_edge(
+            object_ref_json("smp-scaling-benchmark", benchmark.id, benchmark.generation),
+            object_ref_json(
+                "smp-stress-run",
+                benchmark.stress_run,
+                benchmark.stress_run_generation,
+            ),
+            "scaling-stress-run",
+            "historical",
+            Some(benchmark.recorded_at_event),
+        ));
     }
     for resume in &package.semantic.activation_resumes {
         let from = object_ref_json("activation-resume", resume.id, resume.generation);
@@ -5784,7 +5867,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -5806,6 +5889,7 @@ fn replay_until(
         package.semantic.roots.smp_cleanup_quiescence_roots.len(),
         package.semantic.roots.smp_snapshot_barrier_roots.len(),
         package.semantic.roots.smp_stress_run_roots.len(),
+        package.semantic.roots.smp_scaling_benchmark_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -5855,6 +5939,9 @@ fn replay_until(
     }
     for run in &package.semantic.roots.smp_stress_run_roots {
         println!("replay smp-stress-run {run}");
+    }
+    for benchmark in &package.semantic.roots.smp_scaling_benchmark_roots {
+        println!("replay smp-scaling-benchmark {benchmark}");
     }
     Ok(())
 }
@@ -5921,6 +6008,10 @@ fn print_replay_json(
     roots.insert(
         "smp_stress_runs".to_owned(),
         serde_json::json!(package.semantic.roots.smp_stress_run_roots.len()),
+    );
+    roots.insert(
+        "smp_scaling_benchmarks".to_owned(),
+        serde_json::json!(package.semantic.roots.smp_scaling_benchmark_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -6143,6 +6234,10 @@ fn print_replay_json(
         serde_json::json!(&package.semantic.roots.smp_stress_run_roots),
     );
     roots.insert(
+        "smp_scaling_benchmark_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.smp_scaling_benchmark_roots),
+    );
+    roots.insert(
         "cleanup_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.cleanup_roots),
     );
@@ -6226,7 +6321,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -6259,6 +6354,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.smp_cleanup_quiescence_count,
         package.semantic.smp_snapshot_barrier_count,
         package.semantic.smp_stress_run_count,
+        package.semantic.smp_scaling_benchmark_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -6623,6 +6719,7 @@ mod tests {
         package.semantic.smp_cleanup_quiescence_count = 1;
         package.semantic.smp_snapshot_barrier_count = 1;
         package.semantic.smp_stress_run_count = 1;
+        package.semantic.smp_scaling_benchmark_count = 1;
         package.semantic.activation_resume_count = 1;
         package.semantic.activation_wait_count = 1;
         package.semantic.activation_cleanup_count = 1;
@@ -7141,6 +7238,30 @@ mod tests {
         });
         package
             .semantic
+            .smp_scaling_benchmarks
+            .push(SmpScalingBenchmarkManifest {
+                id: 34,
+                scenario: "s16-smp-scaling-benchmark".to_owned(),
+                stress_run: 33,
+                stress_run_generation: 1,
+                hart_count: 2,
+                workload_units: 6,
+                baseline_single_hart_nanos: 120_000,
+                measured_smp_nanos: 72_000,
+                budget_nanos: 90_000,
+                speedup_milli: 1_666,
+                efficiency_milli: 833,
+                event_log_cursor: 27,
+                stress_safe_point_count: 3,
+                stress_rendezvous_count: 3,
+                stress_property_failures: 0,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 28,
+                note: "scaling benchmark".to_owned(),
+            });
+        package
+            .semantic
             .activation_resumes
             .push(ActivationResumeManifest {
                 id: 17,
@@ -7428,6 +7549,15 @@ mod tests {
             stress["references"]["last_snapshot_barrier"]["generation"],
             1
         );
+        let scaling = smp_scaling_benchmark_view_v1(&package.semantic.smp_scaling_benchmarks[0]);
+        assert_eq!(scaling["kind"], "smp-scaling-benchmark");
+        assert_eq!(scaling["owner"]["scenario"], "s16-smp-scaling-benchmark");
+        assert_eq!(scaling["references"]["stress_run"]["id"], 33);
+        assert_eq!(scaling["metrics"]["workload_units"], 6);
+        assert_eq!(scaling["metrics"]["measured_smp_nanos"], 72_000);
+        assert_eq!(scaling["metrics"]["speedup_milli"], 1_666);
+        assert_eq!(scaling["metrics"]["efficiency_milli"], 833);
+        assert_eq!(scaling["coverage"]["stress_property_failures"], 0);
         let resume = activation_resume_view_v1(&package.semantic.activation_resumes[0]);
         assert_eq!(resume["kind"], "activation-resume");
         assert_eq!(resume["references"]["activation"]["generation_before"], 3);
@@ -7563,6 +7693,14 @@ mod tests {
         assert_eq!(
             scheduler["references"]["smp_stress_runs"][0]["property_failures"],
             0
+        );
+        assert_eq!(
+            scheduler["last_transition"]["smp_scaling_benchmark_count"],
+            1
+        );
+        assert_eq!(
+            scheduler["references"]["smp_scaling_benchmarks"][0]["efficiency_milli"],
+            833
         );
         assert_eq!(scheduler["last_transition"]["activation_resume_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_wait_count"], 1);
@@ -7734,6 +7872,15 @@ mod tests {
                     && edge["to"]["kind"] == "smp-snapshot-barrier"
                     && edge["to"]["id"] == 32
                     && edge["relation"] == "last-snapshot-barrier"
+                    && edge["mode"] == "historical")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "smp-scaling-benchmark"
+                    && edge["to"]["kind"] == "smp-stress-run"
+                    && edge["to"]["id"] == 33
+                    && edge["relation"] == "scaling-stress-run"
                     && edge["mode"] == "historical")
         );
         assert!(

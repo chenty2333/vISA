@@ -24,7 +24,7 @@ use artifact_manifest::{
     SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
     SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
     SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
-    SmpSafePointParticipantManifest, SmpSnapshotBarrierManifest,
+    SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
     SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
@@ -1073,6 +1073,21 @@ fn record_preemptive_runtime_context_evidence(
                 note: "s15-record-property-clean-smp-sequence".to_owned(),
             },
         ),
+        CommandEnvelope::new(
+            99,
+            "target-executor-s16",
+            SemanticCommand::RecordSmpScalingBenchmark {
+                benchmark: 9601,
+                scenario: "target-executor-s16-smp-scaling-harness".to_owned(),
+                stress_run: 9501,
+                stress_run_generation: 1,
+                workload_units: 6,
+                baseline_single_hart_nanos: 120_000,
+                measured_smp_nanos: 72_000,
+                budget_nanos: 90_000,
+                note: "s16-record-semantic-smp-scaling-benchmark".to_owned(),
+            },
+        ),
     ];
     for command in commands {
         let result = semantic.apply_envelope(command);
@@ -2104,6 +2119,7 @@ fn demo_migration_package(
             smp_cleanup_quiescence_count: semantic.smp_cleanup_quiescence_count(),
             smp_snapshot_barrier_count: semantic.smp_snapshot_barrier_count(),
             smp_stress_run_count: semantic.smp_stress_run_count(),
+            smp_scaling_benchmark_count: semantic.smp_scaling_benchmark_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2234,6 +2250,11 @@ fn demo_migration_package(
                 .smp_stress_runs()
                 .iter()
                 .map(smp_stress_run_manifest)
+                .collect(),
+            smp_scaling_benchmarks: semantic
+                .smp_scaling_benchmarks()
+                .iter()
+                .map(smp_scaling_benchmark_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2695,6 +2716,25 @@ fn semantic_roots(
                     run.property_failures,
                     run.event_log_cursor,
                     run.generation
+                )
+            })
+            .collect(),
+        smp_scaling_benchmark_roots: semantic
+            .smp_scaling_benchmarks()
+            .iter()
+            .map(|benchmark| {
+                format!(
+                    "smp-scaling-benchmark id={} scenario={} stress_run={}@{} harts={} workload_units={} measured_nanos={} speedup_milli={} efficiency_milli={} generation={}",
+                    benchmark.id,
+                    benchmark.scenario,
+                    benchmark.stress_run,
+                    benchmark.stress_run_generation,
+                    benchmark.hart_count,
+                    benchmark.workload_units,
+                    benchmark.measured_smp_nanos,
+                    benchmark.speedup_milli,
+                    benchmark.efficiency_milli,
+                    benchmark.generation
                 )
             })
             .collect(),
@@ -3784,6 +3824,32 @@ fn smp_stress_run_manifest(run: &semantic_core::SmpStressRunRecord) -> SmpStress
         recorded_at_event: run.recorded_at_event,
         reason: run.reason.clone(),
         note: run.note.clone(),
+    }
+}
+
+fn smp_scaling_benchmark_manifest(
+    benchmark: &semantic_core::SmpScalingBenchmarkRecord,
+) -> SmpScalingBenchmarkManifest {
+    SmpScalingBenchmarkManifest {
+        id: benchmark.id,
+        scenario: benchmark.scenario.clone(),
+        stress_run: benchmark.stress_run,
+        stress_run_generation: benchmark.stress_run_generation,
+        hart_count: benchmark.hart_count,
+        workload_units: benchmark.workload_units,
+        baseline_single_hart_nanos: benchmark.baseline_single_hart_nanos,
+        measured_smp_nanos: benchmark.measured_smp_nanos,
+        budget_nanos: benchmark.budget_nanos,
+        speedup_milli: benchmark.speedup_milli,
+        efficiency_milli: benchmark.efficiency_milli,
+        event_log_cursor: benchmark.event_log_cursor,
+        stress_safe_point_count: benchmark.stress_safe_point_count,
+        stress_rendezvous_count: benchmark.stress_rendezvous_count,
+        stress_property_failures: benchmark.stress_property_failures,
+        generation: benchmark.generation,
+        state: benchmark.state.as_str().to_owned(),
+        recorded_at_event: benchmark.recorded_at_event,
+        note: benchmark.note.clone(),
     }
 }
 

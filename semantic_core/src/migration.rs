@@ -759,6 +759,16 @@ pub enum SemanticInvariantError {
     SmpStressRunMissingEvent {
         run: SmpStressRunId,
     },
+    SmpScalingBenchmarkInvalid {
+        benchmark: SmpScalingBenchmarkId,
+    },
+    SmpScalingBenchmarkMissingStressRun {
+        benchmark: SmpScalingBenchmarkId,
+        stress_run: SmpStressRunId,
+    },
+    SmpScalingBenchmarkMissingEvent {
+        benchmark: SmpScalingBenchmarkId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

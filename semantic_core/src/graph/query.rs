@@ -87,6 +87,7 @@ impl SemanticGraph {
         self.check_smp_cleanup_quiescence_invariants()?;
         self.check_smp_snapshot_barrier_invariants()?;
         self.check_smp_stress_run_invariants()?;
+        self.check_smp_scaling_benchmark_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;

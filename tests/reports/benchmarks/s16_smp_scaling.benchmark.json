@@ -1,0 +1,57 @@
+{
+  "schema": "vmos-benchmark-report",
+  "schema_version": 1,
+  "name": "s16_smp_scaling_host_validation",
+  "checkpoint": "S16-smp-scaling-benchmark",
+  "environment": {
+    "mode": "host-validation-semantic-harness",
+    "hardware_dependency": "none",
+    "measurement_source": "recorded SmpScalingBenchmark semantic object",
+    "no_goal": "not a calibrated hardware SMP scaling number"
+  },
+  "metrics": {
+    "benchmark_count": {
+      "value": 1,
+      "unit": "samples"
+    },
+    "hart_count": {
+      "value": 2,
+      "unit": "harts"
+    },
+    "workload_units": {
+      "value": 6,
+      "unit": "semantic-work-units"
+    },
+    "baseline_single_hart_nanos": {
+      "value": 120000,
+      "unit": "semantic-ns"
+    },
+    "measured_smp_nanos": {
+      "value": 72000,
+      "unit": "semantic-ns"
+    },
+    "budget_nanos": {
+      "value": 90000,
+      "unit": "semantic-ns"
+    },
+    "speedup_milli": {
+      "value": 1666,
+      "unit": "x1000"
+    },
+    "efficiency_milli": {
+      "value": 833,
+      "unit": "x1000"
+    },
+    "within_budget": {
+      "value": 1,
+      "unit": "boolean"
+    }
+  },
+  "validation": {
+    "ok": true,
+    "notes": [
+      "S16 records deterministic host-validation scaling evidence in the semantic graph.",
+      "Real calibrated SMP throughput and fairness benchmarks remain later substrate experiments."
+    ]
+  }
+}

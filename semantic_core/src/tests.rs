@@ -5902,6 +5902,130 @@ fn smp_runtime_s15_rejects_incomplete_or_dirty_property_run() {
     );
 }
 
+#[test]
+fn smp_runtime_s16_scaling_benchmark_records_semantic_metrics() {
+    let mut graph = s15_stress_graph(true);
+    assert!(graph.record_smp_stress_run_with_id(
+        191,
+        "s15-smp-stress-property",
+        3,
+        6,
+        "smp-stress-property-tests",
+        "stress run",
+    ));
+    let cursor_before = graph.event_log().cursor();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s16-test",
+        SemanticCommand::RecordSmpScalingBenchmark {
+            benchmark: 201,
+            scenario: "s16-smp-scaling-benchmark".to_string(),
+            stress_run: 191,
+            stress_run_generation: 1,
+            workload_units: 6,
+            baseline_single_hart_nanos: 120_000,
+            measured_smp_nanos: 72_000,
+            budget_nanos: 90_000,
+            note: "semantic harness scaling benchmark".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.smp_scaling_benchmarks().len(), 1);
+    let benchmark = &graph.smp_scaling_benchmarks()[0];
+    assert_eq!(benchmark.id, 201);
+    assert_eq!(benchmark.stress_run, 191);
+    assert_eq!(benchmark.stress_run_generation, 1);
+    assert_eq!(benchmark.hart_count, 2);
+    assert_eq!(benchmark.workload_units, 6);
+    assert_eq!(benchmark.baseline_single_hart_nanos, 120_000);
+    assert_eq!(benchmark.measured_smp_nanos, 72_000);
+    assert_eq!(benchmark.budget_nanos, 90_000);
+    assert_eq!(benchmark.speedup_milli, 1_666);
+    assert_eq!(benchmark.efficiency_milli, 833);
+    assert_eq!(benchmark.event_log_cursor, cursor_before);
+    assert_eq!(benchmark.stress_safe_point_count, 3);
+    assert_eq!(benchmark.stress_rendezvous_count, 3);
+    assert_eq!(benchmark.stress_property_failures, 0);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "SmpScalingBenchmarkRecorded benchmark=201 stress_run=191@1 harts=2 workload_units=6 measured_nanos=72000 budget_nanos=90000 speedup_milli=1666 efficiency_milli=833 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s16_rejects_unbacked_or_invalid_scaling_benchmark() {
+    let mut graph = s15_stress_graph(true);
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s16-test",
+        SemanticCommand::RecordSmpScalingBenchmark {
+            benchmark: 201,
+            scenario: "s16-smp-scaling-benchmark".to_string(),
+            stress_run: 191,
+            stress_run_generation: 1,
+            workload_units: 6,
+            baseline_single_hart_nanos: 120_000,
+            measured_smp_nanos: 72_000,
+            budget_nanos: 90_000,
+            note: "missing stress must reject".to_string(),
+        },
+    ));
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["smp scaling benchmark missing stress run evidence".to_string()]
+    );
+
+    assert!(graph.record_smp_stress_run_with_id(
+        191,
+        "s15-smp-stress-property",
+        3,
+        6,
+        "smp-stress-property-tests",
+        "stress run",
+    ));
+    let budget_rejected = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s16-test",
+        SemanticCommand::RecordSmpScalingBenchmark {
+            benchmark: 202,
+            scenario: "s16-smp-scaling-benchmark".to_string(),
+            stress_run: 191,
+            stress_run_generation: 1,
+            workload_units: 6,
+            baseline_single_hart_nanos: 120_000,
+            measured_smp_nanos: 100_000,
+            budget_nanos: 90_000,
+            note: "budget overrun must reject".to_string(),
+        },
+    ));
+    assert_eq!(budget_rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        budget_rejected.violations,
+        vec!["smp scaling benchmark exceeds budget".to_string()]
+    );
+
+    assert!(graph.record_smp_scaling_benchmark_with_id(
+        201,
+        "s16-smp-scaling-benchmark",
+        191,
+        1,
+        6,
+        120_000,
+        72_000,
+        90_000,
+        "semantic harness scaling benchmark",
+    ));
+    graph.corrupt_smp_scaling_benchmark_speedup_for_test(201, 1_999);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::SmpScalingBenchmarkInvalid { benchmark: 201 })
+    );
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

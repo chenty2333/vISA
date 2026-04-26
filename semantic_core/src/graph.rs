@@ -26,6 +26,7 @@ pub struct SemanticGraph {
     smp_cleanup_quiescence: Vec<SmpCleanupQuiescenceRecord>,
     smp_snapshot_barriers: Vec<SmpSnapshotBarrierRecord>,
     smp_stress_runs: Vec<SmpStressRunRecord>,
+    smp_scaling_benchmarks: Vec<SmpScalingBenchmarkRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -63,6 +64,7 @@ pub struct SemanticGraph {
     next_smp_cleanup_quiescence_id: SmpCleanupQuiescenceId,
     next_smp_snapshot_barrier_id: SmpSnapshotBarrierId,
     next_smp_stress_run_id: SmpStressRunId,
+    next_smp_scaling_benchmark_id: SmpScalingBenchmarkId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -100,6 +102,7 @@ mod scheduler;
 mod smp_cleanup_quiescence;
 mod smp_code_publish;
 mod smp_safe_point;
+mod smp_scaling;
 mod smp_snapshot_barrier;
 mod smp_stress;
 mod snapshot;
@@ -139,6 +142,7 @@ impl SemanticGraph {
             smp_cleanup_quiescence: Vec::new(),
             smp_snapshot_barriers: Vec::new(),
             smp_stress_runs: Vec::new(),
+            smp_scaling_benchmarks: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -176,6 +180,7 @@ impl SemanticGraph {
             next_smp_cleanup_quiescence_id: 1,
             next_smp_snapshot_barrier_id: 1,
             next_smp_stress_run_id: 1,
+            next_smp_scaling_benchmark_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

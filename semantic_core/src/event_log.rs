@@ -242,6 +242,18 @@ pub enum EventKind {
         property_failures: u32,
         generation: Generation,
     },
+    SmpScalingBenchmarkRecorded {
+        benchmark: SmpScalingBenchmarkId,
+        stress_run: SmpStressRunId,
+        stress_run_generation: Generation,
+        hart_count: u32,
+        workload_units: u64,
+        measured_smp_nanos: u64,
+        budget_nanos: u64,
+        speedup_milli: u64,
+        efficiency_milli: u64,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -928,6 +940,20 @@ impl EventKind {
                 generation,
             } => format!(
                 "SmpStressRunRecorded run={run} scenario={scenario} iterations={iterations} harts={hart_count} safe_points={safe_point_count} rendezvous={rendezvous_count} property_failures={property_failures} generation={generation}"
+            ),
+            Self::SmpScalingBenchmarkRecorded {
+                benchmark,
+                stress_run,
+                stress_run_generation,
+                hart_count,
+                workload_units,
+                measured_smp_nanos,
+                budget_nanos,
+                speedup_milli,
+                efficiency_milli,
+                generation,
+            } => format!(
+                "SmpScalingBenchmarkRecorded benchmark={benchmark} stress_run={stress_run}@{stress_run_generation} harts={hart_count} workload_units={workload_units} measured_nanos={measured_smp_nanos} budget_nanos={budget_nanos} speedup_milli={speedup_milli} efficiency_milli={efficiency_milli} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,
