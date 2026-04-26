@@ -265,6 +265,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub smp_scaling_benchmark_count: usize,
     #[serde(default)]
+    pub device_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -381,6 +383,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub smp_scaling_benchmarks: Vec<SmpScalingBenchmarkManifest>,
     #[serde(default)]
+    pub device_objects: Vec<DeviceObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -476,6 +480,8 @@ pub struct SemanticRootSetManifest {
     pub smp_stress_run_roots: Vec<String>,
     #[serde(default)]
     pub smp_scaling_benchmark_roots: Vec<String>,
+    #[serde(default)]
+    pub device_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1100,6 +1106,23 @@ pub struct SmpScalingBenchmarkManifest {
     pub stress_safe_point_count: u32,
     pub stress_rendezvous_count: u32,
     pub stress_property_failures: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct DeviceObjectManifest {
+    pub id: u64,
+    pub name: String,
+    pub class: String,
+    pub resource: u64,
+    pub resource_generation: u64,
+    pub backend: String,
+    pub bus: String,
+    pub vendor: String,
+    pub model: String,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

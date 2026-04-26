@@ -254,6 +254,14 @@ pub enum EventKind {
         efficiency_milli: u64,
         generation: Generation,
     },
+    DeviceObjectRecorded {
+        device: DeviceObjectId,
+        resource: ResourceId,
+        resource_generation: Generation,
+        class: String,
+        backend: String,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -954,6 +962,16 @@ impl EventKind {
                 generation,
             } => format!(
                 "SmpScalingBenchmarkRecorded benchmark={benchmark} stress_run={stress_run}@{stress_run_generation} harts={hart_count} workload_units={workload_units} measured_nanos={measured_smp_nanos} budget_nanos={budget_nanos} speedup_milli={speedup_milli} efficiency_milli={efficiency_milli} generation={generation}"
+            ),
+            Self::DeviceObjectRecorded {
+                device,
+                resource,
+                resource_generation,
+                class,
+                backend,
+                generation,
+            } => format!(
+                "DeviceObjectRecorded device={device} resource={resource}@{resource_generation} class={class} backend={backend} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

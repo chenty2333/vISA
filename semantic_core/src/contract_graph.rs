@@ -1401,6 +1401,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::SmpSnapshotBarrier
             | ContractObjectKind::SmpStressRun
             | ContractObjectKind::SmpScalingBenchmark
+            | ContractObjectKind::DeviceObject
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

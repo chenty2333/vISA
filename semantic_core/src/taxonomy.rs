@@ -388,6 +388,21 @@ impl SmpScalingBenchmarkState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceObjectState {
+    Registered,
+    Removed,
+}
+
+impl DeviceObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Registered => "registered",
+            Self::Removed => "removed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

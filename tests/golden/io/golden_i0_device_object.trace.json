@@ -1,0 +1,94 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "I0-device-object",
+  "name": "golden_i0_device_object",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md"
+  ],
+  "no_goals": [
+    "real virtio device discovery",
+    "real DMA/MMIO/IRQ access",
+    "network or block vertical implementation",
+    "smoltcp, virtio-drivers, fatfs, or ext4 adapter integration",
+    "driver store binding policy"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "register-resource",
+        "resource": "resource:14@1",
+        "kind": "device",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "record-device-object",
+        "device": "device:9701@1",
+        "resource": "resource:14@1",
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "record-device-object",
+        "resource_kind": "fd",
+        "expected": "rejected",
+        "violation": "device object resource kind is not device-capable"
+      },
+      {
+        "id": 4,
+        "command": "record-device-object",
+        "resource": "resource:14@2",
+        "expected": "rejected",
+        "violation": "device object resource generation mismatch"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "DeviceObjectRecorded",
+      "device": "device:9701@1",
+      "resource": "resource:14@1",
+      "class": "fake-device",
+      "backend": "fake-io-backend"
+    }
+  ],
+  "expected": {
+    "views": {
+      "device": {
+        "id": 9701,
+        "generation": 1,
+        "state": "registered",
+        "name": "fake-io0",
+        "class": "fake-device",
+        "backend": "fake-io-backend",
+        "resource": "resource:14@1"
+      },
+      "graph-live": {
+        "edges": [
+          "device:9701@1 --device-resource--> resource:14@1"
+        ]
+      }
+    },
+    "invariants": [
+      "DeviceObject must reference an exact live device-capable Resource generation",
+      "DeviceObject name, class, and backend must be nonempty",
+      "DeviceObject resource handle is live edge evidence, not adapter-owned truth",
+      "Non-device resources cannot back DeviceObject",
+      "Stale resource generation cannot back DeviceObject"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "io_runtime_i0_device_object_records_resource_identity",
+      "io_runtime_i0_rejects_stale_or_non_device_resource",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "semantic_roots_reject_device_object_root_mismatch"
+    ]
+  }
+}

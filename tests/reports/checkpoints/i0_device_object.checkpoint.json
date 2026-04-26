@@ -1,0 +1,152 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "I0-device-object",
+  "phase": "Phase 3 IO Semantic Core",
+  "status": "pass",
+  "scope": [
+    "Add DeviceObject as the first IO semantic core object",
+    "Bind DeviceObject to an exact live device-capable Resource generation",
+    "Expose DeviceObject through semantic package roots/counts, target_executor host-validation output, osctl ViewV1, replay roots, and graph edges",
+    "Reject stale resource generations and non-device ResourceKind values"
+  ],
+  "no_goals": [
+    "Real virtio device discovery",
+    "Real DMA/MMIO/IRQ access",
+    "Network or block vertical implementation",
+    "smoltcp, virtio-drivers, fatfs, or ext4 adapter integration",
+    "Driver store binding policy"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/device_object.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/io/golden_i0_device_object.trace.json",
+    "tests/reports/checkpoints/i0_device_object.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/io/golden_i0_device_object.trace.json",
+    "tests/reports/checkpoints/i0_device_object.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "DeviceObject is layered over ResourceRecord instead of duplicating resource lifecycle ownership",
+      "DeviceObject references exact resource generation and rejects stale handles",
+      "DeviceObject accepts only device-capable ResourceKind values",
+      "osctl uses an explicit ViewV1 for device output rather than dumping internal records",
+      "No adapter crate state, real virtio discovery, DMA/MMIO/IRQ behavior, or network/block vertical logic was mixed into I0"
+    ],
+    "residual_notes": [
+      "I1 should add QueueObject and keep queue adapter state out of semantic_core",
+      "I7 should add capability gates over DeviceObject-backed MMIO/DMA/IRQ resources",
+      "I8 should bind DriverStore to DeviceObject generation"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core io_runtime_i0",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core device_object",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- device list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only && python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "python osctl device/contract/history assertions",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/io/golden_i0_device_object.trace.json",
+    "osctl_views": [
+      "osctl device list --json <migration.json>",
+      "osctl graph --history --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "device_object_roots",
+      "resource_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 261,
+      "resource_count": 14,
+      "device_object_count": 1,
+      "device": "device:9701@1",
+      "resource": "resource:14@1"
+    }
+  },
+  "residual_gaps": [
+    "I1 QueueObject remains unimplemented"
+  ],
+  "next_checkpoint": "I1-queue-object"
+}

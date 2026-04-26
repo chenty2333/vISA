@@ -18,6 +18,7 @@ pub type SmpCleanupQuiescenceId = u64;
 pub type SmpSnapshotBarrierId = u64;
 pub type SmpStressRunId = u64;
 pub type SmpScalingBenchmarkId = u64;
+pub type DeviceObjectId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

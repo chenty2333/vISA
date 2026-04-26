@@ -238,6 +238,18 @@ pub enum SemanticCommand {
         budget_nanos: u64,
         note: String,
     },
+    RecordDeviceObject {
+        device: DeviceObjectId,
+        name: String,
+        class: String,
+        resource: ResourceId,
+        resource_generation: Generation,
+        backend: String,
+        bus: String,
+        vendor: String,
+        model: String,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -465,6 +477,7 @@ impl SemanticCommand {
             Self::ValidateSmpSnapshotBarrier { .. } => "validate-smp-snapshot-barrier",
             Self::RecordSmpStressRun { .. } => "record-smp-stress-run",
             Self::RecordSmpScalingBenchmark { .. } => "record-smp-scaling-benchmark",
+            Self::RecordDeviceObject { .. } => "record-device-object",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1565,6 +1578,24 @@ impl SemanticGraph {
                     *budget_nanos,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordDeviceObject {
+                device,
+                name,
+                class,
+                resource,
+                resource_generation,
+                backend,
+                ..
+            } => self
+                .validate_device_object(
+                    *device,
+                    name,
+                    class,
+                    *resource,
+                    *resource_generation,
+                    backend,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2446,6 +2477,29 @@ impl SemanticGraph {
                 baseline_single_hart_nanos,
                 measured_smp_nanos,
                 budget_nanos,
+                &note,
+            ),
+            SemanticCommand::RecordDeviceObject {
+                device,
+                name,
+                class,
+                resource,
+                resource_generation,
+                backend,
+                bus,
+                vendor,
+                model,
+                note,
+            } => self.record_device_object_with_id(
+                device,
+                &name,
+                &class,
+                resource,
+                resource_generation,
+                &backend,
+                &bus,
+                &vendor,
+                &model,
                 &note,
             ),
             SemanticCommand::ResumeActivation {

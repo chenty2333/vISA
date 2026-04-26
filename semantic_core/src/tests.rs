@@ -1251,6 +1251,122 @@ fn network_events_are_recorded_as_semantic_state() {
 }
 
 #[test]
+fn io_runtime_i0_device_object_records_resource_identity() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let generation = graph.resource_handle(resource).unwrap().generation;
+    let cursor_before = graph.event_log().cursor();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i0-test",
+        SemanticCommand::RecordDeviceObject {
+            device: 301,
+            name: "fake-io0".to_string(),
+            class: "fake-device".to_string(),
+            resource,
+            resource_generation: generation,
+            backend: "fake-io-backend".to_string(),
+            bus: "semantic-harness".to_string(),
+            vendor: "vmos".to_string(),
+            model: "fake-io-v1".to_string(),
+            note: "device object harness".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.device_objects().len(), 1);
+    let device = &graph.device_objects()[0];
+    assert_eq!(device.id, 301);
+    assert_eq!(device.resource, resource);
+    assert_eq!(device.resource_generation, generation);
+    assert_eq!(device.class, "fake-device");
+    assert_eq!(device.backend, "fake-io-backend");
+    assert_eq!(device.state, DeviceObjectState::Registered);
+    assert!(device.recorded_at_event > cursor_before);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "DeviceObjectRecorded device=301 resource={resource}@{generation} class=fake-device backend=fake-io-backend generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn io_runtime_i0_rejects_stale_or_non_device_resource() {
+    let mut graph = SemanticGraph::new();
+    let fd = graph.register_resource(ResourceKind::Fd, None, "fd:/not-a-device");
+    let fd_generation = graph.resource_handle(fd).unwrap().generation;
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i0-test",
+        SemanticCommand::RecordDeviceObject {
+            device: 301,
+            name: "fake-io0".to_string(),
+            class: "fake-device".to_string(),
+            resource: fd,
+            resource_generation: fd_generation,
+            backend: "fake-io-backend".to_string(),
+            bus: "semantic-harness".to_string(),
+            vendor: "vmos".to_string(),
+            model: "fake-io-v1".to_string(),
+            note: "fd resource must reject".to_string(),
+        },
+    ));
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["device object resource kind is not device-capable".to_string()]
+    );
+
+    let resource = graph.register_resource(ResourceKind::PacketDevice, None, "packet-device:net0");
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i0-test",
+        SemanticCommand::RecordDeviceObject {
+            device: 302,
+            name: "net0".to_string(),
+            class: "packet-device".to_string(),
+            resource,
+            resource_generation: 2,
+            backend: "fake-net-backend".to_string(),
+            bus: "semantic-harness".to_string(),
+            vendor: "vmos".to_string(),
+            model: "fake-net-v1".to_string(),
+            note: "stale resource generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale.violations,
+        vec!["device object resource generation mismatch".to_string()]
+    );
+
+    let generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        302,
+        "net0",
+        "packet-device",
+        resource,
+        generation,
+        "fake-net-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-net-v1",
+        "device object harness",
+    ));
+    graph.corrupt_device_object_resource_generation_for_test(302, generation + 1);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::DeviceObjectMissingResource {
+            device: 302,
+            resource
+        })
+    );
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

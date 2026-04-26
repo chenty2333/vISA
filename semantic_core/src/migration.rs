@@ -769,6 +769,16 @@ pub enum SemanticInvariantError {
     SmpScalingBenchmarkMissingEvent {
         benchmark: SmpScalingBenchmarkId,
     },
+    DeviceObjectInvalid {
+        device: DeviceObjectId,
+    },
+    DeviceObjectMissingResource {
+        device: DeviceObjectId,
+        resource: ResourceId,
+    },
+    DeviceObjectMissingEvent {
+        device: DeviceObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

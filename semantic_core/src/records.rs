@@ -663,6 +663,29 @@ impl SmpScalingBenchmarkRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeviceObjectRecord {
+    pub id: DeviceObjectId,
+    pub name: String,
+    pub class: String,
+    pub resource: ResourceId,
+    pub resource_generation: Generation,
+    pub backend: String,
+    pub bus: String,
+    pub vendor: String,
+    pub model: String,
+    pub generation: Generation,
+    pub state: DeviceObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl DeviceObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::DeviceObject, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

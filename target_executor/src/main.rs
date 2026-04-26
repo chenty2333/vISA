@@ -13,12 +13,12 @@ use artifact_manifest::{
     CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
     CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
     CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
-    CrossHartSchedulerDecisionManifest, GuestStateManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    IpiEventManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    RemoteParkManifest, RemotePreemptManifest, RequiredArtifactProfileManifest,
+    CrossHartSchedulerDecisionManifest, DeviceObjectManifest, GuestStateManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IpiEventManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, RemoteParkManifest, RemotePreemptManifest, RequiredArtifactProfileManifest,
     RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
     SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
     SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -46,7 +46,7 @@ use semantic_core::{
     EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HartState,
     HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
     IpiEventKind, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
-    PackageReplayValidator, ReplayPackageValidationState, RestartPolicy, RuntimeMode,
+    PackageReplayValidator, ReplayPackageValidationState, ResourceKind, RestartPolicy, RuntimeMode,
     SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind,
     SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState,
     TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
@@ -358,6 +358,12 @@ fn record_preemptive_runtime_context_evidence(
         .store_handle(cleanup_store)
         .map(|handle| handle.generation)
         .ok_or("p8 cleanup store handle is missing")?;
+    let io_device_resource =
+        semantic.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let io_device_resource_generation = semantic
+        .resource_handle(io_device_resource)
+        .map(|handle| handle.generation)
+        .ok_or("i0 device resource handle is missing")?;
     // The P8 cleanup command moves the store through Cleaning and Dead, bumping
     // the semantic generation once for each transition before S13 validates it.
     let cleanup_result_store_generation = cleanup_store_generation + 2;
@@ -1086,6 +1092,22 @@ fn record_preemptive_runtime_context_evidence(
                 measured_smp_nanos: 72_000,
                 budget_nanos: 90_000,
                 note: "s16-record-semantic-smp-scaling-benchmark".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            100,
+            "target-executor-i0",
+            SemanticCommand::RecordDeviceObject {
+                device: 9701,
+                name: "fake-io0".to_owned(),
+                class: "fake-device".to_owned(),
+                resource: io_device_resource,
+                resource_generation: io_device_resource_generation,
+                backend: "fake-io-backend".to_owned(),
+                bus: "semantic-harness".to_owned(),
+                vendor: "vmos".to_owned(),
+                model: "fake-io-v1".to_owned(),
+                note: "i0-record-device-object-harness".to_owned(),
             },
         ),
     ];
@@ -2120,6 +2142,7 @@ fn demo_migration_package(
             smp_snapshot_barrier_count: semantic.smp_snapshot_barrier_count(),
             smp_stress_run_count: semantic.smp_stress_run_count(),
             smp_scaling_benchmark_count: semantic.smp_scaling_benchmark_count(),
+            device_object_count: semantic.device_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2255,6 +2278,11 @@ fn demo_migration_package(
                 .smp_scaling_benchmarks()
                 .iter()
                 .map(smp_scaling_benchmark_manifest)
+                .collect(),
+            device_objects: semantic
+                .device_objects()
+                .iter()
+                .map(device_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2735,6 +2763,23 @@ fn semantic_roots(
                     benchmark.speedup_milli,
                     benchmark.efficiency_milli,
                     benchmark.generation
+                )
+            })
+            .collect(),
+        device_object_roots: semantic
+            .device_objects()
+            .iter()
+            .map(|device| {
+                format!(
+                    "device-object id={} name={} class={} resource={}@{} backend={} state={} generation={}",
+                    device.id,
+                    device.name,
+                    device.class,
+                    device.resource,
+                    device.resource_generation,
+                    device.backend,
+                    device.state.as_str(),
+                    device.generation
                 )
             })
             .collect(),
@@ -3850,6 +3895,24 @@ fn smp_scaling_benchmark_manifest(
         state: benchmark.state.as_str().to_owned(),
         recorded_at_event: benchmark.recorded_at_event,
         note: benchmark.note.clone(),
+    }
+}
+
+fn device_object_manifest(device: &semantic_core::DeviceObjectRecord) -> DeviceObjectManifest {
+    DeviceObjectManifest {
+        id: device.id,
+        name: device.name.clone(),
+        class: device.class.clone(),
+        resource: device.resource,
+        resource_generation: device.resource_generation,
+        backend: device.backend.clone(),
+        bus: device.bus.clone(),
+        vendor: device.vendor.clone(),
+        model: device.model.clone(),
+        generation: device.generation,
+        state: device.state.as_str().to_owned(),
+        recorded_at_event: device.recorded_at_event,
+        note: device.note.clone(),
     }
 }
 
