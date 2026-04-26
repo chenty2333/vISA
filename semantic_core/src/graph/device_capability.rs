@@ -147,7 +147,7 @@ impl SemanticGraph {
                     store: record.driver_store,
                 });
             };
-            if !self.device_capability_target_exists(record.target, record.class) {
+            if !self.device_capability_target_generation_exists(record.target, record.class) {
                 return Err(SemanticInvariantError::DeviceCapabilityMissingTarget {
                     device_capability: record.id,
                     target: record.target,
@@ -160,24 +160,30 @@ impl SemanticGraph {
                 });
             };
             let authority = AuthorityObjectRef::internal(record.class, record.target);
+            let active = record.state == DeviceCapabilityState::Active;
+            let revoked = record.state == DeviceCapabilityState::Revoked;
             if record.id == 0
                 || record.generation == 0
                 || record.driver_store_generation == 0
                 || record.target.generation == 0
                 || record.operation.is_empty()
                 || record.capability_generation == 0
-                || store_record.state == StoreState::Dead
                 || store_record.role != "driver"
-                || record.state != DeviceCapabilityState::Active
-                || capability_record.generation != record.capability_generation
-                || capability_record.revoked
+                || (!active && !revoked)
+                || (active && store_record.state == StoreState::Dead)
+                || (active && capability_record.generation != record.capability_generation)
+                || (active && capability_record.revoked)
+                || (active && !self.device_capability_target_exists(record.target, record.class))
+                || (revoked
+                    && (!capability_record.revoked
+                        || capability_record.generation <= record.capability_generation))
                 || capability_record.subject != store_record.package
                 || capability_record.object_ref != Some(authority)
                 || capability_record.owner_store != Some(record.driver_store)
                 || capability_record.owner_store_generation != Some(record.driver_store_generation)
                 || capability_record.handle_slot != record.handle_slot
-                || capability_record.handle_generation != record.handle_generation
-                || capability_record.handle_tag != record.handle_tag
+                || (active && capability_record.handle_generation != record.handle_generation)
+                || (active && capability_record.handle_tag != record.handle_tag)
                 || !capability_record.operations.contains(&record.operation)
                 || (capability_record.class.requires_manifest_declaration()
                     && !capability_record.manifest_decl)
@@ -264,6 +270,32 @@ impl SemanticGraph {
                     record.object_ref() == target && record.state == IrqLineObjectState::Registered
                 })
             }
+            _ => false,
+        }
+    }
+
+    fn device_capability_target_generation_exists(
+        &self,
+        target: ContractObjectRef,
+        class: CapabilityClass,
+    ) -> bool {
+        match (class, target.kind) {
+            (CapabilityClass::Device, ContractObjectKind::DeviceObject) => self
+                .device_objects
+                .iter()
+                .any(|record| record.object_ref() == target),
+            (CapabilityClass::DmaBuffer, ContractObjectKind::DmaBufferObject) => self
+                .dma_buffer_objects
+                .iter()
+                .any(|record| record.object_ref() == target),
+            (CapabilityClass::MmioRegion, ContractObjectKind::MmioRegionObject) => self
+                .mmio_region_objects
+                .iter()
+                .any(|record| record.object_ref() == target),
+            (CapabilityClass::IrqLine, ContractObjectKind::IrqLineObject) => self
+                .irq_line_objects
+                .iter()
+                .any(|record| record.object_ref() == target),
             _ => false,
         }
     }

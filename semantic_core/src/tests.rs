@@ -3567,6 +3567,332 @@ fn io_runtime_i9_rejects_stale_waits_and_cancels_device_faults() {
     );
 }
 
+fn setup_i10_io_cleanup_graph() -> (
+    SemanticGraph,
+    StoreId,
+    Generation,
+    DriverStoreBindingId,
+    IoWaitId,
+) {
+    let (mut graph, driver_store, driver_store_generation, device, mmio, dma, irq) =
+        setup_i7_device_capability_graph();
+    let device_capability = record_i8_device_probe_capability(
+        &mut graph,
+        driver_store,
+        driver_store_generation,
+        device,
+        1401,
+    );
+    assert!(graph.record_driver_store_binding_with_id(
+        1402,
+        driver_store,
+        driver_store_generation,
+        401,
+        1,
+        device_capability,
+        1,
+        "i10 binding harness",
+    ));
+
+    let mmio_cap = graph.grant_capability_with_authority_ref(
+        "driver.fake-io0",
+        "mmio.fake-io0.regs",
+        AuthorityObjectRef::internal(CapabilityClass::MmioRegion, mmio),
+        &["write32"],
+        "store",
+        "i10-test",
+        true,
+    );
+    let dma_cap = graph.grant_capability_with_authority_ref(
+        "driver.fake-io0",
+        "dma.fake-io0.rx0",
+        AuthorityObjectRef::internal(CapabilityClass::DmaBuffer, dma),
+        &["sync-for-device"],
+        "store",
+        "i10-test",
+        true,
+    );
+    let irq_cap = graph.grant_capability_with_authority_ref(
+        "driver.fake-io0",
+        "irq.fake-io0.rx",
+        AuthorityObjectRef::internal(CapabilityClass::IrqLine, irq),
+        &["ack"],
+        "store",
+        "i10-test",
+        true,
+    );
+    let mmio_handle = graph
+        .capabilities()
+        .record(mmio_cap)
+        .and_then(|record| record.store_local_handle(vec!["write32".to_string()]))
+        .unwrap();
+    let dma_handle = graph
+        .capabilities()
+        .record(dma_cap)
+        .and_then(|record| record.store_local_handle(vec!["sync-for-device".to_string()]))
+        .unwrap();
+    let irq_handle = graph
+        .capabilities()
+        .record(irq_cap)
+        .and_then(|record| record.store_local_handle(vec!["ack".to_string()]))
+        .unwrap();
+    assert!(graph.record_device_capability_with_id(
+        1403,
+        driver_store,
+        driver_store_generation,
+        mmio,
+        CapabilityClass::MmioRegion,
+        "write32",
+        mmio_handle,
+        "i10 mmio capability",
+    ));
+    assert!(graph.record_device_capability_with_id(
+        1404,
+        driver_store,
+        driver_store_generation,
+        dma,
+        CapabilityClass::DmaBuffer,
+        "sync-for-device",
+        dma_handle,
+        "i10 dma capability",
+    ));
+    assert!(graph.record_device_capability_with_id(
+        1405,
+        driver_store,
+        driver_store_generation,
+        irq,
+        CapabilityClass::IrqLine,
+        "ack",
+        irq_handle,
+        "i10 irq capability",
+    ));
+    assert!(
+        graph
+            .apply(SemanticCommand::CreateWait {
+                wait: 1406,
+                owner_task: None,
+                owner_store: Some(driver_store),
+                owner_store_generation: Some(driver_store_generation),
+                kind: SemanticWaitKind::DeviceIrq,
+                generation: 1,
+                blockers: vec![irq],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: Some("driver.fake-io0:cleanup-rx".to_string()),
+            })
+            .is_ok()
+    );
+    assert!(graph.record_io_wait_with_id(
+        1407,
+        1406,
+        1,
+        driver_store,
+        driver_store_generation,
+        401,
+        1,
+        1402,
+        1,
+        irq,
+        "i10 pending io wait",
+    ));
+    assert!(graph.record_irq_event_with_id(
+        1409,
+        901,
+        1,
+        401,
+        1,
+        driver_store,
+        driver_store_generation,
+        1,
+        "i10 historical irq event before cleanup",
+    ));
+    (graph, driver_store, driver_store_generation, 1402, 1407)
+}
+
+#[test]
+fn io_runtime_i10_cleanup_cancels_waits_revokes_caps_and_releases_io_objects() {
+    let (mut graph, driver_store, driver_store_generation, binding, io_wait) =
+        setup_i10_io_cleanup_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i10-test",
+        SemanticCommand::CleanupIoDriver {
+            cleanup: 1408,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            reason: "device-fault".to_string(),
+            note: "i10 io cleanup harness".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.io_cleanup_count(), 1);
+    let cleanup = &graph.io_cleanups()[0];
+    assert_eq!(cleanup.state, IoCleanupState::Completed);
+    assert_eq!(cleanup.cancelled_io_waits.len(), 1);
+    assert_eq!(cleanup.cancelled_io_waits[0].id, io_wait);
+    assert_eq!(cleanup.revoked_device_capabilities.len(), 4);
+    assert_eq!(cleanup.revoked_capabilities.len(), 4);
+    assert_eq!(cleanup.released_dma_buffers.len(), 1);
+    assert_eq!(cleanup.released_mmio_regions.len(), 1);
+    assert_eq!(cleanup.released_irq_lines.len(), 1);
+    assert!(
+        cleanup
+            .steps
+            .iter()
+            .any(|step| step.kind == IoCleanupStepKind::CancelIoWaits
+                && step.status == IoCleanupStepStatus::Done)
+    );
+
+    let wait = graph
+        .wait_records()
+        .iter()
+        .find(|record| record.id == 1406)
+        .unwrap();
+    assert_eq!(wait.state, WaitState::Cancelled);
+    assert_eq!(wait.cancel_reason, Some(WaitCancelReason::DeviceFault));
+    assert_eq!(graph.io_waits()[0].state, IoWaitState::Cancelled);
+    assert!(
+        graph
+            .device_capabilities()
+            .iter()
+            .filter(|record| record.driver_store == driver_store
+                && record.driver_store_generation == driver_store_generation)
+            .all(|record| record.state == DeviceCapabilityState::Revoked)
+    );
+    assert_eq!(
+        graph.driver_store_bindings()[0].state,
+        DriverStoreBindingState::Released
+    );
+    assert_eq!(
+        graph.dma_buffer_objects()[0].state,
+        DmaBufferObjectState::Released
+    );
+    assert_eq!(
+        graph.mmio_region_objects()[0].state,
+        MmioRegionObjectState::Released
+    );
+    assert_eq!(
+        graph.irq_line_objects()[0].state,
+        IrqLineObjectState::Released
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "IoCleanupCompleted cleanup=1408 driver_store=1@2 device=401@1 driver_binding=1402@1 cancelled_io_waits=1 revoked_device_capabilities=4 released_dma_buffers=1 released_mmio_regions=1 released_irq_lines=1 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+
+    let cleanup_count = graph.io_cleanup_count();
+    let replay = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i10-test",
+        SemanticCommand::CleanupIoDriver {
+            cleanup: 1408,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            reason: "device-fault".to_string(),
+            note: "i10 idempotent replay".to_string(),
+        },
+    ));
+    assert_eq!(replay.status, CommandStatus::Applied);
+    assert_eq!(graph.io_cleanup_count(), cleanup_count);
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn io_runtime_i10_rejects_stale_cleanup_and_blocks_post_cleanup_wait_reuse() {
+    let (mut graph, driver_store, driver_store_generation, binding, _io_wait) =
+        setup_i10_io_cleanup_graph();
+    let stale_device = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i10-test",
+        SemanticCommand::CleanupIoDriver {
+            cleanup: 1410,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 2,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            reason: "device-fault".to_string(),
+            note: "stale device cleanup must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_device.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_device.violations,
+        vec!["io cleanup device generation is missing or inactive".to_string()]
+    );
+
+    assert!(graph.cleanup_io_driver_for_device_fault_with_id(
+        1410,
+        driver_store,
+        driver_store_generation,
+        401,
+        1,
+        binding,
+        1,
+        "device-fault",
+        "cleanup before wait reuse",
+    ));
+    let irq = ContractObjectRef::new(ContractObjectKind::IrqLineObject, 901, 1);
+    assert!(
+        graph
+            .apply(SemanticCommand::CreateWait {
+                wait: 1411,
+                owner_task: None,
+                owner_store: Some(driver_store),
+                owner_store_generation: Some(driver_store_generation),
+                kind: SemanticWaitKind::DeviceIrq,
+                generation: 1,
+                blockers: vec![irq],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: None,
+            })
+            .is_ok()
+    );
+    let post_cleanup_wait = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i10-test",
+        SemanticCommand::RecordIoWait {
+            io_wait: 1412,
+            wait: 1411,
+            wait_generation: 1,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            blocker: irq,
+            note: "released binding must reject new io wait".to_string(),
+        },
+    ));
+    assert_eq!(post_cleanup_wait.status, CommandStatus::Rejected);
+    assert_eq!(
+        post_cleanup_wait.violations,
+        vec!["io wait driver binding generation is missing or inactive".to_string()]
+    );
+
+    graph.corrupt_io_cleanup_cancelled_wait_for_test(1410, 1407);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::IoWaitMissingBlocker {
+            io_wait: 1407,
+            blocker: irq,
+        })
+    );
+}
+
 #[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();

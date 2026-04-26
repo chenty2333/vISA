@@ -378,6 +378,31 @@ pub enum EventKind {
         reason: WaitCancelReason,
         generation: Generation,
     },
+    IoCleanupStarted {
+        cleanup: IoCleanupId,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        driver_binding: DriverStoreBindingId,
+        driver_binding_generation: Generation,
+        generation: Generation,
+    },
+    IoCleanupCompleted {
+        cleanup: IoCleanupId,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        driver_binding: DriverStoreBindingId,
+        driver_binding_generation: Generation,
+        cancelled_io_waits: usize,
+        revoked_device_capabilities: usize,
+        released_dma_buffers: usize,
+        released_mmio_regions: usize,
+        released_irq_lines: usize,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1236,6 +1261,35 @@ impl EventKind {
             } => format!(
                 "IoWaitCancelled io_wait={io_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
                 reason.as_str()
+            ),
+            Self::IoCleanupStarted {
+                cleanup,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                driver_binding,
+                driver_binding_generation,
+                generation,
+            } => format!(
+                "IoCleanupStarted cleanup={cleanup} driver_store={driver_store}@{driver_store_generation} device={device}@{device_generation} driver_binding={driver_binding}@{driver_binding_generation} generation={generation}"
+            ),
+            Self::IoCleanupCompleted {
+                cleanup,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                driver_binding,
+                driver_binding_generation,
+                cancelled_io_waits,
+                revoked_device_capabilities,
+                released_dma_buffers,
+                released_mmio_regions,
+                released_irq_lines,
+                generation,
+            } => format!(
+                "IoCleanupCompleted cleanup={cleanup} driver_store={driver_store}@{driver_store_generation} device={device}@{device_generation} driver_binding={driver_binding}@{driver_binding_generation} cancelled_io_waits={cancelled_io_waits} revoked_device_capabilities={revoked_device_capabilities} released_dma_buffers={released_dma_buffers} released_mmio_regions={released_mmio_regions} released_irq_lines={released_irq_lines} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

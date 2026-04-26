@@ -162,10 +162,14 @@ impl SemanticGraph {
                 || record.offset.checked_add(record.length).is_none()
                 || record.device_generation == 0
                 || record.resource_generation == 0
-                || device_record.state != DeviceObjectState::Registered
                 || resource_record.kind != ResourceKind::MmioRegion
-                || !resource_record.live
-                || record.state != MmioRegionObjectState::Registered
+                || !matches!(
+                    record.state,
+                    MmioRegionObjectState::Registered | MmioRegionObjectState::Released
+                )
+                || (record.state == MmioRegionObjectState::Registered
+                    && (device_record.state != DeviceObjectState::Registered
+                        || !resource_record.live))
                 || !Self::mmio_region_access_is_supported(record.access)
             {
                 return Err(SemanticInvariantError::MmioRegionObjectInvalid {

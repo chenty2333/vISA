@@ -16,16 +16,16 @@ use artifact_manifest::{
     CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
     DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
-    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
-    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoWaitManifest,
+    IpiEventManifest, IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
+    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -1461,6 +1461,69 @@ fn record_preemptive_runtime_context_evidence(
             .into());
         }
     }
+    let i10_commands = [
+        CommandEnvelope::new(
+            116,
+            "target-executor-i10",
+            SemanticCommand::CreateWait {
+                wait: 9965,
+                owner_task: None,
+                owner_store: Some(io_driver_store),
+                owner_store_generation: Some(io_driver_store_generation),
+                kind: SemanticWaitKind::DeviceIrq,
+                generation: 1,
+                blockers: vec![irq_ref],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: Some("i10-pending-io-wait-before-cleanup".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            117,
+            "target-executor-i10",
+            SemanticCommand::RecordIoWait {
+                io_wait: 9966,
+                wait: 9965,
+                wait_generation: 1,
+                driver_store: io_driver_store,
+                driver_store_generation: io_driver_store_generation,
+                device: 9701,
+                device_generation: 1,
+                driver_binding: 9961,
+                driver_binding_generation: 1,
+                blocker: irq_ref,
+                note: "i10-pending-io-wait-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            118,
+            "target-executor-i10",
+            SemanticCommand::CleanupIoDriver {
+                cleanup: 9967,
+                driver_store: io_driver_store,
+                driver_store_generation: io_driver_store_generation,
+                device: 9701,
+                device_generation: 1,
+                driver_binding: 9961,
+                driver_binding_generation: 1,
+                reason: "device-fault".to_owned(),
+                note: "i10-cleanup-driver-io-harness".to_owned(),
+            },
+        ),
+    ];
+    for command in i10_commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "preemptive runtime evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
     Ok(())
 }
 
@@ -2489,6 +2552,7 @@ fn demo_migration_package(
             device_capability_count: semantic.device_capability_count(),
             driver_store_binding_count: semantic.driver_store_binding_count(),
             io_wait_count: semantic.io_wait_count(),
+            io_cleanup_count: semantic.io_cleanup_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2671,6 +2735,11 @@ fn demo_migration_package(
                 .map(driver_store_binding_manifest)
                 .collect(),
             io_waits: semantic.io_waits().iter().map(io_wait_manifest).collect(),
+            io_cleanups: semantic
+                .io_cleanups()
+                .iter()
+                .map(io_cleanup_manifest)
+                .collect(),
             activation_resumes: semantic
                 .activation_resumes()
                 .iter()
@@ -3339,6 +3408,29 @@ fn semantic_roots(
                     io_wait.blocker.summary(),
                     io_wait.state.as_str(),
                     io_wait.generation
+                )
+            })
+            .collect(),
+        io_cleanup_roots: semantic
+            .io_cleanups()
+            .iter()
+            .map(|cleanup| {
+                format!(
+                    "io-cleanup id={} driver_store={}@{} device={}@{} binding={}@{} state={} generation={} cancelled_io_waits={} revoked_device_capabilities={} released_dma_buffers={} released_mmio_regions={} released_irq_lines={}",
+                    cleanup.id,
+                    cleanup.driver_store,
+                    cleanup.driver_store_generation,
+                    cleanup.device,
+                    cleanup.device_generation,
+                    cleanup.driver_binding,
+                    cleanup.driver_binding_generation,
+                    cleanup.state.as_str(),
+                    cleanup.generation,
+                    cleanup.cancelled_io_waits.len(),
+                    cleanup.revoked_device_capabilities.len(),
+                    cleanup.released_dma_buffers.len(),
+                    cleanup.released_mmio_regions.len(),
+                    cleanup.released_irq_lines.len()
                 )
             })
             .collect(),
@@ -4650,6 +4742,71 @@ fn io_wait_manifest(io_wait: &semantic_core::IoWaitRecord) -> IoWaitManifest {
     }
 }
 
+fn io_cleanup_manifest(cleanup: &semantic_core::IoCleanupRecord) -> IoCleanupManifest {
+    IoCleanupManifest {
+        id: cleanup.id,
+        driver_store: cleanup.driver_store,
+        driver_store_generation: cleanup.driver_store_generation,
+        device: cleanup.device,
+        device_generation: cleanup.device_generation,
+        driver_binding: cleanup.driver_binding,
+        driver_binding_generation: cleanup.driver_binding_generation,
+        generation: cleanup.generation,
+        state: cleanup.state.as_str().to_owned(),
+        reason: cleanup.reason.clone(),
+        started_at_event: cleanup.started_at_event,
+        completed_at_event: cleanup.completed_at_event,
+        cancelled_io_waits: cleanup
+            .cancelled_io_waits
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        revoked_device_capabilities: cleanup
+            .revoked_device_capabilities
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        revoked_capabilities: cleanup
+            .revoked_capabilities
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        released_dma_buffers: cleanup
+            .released_dma_buffers
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        released_mmio_regions: cleanup
+            .released_mmio_regions
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        released_irq_lines: cleanup
+            .released_irq_lines
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        steps: cleanup
+            .steps
+            .iter()
+            .map(|step| IoCleanupStepManifest {
+                kind: step.kind.as_str().to_owned(),
+                target: contract_object_ref_manifest(step.target),
+                observed_generation: step.observed_generation,
+                status: step.status.as_str().to_owned(),
+                event: step.event,
+            })
+            .collect(),
+        note: cleanup.note.clone(),
+    }
+}
+
 fn activation_resume_manifest(
     resume: &semantic_core::ActivationResumeRecord,
 ) -> ActivationResumeManifest {
@@ -5264,7 +5421,7 @@ fn restore_migration_package(
     if package.semantic.store_count > semantic.store_count() {
         return Err("migration package requires more stores than the executor rebuilt".into());
     }
-    if package.semantic.capability_count > semantic.capability_count() {
+    if package.semantic.capability_count > semantic.capabilities().records().len() {
         return Err(
             "migration package requires more capabilities than the executor rebound".into(),
         );

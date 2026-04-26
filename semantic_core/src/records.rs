@@ -912,6 +912,45 @@ impl IoWaitRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IoCleanupStepRecord {
+    pub kind: IoCleanupStepKind,
+    pub target: ContractObjectRef,
+    pub observed_generation: Generation,
+    pub status: IoCleanupStepStatus,
+    pub event: Option<EventId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IoCleanupRecord {
+    pub id: IoCleanupId,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub driver_binding: DriverStoreBindingId,
+    pub driver_binding_generation: Generation,
+    pub generation: Generation,
+    pub state: IoCleanupState,
+    pub reason: String,
+    pub started_at_event: EventId,
+    pub completed_at_event: EventId,
+    pub cancelled_io_waits: Vec<ContractObjectRef>,
+    pub revoked_device_capabilities: Vec<ContractObjectRef>,
+    pub revoked_capabilities: Vec<ContractObjectRef>,
+    pub released_dma_buffers: Vec<ContractObjectRef>,
+    pub released_mmio_regions: Vec<ContractObjectRef>,
+    pub released_irq_lines: Vec<ContractObjectRef>,
+    pub steps: Vec<IoCleanupStepRecord>,
+    pub note: String,
+}
+
+impl IoCleanupRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::IoCleanup, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

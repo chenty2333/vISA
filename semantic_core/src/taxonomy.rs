@@ -642,6 +642,61 @@ impl IoWaitState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IoCleanupState {
+    Completed,
+    SkippedStaleGeneration,
+}
+
+impl IoCleanupState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::SkippedStaleGeneration => "skipped-stale-generation",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IoCleanupStepKind {
+    CancelIoWaits,
+    RevokeDeviceCapabilities,
+    ReleaseDriverBinding,
+    ReleaseDmaBuffers,
+    ReleaseMmioRegions,
+    ReleaseIrqLines,
+}
+
+impl IoCleanupStepKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CancelIoWaits => "cancel-io-waits",
+            Self::RevokeDeviceCapabilities => "revoke-device-capabilities",
+            Self::ReleaseDriverBinding => "release-driver-binding",
+            Self::ReleaseDmaBuffers => "release-dma-buffers",
+            Self::ReleaseMmioRegions => "release-mmio-regions",
+            Self::ReleaseIrqLines => "release-irq-lines",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IoCleanupStepStatus {
+    Done,
+    SkippedNotPresent,
+    SkippedStaleGeneration,
+}
+
+impl IoCleanupStepStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::SkippedNotPresent => "skipped-not-present",
+            Self::SkippedStaleGeneration => "skipped-stale-generation",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

@@ -285,6 +285,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub io_wait_count: usize,
     #[serde(default)]
+    pub io_cleanup_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -421,6 +423,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub io_waits: Vec<IoWaitManifest>,
     #[serde(default)]
+    pub io_cleanups: Vec<IoCleanupManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -536,6 +540,8 @@ pub struct SemanticRootSetManifest {
     pub driver_store_binding_roots: Vec<String>,
     #[serde(default)]
     pub io_wait_roots: Vec<String>,
+    #[serde(default)]
+    pub io_cleanup_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1337,6 +1343,47 @@ pub struct IoWaitManifest {
     #[serde(default)]
     pub cancel_reason: Option<String>,
     pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IoCleanupManifest {
+    pub id: u64,
+    pub driver_store: u64,
+    pub driver_store_generation: u64,
+    pub device: u64,
+    pub device_generation: u64,
+    pub driver_binding: u64,
+    pub driver_binding_generation: u64,
+    pub generation: u64,
+    pub state: String,
+    pub reason: String,
+    pub started_at_event: u64,
+    pub completed_at_event: u64,
+    #[serde(default)]
+    pub cancelled_io_waits: Vec<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub revoked_device_capabilities: Vec<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub revoked_capabilities: Vec<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub released_dma_buffers: Vec<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub released_mmio_regions: Vec<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub released_irq_lines: Vec<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub steps: Vec<IoCleanupStepManifest>,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IoCleanupStepManifest {
+    pub kind: String,
+    pub target: ContractObjectRefManifest,
+    pub observed_generation: u64,
+    pub status: String,
+    #[serde(default)]
+    pub event: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

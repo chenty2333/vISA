@@ -315,8 +315,17 @@ impl SemanticGraph {
                     binding: record.driver_binding,
                 });
             };
-            if !self.io_wait_blocker_exists(record.blocker, record.device, record.device_generation)
-            {
+            let pending = record.state == IoWaitState::Pending;
+            let blocker_exists = if pending {
+                self.io_wait_blocker_exists(record.blocker, record.device, record.device_generation)
+            } else {
+                self.io_wait_blocker_generation_exists(
+                    record.blocker,
+                    record.device,
+                    record.device_generation,
+                )
+            };
+            if !blocker_exists {
                 return Err(SemanticInvariantError::IoWaitMissingBlocker {
                     io_wait: record.id,
                     blocker: record.blocker,
@@ -328,10 +337,15 @@ impl SemanticGraph {
                 || record.driver_store_generation == 0
                 || record.device_generation == 0
                 || record.driver_binding_generation == 0
-                || store_record.state == StoreState::Dead
                 || store_record.role != "driver"
-                || device_record.state != DeviceObjectState::Registered
-                || binding_record.state != DriverStoreBindingState::Bound
+                || (pending && store_record.state == StoreState::Dead)
+                || (pending && device_record.state != DeviceObjectState::Registered)
+                || (pending && binding_record.state != DriverStoreBindingState::Bound)
+                || (!pending
+                    && !matches!(
+                        binding_record.state,
+                        DriverStoreBindingState::Bound | DriverStoreBindingState::Released
+                    ))
                 || binding_record.driver_store != record.driver_store
                 || binding_record.driver_store_generation != record.driver_store_generation
                 || binding_record.device != record.device
@@ -517,6 +531,47 @@ impl SemanticGraph {
                     && record.device == device
                     && record.device_generation == device_generation
                     && record.state == MmioRegionObjectState::Registered
+            }),
+            _ => false,
+        }
+    }
+
+    fn io_wait_blocker_generation_exists(
+        &self,
+        blocker: ContractObjectRef,
+        device: DeviceObjectId,
+        device_generation: Generation,
+    ) -> bool {
+        match blocker.kind {
+            ContractObjectKind::DeviceObject => self.device_objects.iter().any(|record| {
+                record.id == blocker.id
+                    && record.generation == blocker.generation
+                    && record.id == device
+                    && record.generation == device_generation
+            }),
+            ContractObjectKind::QueueObject => self.queue_objects.iter().any(|record| {
+                record.id == blocker.id
+                    && record.generation == blocker.generation
+                    && record.device == device
+                    && record.device_generation == device_generation
+            }),
+            ContractObjectKind::IrqLineObject => self.irq_line_objects.iter().any(|record| {
+                record.id == blocker.id
+                    && record.generation == blocker.generation
+                    && record.device == device
+                    && record.device_generation == device_generation
+            }),
+            ContractObjectKind::DmaBufferObject => self.io_cleanup_dma_buffer_belongs_to_device(
+                blocker.id,
+                blocker.generation,
+                device,
+                device_generation,
+            ),
+            ContractObjectKind::MmioRegionObject => self.mmio_region_objects.iter().any(|record| {
+                record.id == blocker.id
+                    && record.generation == blocker.generation
+                    && record.device == device
+                    && record.device_generation == device_generation
             }),
             _ => false,
         }

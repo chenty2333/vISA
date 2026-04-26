@@ -37,6 +37,7 @@ pub struct SemanticGraph {
     device_capabilities: Vec<DeviceCapabilityRecord>,
     driver_store_bindings: Vec<DriverStoreBindingRecord>,
     io_waits: Vec<IoWaitRecord>,
+    io_cleanups: Vec<IoCleanupRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -85,6 +86,7 @@ pub struct SemanticGraph {
     next_device_capability_id: DeviceCapabilityId,
     next_driver_store_binding_id: DriverStoreBindingId,
     next_io_wait_id: IoWaitId,
+    next_io_cleanup_id: IoCleanupId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -116,6 +118,7 @@ mod driver_store_binding;
 mod hart;
 mod hart_event;
 mod interface;
+mod io_cleanup;
 mod io_wait;
 mod ipi;
 mod irq_event;
@@ -183,6 +186,7 @@ impl SemanticGraph {
             device_capabilities: Vec::new(),
             driver_store_bindings: Vec::new(),
             io_waits: Vec::new(),
+            io_cleanups: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -231,6 +235,7 @@ impl SemanticGraph {
             next_device_capability_id: 1,
             next_driver_store_binding_id: 1,
             next_io_wait_id: 1,
+            next_io_cleanup_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

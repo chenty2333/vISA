@@ -155,10 +155,14 @@ impl SemanticGraph {
                 || record.length > descriptor_record.length
                 || record.descriptor_generation == 0
                 || record.resource_generation == 0
-                || descriptor_record.state != DescriptorObjectState::Registered
                 || resource_record.kind != ResourceKind::DmaBuffer
-                || !resource_record.live
-                || record.state != DmaBufferObjectState::Registered
+                || !matches!(
+                    record.state,
+                    DmaBufferObjectState::Registered | DmaBufferObjectState::Released
+                )
+                || (record.state == DmaBufferObjectState::Registered
+                    && (descriptor_record.state != DescriptorObjectState::Registered
+                        || !resource_record.live))
                 || !Self::dma_buffer_access_is_supported(record.access)
                 || !Self::dma_buffer_access_matches_descriptor(
                     record.access,

@@ -194,17 +194,20 @@ impl SemanticGraph {
                     },
                 );
             };
+            let bound = record.state == DriverStoreBindingState::Bound;
+            let released = record.state == DriverStoreBindingState::Released;
             if record.id == 0
                 || record.generation == 0
                 || record.driver_store_generation == 0
                 || record.device_generation == 0
                 || record.device_capability_generation == 0
                 || record.capability_generation == 0
-                || store_record.state == StoreState::Dead
                 || store_record.role != "driver"
                 || device_record.state != DeviceObjectState::Registered
-                || record.state != DriverStoreBindingState::Bound
-                || device_capability.state != DeviceCapabilityState::Active
+                || (!bound && !released)
+                || (bound && store_record.state == StoreState::Dead)
+                || (bound && device_capability.state != DeviceCapabilityState::Active)
+                || (released && device_capability.state != DeviceCapabilityState::Revoked)
                 || device_capability.driver_store != record.driver_store
                 || device_capability.driver_store_generation != record.driver_store_generation
                 || device_capability.target != device_ref

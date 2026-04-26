@@ -152,10 +152,14 @@ impl SemanticGraph {
                 || record.generation == 0
                 || record.device_generation == 0
                 || record.resource_generation == 0
-                || device_record.state != DeviceObjectState::Registered
                 || resource_record.kind != ResourceKind::IrqLine
-                || !resource_record.live
-                || record.state != IrqLineObjectState::Registered
+                || !matches!(
+                    record.state,
+                    IrqLineObjectState::Registered | IrqLineObjectState::Released
+                )
+                || (record.state == IrqLineObjectState::Registered
+                    && (device_record.state != DeviceObjectState::Registered
+                        || !resource_record.live))
                 || !Self::irq_line_trigger_is_supported(record.trigger)
                 || !Self::irq_line_polarity_is_supported(record.polarity)
             {

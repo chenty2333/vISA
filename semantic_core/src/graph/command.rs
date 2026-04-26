@@ -360,6 +360,17 @@ pub enum SemanticCommand {
         reason: WaitCancelReason,
         note: String,
     },
+    CleanupIoDriver {
+        cleanup: IoCleanupId,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        driver_binding: DriverStoreBindingId,
+        driver_binding_generation: Generation,
+        reason: String,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -599,6 +610,7 @@ impl SemanticCommand {
             Self::RecordIoWait { .. } => "record-io-wait",
             Self::ResolveIoWait { .. } => "resolve-io-wait",
             Self::CancelIoWait { .. } => "cancel-io-wait",
+            Self::CleanupIoDriver { .. } => "cleanup-io-driver",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1993,6 +2005,28 @@ impl SemanticGraph {
                     ))
                 }
             }
+            SemanticCommand::CleanupIoDriver {
+                cleanup,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                driver_binding,
+                driver_binding_generation,
+                reason,
+                ..
+            } => self
+                .validate_io_cleanup(
+                    *cleanup,
+                    *driver_store,
+                    *driver_store_generation,
+                    *device,
+                    *device_generation,
+                    *driver_binding,
+                    *driver_binding_generation,
+                    reason,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -3102,6 +3136,27 @@ impl SemanticGraph {
                 reason,
                 note,
             } => self.cancel_io_wait(io_wait, io_wait_generation, errno, reason, &note),
+            SemanticCommand::CleanupIoDriver {
+                cleanup,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                driver_binding,
+                driver_binding_generation,
+                reason,
+                note,
+            } => self.cleanup_io_driver_for_device_fault_with_id(
+                cleanup,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                driver_binding,
+                driver_binding_generation,
+                &reason,
+                &note,
+            ),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,

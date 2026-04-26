@@ -178,7 +178,10 @@ impl SemanticGraph {
                 || record.device_generation == 0
                 || record.driver_store_generation == 0
                 || record.sequence == 0
-                || line_record.state != IrqLineObjectState::Registered
+                || !matches!(
+                    line_record.state,
+                    IrqLineObjectState::Registered | IrqLineObjectState::Released
+                )
                 || line_record.device != record.device
                 || line_record.device_generation != record.device_generation
                 || line_record.irq_number != record.irq_number
