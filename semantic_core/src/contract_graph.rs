@@ -1394,6 +1394,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::SchedulerDecision
             | ContractObjectKind::CrossHartSchedulerDecision
             | ContractObjectKind::ActivationMigration
+            | ContractObjectKind::SmpSafePoint
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

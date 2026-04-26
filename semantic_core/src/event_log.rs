@@ -186,6 +186,13 @@ pub enum EventKind {
         target_queue_generation: Generation,
         generation: Generation,
     },
+    SmpSafePointRecorded {
+        safe_point: SmpSafePointId,
+        coordinator_hart: HartId,
+        coordinator_hart_generation: Generation,
+        participant_count: u32,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -804,6 +811,15 @@ impl EventKind {
                 generation,
             } => format!(
                 "ActivationMigrated migration={migration} activation={activation}@{from_generation}->{to_generation} source_hart={source_hart}@{source_hart_generation} target_hart={target_hart}@{target_hart_generation} source_queue={source_queue}@{source_queue_generation} target_queue={target_queue}@{target_queue_generation} generation={generation}"
+            ),
+            Self::SmpSafePointRecorded {
+                safe_point,
+                coordinator_hart,
+                coordinator_hart_generation,
+                participant_count,
+                generation,
+            } => format!(
+                "SmpSafePointRecorded safe_point={safe_point} coordinator_hart={coordinator_hart}@{coordinator_hart_generation} participants={participant_count} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

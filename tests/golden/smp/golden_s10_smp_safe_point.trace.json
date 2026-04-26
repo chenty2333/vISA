@@ -1,0 +1,127 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "S10-smp-safe-point",
+  "name": "golden_s10_smp_safe_point",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "stop-the-world rendezvous",
+    "SMP code publish barrier",
+    "remote park implementation",
+    "real interrupt masking",
+    "real target-side execution",
+    "production scheduler fairness"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "record-smp-safe-point",
+        "safe_point": "smp-safe-point:9001@1",
+        "coordinator_hart": "hart:1@2",
+        "participants": [
+          "hart:1@2",
+          "hart:2@4"
+        ],
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "record-smp-safe-point",
+        "participants": [
+          "hart:1@2",
+          "hart:2@3"
+        ],
+        "expected": "rejected",
+        "violation": "smp safe point participant hart generation is missing"
+      },
+      {
+        "id": 3,
+        "command": "record-smp-safe-point",
+        "participants": [
+          "hart:1@2",
+          "hart:2@3"
+        ],
+        "hart:2@3": "running",
+        "expected": "rejected",
+        "violation": "smp safe point participant is not quiesced"
+      },
+      {
+        "id": 4,
+        "command": "record-smp-safe-point",
+        "participants": [
+          "hart:1@2",
+          "hart:2@4"
+        ],
+        "active_hart_not_listed": "hart:3@2",
+        "expected": "rejected",
+        "violation": "smp safe point missing active hart"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "SmpSafePointRecorded",
+      "safe_point": "smp-safe-point:9001@1",
+      "coordinator_hart": "hart:1@2",
+      "participant_count": 2
+    },
+    {
+      "kind": "HartEventAttribution",
+      "event_kind": "SmpSafePointCoordinatorRecorded",
+      "hart": "hart:1@2"
+    },
+    {
+      "kind": "HartEventAttribution",
+      "event_kind": "SmpSafePointParticipantRecorded",
+      "hart": "hart:2@4"
+    }
+  ],
+  "expected": {
+    "views": {
+      "smp-safe-point": {
+        "id": 9001,
+        "generation": 1,
+        "state": "recorded",
+        "coordinator_hart": "hart:1@2",
+        "participants": [
+          "hart:1@2",
+          "hart:2@4"
+        ],
+        "participant_count": 2
+      },
+      "scheduler": {
+        "smp_safe_point_count": 1,
+        "hart_event_attribution_count_delta": 2
+      },
+      "graph-history": {
+        "edges": [
+          "smp-safe-point:9001@1 --coordinator-hart--> hart:1@2",
+          "smp-safe-point:9001@1 --participant-hart--> hart:1@2",
+          "smp-safe-point:9001@1 --participant-hart--> hart:2@4"
+        ]
+      }
+    },
+    "invariants": [
+      "SMP safe point must include at least two harts",
+      "Coordinator hart must be an exact participant reference",
+      "Every non-faulted/non-offline hart must appear in the participant set",
+      "Participant harts must be quiesced with no current activation at the recorded generation",
+      "Safe point is historical evidence and survives later hart generation changes",
+      "Coordinator and participant hart event attribution must be visible"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "smp_runtime_s10_safe_point_records_quiesced_harts",
+      "smp_runtime_s10_rejects_stale_participant_and_running_hart",
+      "smp_runtime_s10_history_survives_later_hart_transition",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "semantic_roots_reject_smp_safe_point_root_mismatch"
+    ]
+  }
+}

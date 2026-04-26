@@ -1,6 +1,7 @@
 use super::*;
 use alloc::format;
 use alloc::string::ToString;
+use alloc::vec;
 use alloc::vec::Vec;
 
 fn handle_for(record: &CapabilityRecord, rights: &[&str]) -> CapabilityHandle {
@@ -3119,6 +3120,162 @@ fn smp_runtime_s9_history_still_requires_event_after_target_hart_advances() {
     assert_eq!(
         graph.check_invariants(),
         Err(SemanticInvariantError::ActivationMigrationMissingEvent { migration: 61 })
+    );
+}
+
+fn s10_smp_safe_point_graph() -> SemanticGraph {
+    let mut graph = s9_activation_migration_graph();
+    assert!(graph.migrate_runnable_activation_with_id(
+        61,
+        11,
+        4,
+        2,
+        2,
+        3,
+        2,
+        2,
+        4,
+        1,
+        2,
+        "rebalance",
+        "move runnable to hart0",
+    ));
+    graph
+}
+
+#[test]
+fn smp_runtime_s10_safe_point_records_quiesced_harts() {
+    let mut graph = s10_smp_safe_point_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s10-test",
+        SemanticCommand::RecordSmpSafePoint {
+            safe_point: 71,
+            coordinator_hart: 1,
+            coordinator_hart_generation: 2,
+            participants: vec![(1, 2), (2, 4)],
+            reason: "quiescent-boundary".to_string(),
+            note: "record all harts quiesced".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.smp_safe_points().len(), 1);
+    let safe_point = &graph.smp_safe_points()[0];
+    assert_eq!(safe_point.coordinator_hart, 1);
+    assert_eq!(safe_point.coordinator_hart_generation, 2);
+    assert_eq!(safe_point.participants.len(), 2);
+    assert!(safe_point.participants.iter().all(|participant| matches!(
+        participant.hart_state,
+        HartState::Idle | HartState::Parked
+    )
+        && participant.current_activation.is_none()));
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == safe_point.recorded_at_event
+            && record.hart == 1
+            && record.hart_generation == 2
+            && record.event_kind == "SmpSafePointCoordinatorRecorded"
+    }));
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == safe_point.recorded_at_event
+            && record.hart == 2
+            && record.hart_generation == 4
+            && record.event_kind == "SmpSafePointParticipantRecorded"
+    }));
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "SmpSafePointRecorded safe_point=71 coordinator_hart=1@2 participants=2 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s10_rejects_stale_participant_and_running_hart() {
+    let mut graph = s10_smp_safe_point_graph();
+    let stale_participant = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s10-test",
+        SemanticCommand::RecordSmpSafePoint {
+            safe_point: 71,
+            coordinator_hart: 1,
+            coordinator_hart_generation: 2,
+            participants: vec![(1, 2), (2, 3)],
+            reason: "quiescent-boundary".to_string(),
+            note: "must reject stale hart generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_participant.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp safe point participant hart generation is missing".to_string());
+    assert_eq!(stale_participant.violations, expected);
+
+    let mut running = s6_remote_preempt_graph();
+    let running_participant = running.apply_envelope(CommandEnvelope::new(
+        2,
+        "s10-test",
+        SemanticCommand::RecordSmpSafePoint {
+            safe_point: 71,
+            coordinator_hart: 1,
+            coordinator_hart_generation: 2,
+            participants: vec![(1, 2), (2, 3)],
+            reason: "quiescent-boundary".to_string(),
+            note: "must reject running hart".to_string(),
+        },
+    ));
+    assert_eq!(running_participant.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp safe point participant is not quiesced".to_string());
+    assert_eq!(running_participant.violations, expected);
+    assert!(running.smp_safe_points().is_empty());
+
+    let mut missing = s10_smp_safe_point_graph();
+    assert!(missing.register_hart_with_id(3, 2, "hart2", false, "created"));
+    assert!(missing.set_hart_state(3, 1, HartState::Idle, "ready", "idle"));
+    let missing_active_hart = missing.apply_envelope(CommandEnvelope::new(
+        3,
+        "s10-test",
+        SemanticCommand::RecordSmpSafePoint {
+            safe_point: 71,
+            coordinator_hart: 1,
+            coordinator_hart_generation: 2,
+            participants: vec![(1, 2), (2, 4)],
+            reason: "quiescent-boundary".to_string(),
+            note: "must reject partial safe point".to_string(),
+        },
+    ));
+    assert_eq!(missing_active_hart.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("smp safe point missing active hart".to_string());
+    assert_eq!(missing_active_hart.violations, expected);
+    assert!(missing.smp_safe_points().is_empty());
+    assert!(graph.smp_safe_points().is_empty());
+}
+
+#[test]
+fn smp_runtime_s10_history_survives_later_hart_transition() {
+    let mut graph = s10_smp_safe_point_graph();
+    assert!(graph.record_smp_safe_point_with_id(
+        71,
+        1,
+        2,
+        vec![(1, 2), (2, 4)],
+        "quiescent-boundary",
+        "record all harts quiesced",
+    ));
+    assert!(graph.set_hart_state(
+        1,
+        2,
+        HartState::Booting,
+        "advance after safe point",
+        "later"
+    ));
+    assert!(graph.check_invariants().is_ok());
+
+    graph.corrupt_smp_safe_point_event_for_test(71, 999);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::SmpSafePointMissingEvent { safe_point: 71 })
     );
 }
 

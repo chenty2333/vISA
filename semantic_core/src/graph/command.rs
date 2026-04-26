@@ -171,6 +171,14 @@ pub enum SemanticCommand {
         reason: String,
         note: String,
     },
+    RecordSmpSafePoint {
+        safe_point: SmpSafePointId,
+        coordinator_hart: HartId,
+        coordinator_hart_generation: Generation,
+        participants: Vec<(HartId, Generation)>,
+        reason: String,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -391,6 +399,7 @@ impl SemanticCommand {
             Self::RecordSchedulerDecision { .. } => "record-scheduler-decision",
             Self::RecordCrossHartSchedulerDecision { .. } => "record-cross-hart-scheduler-decision",
             Self::MigrateRunnableActivation { .. } => "migrate-runnable-activation",
+            Self::RecordSmpSafePoint { .. } => "record-smp-safe-point",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1363,6 +1372,22 @@ impl SemanticGraph {
                     reason,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordSmpSafePoint {
+                safe_point,
+                coordinator_hart,
+                coordinator_hart_generation,
+                participants,
+                reason,
+                ..
+            } => self
+                .validate_smp_safe_point(
+                    *safe_point,
+                    *coordinator_hart,
+                    *coordinator_hart_generation,
+                    participants,
+                    reason,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2116,6 +2141,21 @@ impl SemanticGraph {
                 source_hart_generation,
                 target_hart,
                 target_hart_generation,
+                &reason,
+                &note,
+            ),
+            SemanticCommand::RecordSmpSafePoint {
+                safe_point,
+                coordinator_hart,
+                coordinator_hart_generation,
+                participants,
+                reason,
+                note,
+            } => self.record_smp_safe_point_with_id(
+                safe_point,
+                coordinator_hart,
+                coordinator_hart_generation,
+                participants,
                 &reason,
                 &note,
             ),

@@ -20,6 +20,7 @@ pub struct SemanticGraph {
     scheduler_decisions: Vec<SchedulerDecisionRecord>,
     cross_hart_scheduler_decisions: Vec<CrossHartSchedulerDecisionRecord>,
     activation_migrations: Vec<ActivationMigrationRecord>,
+    smp_safe_points: Vec<SmpSafePointRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -51,6 +52,7 @@ pub struct SemanticGraph {
     next_scheduler_decision_id: SchedulerDecisionId,
     next_cross_hart_scheduler_decision_id: CrossHartSchedulerDecisionId,
     next_activation_migration_id: ActivationMigrationId,
+    next_smp_safe_point_id: SmpSafePointId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -85,6 +87,7 @@ mod remote;
 mod remote_park;
 mod resource;
 mod scheduler;
+mod smp_safe_point;
 mod snapshot;
 mod store;
 mod substrate;
@@ -115,6 +118,7 @@ impl SemanticGraph {
             scheduler_decisions: Vec::new(),
             cross_hart_scheduler_decisions: Vec::new(),
             activation_migrations: Vec::new(),
+            smp_safe_points: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -146,6 +150,7 @@ impl SemanticGraph {
             next_scheduler_decision_id: 1,
             next_cross_hart_scheduler_decision_id: 1,
             next_activation_migration_id: 1,
+            next_smp_safe_point_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

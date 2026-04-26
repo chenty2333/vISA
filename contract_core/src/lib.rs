@@ -79,6 +79,7 @@ pub enum ObjectKind {
     SchedulerDecision,
     CrossHartSchedulerDecision,
     ActivationMigration,
+    SmpSafePoint,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -123,6 +124,7 @@ impl ObjectKind {
             Self::SchedulerDecision => "scheduler-decision",
             Self::CrossHartSchedulerDecision => "cross-hart-scheduler-decision",
             Self::ActivationMigration => "activation-migration",
+            Self::SmpSafePoint => "smp-safe-point",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -324,6 +326,7 @@ typed_ref!(
     ObjectKind::CrossHartSchedulerDecision
 );
 typed_ref!(ActivationMigrationRef, ObjectKind::ActivationMigration);
+typed_ref!(SmpSafePointRef, ObjectKind::SmpSafePoint);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1528,6 +1531,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "activation migration root/count mismatch",
         ));
     }
+    if roots.smp_safe_point_roots.len() != package.semantic.smp_safe_point_count
+        || package.semantic.smp_safe_points.len() != package.semantic.smp_safe_point_count
+    {
+        return Err(ContractError::new("smp safe point root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2063,6 +2071,7 @@ mod tests {
                 scheduler_decision_count: 0,
                 cross_hart_scheduler_decision_count: 0,
                 activation_migration_count: 0,
+                smp_safe_point_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2116,6 +2125,7 @@ mod tests {
                 scheduler_decisions: Vec::new(),
                 cross_hart_scheduler_decisions: Vec::new(),
                 activation_migrations: Vec::new(),
+                smp_safe_points: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -2505,6 +2515,46 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "activation migration root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_smp_safe_point_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.smp_safe_point_count = 1;
+        package
+            .semantic
+            .smp_safe_points
+            .push(artifact_manifest::SmpSafePointManifest {
+                id: 8,
+                coordinator_hart: 1,
+                coordinator_hart_generation: 2,
+                participants: vec![
+                    artifact_manifest::SmpSafePointParticipantManifest {
+                        hart: 1,
+                        hart_generation: 2,
+                        hardware_hart: 0,
+                        hart_state: "idle".to_owned(),
+                        current_activation: None,
+                        current_activation_generation: None,
+                    },
+                    artifact_manifest::SmpSafePointParticipantManifest {
+                        hart: 2,
+                        hart_generation: 4,
+                        hardware_hart: 1,
+                        hart_state: "idle".to_owned(),
+                        current_activation: None,
+                        current_activation_generation: None,
+                    },
+                ],
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 10,
+                reason: "smp-safe-point".to_owned(),
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "smp safe point root/count mismatch");
     }
 
     #[test]
@@ -2979,6 +3029,8 @@ mod tests {
         assert!(CrossHartSchedulerDecisionRef::try_from_ref(cross_decision).is_ok());
         let migration = ObjectRef::new(ObjectKind::ActivationMigration, 9, 1).unwrap();
         assert!(ActivationMigrationRef::try_from_ref(migration).is_ok());
+        let safe_point = ObjectRef::new(ObjectKind::SmpSafePoint, 10, 1).unwrap();
+        assert!(SmpSafePointRef::try_from_ref(safe_point).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

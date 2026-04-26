@@ -251,6 +251,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub activation_migration_count: usize,
     #[serde(default)]
+    pub smp_safe_point_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -353,6 +355,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub activation_migrations: Vec<ActivationMigrationManifest>,
     #[serde(default)]
+    pub smp_safe_points: Vec<SmpSafePointManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -434,6 +438,8 @@ pub struct SemanticRootSetManifest {
     pub cross_hart_scheduler_decision_roots: Vec<String>,
     #[serde(default)]
     pub activation_migration_roots: Vec<String>,
+    #[serde(default)]
+    pub smp_safe_point_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -844,6 +850,29 @@ pub struct ActivationMigrationManifest {
     pub generation: u64,
     pub state: String,
     pub migrated_at_event: u64,
+    pub reason: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SmpSafePointParticipantManifest {
+    pub hart: u64,
+    pub hart_generation: u64,
+    pub hardware_hart: u32,
+    pub hart_state: String,
+    pub current_activation: Option<u64>,
+    pub current_activation_generation: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SmpSafePointManifest {
+    pub id: u64,
+    pub coordinator_hart: u64,
+    pub coordinator_hart_generation: u64,
+    pub participants: Vec<SmpSafePointParticipantManifest>,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
     pub reason: String,
     pub note: String,
 }

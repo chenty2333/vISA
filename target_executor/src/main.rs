@@ -21,11 +21,11 @@ use artifact_manifest::{
     RemoteParkManifest, RemotePreemptManifest, RequiredArtifactProfileManifest,
     RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
     SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
-    SemanticSnapshotManifest, StoreRecordManifest, SubstrateBoundaryManifest,
-    SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
-    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
-    TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
-    WaitRecordManifest,
+    SemanticSnapshotManifest, SmpSafePointManifest, SmpSafePointParticipantManifest,
+    StoreRecordManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
+    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
+    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TaskRecordManifest,
+    TimerInterruptManifest, TombstoneManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -565,6 +565,18 @@ fn record_preemptive_runtime_context_evidence(
                 target_hart_generation: 2,
                 reason: "s9-cross-hart-rebalance".to_owned(),
                 note: "s9-activation-migration-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            9_010,
+            "target-executor-s10",
+            SemanticCommand::RecordSmpSafePoint {
+                safe_point: 9001,
+                coordinator_hart: 1,
+                coordinator_hart_generation: 2,
+                participants: vec![(1, 2), (2, 4)],
+                reason: "s10-quiescent-boundary".to_owned(),
+                note: "s10-smp-safe-point-harness".to_owned(),
             },
         ),
         CommandEnvelope::new(
@@ -1959,6 +1971,7 @@ fn demo_migration_package(
             scheduler_decision_count: semantic.scheduler_decision_count(),
             cross_hart_scheduler_decision_count: semantic.cross_hart_scheduler_decision_count(),
             activation_migration_count: semantic.activation_migration_count(),
+            smp_safe_point_count: semantic.smp_safe_point_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2059,6 +2072,11 @@ fn demo_migration_package(
                 .activation_migrations()
                 .iter()
                 .map(activation_migration_manifest)
+                .collect(),
+            smp_safe_points: semantic
+                .smp_safe_points()
+                .iter()
+                .map(smp_safe_point_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2420,6 +2438,21 @@ fn semantic_roots(
                     migration.target_queue_generation,
                     migration.state.as_str(),
                     migration.generation
+                )
+            })
+            .collect(),
+        smp_safe_point_roots: semantic
+            .smp_safe_points()
+            .iter()
+            .map(|safe_point| {
+                format!(
+                    "smp-safe-point id={} coordinator_hart={}@{} participants={} state={} generation={}",
+                    safe_point.id,
+                    safe_point.coordinator_hart,
+                    safe_point.coordinator_hart_generation,
+                    safe_point.participants.len(),
+                    safe_point.state.as_str(),
+                    safe_point.generation
                 )
             })
             .collect(),
@@ -3299,6 +3332,31 @@ fn activation_migration_manifest(
         migrated_at_event: migration.migrated_at_event,
         reason: migration.reason.clone(),
         note: migration.note.clone(),
+    }
+}
+
+fn smp_safe_point_manifest(safe_point: &semantic_core::SmpSafePointRecord) -> SmpSafePointManifest {
+    SmpSafePointManifest {
+        id: safe_point.id,
+        coordinator_hart: u64::from(safe_point.coordinator_hart),
+        coordinator_hart_generation: safe_point.coordinator_hart_generation,
+        participants: safe_point
+            .participants
+            .iter()
+            .map(|participant| SmpSafePointParticipantManifest {
+                hart: u64::from(participant.hart),
+                hart_generation: participant.hart_generation,
+                hardware_hart: participant.hardware_hart,
+                hart_state: participant.hart_state.as_str().to_owned(),
+                current_activation: participant.current_activation,
+                current_activation_generation: participant.current_activation_generation,
+            })
+            .collect(),
+        generation: safe_point.generation,
+        state: safe_point.state.as_str().to_owned(),
+        recorded_at_event: safe_point.recorded_at_event,
+        reason: safe_point.reason.clone(),
+        note: safe_point.note.clone(),
     }
 }
 

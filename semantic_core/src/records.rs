@@ -387,6 +387,35 @@ impl ActivationMigrationRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmpSafePointParticipantRecord {
+    pub hart: HartId,
+    pub hart_generation: Generation,
+    pub hardware_hart: u32,
+    pub hart_state: HartState,
+    pub current_activation: Option<ActivationId>,
+    pub current_activation_generation: Option<Generation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmpSafePointRecord {
+    pub id: SmpSafePointId,
+    pub coordinator_hart: HartId,
+    pub coordinator_hart_generation: Generation,
+    pub participants: Vec<SmpSafePointParticipantRecord>,
+    pub generation: Generation,
+    pub state: SmpSafePointState,
+    pub recorded_at_event: EventId,
+    pub reason: String,
+    pub note: String,
+}
+
+impl SmpSafePointRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::SmpSafePoint, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

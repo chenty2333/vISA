@@ -644,6 +644,28 @@ pub enum SemanticInvariantError {
         migration: ActivationMigrationId,
         event: EventId,
     },
+    SmpSafePointInvalid {
+        safe_point: SmpSafePointId,
+    },
+    SmpSafePointMissingHart {
+        safe_point: SmpSafePointId,
+        hart: HartId,
+    },
+    SmpSafePointHartGenerationMismatch {
+        safe_point: SmpSafePointId,
+        hart: HartId,
+    },
+    SmpSafePointParticipantNotQuiesced {
+        safe_point: SmpSafePointId,
+        hart: HartId,
+    },
+    SmpSafePointMissingEvent {
+        safe_point: SmpSafePointId,
+    },
+    SmpSafePointMissingHartEventAttribution {
+        safe_point: SmpSafePointId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

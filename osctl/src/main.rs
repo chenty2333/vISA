@@ -15,8 +15,8 @@ use artifact_manifest::{
     MigrationPackageManifest, PreemptionLatencySampleManifest, PreemptionManifest,
     RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
-    TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
+    SmpSafePointManifest, StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest,
+    TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -232,6 +232,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "scheduler-decision"
         | "cross-hart-scheduler-decision"
         | "activation-migration"
+        | "smp-safe-point"
+        | "safepoint"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -402,7 +404,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -608,6 +610,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "scheduler-decision" => "scheduler-decision",
         "cross-hart-scheduler-decision" => "cross-hart-scheduler-decision",
         "activation-migration" => "activation-migration",
+        "smp-safe-point" | "safepoint" => "smp-safe-point",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -1188,6 +1191,44 @@ fn activation_migration_view_v1(migration: &ActivationMigrationManifest) -> serd
     })
 }
 
+fn smp_safe_point_view_v1(safe_point: &SmpSafePointManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "smp-safe-point",
+        "id": safe_point.id,
+        "generation": safe_point.generation,
+        "state": safe_point.state,
+        "owner": {
+            "coordinator_hart": {
+                "id": safe_point.coordinator_hart,
+                "generation": safe_point.coordinator_hart_generation,
+            },
+        },
+        "references": {
+            "participants": safe_point.participants.iter().map(|participant| serde_json::json!({
+                "hart": {
+                    "id": participant.hart,
+                    "generation": participant.hart_generation,
+                },
+                "hardware_hart": participant.hardware_hart,
+                "hart_state": participant.hart_state,
+                "current_activation": participant.current_activation,
+                "current_activation_generation": participant.current_activation_generation,
+            })).collect::<Vec<_>>(),
+            "event": {
+                "id": safe_point.recorded_at_event,
+            },
+        },
+        "reason": safe_point.reason,
+        "note": safe_point.note,
+        "last_transition": {
+            "recorded_at_event": safe_point.recorded_at_event,
+            "participant_count": safe_point.participants.len(),
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -1538,6 +1579,14 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "target_queue": migration.target_queue,
                 "target_queue_generation": migration.target_queue_generation,
             })).collect::<Vec<_>>(),
+            "smp_safe_points": package.semantic.smp_safe_points.iter().map(|safe_point| serde_json::json!({
+                "id": safe_point.id,
+                "generation": safe_point.generation,
+                "coordinator_hart": safe_point.coordinator_hart,
+                "coordinator_hart_generation": safe_point.coordinator_hart_generation,
+                "participant_count": safe_point.participants.len(),
+                "state": safe_point.state,
+            })).collect::<Vec<_>>(),
             "activation_resumes": package.semantic.activation_resumes.iter().map(|resume| serde_json::json!({
                 "id": resume.id,
                 "generation": resume.generation,
@@ -1592,6 +1641,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "scheduler_decision_count": package.semantic.scheduler_decision_count,
             "cross_hart_scheduler_decision_count": package.semantic.cross_hart_scheduler_decision_count,
             "activation_migration_count": package.semantic.activation_migration_count,
+            "smp_safe_point_count": package.semantic.smp_safe_point_count,
             "activation_resume_count": package.semantic.activation_resume_count,
             "activation_wait_count": package.semantic.activation_wait_count,
             "activation_cleanup_count": package.semantic.activation_cleanup_count,
@@ -2039,6 +2089,12 @@ fn stable_views_for_kind(
             .activation_migrations
             .iter()
             .map(activation_migration_view_v1)
+            .collect()),
+        "smp-safe-point" | "safepoint" => Ok(package
+            .semantic
+            .smp_safe_points
+            .iter()
+            .map(smp_safe_point_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -2686,7 +2742,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -2703,6 +2759,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.scheduler_decision_count,
             package.semantic.cross_hart_scheduler_decision_count,
             package.semantic.activation_migration_count,
+            package.semantic.smp_safe_point_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -2835,7 +2892,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -2869,6 +2926,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
             .cross_hart_scheduler_decision_roots
             .len(),
         package.semantic.roots.activation_migration_roots.len(),
+        package.semantic.roots.smp_safe_point_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -2904,6 +2962,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "activation-migration",
         &package.semantic.roots.activation_migration_roots,
+    );
+    print_roots(
+        "smp-safe-point",
+        &package.semantic.roots.smp_safe_point_roots,
     );
     print_roots(
         "activation-resume",
@@ -3648,6 +3710,29 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "historical",
             Some(migration.migrated_at_event),
         ));
+    }
+    for safe_point in &package.semantic.smp_safe_points {
+        let from = object_ref_json("smp-safe-point", safe_point.id, safe_point.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "hart",
+                safe_point.coordinator_hart,
+                safe_point.coordinator_hart_generation,
+            ),
+            "coordinator-hart",
+            "historical",
+            Some(safe_point.recorded_at_event),
+        ));
+        for participant in &safe_point.participants {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("hart", participant.hart, participant.hart_generation),
+                "participant-hart",
+                "historical",
+                Some(safe_point.recorded_at_event),
+            ));
+        }
     }
     for resume in &package.semantic.activation_resumes {
         let from = object_ref_json("activation-resume", resume.id, resume.generation);
@@ -5176,6 +5261,7 @@ fn print_replay_json(
             "remote_parks": package.semantic.roots.remote_park_roots.len(),
             "cross_hart_scheduler_decisions": package.semantic.roots.cross_hart_scheduler_decision_roots.len(),
             "activation_migrations": package.semantic.roots.activation_migration_roots.len(),
+            "smp_safe_points": package.semantic.roots.smp_safe_point_roots.len(),
             "resources": package.semantic.roots.resource_roots.len(),
             "authorities": package.semantic.roots.authority_roots.len(),
             "stores": package.semantic.roots.store_roots.len(),
@@ -5225,6 +5311,7 @@ fn print_replay_json(
             "remote_park_roots": &package.semantic.roots.remote_park_roots,
             "cross_hart_scheduler_decision_roots": &package.semantic.roots.cross_hart_scheduler_decision_roots,
             "activation_migration_roots": &package.semantic.roots.activation_migration_roots,
+            "smp_safe_point_roots": &package.semantic.roots.smp_safe_point_roots,
             "cleanup_roots": &package.semantic.roots.cleanup_roots,
             "activation_cleanup_roots": &package.semantic.roots.activation_cleanup_roots,
             "preemption_latency_roots": &package.semantic.roots.preemption_latency_roots,
@@ -5252,7 +5339,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -5279,6 +5366,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.remote_park_count,
         package.semantic.cross_hart_scheduler_decision_count,
         package.semantic.activation_migration_count,
+        package.semantic.smp_safe_point_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -5637,6 +5725,7 @@ mod tests {
         package.semantic.scheduler_decision_count = 1;
         package.semantic.cross_hart_scheduler_decision_count = 1;
         package.semantic.activation_migration_count = 1;
+        package.semantic.smp_safe_point_count = 1;
         package.semantic.activation_resume_count = 1;
         package.semantic.activation_wait_count = 1;
         package.semantic.activation_cleanup_count = 1;
@@ -5926,6 +6015,34 @@ mod tests {
                 reason: "rebalance".to_owned(),
                 note: "activation migration".to_owned(),
             });
+        package.semantic.smp_safe_points.push(SmpSafePointManifest {
+            id: 28,
+            coordinator_hart: 1,
+            coordinator_hart_generation: 2,
+            participants: vec![
+                artifact_manifest::SmpSafePointParticipantManifest {
+                    hart: 1,
+                    hart_generation: 2,
+                    hardware_hart: 0,
+                    hart_state: "idle".to_owned(),
+                    current_activation: None,
+                    current_activation_generation: None,
+                },
+                artifact_manifest::SmpSafePointParticipantManifest {
+                    hart: 2,
+                    hart_generation: 2,
+                    hardware_hart: 1,
+                    hart_state: "parked".to_owned(),
+                    current_activation: None,
+                    current_activation_generation: None,
+                },
+            ],
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 22,
+            reason: "quiescent-boundary".to_owned(),
+            note: "smp safe point".to_owned(),
+        });
         package
             .semantic
             .activation_resumes
@@ -6152,6 +6269,15 @@ mod tests {
         assert_eq!(migration["owner"]["target_hart"]["id"], 1);
         assert_eq!(migration["references"]["activation"]["generation_after"], 4);
         assert_eq!(migration["references"]["target_queue"]["id"], 1);
+        let safe_point = smp_safe_point_view_v1(&package.semantic.smp_safe_points[0]);
+        assert_eq!(safe_point["kind"], "smp-safe-point");
+        assert_eq!(safe_point["owner"]["coordinator_hart"]["id"], 1);
+        assert_eq!(safe_point["references"]["participants"][0]["hart"]["id"], 1);
+        assert_eq!(
+            safe_point["references"]["participants"][0]["hart"]["generation"],
+            2
+        );
+        assert_eq!(safe_point["last_transition"]["participant_count"], 2);
         let resume = activation_resume_view_v1(&package.semantic.activation_resumes[0]);
         assert_eq!(resume["kind"], "activation-resume");
         assert_eq!(resume["references"]["activation"]["generation_before"], 3);
@@ -6246,6 +6372,11 @@ mod tests {
             scheduler["references"]["activation_migrations"][0]["activation_generation_after"],
             4
         );
+        assert_eq!(scheduler["last_transition"]["smp_safe_point_count"], 1);
+        assert_eq!(
+            scheduler["references"]["smp_safe_points"][0]["participant_count"],
+            2
+        );
         assert_eq!(scheduler["last_transition"]["activation_resume_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_wait_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_cleanup_count"], 1);
@@ -6338,6 +6469,24 @@ mod tests {
                     && edge["to"]["kind"] == "activation"
                     && edge["to"]["generation"] == 4
                     && edge["relation"] == "migrated-to"
+                    && edge["mode"] == "historical")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "smp-safe-point"
+                    && edge["to"]["kind"] == "hart"
+                    && edge["to"]["id"] == 1
+                    && edge["relation"] == "coordinator-hart"
+                    && edge["mode"] == "historical")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "smp-safe-point"
+                    && edge["to"]["kind"] == "hart"
+                    && edge["to"]["id"] == 2
+                    && edge["relation"] == "participant-hart"
                     && edge["mode"] == "historical")
         );
         assert!(
