@@ -110,6 +110,22 @@ pub enum EventKind {
         kind: IpiEventKind,
         generation: Generation,
     },
+    RemoteActivationPreempted {
+        remote_preempt: RemotePreemptId,
+        ipi: IpiEventId,
+        ipi_generation: Generation,
+        source_hart: HartId,
+        source_hart_generation: Generation,
+        target_hart: HartId,
+        target_hart_generation_before: Generation,
+        target_hart_generation_after: Generation,
+        activation: ActivationId,
+        from_generation: Generation,
+        to_generation: Generation,
+        queue: RunnableQueueId,
+        queue_generation: Generation,
+        generation: Generation,
+    },
     RuntimeActivationPreempted {
         preemption: PreemptionId,
         activation: ActivationId,
@@ -659,6 +675,24 @@ impl EventKind {
             } => format!(
                 "IpiEventRecorded ipi={ipi} kind={} source_hart={source_hart}@{source_hart_generation} target_hart={target_hart}@{target_hart_generation} generation={generation}",
                 kind.as_str()
+            ),
+            Self::RemoteActivationPreempted {
+                remote_preempt,
+                ipi,
+                ipi_generation,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation_before,
+                target_hart_generation_after,
+                activation,
+                from_generation,
+                to_generation,
+                queue,
+                queue_generation,
+                generation,
+            } => format!(
+                "RemoteActivationPreempted remote_preempt={remote_preempt} ipi={ipi}@{ipi_generation} source_hart={source_hart}@{source_hart_generation} target_hart={target_hart}@{target_hart_generation_before}->{target_hart_generation_after} activation={activation}@{from_generation}->{to_generation} queue={queue}@{queue_generation} generation={generation}"
             ),
             Self::RuntimeActivationPreempted {
                 preemption,

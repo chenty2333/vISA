@@ -239,6 +239,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub ipi_event_count: usize,
     #[serde(default)]
+    pub remote_preempt_count: usize,
+    #[serde(default)]
     pub preemption_count: usize,
     #[serde(default)]
     pub scheduler_decision_count: usize,
@@ -333,6 +335,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub ipi_events: Vec<IpiEventManifest>,
     #[serde(default)]
+    pub remote_preempts: Vec<RemotePreemptManifest>,
+    #[serde(default)]
     pub preemptions: Vec<PreemptionManifest>,
     #[serde(default)]
     pub scheduler_decisions: Vec<SchedulerDecisionManifest>,
@@ -406,6 +410,8 @@ pub struct SemanticRootSetManifest {
     pub timer_interrupt_roots: Vec<String>,
     #[serde(default)]
     pub ipi_event_roots: Vec<String>,
+    #[serde(default)]
+    pub remote_preempt_roots: Vec<String>,
     #[serde(default)]
     pub preemption_roots: Vec<String>,
     #[serde(default)]
@@ -682,6 +688,27 @@ pub struct IpiEventManifest {
     pub state: String,
     pub recorded_at_event: u64,
     pub reason: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct RemotePreemptManifest {
+    pub id: u64,
+    pub ipi: u64,
+    pub ipi_generation: u64,
+    pub source_hart: u64,
+    pub source_hart_generation: u64,
+    pub target_hart: u64,
+    pub target_hart_generation_before: u64,
+    pub target_hart_generation_after: u64,
+    pub activation: u64,
+    pub activation_generation_before: u64,
+    pub activation_generation_after: u64,
+    pub queue: u64,
+    pub queue_generation: u64,
+    pub generation: u64,
+    pub state: String,
+    pub preempted_at_event: u64,
     pub note: String,
 }
 

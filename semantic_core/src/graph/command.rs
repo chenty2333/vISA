@@ -103,6 +103,19 @@ pub enum SemanticCommand {
         reason: String,
         note: String,
     },
+    RemotePreemptActivation {
+        remote_preempt: RemotePreemptId,
+        ipi: IpiEventId,
+        ipi_generation: Generation,
+        source_hart: HartId,
+        source_hart_generation: Generation,
+        target_hart: HartId,
+        target_hart_generation: Generation,
+        activation: ActivationId,
+        activation_generation: Generation,
+        queue: RunnableQueueId,
+        note: String,
+    },
     PreemptActivation {
         preemption: PreemptionId,
         activation: ActivationId,
@@ -335,6 +348,7 @@ impl SemanticCommand {
             Self::SavePreemptedContext { .. } => "save-preempted-context",
             Self::RecordTimerInterrupt { .. } => "record-timer-interrupt",
             Self::RecordIpiEvent { .. } => "record-ipi-event",
+            Self::RemotePreemptActivation { .. } => "remote-preempt-activation",
             Self::PreemptActivation { .. } => "preempt-activation",
             Self::RecordSchedulerDecision { .. } => "record-scheduler-decision",
             Self::ResumeActivation { .. } => "resume-activation",
@@ -1048,6 +1062,32 @@ impl SemanticGraph {
                     Ok(())
                 }
             }
+            SemanticCommand::RemotePreemptActivation {
+                remote_preempt,
+                ipi,
+                ipi_generation,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation,
+                activation,
+                activation_generation,
+                queue,
+                ..
+            } => self
+                .validate_remote_preempt_activation(
+                    *remote_preempt,
+                    *ipi,
+                    *ipi_generation,
+                    *source_hart,
+                    *source_hart_generation,
+                    *target_hart,
+                    *target_hart_generation,
+                    *activation,
+                    *activation_generation,
+                    *queue,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::PreemptActivation {
                 preemption,
                 activation,
@@ -1835,6 +1875,31 @@ impl SemanticGraph {
                 target_hart_generation,
                 kind,
                 &reason,
+                &note,
+            ),
+            SemanticCommand::RemotePreemptActivation {
+                remote_preempt,
+                ipi,
+                ipi_generation,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation,
+                activation,
+                activation_generation,
+                queue,
+                note,
+            } => self.remote_preempt_activation_with_id(
+                remote_preempt,
+                ipi,
+                ipi_generation,
+                source_hart,
+                source_hart_generation,
+                target_hart,
+                target_hart_generation,
+                activation,
+                activation_generation,
+                queue,
                 &note,
             ),
             SemanticCommand::PreemptActivation {

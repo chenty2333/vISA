@@ -88,6 +88,21 @@ impl IpiEventState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemotePreemptState {
+    Applied,
+    Rejected,
+}
+
+impl RemotePreemptState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskState {
     Runnable,
     Running,

@@ -17,13 +17,13 @@ use artifact_manifest::{
     IpiEventManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
     MigrationTargetManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
-    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
-    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
-    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
-    TrapRecordManifest, WaitRecordManifest,
+    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    StoreRecordManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
+    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
+    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TaskRecordManifest,
+    TimerInterruptManifest, TombstoneManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -338,6 +338,7 @@ fn record_preemptive_runtime_context_evidence(
     semantic.ensure_task(9001, FrontendKind::LinuxElf, "p0-preemptive-demo-task");
     semantic.ensure_task(9002, FrontendKind::LinuxElf, "p2-timer-demo-task");
     semantic.ensure_task(9003, FrontendKind::LinuxElf, "p8-cleanup-demo-task");
+    semantic.ensure_task(9004, FrontendKind::LinuxElf, "s6-remote-preempt-task");
     let cleanup_store = semantic.register_store(
         "p8.cleanup.driver",
         "p8-cleanup-driver.fake-aot",
@@ -406,6 +407,96 @@ fn record_preemptive_runtime_context_evidence(
                 kind: IpiEventKind::SchedulerKick,
                 reason: "s5-scheduler-kick".to_owned(),
                 note: "s5-ipi-event-model-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            6,
+            "target-executor-s6",
+            SemanticCommand::CreateRunnableQueue {
+                queue: 9004,
+                label: "remote-preempt-target-runnable-queue".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            7,
+            "target-executor-s6",
+            SemanticCommand::BindRunnableQueueOwner {
+                queue: 9004,
+                queue_generation: 1,
+                hart: 2,
+                hart_generation: 2,
+                note: "s6-target-queue-owned-by-secondary-hart".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            8,
+            "target-executor-s6",
+            SemanticCommand::CreateRuntimeActivation {
+                activation: 9004,
+                owner_task: 9004,
+                owner_task_generation: 1,
+                owner_store: None,
+                owner_store_generation: None,
+                code_object: None,
+            },
+        ),
+        CommandEnvelope::new(
+            9,
+            "target-executor-s6",
+            SemanticCommand::EnqueueRunnable {
+                queue: 9004,
+                activation: 9004,
+                activation_generation: 1,
+            },
+        ),
+        CommandEnvelope::new(
+            9_001,
+            "target-executor-s6",
+            SemanticCommand::DequeueRunnable {
+                queue: 9004,
+                activation: 9004,
+            },
+        ),
+        CommandEnvelope::new(
+            9_002,
+            "target-executor-s6",
+            SemanticCommand::BindHartCurrentActivation {
+                hart: 2,
+                hart_generation: 2,
+                activation: 9004,
+                activation_generation: 3,
+                note: "s6-dispatch-target-on-secondary-hart".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            9_003,
+            "target-executor-s6",
+            SemanticCommand::RecordIpiEvent {
+                ipi: 9002,
+                source_hart: 1,
+                source_hart_generation: 2,
+                target_hart: 2,
+                target_hart_generation: 3,
+                kind: IpiEventKind::SchedulerKick,
+                reason: "s6-remote-preempt-ipi".to_owned(),
+                note: "s6-remote-preempt-ipi-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            9_004,
+            "target-executor-s6",
+            SemanticCommand::RemotePreemptActivation {
+                remote_preempt: 9001,
+                ipi: 9002,
+                ipi_generation: 1,
+                source_hart: 1,
+                source_hart_generation: 2,
+                target_hart: 2,
+                target_hart_generation: 3,
+                activation: 9004,
+                activation_generation: 3,
+                queue: 9004,
+                note: "s6-remote-preempt-activation-harness".to_owned(),
             },
         ),
         CommandEnvelope::new(
@@ -1765,6 +1856,7 @@ fn demo_migration_package(
             saved_context_count: semantic.saved_context_count(),
             timer_interrupt_count: semantic.timer_interrupt_count(),
             ipi_event_count: semantic.ipi_event_count(),
+            remote_preempt_count: semantic.remote_preempt_count(),
             preemption_count: semantic.preemption_count(),
             scheduler_decision_count: semantic.scheduler_decision_count(),
             activation_resume_count: semantic.activation_resume_count(),
@@ -1837,6 +1929,11 @@ fn demo_migration_package(
                 .ipi_events()
                 .iter()
                 .map(ipi_event_manifest)
+                .collect(),
+            remote_preempts: semantic
+                .remote_preempts()
+                .iter()
+                .map(remote_preempt_manifest)
                 .collect(),
             preemptions: semantic
                 .preemptions()
@@ -2084,6 +2181,30 @@ fn semantic_roots(
                     ipi.target_hart_generation,
                     ipi.state.as_str(),
                     ipi.generation
+                )
+            })
+            .collect(),
+        remote_preempt_roots: semantic
+            .remote_preempts()
+            .iter()
+            .map(|remote| {
+                format!(
+                    "remote-preempt id={} ipi={}@{} source_hart={}@{} target_hart={}@{}->{} activation={}@{}->{} queue={}@{} state={} generation={}",
+                    remote.id,
+                    remote.ipi,
+                    remote.ipi_generation,
+                    remote.source_hart,
+                    remote.source_hart_generation,
+                    remote.target_hart,
+                    remote.target_hart_generation_before,
+                    remote.target_hart_generation_after,
+                    remote.activation,
+                    remote.activation_generation_before,
+                    remote.activation_generation_after,
+                    remote.queue,
+                    remote.queue_generation,
+                    remote.state.as_str(),
+                    remote.generation
                 )
             })
             .collect(),
@@ -2847,6 +2968,28 @@ fn ipi_event_manifest(ipi: &semantic_core::IpiEventRecord) -> IpiEventManifest {
         recorded_at_event: ipi.recorded_at_event,
         reason: ipi.reason.clone(),
         note: ipi.note.clone(),
+    }
+}
+
+fn remote_preempt_manifest(remote: &semantic_core::RemotePreemptRecord) -> RemotePreemptManifest {
+    RemotePreemptManifest {
+        id: remote.id,
+        ipi: remote.ipi,
+        ipi_generation: remote.ipi_generation,
+        source_hart: u64::from(remote.source_hart),
+        source_hart_generation: remote.source_hart_generation,
+        target_hart: u64::from(remote.target_hart),
+        target_hart_generation_before: remote.target_hart_generation_before,
+        target_hart_generation_after: remote.target_hart_generation_after,
+        activation: remote.activation,
+        activation_generation_before: remote.activation_generation_before,
+        activation_generation_after: remote.activation_generation_after,
+        queue: remote.queue,
+        queue_generation: remote.queue_generation,
+        generation: remote.generation,
+        state: remote.state.as_str().to_owned(),
+        preempted_at_event: remote.preempted_at_event,
+        note: remote.note.clone(),
     }
 }
 

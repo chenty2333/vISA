@@ -1,0 +1,162 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "S6-remote-preempt",
+  "phase": "Phase 2 Full SMP Runtime",
+  "status": "pass",
+  "scope": [
+    "Add a semantic remote preempt object caused by a SchedulerKick IPI",
+    "Make remote preempt clear the target hart current activation and requeue the activation",
+    "Expose remote preempt evidence through semantic package roots/counts and osctl ViewV1",
+    "Add history graph edges from remote preempt evidence to IPI, hart, activation, and queue generations"
+  ],
+  "no_goals": [
+    "Remote park",
+    "Activation migration",
+    "Cross-hart scheduler decision",
+    "Stop-the-world safe point",
+    "SMP code publish barrier",
+    "Real hardware IPI delivery",
+    "Target-side execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/graph/remote.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/smp/golden_s6_remote_preempt.trace.json",
+    "tests/reports/checkpoints/s6_remote_preempt.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/smp/golden_s6_remote_preempt.trace.json",
+    "tests/reports/checkpoints/s6_remote_preempt.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "Remote preempt was modeled as its own semantic object instead of overloading timer PreemptionRecord",
+      "Command preflight checks target hart generation before IPI binding mismatch so stale target identity is reported deterministically",
+      "Remote preempt history remains event- and attribution-validated after the activation generation advances",
+      "Remote preempt roots/counts are validated by contract_core instead of remaining untrusted package payload",
+      "osctl ViewV1 uses explicit id/generation references and graph history emits historical edges, not live ownership",
+      "Target executor exports remote preempt evidence from the canonical SemanticGraph instead of debug strings"
+    ],
+    "residual_notes": [
+      "S7 must define remote park as a separate command/evidence object",
+      "S8/S9 must define cross-hart scheduler decisions and activation migration separately from this remote-preempt requeue path"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core semantic_roots_reject_remote_preempt_root_mismatch",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core smp_runtime_s6",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only && python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- remote-preempt list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- scheduler list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python osctl remote-preempt/scheduler/contract/history assertions",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/smp/golden_s6_remote_preempt.trace.json",
+    "osctl_views": [
+      "osctl remote-preempt list --json <migration.json>",
+      "osctl scheduler list --json <migration.json>",
+      "osctl graph --history --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "remote_preempt_roots",
+      "ipi_event_roots",
+      "hart_event_attribution_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 239,
+      "ipi_event_count": 2,
+      "remote_preempt_count": 1,
+      "hart_count": 2,
+      "hart_event_attribution_count": 15
+    }
+  },
+  "residual_gaps": [
+    "S7 remote park remains unimplemented",
+    "S8 cross-hart scheduler decision remains unimplemented",
+    "S9 activation migration remains unimplemented"
+  ],
+  "next_checkpoint": "S7-remote-park"
+}

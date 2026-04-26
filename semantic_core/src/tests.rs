@@ -2374,6 +2374,231 @@ fn smp_runtime_s5_invariants_require_source_and_target_attribution() {
     );
 }
 
+fn s6_remote_preempt_graph() -> SemanticGraph {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "created"));
+    assert!(graph.set_hart_state(2, 1, HartState::Idle, "ready", "idle"));
+    graph.ensure_task(7, FrontendKind::LinuxElf, "remote-preempt-target");
+    assert!(graph.create_runnable_queue_with_id(2, "hart1-rq"));
+    assert!(graph.bind_runnable_queue_owner(2, 1, 2, 2, "hart1 owns queue"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(2, 11, 1));
+    assert!(graph.dequeue_runnable_activation(2, 11));
+    assert!(graph.bind_hart_current_activation(2, 2, 11, 3, "dispatch on hart1"));
+    assert!(graph.record_ipi_event_with_id(
+        21,
+        1,
+        2,
+        2,
+        3,
+        IpiEventKind::SchedulerKick,
+        "remote preempt",
+        "hart0 requests hart1 preempt",
+    ));
+    graph
+}
+
+#[test]
+fn smp_runtime_s6_remote_preempt_requeues_target_hart_activation() {
+    let mut graph = s6_remote_preempt_graph();
+
+    let remote = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s6-test",
+        SemanticCommand::RemotePreemptActivation {
+            remote_preempt: 31,
+            ipi: 21,
+            ipi_generation: 1,
+            source_hart: 1,
+            source_hart_generation: 2,
+            target_hart: 2,
+            target_hart_generation: 3,
+            activation: 11,
+            activation_generation: 3,
+            queue: 2,
+            note: "remote preempt activation".to_string(),
+        },
+    ));
+
+    assert_eq!(remote.status, CommandStatus::Applied);
+    assert_eq!(graph.remote_preempts().len(), 1);
+    assert_eq!(graph.remote_preempts()[0].ipi, 21);
+    assert_eq!(graph.remote_preempts()[0].target_hart_generation_before, 3);
+    assert_eq!(graph.remote_preempts()[0].target_hart_generation_after, 4);
+    assert_eq!(graph.remote_preempts()[0].activation_generation_after, 4);
+    let hart = graph
+        .harts()
+        .iter()
+        .find(|hart| hart.id == 2)
+        .expect("target hart");
+    assert_eq!(hart.state, HartState::Idle);
+    assert_eq!(hart.generation, 4);
+    assert_eq!(hart.current_activation, None);
+    let activation = graph
+        .runtime_activations()
+        .iter()
+        .find(|activation| activation.id == 11)
+        .expect("activation");
+    assert_eq!(activation.state, RuntimeActivationState::Runnable);
+    assert_eq!(activation.generation, 4);
+    assert_eq!(activation.runnable_queue, Some(2));
+    assert!(
+        graph.runnable_queues()[0]
+            .entries
+            .iter()
+            .any(|entry| entry.activation == 11 && entry.activation_generation == 4)
+    );
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == graph.remote_preempts()[0].preempted_at_event
+            && record.hart == 1
+            && record.event_kind == "RemotePreemptSourceRecorded"
+    }));
+    assert!(graph.hart_event_attributions().iter().any(|record| {
+        record.event == graph.remote_preempts()[0].preempted_at_event
+            && record.hart == 2
+            && record.hart_generation == 4
+            && record.event_kind == "RemotePreemptTargetRecorded"
+    }));
+    assert_eq!(
+        graph.event_log_tail(3)[0].kind.summary(),
+        "RemoteActivationPreempted remote_preempt=31 ipi=21@1 source_hart=1@2 target_hart=2@3->4 activation=11@3->4 queue=2@2 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s6_rejects_stale_ipi_and_wrong_target_generation() {
+    let mut graph = s6_remote_preempt_graph();
+
+    let stale_ipi = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s6-test",
+        SemanticCommand::RemotePreemptActivation {
+            remote_preempt: 31,
+            ipi: 21,
+            ipi_generation: 99,
+            source_hart: 1,
+            source_hart_generation: 2,
+            target_hart: 2,
+            target_hart_generation: 3,
+            activation: 11,
+            activation_generation: 3,
+            queue: 2,
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_ipi.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("remote preempt ipi generation is missing".to_string());
+    assert_eq!(stale_ipi.violations, expected);
+
+    let wrong_target = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s6-test",
+        SemanticCommand::RemotePreemptActivation {
+            remote_preempt: 32,
+            ipi: 21,
+            ipi_generation: 1,
+            source_hart: 1,
+            source_hart_generation: 2,
+            target_hart: 2,
+            target_hart_generation: 2,
+            activation: 11,
+            activation_generation: 3,
+            queue: 2,
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(wrong_target.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("remote preempt target hart generation is missing".to_string());
+    assert_eq!(wrong_target.violations, expected);
+    assert!(graph.remote_preempts().is_empty());
+}
+
+#[test]
+fn smp_runtime_s6_rejects_queue_not_owned_by_target_hart() {
+    let mut graph = s6_remote_preempt_graph();
+    assert!(graph.create_runnable_queue_with_id(3, "wrong-rq"));
+    assert!(graph.bind_runnable_queue_owner(3, 1, 1, 2, "hart0 owns wrong queue"));
+
+    let remote = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s6-test",
+        SemanticCommand::RemotePreemptActivation {
+            remote_preempt: 31,
+            ipi: 21,
+            ipi_generation: 1,
+            source_hart: 1,
+            source_hart_generation: 2,
+            target_hart: 2,
+            target_hart_generation: 3,
+            activation: 11,
+            activation_generation: 3,
+            queue: 3,
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(remote.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("remote preempt queue is not owned by target hart".to_string());
+    assert_eq!(remote.violations, expected);
+}
+
+#[test]
+fn smp_runtime_s6_invariants_reject_remote_preempt_ipi_generation_leak() {
+    let mut graph = s6_remote_preempt_graph();
+    assert!(graph.remote_preempt_activation_with_id(
+        31,
+        21,
+        1,
+        1,
+        2,
+        2,
+        3,
+        11,
+        3,
+        2,
+        "remote preempt activation",
+    ));
+    graph.corrupt_remote_preempt_ipi_generation_for_test(31, 99);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::RemotePreemptMissingIpi {
+            remote_preempt: 31,
+            ipi: 21,
+        })
+    );
+}
+
+#[test]
+fn smp_runtime_s6_history_still_requires_event_after_activation_advances() {
+    let mut graph = s6_remote_preempt_graph();
+    assert!(graph.remote_preempt_activation_with_id(
+        31,
+        21,
+        1,
+        1,
+        2,
+        2,
+        3,
+        11,
+        3,
+        2,
+        "remote preempt activation",
+    ));
+    assert!(graph.dequeue_runnable_activation(2, 11));
+    graph.corrupt_remote_preempt_event_for_test(31, 999);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::RemotePreemptMissingEvent { remote_preempt: 31 })
+    );
+}
+
 #[test]
 fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let mut graph = SemanticGraph::new();

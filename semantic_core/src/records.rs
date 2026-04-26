@@ -92,6 +92,33 @@ impl IpiEventRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemotePreemptRecord {
+    pub id: RemotePreemptId,
+    pub ipi: IpiEventId,
+    pub ipi_generation: Generation,
+    pub source_hart: HartId,
+    pub source_hart_generation: Generation,
+    pub target_hart: HartId,
+    pub target_hart_generation_before: Generation,
+    pub target_hart_generation_after: Generation,
+    pub activation: ActivationId,
+    pub activation_generation_before: Generation,
+    pub activation_generation_after: Generation,
+    pub queue: RunnableQueueId,
+    pub queue_generation: Generation,
+    pub generation: Generation,
+    pub state: RemotePreemptState,
+    pub preempted_at_event: EventId,
+    pub note: String,
+}
+
+impl RemotePreemptRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::RemotePreempt, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunnableQueueEntry {
     pub activation: ActivationId,
     pub activation_generation: Generation,

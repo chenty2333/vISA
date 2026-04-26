@@ -483,6 +483,44 @@ pub enum SemanticInvariantError {
         ipi: IpiEventId,
         event: EventId,
     },
+    RemotePreemptInvalid {
+        remote_preempt: RemotePreemptId,
+    },
+    RemotePreemptMissingIpi {
+        remote_preempt: RemotePreemptId,
+        ipi: IpiEventId,
+    },
+    RemotePreemptIpiMismatch {
+        remote_preempt: RemotePreemptId,
+        ipi: IpiEventId,
+    },
+    RemotePreemptMissingHart {
+        remote_preempt: RemotePreemptId,
+        hart: HartId,
+    },
+    RemotePreemptHartGenerationMismatch {
+        remote_preempt: RemotePreemptId,
+        hart: HartId,
+    },
+    RemotePreemptMissingActivation {
+        remote_preempt: RemotePreemptId,
+        activation: ActivationId,
+    },
+    RemotePreemptMissingQueue {
+        remote_preempt: RemotePreemptId,
+        queue: RunnableQueueId,
+    },
+    RemotePreemptQueueEntryMismatch {
+        remote_preempt: RemotePreemptId,
+        activation: ActivationId,
+    },
+    RemotePreemptMissingEvent {
+        remote_preempt: RemotePreemptId,
+    },
+    RemotePreemptMissingHartEventAttribution {
+        remote_preempt: RemotePreemptId,
+        event: EventId,
+    },
     PreemptionMissingTimerInterrupt {
         preemption: PreemptionId,
         interrupt: TimerInterruptId,
