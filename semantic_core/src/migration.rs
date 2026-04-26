@@ -244,6 +244,51 @@ pub enum SemanticInvariantError {
         wait: WaitId,
         task: TaskId,
     },
+    ActivationReferencesMissingTask {
+        activation: ActivationId,
+        task: TaskId,
+    },
+    ActivationReferencesMissingStore {
+        activation: ActivationId,
+        store: StoreId,
+    },
+    DeadStoreOwnsLiveActivation {
+        store: StoreId,
+        activation: ActivationId,
+    },
+    PendingTaskHasRunnableActivation {
+        task: TaskId,
+        activation: ActivationId,
+    },
+    InactiveRunnableQueueHasEntries {
+        queue: RunnableQueueId,
+    },
+    RunnableQueueReferencesMissingActivation {
+        queue: RunnableQueueId,
+        activation: ActivationId,
+    },
+    RunnableQueueActivationGenerationMismatch {
+        queue: RunnableQueueId,
+        activation: ActivationId,
+        expected: Generation,
+        actual: Generation,
+    },
+    RunnableQueueContainsNonRunnableActivation {
+        queue: RunnableQueueId,
+        activation: ActivationId,
+        state: RuntimeActivationState,
+    },
+    RunnableQueueOwnershipMismatch {
+        queue: RunnableQueueId,
+        activation: ActivationId,
+    },
+    RunnableActivationQueueCountMismatch {
+        activation: ActivationId,
+        queue_refs: usize,
+    },
+    RunningActivationStillQueued {
+        activation: ActivationId,
+    },
     StoreReferencesMissingFaultDomain {
         store: StoreId,
         fault_domain: FaultDomainId,

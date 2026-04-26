@@ -9,8 +9,9 @@ use artifact_manifest::{
     ActivationRecordManifest, ArtifactBundleManifest, BoundaryValidationReportManifest,
     CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
     CommandResultManifest, ContractObjectRefManifest, HostcallTraceManifest,
-    InterfaceEventManifest, MigrationPackageManifest, StoreRecordManifest, SubstrateEventManifest,
-    TargetArtifactImageManifest, TrapRecordManifest, WaitRecordManifest,
+    InterfaceEventManifest, MigrationPackageManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, StoreRecordManifest, SubstrateEventManifest,
+    TargetArtifactImageManifest, TaskRecordManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -163,6 +164,31 @@ fn run() -> Result<(), Box<dyn Error>> {
                 ),
             }
         }
+        "experiment" => {
+            let Some(subcommand) = args.next() else {
+                return Err("experiment requires a subcommand".into());
+            };
+            match subcommand.as_str() {
+                "report" => {
+                    let mut json = false;
+                    let mut path = None;
+                    for arg in args {
+                        if arg == "--json" {
+                            json = true;
+                        } else if path.is_none() {
+                            path = Some(arg);
+                        } else {
+                            return Err("experiment report received too many arguments".into());
+                        }
+                    }
+                    let path = path.ok_or("experiment report requires a report JSON path")?;
+                    print_experiment_report(Path::new(&path), json)
+                }
+                _ => Err(
+                    "experiment syntax is: osctl experiment report [--json] <report.json>".into(),
+                ),
+            }
+        }
         "modes" => print_modes(),
         "caps" => {
             let mut subject = None;
@@ -179,9 +205,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             let path = path.ok_or("caps requires a manifest/package JSON path")?;
             print_caps(Path::new(&path), subject.as_deref())
         }
-        "store" | "cap" | "capability" | "wait" | "cleanup" | "command" => {
-            handle_view_command(&command, args.collect())
-        }
+        "task" | "store" | "cap" | "capability" | "wait" | "cleanup" | "command" | "scheduler"
+        | "runtime-activation" | "runnable-queue" => handle_view_command(&command, args.collect()),
         "state" => {
             let Some(path) = args.next() else {
                 return Err("state requires a manifest/package JSON path".into());
@@ -209,9 +234,16 @@ fn run() -> Result<(), Box<dyn Error>> {
             print_graph(Path::new(&path), mode, json)
         }
         "activation" => {
+            let collected = args.collect::<Vec<_>>();
+            if collected
+                .first()
+                .is_some_and(|arg| arg == "show" || arg == "list")
+            {
+                return handle_view_command("activation", collected);
+            }
             let mut blocked_only = false;
             let mut path = None;
-            for arg in args {
+            for arg in collected {
                 if arg == "--blocked" {
                     blocked_only = true;
                 } else if path.is_none() {
@@ -334,9 +366,12 @@ fn print_usage() {
     eprintln!("  osctl substrate events [--json] <migration.json>");
     eprintln!("  osctl interface check [--json] [--profile <name>] <manifest.json>");
     eprintln!("  osctl interface events [--json] <migration.json>");
+    eprintln!("  osctl experiment report [--json] <report.json>");
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
-    eprintln!("  osctl store|cap|wait|cleanup|command list --json <migration.json>");
+    eprintln!(
+        "  osctl task|activation|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+    );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
     eprintln!("  osctl graph [--live|--history] [--json] <migration.json>");
@@ -383,6 +418,92 @@ fn check_path(path: &Path) -> Result<(), Box<dyn Error>> {
         plan.expected_export_count()
     );
     Ok(())
+}
+
+fn print_experiment_report(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+    let schema = json_field_str(&report, "schema")?;
+    if schema != "vmos-experiment-report" {
+        return Err(format!(
+            "experiment report schema must be vmos-experiment-report, got {schema}"
+        )
+        .into());
+    }
+    let name = json_field_str(&report, "name")?;
+    let checkpoint = json_field_str(&report, "checkpoint")?;
+    let commands = json_field_array(&report, "commands")?;
+    let events = json_field_array(&report, "events")?;
+    let metrics = json_field_object(&report, "metrics")?;
+    let validation = json_field_object(&report, "validation")?;
+    let contract_ok = validation
+        .get("contract_ok")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or("experiment report validation.contract_ok must be a boolean")?;
+    let golden_replay_ok = validation
+        .get("golden_replay_ok")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or("experiment report validation.golden_replay_ok must be a boolean")?;
+    let metric_keys: Vec<_> = metrics.keys().cloned().collect();
+    let ok = contract_ok && golden_replay_ok;
+
+    if json {
+        let value = serde_json::json!({
+            "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+            "schema": "osctl-experiment-report-view-v1",
+            "report_schema": schema,
+            "path": path.display().to_string(),
+            "name": name,
+            "checkpoint": checkpoint,
+            "command_count": commands.len(),
+            "event_count": events.len(),
+            "metrics": metric_keys,
+            "validation": {
+                "ok": ok,
+                "contract_ok": contract_ok,
+                "golden_replay_ok": golden_replay_ok
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
+
+    println!("experiment report: {name}");
+    println!("  checkpoint: {checkpoint}");
+    println!("  commands: {}", commands.len());
+    println!("  events: {}", events.len());
+    println!("  metrics: {}", metric_keys.join(", "));
+    println!("  validation: {}", if ok { "ok" } else { "failed" });
+    Ok(())
+}
+
+fn json_field_str<'a>(
+    value: &'a serde_json::Value,
+    field: &str,
+) -> Result<&'a str, Box<dyn Error>> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("json field `{field}` must be a string").into())
+}
+
+fn json_field_array<'a>(
+    value: &'a serde_json::Value,
+    field: &str,
+) -> Result<&'a Vec<serde_json::Value>, Box<dyn Error>> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("json field `{field}` must be an array").into())
+}
+
+fn json_field_object<'a>(
+    value: &'a serde_json::Value,
+    field: &str,
+) -> Result<&'a serde_json::Map<String, serde_json::Value>, Box<dyn Error>> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| format!("json field `{field}` must be an object").into())
 }
 
 fn handle_view_command(kind: &str, args: Vec<String>) -> Result<(), Box<dyn Error>> {
@@ -442,6 +563,10 @@ fn handle_view_command(kind: &str, args: Vec<String>) -> Result<(), Box<dyn Erro
 
 fn canonical_view_kind(kind: &str) -> &'static str {
     match kind {
+        "task" => "task",
+        "activation" | "runtime-activation" => "activation",
+        "scheduler" => "scheduler",
+        "runnable-queue" => "runnable-queue",
         "cap" | "capability" => "capability",
         "store" => "store",
         "wait" => "wait",
@@ -460,6 +585,117 @@ fn select_view_by_id(
         .into_iter()
         .find(|view| view.get("id").and_then(serde_json::Value::as_u64) == Some(parsed))
         .ok_or_else(|| format!("object id {id} not found").into())
+}
+
+fn task_view_v1(task: &TaskRecordManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "task",
+        "id": task.id,
+        "generation": task.generation,
+        "state": task.state,
+        "owner": {
+            "frontend": task.frontend,
+        },
+        "references": {
+            "fault_domain": task.fault_domain,
+            "pending_wait": task.pending_wait,
+            "resources": task.resources,
+        },
+        "label": task.label,
+        "last_transition": serde_json::Value::Null,
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn runtime_activation_view_v1(activation: &RuntimeActivationRecordManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "activation",
+        "id": activation.id,
+        "generation": activation.generation,
+        "state": activation.state,
+        "owner": {
+            "task": activation.owner_task,
+            "task_generation": activation.owner_task_generation,
+            "store": activation.owner_store,
+            "store_generation": activation.owner_store_generation,
+        },
+        "references": {
+            "code_object": activation.code_object,
+            "runnable_queue": activation.runnable_queue.map(|id| serde_json::json!({
+                "id": id,
+                "generation": activation.runnable_queue_generation,
+            })),
+        },
+        "last_transition": {
+            "last_event": activation.last_event,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn runnable_queue_view_v1(queue: &RunnableQueueManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "runnable-queue",
+        "id": queue.id,
+        "generation": queue.generation,
+        "state": queue.state,
+        "owner": {
+            "scheduler": 1,
+        },
+        "references": {
+            "entries": queue.entries.iter().map(|entry| serde_json::json!({
+                "activation": {
+                    "id": entry.activation,
+                    "generation": entry.activation_generation,
+                },
+                "enqueued_at": entry.enqueued_at,
+            })).collect::<Vec<_>>(),
+        },
+        "label": queue.label,
+        "last_transition": {
+            "entry_count": queue.entries.len(),
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "scheduler",
+        "id": 1,
+        "generation": 1,
+        "state": "active",
+        "owner": {
+            "package": package.package_id,
+        },
+        "references": {
+            "tasks": package.semantic.task_records.iter().map(|task| serde_json::json!({
+                "id": task.id,
+                "generation": task.generation,
+            })).collect::<Vec<_>>(),
+            "activations": package.semantic.runtime_activation_records.iter().map(|activation| serde_json::json!({
+                "id": activation.id,
+                "generation": activation.generation,
+                "state": activation.state,
+            })).collect::<Vec<_>>(),
+            "queues": package.semantic.runnable_queues.iter().map(|queue| serde_json::json!({
+                "id": queue.id,
+                "generation": queue.generation,
+                "entries": queue.entries.len(),
+            })).collect::<Vec<_>>(),
+        },
+        "last_transition": {
+            "scheduler_decision_cursor": package.substrate_boundary.scheduler_decision_cursor,
+            "task_count": package.semantic.task_record_count,
+            "activation_count": package.semantic.runtime_activation_count,
+            "queue_count": package.semantic.runnable_queue_count,
+        },
+        "last_error": serde_json::Value::Null,
+    })
 }
 
 fn artifact_view_v1(artifact: &TargetArtifactImageManifest) -> serde_json::Value {
@@ -815,6 +1051,25 @@ fn stable_views_for_kind(
     package: &MigrationPackageManifest,
 ) -> Result<Vec<serde_json::Value>, Box<dyn Error>> {
     match kind {
+        "task" => Ok(package
+            .semantic
+            .task_records
+            .iter()
+            .map(task_view_v1)
+            .collect()),
+        "activation" | "runtime-activation" => Ok(package
+            .semantic
+            .runtime_activation_records
+            .iter()
+            .map(runtime_activation_view_v1)
+            .collect()),
+        "scheduler" => Ok(vec![scheduler_view_v1(package)]),
+        "runnable-queue" => Ok(package
+            .semantic
+            .runnable_queues
+            .iter()
+            .map(runnable_queue_view_v1)
+            .collect()),
         "store" => Ok(package
             .semantic
             .store_records
@@ -1431,10 +1686,12 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} tasks={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.task_count,
+            package.semantic.runtime_activation_count,
+            package.semantic.runnable_queue_count,
             package.semantic.resource_count,
             package.semantic.store_count,
             package.semantic.capability_count,
@@ -1650,6 +1907,56 @@ fn graph_edges_for_package(
 
 fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value> {
     let mut edges = Vec::new();
+    for activation in &package.semantic.runtime_activation_records {
+        if matches!(
+            activation.state.as_str(),
+            "runnable" | "running" | "pending"
+        ) {
+            let task_generation = package
+                .semantic
+                .task_records
+                .iter()
+                .find(|task| {
+                    task.id == activation.owner_task
+                        && task.generation == activation.owner_task_generation
+                })
+                .map(|task| task.generation)
+                .unwrap_or(activation.owner_task_generation);
+            edges.push(graph_edge(
+                object_ref_json("task", activation.owner_task, task_generation),
+                object_ref_json("activation", activation.id, activation.generation),
+                "owns",
+                "live",
+                activation.last_event,
+            ));
+            if let (Some(queue), Some(queue_generation)) = (
+                activation.runnable_queue,
+                activation.runnable_queue_generation,
+            ) {
+                edges.push(graph_edge(
+                    object_ref_json("activation", activation.id, activation.generation),
+                    object_ref_json("runnable-queue", queue, queue_generation),
+                    "queued-in",
+                    "live",
+                    activation.last_event,
+                ));
+            }
+        }
+    }
+    for queue in &package.semantic.runnable_queues {
+        if queue.state != "active" {
+            continue;
+        }
+        for entry in &queue.entries {
+            edges.push(graph_edge(
+                object_ref_json("runnable-queue", queue.id, queue.generation),
+                object_ref_json("activation", entry.activation, entry.activation_generation),
+                "contains",
+                "live",
+                Some(entry.enqueued_at),
+            ));
+        }
+    }
     for activation in &package.semantic.activation_records {
         if activation.state == "running" {
             edges.push(graph_edge(
@@ -3446,6 +3753,109 @@ mod tests {
         assert_eq!(view["references"]["blockers"][0]["kind"], "capability");
         assert_eq!(view["cancel_reason"], "capability-revoked");
         assert_eq!(view["restart_policy"], "restart-if-allowed");
+    }
+
+    #[test]
+    fn preemptive_runtime_views_expose_task_activation_and_scheduler_state() {
+        let task = task_view_v1(&TaskRecordManifest {
+            id: 7,
+            label: "linux-thread-7".to_owned(),
+            frontend: "linux-elf".to_owned(),
+            state: "runnable".to_owned(),
+            generation: 1,
+            fault_domain: None,
+            pending_wait: None,
+            resources: vec![3],
+        });
+        assert_eq!(task["kind"], "task");
+        assert_eq!(task["owner"]["frontend"], "linux-elf");
+        assert_eq!(task["references"]["resources"][0], 3);
+
+        let activation = runtime_activation_view_v1(&RuntimeActivationRecordManifest {
+            id: 11,
+            owner_task: 7,
+            owner_task_generation: 1,
+            owner_store: None,
+            owner_store_generation: None,
+            code_object: Some(ContractObjectRefManifest {
+                kind: "code-object".to_owned(),
+                id: 4,
+                generation: 1,
+            }),
+            generation: 2,
+            state: "runnable".to_owned(),
+            runnable_queue: Some(1),
+            runnable_queue_generation: Some(1),
+            last_event: Some(9),
+        });
+        assert_eq!(activation["kind"], "activation");
+        assert_eq!(activation["owner"]["task"], 7);
+        assert_eq!(activation["owner"]["task_generation"], 1);
+        assert_eq!(activation["references"]["runnable_queue"]["id"], 1);
+        assert_eq!(activation["references"]["runnable_queue"]["generation"], 1);
+
+        let mut package = minimal_graph_package();
+        package.package_id = "p0-test".to_owned();
+        package.substrate_boundary.scheduler_decision_cursor = 12;
+        package.semantic.task_record_count = 1;
+        package.semantic.runtime_activation_count = 1;
+        package.semantic.runnable_queue_count = 1;
+        package.semantic.task_records.push(TaskRecordManifest {
+            id: 7,
+            label: "linux-thread-7".to_owned(),
+            frontend: "linux-elf".to_owned(),
+            state: "runnable".to_owned(),
+            generation: 1,
+            fault_domain: None,
+            pending_wait: None,
+            resources: Vec::new(),
+        });
+        package
+            .semantic
+            .runtime_activation_records
+            .push(RuntimeActivationRecordManifest {
+                id: 11,
+                owner_task: 7,
+                owner_task_generation: 1,
+                owner_store: None,
+                owner_store_generation: None,
+                code_object: None,
+                generation: 2,
+                state: "runnable".to_owned(),
+                runnable_queue: Some(1),
+                runnable_queue_generation: Some(1),
+                last_event: Some(9),
+            });
+        package
+            .semantic
+            .runnable_queues
+            .push(RunnableQueueManifest {
+                id: 1,
+                label: "main-rq".to_owned(),
+                generation: 1,
+                state: "active".to_owned(),
+                entries: vec![artifact_manifest::RunnableQueueEntryManifest {
+                    activation: 11,
+                    activation_generation: 2,
+                    enqueued_at: 9,
+                }],
+            });
+        let scheduler = scheduler_view_v1(&package);
+        assert_eq!(scheduler["kind"], "scheduler");
+        assert_eq!(scheduler["references"]["queues"][0]["entries"], 1);
+        assert_eq!(
+            scheduler["last_transition"]["scheduler_decision_cursor"],
+            12
+        );
+
+        let edges = live_graph_edges(&package);
+        assert!(edges.iter().any(|edge| edge["from"]["kind"] == "task"
+            && edge["from"]["generation"] == 1
+            && edge["to"]["kind"] == "activation"
+            && edge["to"]["generation"] == 2));
+        assert!(edges.iter().any(|edge| edge["from"]["kind"] == "activation"
+            && edge["to"]["kind"] == "runnable-queue"
+            && edge["to"]["generation"] == 1));
     }
 
     #[test]

@@ -1,0 +1,117 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "P0-task-activation-runnable-queue",
+  "phase": "Phase 1 Preemptive Runtime",
+  "status": "pass",
+  "scope": [
+    "Add Task / runtime Activation / RunnableQueue semantic objects",
+    "Route P0 mutations through SemanticCommand and EventLog",
+    "Expose P0 state through osctl stable JSON views",
+    "Add P0 golden trace evidence"
+  ],
+  "no_goals": [
+    "timer interrupt preemption",
+    "saved CPU context",
+    "SMP scheduler",
+    "real target-side execution",
+    "full scheduler fairness tuning"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/graph/scheduler.rs",
+    "semantic_core/src/graph/task.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "semantic_core/src/target_executor.rs",
+    "target_executor/src/main.rs",
+    "osctl/src/main.rs",
+    "tests/golden/preemptive/golden_preempt_p0_runnable_queue.trace.json",
+    "tests/reports/checkpoints/p0_preemptive_runtime_objects.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/preemptive/golden_preempt_p0_runnable_queue.trace.json",
+    "tests/reports/checkpoints/p0_preemptive_runtime_objects.checkpoint.json"
+  ],
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- scheduler list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- graph --live --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/preemptive/golden_preempt_p0_runnable_queue.trace.json",
+    "osctl_views": [
+      "osctl task list --json <migration.json>",
+      "osctl activation list --json <migration.json>",
+      "osctl scheduler list --json <migration.json>"
+    ],
+    "semantic_tests": [
+      "preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants",
+      "preemptive_runtime_p0_rejects_pending_task_and_stale_generation_enqueue",
+      "preemptive_runtime_p0_rejects_duplicate_queue_and_generationless_store_owner",
+      "preemptive_runtime_p0_invariants_reject_bad_queue_ownership"
+    ]
+  },
+  "residual_gaps": [
+    "P1 must add SavedContext / ActivationContext before timer preemption can preserve execution state",
+    "P2-P3 must add TimerInterrupt and PreemptActivation commands before real preemption evidence exists"
+  ],
+  "next_checkpoint": "P1-saved-context-activation-context"
+}

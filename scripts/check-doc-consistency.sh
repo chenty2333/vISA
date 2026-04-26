@@ -48,6 +48,17 @@ required_files=(
     references/specs/target-runtime-abi/08-default-profile.md
     tests/golden/README.md
     tests/golden/schema/vmos-golden-trace.schema.json
+    tests/golden/schema/vmos-checkpoint-report.schema.json
+    tests/golden/schema/vmos-experiment-report.schema.json
+    tests/golden/schema/vmos-benchmark-report.schema.json
+    tests/golden/schema/vmos-fault-injection.schema.json
+    scripts/replay-golden-traces.sh
+    scripts/validate-runtime-evidence.py
+    scripts/validate-runtime-full.sh
+    tests/reports/checkpoints/e0_checkpoint_report_schema.checkpoint.json
+    tests/reports/experiments/e0_evidence_harness.experiment.json
+    tests/reports/benchmarks/e0_validation_gate.benchmark.json
+    tests/reports/fault-injection/e0_fault_injection_smoke.fault.json
 )
 
 for path in "${required_files[@]}"; do
@@ -79,7 +90,6 @@ require_literal references/specs/semantic-contract-v0.1/12-guest-memory-object-m
 require_literal references/specs/semantic-contract-v0.1/04-capability-authority.md 'CapabilityLedger[StoreRef][slot]'
 require_literal references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md 'GuestAddressSpace'
 require_literal references/00_INDEX.md '12-guest-memory-object-model.md'
-
 python - <<'PY'
 from pathlib import Path
 import json
@@ -94,7 +104,9 @@ paths = [
 paths.extend(Path("references/specs").rglob("*.md"))
 paths.extend(Path("tests/golden").rglob("*.md"))
 paths.extend(Path("tests/golden").rglob("*.json"))
+paths.extend(Path("tests/reports").rglob("*.json"))
 paths.extend(Path("scripts").glob("*.sh"))
+paths.extend(Path("scripts").glob("*.py"))
 
 issues = []
 for path in paths:

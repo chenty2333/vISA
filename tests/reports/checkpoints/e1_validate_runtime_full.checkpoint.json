@@ -1,0 +1,41 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "E1-validate-runtime-full",
+  "phase": "Phase 0 Evidence And Gate Base",
+  "status": "pass",
+  "scope": [
+    "Add a top-level runtime evidence validator",
+    "Gate docs, target runtime contract, golden replay, and evidence reports"
+  ],
+  "no_goals": [
+    "feature implementation",
+    "benchmark execution",
+    "hardware execution"
+  ],
+  "changed_files": [
+    "scripts/validate-runtime-full.sh",
+    "scripts/validate-runtime-evidence.py"
+  ],
+  "tests_and_traces": [
+    "tests/reports/checkpoints/e1_validate_runtime_full.checkpoint.json"
+  ],
+  "validation_commands": [
+    {
+      "command": "scripts/validate-runtime-full.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "default_gate": "scripts/validate-runtime-full.sh",
+    "full_gate": "scripts/validate-runtime-full.sh --full"
+  },
+  "residual_gaps": [
+    "Later phases should add subsystem-specific validators behind this gate"
+  ],
+  "next_checkpoint": "E2-golden-trace-runner"
+}

@@ -92,6 +92,8 @@ impl SemanticGraph {
             }
         }
 
+        self.check_scheduler_invariants()?;
+
         for authority in &self.authority_bindings {
             if authority.state != AuthorityState::Bound {
                 continue;

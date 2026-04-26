@@ -2,6 +2,27 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SemanticCommand {
+    CreateRuntimeActivation {
+        activation: ActivationId,
+        owner_task: TaskId,
+        owner_task_generation: Generation,
+        owner_store: Option<StoreId>,
+        owner_store_generation: Option<Generation>,
+        code_object: Option<ContractObjectRef>,
+    },
+    CreateRunnableQueue {
+        queue: RunnableQueueId,
+        label: String,
+    },
+    EnqueueRunnable {
+        queue: RunnableQueueId,
+        activation: ActivationId,
+        activation_generation: Generation,
+    },
+    DequeueRunnable {
+        queue: RunnableQueueId,
+        activation: ActivationId,
+    },
     GrantCapability {
         subject: String,
         debug_object_label: String,
@@ -150,6 +171,10 @@ impl CommandError {
 impl SemanticCommand {
     pub const fn name(&self) -> &'static str {
         match self {
+            Self::CreateRuntimeActivation { .. } => "create-runtime-activation",
+            Self::CreateRunnableQueue { .. } => "create-runnable-queue",
+            Self::EnqueueRunnable { .. } => "enqueue-runnable",
+            Self::DequeueRunnable { .. } => "dequeue-runnable",
             Self::GrantCapability { .. } => "grant-capability",
             Self::RevokeCapability { .. } => "revoke-capability",
             Self::CreateWait { .. } => "create-wait",
@@ -242,6 +267,166 @@ impl SemanticGraph {
 
     fn preflight_command(&self, command: &SemanticCommand) -> Result<(), CommandError> {
         match command {
+            SemanticCommand::CreateRuntimeActivation {
+                activation,
+                owner_task,
+                owner_task_generation,
+                owner_store,
+                owner_store_generation,
+                code_object,
+            } => {
+                if *activation == 0 {
+                    Err(CommandError::precondition("activation id=0 is invalid"))
+                } else if self
+                    .runtime_activations
+                    .iter()
+                    .any(|record| record.id == *activation)
+                {
+                    Err(CommandError::precondition("activation already exists"))
+                } else if !self
+                    .tasks
+                    .iter()
+                    .any(|task| task.id == *owner_task && task.generation == *owner_task_generation)
+                {
+                    Err(CommandError::precondition(
+                        "activation owner task generation is missing",
+                    ))
+                } else if let Some(code) = code_object
+                    && code.kind != ContractObjectKind::CodeObject
+                {
+                    Err(CommandError::precondition(
+                        "activation code reference must be a code object",
+                    ))
+                } else if let Some(store) = owner_store {
+                    if let Some(generation) = owner_store_generation {
+                        if self.stores.iter().any(|record| {
+                            record.id == *store
+                                && record.generation == *generation
+                                && record.state != StoreState::Dead
+                        }) {
+                            Ok(())
+                        } else {
+                            Err(CommandError::precondition(
+                                "activation owner store generation is missing or dead",
+                            ))
+                        }
+                    } else {
+                        Err(CommandError::precondition(
+                            "activation owner store generation is required",
+                        ))
+                    }
+                } else {
+                    Ok(())
+                }
+            }
+            SemanticCommand::CreateRunnableQueue { queue, label } => {
+                if *queue == 0 {
+                    Err(CommandError::precondition("runnable queue id=0 is invalid"))
+                } else if label.is_empty() {
+                    Err(CommandError::precondition("runnable queue label is empty"))
+                } else if self
+                    .runnable_queues
+                    .iter()
+                    .any(|record| record.id == *queue)
+                {
+                    Err(CommandError::precondition("runnable queue already exists"))
+                } else {
+                    Ok(())
+                }
+            }
+            SemanticCommand::EnqueueRunnable {
+                queue,
+                activation,
+                activation_generation,
+            } => {
+                let Some(queue_record) = self
+                    .runnable_queues
+                    .iter()
+                    .find(|record| record.id == *queue)
+                else {
+                    return Err(CommandError::precondition("runnable queue is missing"));
+                };
+                if queue_record.state != RunnableQueueState::Active {
+                    return Err(CommandError::precondition("runnable queue is not active"));
+                }
+                if self.runnable_queues.iter().any(|record| {
+                    record
+                        .entries
+                        .iter()
+                        .any(|entry| entry.activation == *activation)
+                }) {
+                    return Err(CommandError::precondition("activation already queued"));
+                }
+                let Some(activation_record) = self
+                    .runtime_activations
+                    .iter()
+                    .find(|record| record.id == *activation)
+                else {
+                    return Err(CommandError::precondition("activation is missing"));
+                };
+                if activation_record.generation != *activation_generation {
+                    return Err(CommandError::precondition("activation generation mismatch"));
+                }
+                if !matches!(
+                    activation_record.state,
+                    RuntimeActivationState::Created | RuntimeActivationState::Blocked
+                ) {
+                    return Err(CommandError::precondition("activation is not enqueueable"));
+                }
+                if activation_record.runnable_queue.is_some() {
+                    return Err(CommandError::precondition("activation already queued"));
+                }
+                let Some(owner_task) = self.tasks.iter().find(|task| {
+                    task.id == activation_record.owner_task
+                        && task.generation == activation_record.owner_task_generation
+                }) else {
+                    return Err(CommandError::precondition(
+                        "activation owner task generation is missing",
+                    ));
+                };
+                if owner_task.state == TaskState::Pending {
+                    return Err(CommandError::precondition(
+                        "pending wait task cannot be enqueued",
+                    ));
+                }
+                if let Some(store) = activation_record.owner_store {
+                    let Some(generation) = activation_record.owner_store_generation else {
+                        return Err(CommandError::precondition(
+                            "activation owner store generation is required",
+                        ));
+                    };
+                    if !self.stores.iter().any(|record| {
+                        record.id == store
+                            && record.generation == generation
+                            && record.state != StoreState::Dead
+                    }) {
+                        return Err(CommandError::precondition(
+                            "dead or missing store activation cannot be enqueued",
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            SemanticCommand::DequeueRunnable { queue, activation } => {
+                let Some(queue_record) = self
+                    .runnable_queues
+                    .iter()
+                    .find(|record| record.id == *queue)
+                else {
+                    return Err(CommandError::precondition("runnable queue is missing"));
+                };
+                if queue_record.state != RunnableQueueState::Active {
+                    return Err(CommandError::precondition("runnable queue is not active"));
+                }
+                if !queue_record
+                    .entries
+                    .iter()
+                    .any(|entry| entry.activation == *activation)
+                {
+                    return Err(CommandError::precondition("activation is not queued"));
+                }
+                Ok(())
+            }
             SemanticCommand::GrantCapability { operations, .. } if operations.is_empty() => Err(
                 CommandError::precondition("grant-capability requires at least one operation"),
             ),
@@ -372,6 +557,32 @@ impl SemanticGraph {
 
     fn apply_prechecked_command(&mut self, command: SemanticCommand) -> bool {
         match command {
+            SemanticCommand::CreateRuntimeActivation {
+                activation,
+                owner_task,
+                owner_task_generation,
+                owner_store,
+                owner_store_generation,
+                code_object,
+            } => self.create_runtime_activation_with_id(
+                activation,
+                owner_task,
+                owner_task_generation,
+                owner_store,
+                owner_store_generation,
+                code_object,
+            ),
+            SemanticCommand::CreateRunnableQueue { queue, label } => {
+                self.create_runnable_queue_with_id(queue, &label)
+            }
+            SemanticCommand::EnqueueRunnable {
+                queue,
+                activation,
+                activation_generation,
+            } => self.enqueue_runnable_activation(queue, activation, activation_generation),
+            SemanticCommand::DequeueRunnable { queue, activation } => {
+                self.dequeue_runnable_activation(queue, activation)
+            }
             SemanticCommand::GrantCapability {
                 subject,
                 debug_object_label,

@@ -14,11 +14,12 @@ use artifact_manifest::{
     GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
     MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
     MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    RequiredArtifactProfileManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
     StoreRecordManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
     TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
-    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TombstoneManifest, TrapRecordManifest,
-    WaitRecordManifest,
+    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TaskRecordManifest, TombstoneManifest,
+    TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -94,6 +95,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     semantic.ensure_task(1, FrontendKind::Supervisor, "target-executor-bootstrap");
     semantic.set_task_state(1, TaskState::Running);
+    record_preemptive_runtime_p0_evidence(&mut semantic);
     publish_host_boundary_status(&mut semantic, &manifest);
 
     for entry in &plan.modules {
@@ -323,6 +325,44 @@ fn record_command_surface_evidence(semantic: &mut SemanticGraph) {
         },
     );
     let _ = semantic.apply_envelope(command);
+}
+
+fn record_preemptive_runtime_p0_evidence(semantic: &mut SemanticGraph) {
+    semantic.ensure_task(9001, FrontendKind::LinuxElf, "p0-preemptive-demo-task");
+    let commands = [
+        CommandEnvelope::new(
+            10,
+            "target-executor-p0",
+            SemanticCommand::CreateRunnableQueue {
+                queue: 9001,
+                label: "bootstrap-runnable-queue".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            11,
+            "target-executor-p0",
+            SemanticCommand::CreateRuntimeActivation {
+                activation: 9001,
+                owner_task: 9001,
+                owner_task_generation: 1,
+                owner_store: None,
+                owner_store_generation: None,
+                code_object: None,
+            },
+        ),
+        CommandEnvelope::new(
+            12,
+            "target-executor-p0",
+            SemanticCommand::EnqueueRunnable {
+                queue: 9001,
+                activation: 9001,
+                activation_generation: 1,
+            },
+        ),
+    ];
+    for command in commands {
+        let _ = semantic.apply_envelope(command);
+    }
 }
 
 fn record_interface_boundary_evidence(semantic: &mut SemanticGraph) {
@@ -1241,6 +1281,9 @@ fn prepare_migration_package(
     }
 
     let path = artifact_root.join("semantic-package-v1.json");
+    semantic
+        .check_invariants()
+        .map_err(|error| format!("semantic invariant failed before package write: {error:?}"))?;
     let package = demo_migration_package(manifest, semantic, target_v1);
     fs::write(&path, serde_json::to_vec_pretty(&package)?)?;
     Ok(path)
@@ -1310,6 +1353,9 @@ fn demo_migration_package(
             roots,
             pending_wait_count: 0,
             task_count: semantic.task_count(),
+            task_record_count: semantic.tasks().len(),
+            runtime_activation_count: semantic.runtime_activation_count(),
+            runnable_queue_count: semantic.runnable_queue_count(),
             resource_count: semantic.resource_count(),
             authority_count: semantic.authority_count(),
             active_authority_count: semantic.active_authority_count(),
@@ -1344,6 +1390,17 @@ fn demo_migration_package(
             command_result_count: target_v1.command_results.len(),
             interface_event_count: target_v1.interface_events.len(),
             target_artifacts: target_v1.target_artifacts.clone(),
+            task_records: semantic.tasks().iter().map(task_record_manifest).collect(),
+            runtime_activation_records: semantic
+                .runtime_activations()
+                .iter()
+                .map(runtime_activation_record_manifest)
+                .collect(),
+            runnable_queues: semantic
+                .runnable_queues()
+                .iter()
+                .map(runnable_queue_manifest)
+                .collect(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
             capability_records: target_v1.capability_records.clone(),
@@ -1404,7 +1461,60 @@ fn semantic_roots(
     target_v1: &TargetExecutorV1Report,
 ) -> SemanticRootSetManifest {
     SemanticRootSetManifest {
-        task_roots: vec!["task:1:target-executor-bootstrap".to_owned()],
+        task_roots: semantic
+            .tasks()
+            .iter()
+            .map(|task| {
+                format!(
+                    "task:{}:{}:{}:gen{}",
+                    task.id,
+                    task.frontend.as_str(),
+                    task.state.as_str(),
+                    task.generation
+                )
+            })
+            .collect(),
+        task_record_roots: semantic
+            .tasks()
+            .iter()
+            .map(|task| format!("task-record id={} state={} generation={}", task.id, task.state.as_str(), task.generation))
+            .collect(),
+        runtime_activation_roots: semantic
+            .runtime_activations()
+            .iter()
+            .map(|activation| {
+                format!(
+                    "runtime-activation id={} task={}@{} state={} generation={} queue={}@{}",
+                    activation.id,
+                    activation.owner_task,
+                    activation.owner_task_generation,
+                    activation.state.as_str(),
+                    activation.generation,
+                    activation
+                        .runnable_queue
+                        .map(|queue| queue.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    activation
+                        .runnable_queue_generation
+                        .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "none".to_owned())
+                )
+            })
+            .collect(),
+        runnable_queue_roots: semantic
+            .runnable_queues()
+            .iter()
+            .map(|queue| {
+                format!(
+                    "runnable-queue id={} label={} state={} generation={} entries={}",
+                    queue.id,
+                    queue.label,
+                    queue.state.as_str(),
+                    queue.generation,
+                    queue.entries.len()
+                )
+            })
+            .collect(),
         resource_roots: manifest
             .modules
             .iter()
@@ -1847,6 +1957,55 @@ fn store_record_manifest(store: &StoreRecord) -> StoreRecordManifest {
         state: store.state.as_str().to_owned(),
         generation: store.generation,
         restart_count: store.restart_count,
+    }
+}
+
+fn task_record_manifest(task: &semantic_core::TaskRecord) -> TaskRecordManifest {
+    TaskRecordManifest {
+        id: u64::from(task.id),
+        label: task.label.clone(),
+        frontend: task.frontend.as_str().to_owned(),
+        state: task.state.as_str().to_owned(),
+        generation: task.generation,
+        fault_domain: task.fault_domain,
+        pending_wait: task.pending_wait,
+        resources: task.resources.clone(),
+    }
+}
+
+fn runtime_activation_record_manifest(
+    activation: &semantic_core::RuntimeActivationRecord,
+) -> RuntimeActivationRecordManifest {
+    RuntimeActivationRecordManifest {
+        id: activation.id,
+        owner_task: u64::from(activation.owner_task),
+        owner_task_generation: activation.owner_task_generation,
+        owner_store: activation.owner_store,
+        owner_store_generation: activation.owner_store_generation,
+        code_object: activation.code_object.map(contract_object_ref_manifest),
+        generation: activation.generation,
+        state: activation.state.as_str().to_owned(),
+        runnable_queue: activation.runnable_queue,
+        runnable_queue_generation: activation.runnable_queue_generation,
+        last_event: activation.last_event,
+    }
+}
+
+fn runnable_queue_manifest(queue: &semantic_core::RunnableQueueRecord) -> RunnableQueueManifest {
+    RunnableQueueManifest {
+        id: queue.id,
+        label: queue.label.clone(),
+        generation: queue.generation,
+        state: queue.state.as_str().to_owned(),
+        entries: queue
+            .entries
+            .iter()
+            .map(|entry| RunnableQueueEntryManifest {
+                activation: entry.activation,
+                activation_generation: entry.activation_generation,
+                enqueued_at: entry.enqueued_at,
+            })
+            .collect(),
     }
 }
 

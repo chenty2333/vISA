@@ -7,6 +7,8 @@ use super::*;
 #[derive(Clone, Debug)]
 pub struct SemanticGraph {
     tasks: Vec<TaskRecord>,
+    runtime_activations: Vec<RuntimeActivationRecord>,
+    runnable_queues: Vec<RunnableQueueRecord>,
     resources: Vec<ResourceRecord>,
     authority_bindings: Vec<AuthorityBindingRecord>,
     waits: Vec<WaitRecord>,
@@ -21,6 +23,8 @@ pub struct SemanticGraph {
     capabilities: CapabilityLedger,
     event_log: EventLog,
     next_resource_id: ResourceId,
+    next_runtime_activation_id: ActivationId,
+    next_runnable_queue_id: RunnableQueueId,
     next_authority_id: AuthorityId,
     next_fault_domain_id: FaultDomainId,
     next_store_id: StoreId,
@@ -39,6 +43,7 @@ mod interface;
 mod network;
 mod query;
 mod resource;
+mod scheduler;
 mod snapshot;
 mod store;
 mod substrate;
@@ -55,6 +60,8 @@ impl SemanticGraph {
     pub fn with_runtime_mode(runtime_mode: RuntimeMode) -> Self {
         Self {
             tasks: Vec::new(),
+            runtime_activations: Vec::new(),
+            runnable_queues: Vec::new(),
             resources: Vec::new(),
             authority_bindings: Vec::new(),
             waits: Vec::new(),
@@ -69,6 +76,8 @@ impl SemanticGraph {
             capabilities: CapabilityLedger::new(),
             event_log: EventLog::with_runtime_mode(runtime_mode),
             next_resource_id: 1,
+            next_runtime_activation_id: 1,
+            next_runnable_queue_id: 1,
             next_authority_id: 1,
             next_fault_domain_id: 1,
             next_store_id: 1,

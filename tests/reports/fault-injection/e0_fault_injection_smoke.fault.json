@@ -1,0 +1,29 @@
+{
+  "schema": "vmos-fault-injection-scenario",
+  "schema_version": 1,
+  "name": "e0_fault_injection_schema_smoke",
+  "checkpoint": "E6-fault-injection-harness",
+  "trigger": {
+    "kind": "SyntheticContractFault",
+    "target": "phase0-evidence-only",
+    "runtime_side_effect": "none"
+  },
+  "expected_events": [
+    {
+      "kind": "FaultInjectionPlanned",
+      "scope": "schema-only"
+    },
+    {
+      "kind": "FaultInjectionValidated",
+      "cleanup_required": false
+    }
+  ],
+  "expected_cleanup": {
+    "required": false,
+    "reason": "Phase 0 only validates scenario shape."
+  },
+  "validation": {
+    "ok": true,
+    "negative_test_contract": "Later checkpoints must add real fault triggers and recovery evidence."
+  }
+}

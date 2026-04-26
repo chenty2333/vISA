@@ -15,6 +15,32 @@ pub enum EventKind {
         from: TaskState,
         to: TaskState,
     },
+    RuntimeActivationCreated {
+        activation: ActivationId,
+        task: TaskId,
+        generation: Generation,
+    },
+    RuntimeActivationStateChanged {
+        activation: ActivationId,
+        from: RuntimeActivationState,
+        to: RuntimeActivationState,
+        generation: Generation,
+    },
+    RunnableQueueCreated {
+        queue: RunnableQueueId,
+        label: String,
+        generation: Generation,
+    },
+    RunnableQueued {
+        queue: RunnableQueueId,
+        activation: ActivationId,
+        activation_generation: Generation,
+    },
+    RunnableDequeued {
+        queue: RunnableQueueId,
+        activation: ActivationId,
+        activation_generation: Generation,
+    },
     ResourceCreated {
         resource: ResourceId,
         kind: ResourceKind,
@@ -348,6 +374,44 @@ impl EventKind {
                     to.as_str()
                 )
             }
+            Self::RuntimeActivationCreated {
+                activation,
+                task,
+                generation,
+            } => format!(
+                "RuntimeActivationCreated activation={activation} task={task} generation={generation}"
+            ),
+            Self::RuntimeActivationStateChanged {
+                activation,
+                from,
+                to,
+                generation,
+            } => format!(
+                "RuntimeActivationStateChanged activation={activation} {}->{} generation={generation}",
+                from.as_str(),
+                to.as_str()
+            ),
+            Self::RunnableQueueCreated {
+                queue,
+                label,
+                generation,
+            } => {
+                format!("RunnableQueueCreated queue={queue} label={label} generation={generation}")
+            }
+            Self::RunnableQueued {
+                queue,
+                activation,
+                activation_generation,
+            } => format!(
+                "RunnableQueued queue={queue} activation={activation}@{activation_generation}"
+            ),
+            Self::RunnableDequeued {
+                queue,
+                activation,
+                activation_generation,
+            } => format!(
+                "RunnableDequeued queue={queue} activation={activation}@{activation_generation}"
+            ),
             Self::ResourceCreated {
                 resource,
                 kind,

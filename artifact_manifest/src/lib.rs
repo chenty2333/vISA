@@ -222,6 +222,12 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub pending_wait_count: usize,
     pub task_count: usize,
+    #[serde(default)]
+    pub task_record_count: usize,
+    #[serde(default)]
+    pub runtime_activation_count: usize,
+    #[serde(default)]
+    pub runnable_queue_count: usize,
     pub resource_count: usize,
     #[serde(default)]
     pub authority_count: usize,
@@ -287,6 +293,12 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub target_artifacts: Vec<TargetArtifactImageManifest>,
     #[serde(default)]
+    pub task_records: Vec<TaskRecordManifest>,
+    #[serde(default)]
+    pub runtime_activation_records: Vec<RuntimeActivationRecordManifest>,
+    #[serde(default)]
+    pub runnable_queues: Vec<RunnableQueueManifest>,
+    #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
     #[serde(default)]
     pub store_records: Vec<StoreRecordManifest>,
@@ -330,6 +342,12 @@ pub struct SemanticSnapshotManifest {
 pub struct SemanticRootSetManifest {
     #[serde(default)]
     pub task_roots: Vec<String>,
+    #[serde(default)]
+    pub task_record_roots: Vec<String>,
+    #[serde(default)]
+    pub runtime_activation_roots: Vec<String>,
+    #[serde(default)]
+    pub runnable_queue_roots: Vec<String>,
     #[serde(default)]
     pub resource_roots: Vec<String>,
     #[serde(default)]
@@ -434,6 +452,55 @@ pub struct InterfaceEventManifest {
     pub artifact: Option<u64>,
     pub store: Option<u64>,
     pub explanation: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct TaskRecordManifest {
+    pub id: u64,
+    pub label: String,
+    pub frontend: String,
+    pub state: String,
+    pub generation: u64,
+    pub fault_domain: Option<u64>,
+    pub pending_wait: Option<u64>,
+    #[serde(default)]
+    pub resources: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct RuntimeActivationRecordManifest {
+    pub id: u64,
+    pub owner_task: u64,
+    #[serde(default)]
+    pub owner_task_generation: u64,
+    pub owner_store: Option<u64>,
+    #[serde(default)]
+    pub owner_store_generation: Option<u64>,
+    #[serde(default)]
+    pub code_object: Option<ContractObjectRefManifest>,
+    pub generation: u64,
+    pub state: String,
+    pub runnable_queue: Option<u64>,
+    #[serde(default)]
+    pub runnable_queue_generation: Option<u64>,
+    pub last_event: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct RunnableQueueEntryManifest {
+    pub activation: u64,
+    pub activation_generation: u64,
+    pub enqueued_at: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct RunnableQueueManifest {
+    pub id: u64,
+    pub label: String,
+    pub generation: u64,
+    pub state: String,
+    #[serde(default)]
+    pub entries: Vec<RunnableQueueEntryManifest>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

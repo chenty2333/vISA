@@ -1,0 +1,55 @@
+{
+  "schema": "json-schema-draft-07",
+  "title": "VMOS Experiment Report",
+  "type": "object",
+  "required": [
+    "schema",
+    "schema_version",
+    "name",
+    "checkpoint",
+    "commands",
+    "events",
+    "final_views",
+    "metrics",
+    "validation"
+  ],
+  "properties": {
+    "schema": {
+      "const": "vmos-experiment-report"
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "name": {
+      "type": "string"
+    },
+    "checkpoint": {
+      "type": "string"
+    },
+    "commands": {
+      "type": "array"
+    },
+    "events": {
+      "type": "array"
+    },
+    "final_views": {
+      "type": "object"
+    },
+    "metrics": {
+      "type": "object"
+    },
+    "validation": {
+      "type": "object",
+      "required": ["contract_ok", "golden_replay_ok"],
+      "properties": {
+        "contract_ok": {
+          "type": "boolean"
+        },
+        "golden_replay_ok": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

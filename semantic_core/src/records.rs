@@ -16,6 +16,55 @@ pub struct TaskRecord {
     pub resources: Vec<ResourceId>,
 }
 
+impl TaskRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::Task, self.id as u64, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeActivationRecord {
+    pub id: ActivationId,
+    pub owner_task: TaskId,
+    pub owner_task_generation: Generation,
+    pub owner_store: Option<StoreId>,
+    pub owner_store_generation: Option<Generation>,
+    pub code_object: Option<ContractObjectRef>,
+    pub generation: Generation,
+    pub state: RuntimeActivationState,
+    pub runnable_queue: Option<RunnableQueueId>,
+    pub runnable_queue_generation: Option<Generation>,
+    pub last_event: Option<EventId>,
+}
+
+impl RuntimeActivationRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::Activation, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunnableQueueEntry {
+    pub activation: ActivationId,
+    pub activation_generation: Generation,
+    pub enqueued_at: EventId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunnableQueueRecord {
+    pub id: RunnableQueueId,
+    pub label: String,
+    pub generation: Generation,
+    pub state: RunnableQueueState,
+    pub entries: Vec<RunnableQueueEntry>,
+}
+
+impl RunnableQueueRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::RunnableQueue, self.id, self.generation)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceRecord {
     pub id: ResourceId,

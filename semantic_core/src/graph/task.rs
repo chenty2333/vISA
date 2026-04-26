@@ -46,4 +46,8 @@ impl SemanticGraph {
     pub fn task_count(&self) -> usize {
         self.tasks.len()
     }
+
+    pub fn tasks(&self) -> &[TaskRecord] {
+        &self.tasks
+    }
 }

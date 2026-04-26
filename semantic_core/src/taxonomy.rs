@@ -28,6 +28,50 @@ pub enum TaskState {
     SnapshotFrozen,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeActivationState {
+    Created,
+    Runnable,
+    Running,
+    Pending,
+    Blocked,
+    Dead,
+    Exited,
+}
+
+impl RuntimeActivationState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Runnable => "runnable",
+            Self::Running => "running",
+            Self::Pending => "pending",
+            Self::Blocked => "blocked",
+            Self::Dead => "dead",
+            Self::Exited => "exited",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunnableQueueState {
+    Active,
+    Draining,
+    Frozen,
+    Dropped,
+}
+
+impl RunnableQueueState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Draining => "draining",
+            Self::Frozen => "frozen",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
 impl TaskState {
     pub const fn as_str(self) -> &'static str {
         match self {

@@ -1,0 +1,104 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "P0-task-activation-runnable-queue",
+  "name": "golden_preempt_p0_runnable_queue",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "timer interrupt preemption",
+    "saved CPU context",
+    "SMP scheduler",
+    "real target-side execution"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "create-runnable-queue",
+        "queue": "runnable-queue:1@1"
+      },
+      {
+        "id": 2,
+        "command": "create-runtime-activation",
+        "activation": "activation:11@1",
+        "owner_task": "task:7@1"
+      },
+      {
+        "id": 3,
+        "command": "enqueue-runnable",
+        "queue": "runnable-queue:1@1",
+        "activation": "activation:11@1"
+      },
+      {
+        "id": 4,
+        "command": "dequeue-runnable",
+        "queue": "runnable-queue:1@1",
+        "activation": "activation:11@2"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "RunnableQueueCreated",
+      "queue": "runnable-queue:1@1"
+    },
+    {
+      "kind": "RuntimeActivationCreated",
+      "activation": "activation:11@1",
+      "owner_task": "task:7@1"
+    },
+    {
+      "kind": "RunnableQueued",
+      "queue": "runnable-queue:1@1",
+      "activation": "activation:11@2"
+    },
+    {
+      "kind": "RunnableDequeued",
+      "queue": "runnable-queue:1@1",
+      "activation": "activation:11@2"
+    },
+    {
+      "kind": "RuntimeActivationStateChanged",
+      "activation": "activation:11@3",
+      "state": "running"
+    }
+  ],
+  "expected": {
+    "views": {
+      "task": {
+        "kind": "task",
+        "id": 7,
+        "generation": 1,
+        "state": "runnable"
+      },
+      "activation": {
+        "kind": "activation",
+        "id": 11,
+        "generation": 3,
+        "state": "running"
+      },
+      "scheduler": {
+        "kind": "scheduler",
+        "queue_count": 1,
+        "runtime_activation_count": 1
+      }
+    },
+    "invariants": [
+      "running activation is not present in runnable queue",
+      "runnable queue entries carry activation generation",
+      "pending wait task cannot be enqueued"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants",
+      "preemptive_runtime_p0_rejects_pending_task_and_stale_generation_enqueue",
+      "preemptive_runtime_p0_invariants_reject_bad_queue_ownership",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state"
+    ]
+  }
+}

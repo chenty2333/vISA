@@ -1576,6 +1576,200 @@ fn interface_unsupported_is_event_log_visible() {
     );
 }
 
+#[test]
+fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+
+    let queue = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p0-test",
+        SemanticCommand::CreateRunnableQueue {
+            queue: 1,
+            label: "main-rq".to_string(),
+        },
+    ));
+    assert_eq!(queue.status, CommandStatus::Applied);
+
+    let activation = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p0-test",
+        SemanticCommand::CreateRuntimeActivation {
+            activation: 11,
+            owner_task: 7,
+            owner_task_generation: 1,
+            owner_store: None,
+            owner_store_generation: None,
+            code_object: Some(ContractObjectRef::new(ContractObjectKind::CodeObject, 3, 1)),
+        },
+    ));
+    assert_eq!(activation.status, CommandStatus::Applied);
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Created
+    );
+
+    let enqueue = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "p0-test",
+        SemanticCommand::EnqueueRunnable {
+            queue: 1,
+            activation: 11,
+            activation_generation: 1,
+        },
+    ));
+    assert_eq!(enqueue.status, CommandStatus::Applied);
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Runnable
+    );
+    assert_eq!(graph.runtime_activations()[0].generation, 2);
+    assert_eq!(graph.runnable_queues()[0].entries[0].activation, 11);
+    assert_eq!(
+        graph.runnable_queues()[0].entries[0].activation_generation,
+        2
+    );
+
+    let dequeue = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "p0-test",
+        SemanticCommand::DequeueRunnable {
+            queue: 1,
+            activation: 11,
+        },
+    ));
+    assert_eq!(dequeue.status, CommandStatus::Applied);
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Running
+    );
+    assert!(graph.runnable_queues()[0].entries.is_empty());
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "RuntimeActivationStateChanged activation=11 runnable->running generation=3"
+    );
+}
+
+#[test]
+fn preemptive_runtime_p0_rejects_pending_task_and_stale_generation_enqueue() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p0-test",
+        SemanticCommand::EnqueueRunnable {
+            queue: 1,
+            activation: 11,
+            activation_generation: 99,
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("activation generation mismatch".to_string());
+    assert_eq!(stale.violations, expected);
+    assert!(graph.runnable_queues()[0].entries.is_empty());
+
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    graph.record_wait_created_with_details(
+        42,
+        Some(7),
+        None,
+        None,
+        SemanticWaitKind::Timer,
+        1,
+        Vec::new(),
+        Some(10),
+        RestartPolicy::RestartIfAllowed,
+        None,
+    );
+    let task_generation = graph.tasks()[0].generation;
+    assert!(graph.create_runtime_activation_with_id(11, 7, task_generation, None, None, None));
+    let pending = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p0-test",
+        SemanticCommand::EnqueueRunnable {
+            queue: 1,
+            activation: 11,
+            activation_generation: 1,
+        },
+    ));
+    assert_eq!(pending.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("pending wait task cannot be enqueued".to_string());
+    assert_eq!(pending.violations, expected);
+    assert!(graph.runnable_queues()[0].entries.is_empty());
+}
+
+#[test]
+fn preemptive_runtime_p0_rejects_duplicate_queue_and_generationless_store_owner() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    let store = graph.register_store("sched-store", "sched-artifact", "service", "restartable");
+    assert!(!graph.create_runtime_activation_with_id(9, 7, 1, Some(store), None, None));
+
+    let missing_generation = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p0-test",
+        SemanticCommand::CreateRuntimeActivation {
+            activation: 9,
+            owner_task: 7,
+            owner_task_generation: 1,
+            owner_store: Some(store),
+            owner_store_generation: None,
+            code_object: None,
+        },
+    ));
+    assert_eq!(missing_generation.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("activation owner store generation is required".to_string());
+    assert_eq!(missing_generation.violations, expected);
+
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(graph.create_runnable_queue_with_id(2, "backup-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p0-test",
+        SemanticCommand::EnqueueRunnable {
+            queue: 2,
+            activation: 11,
+            activation_generation: 2,
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("activation already queued".to_string());
+    assert_eq!(duplicate.violations, expected);
+    assert!(graph.runnable_queues()[1].entries.is_empty());
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn preemptive_runtime_p0_invariants_reject_bad_queue_ownership() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    graph.clear_runtime_activation_queue_for_test(11);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::RunnableQueueOwnershipMismatch {
+            queue: 1,
+            activation: 11,
+        })
+    );
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

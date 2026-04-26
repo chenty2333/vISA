@@ -67,6 +67,7 @@ impl SchemaVersion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObjectKind {
     Task,
+    RunnableQueue,
     Resource,
     Capability,
     WaitToken,
@@ -94,6 +95,7 @@ impl ObjectKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Task => "task",
+            Self::RunnableQueue => "runnable-queue",
             Self::Resource => "resource",
             Self::Capability => "capability",
             Self::WaitToken => "wait-token",
@@ -275,6 +277,7 @@ typed_ref!(CapabilityRef, ObjectKind::Capability);
 typed_ref!(WaitTokenRef, ObjectKind::WaitToken);
 typed_ref!(CleanupRef, ObjectKind::Cleanup);
 typed_ref!(TaskRef, ObjectKind::Task);
+typed_ref!(RunnableQueueRef, ObjectKind::RunnableQueue);
 typed_ref!(FaultDomainRef, ObjectKind::FaultDomain);
 typed_ref!(ArtifactRef, ObjectKind::Artifact);
 typed_ref!(CodeObjectRef, ObjectKind::CodeObject);
@@ -1395,6 +1398,23 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     if roots.task_roots.len() != package.semantic.task_count {
         return Err(ContractError::new("task root/count mismatch"));
     }
+    if package.semantic.task_records.len() != package.semantic.task_record_count {
+        return Err(ContractError::new("task record count mismatch"));
+    }
+    if roots.task_record_roots.len() != package.semantic.task_record_count {
+        return Err(ContractError::new("task record root/count mismatch"));
+    }
+    if roots.runtime_activation_roots.len() != package.semantic.runtime_activation_count
+        || package.semantic.runtime_activation_records.len()
+            != package.semantic.runtime_activation_count
+    {
+        return Err(ContractError::new("runtime activation root/count mismatch"));
+    }
+    if roots.runnable_queue_roots.len() != package.semantic.runnable_queue_count
+        || package.semantic.runnable_queues.len() != package.semantic.runnable_queue_count
+    {
+        return Err(ContractError::new("runnable queue root/count mismatch"));
+    }
     if roots.resource_roots.len() != package.semantic.resource_count {
         return Err(ContractError::new("resource root/count mismatch"));
     }
@@ -1672,9 +1692,10 @@ mod tests {
     use artifact_manifest::{
         CommandResultManifest, CompilerManifest, ExternManifest, GuestStateManifest,
         InterfaceEventManifest, MigrationHostManifest, MigrationPackageManifest,
-        MigrationTargetManifest, RequiredArtifactProfileManifest, SemanticRootSetManifest,
-        SemanticSnapshotManifest, SignatureManifest, SubstrateAuthorityRequirementManifest,
-        SubstrateBoundaryManifest, SubstrateEventManifest, TargetManifest,
+        MigrationTargetManifest, RequiredArtifactProfileManifest, RuntimeActivationRecordManifest,
+        SemanticRootSetManifest, SemanticSnapshotManifest, SignatureManifest,
+        SubstrateAuthorityRequirementManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
+        TargetManifest,
     };
 
     #[test]
@@ -1886,6 +1907,9 @@ mod tests {
                 roots: SemanticRootSetManifest::default(),
                 pending_wait_count: 0,
                 task_count: 0,
+                task_record_count: 0,
+                runtime_activation_count: 0,
+                runnable_queue_count: 0,
                 resource_count: 0,
                 authority_count: 0,
                 active_authority_count: 0,
@@ -1920,6 +1944,9 @@ mod tests {
                 command_result_count: 0,
                 interface_event_count: 0,
                 target_artifacts: Vec::new(),
+                task_records: Vec::new(),
+                runtime_activation_records: Vec::new(),
+                runnable_queues: Vec::new(),
                 code_objects: Vec::new(),
                 store_records: Vec::new(),
                 capability_records: Vec::new(),
@@ -2022,6 +2049,31 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("count mismatch must fail");
         assert_eq!(err.to_string(), "substrate event root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_runtime_scheduler_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.runtime_activation_count = 1;
+        package
+            .semantic
+            .runtime_activation_records
+            .push(RuntimeActivationRecordManifest {
+                id: 11,
+                owner_task: 7,
+                owner_task_generation: 1,
+                owner_store: None,
+                owner_store_generation: None,
+                code_object: None,
+                generation: 1,
+                state: "runnable".to_owned(),
+                runnable_queue: Some(1),
+                runnable_queue_generation: Some(1),
+                last_event: Some(3),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "runtime activation root/count mismatch");
     }
 
     #[test]

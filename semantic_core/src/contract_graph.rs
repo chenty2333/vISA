@@ -1373,6 +1373,7 @@ impl ContractGraphValidator {
                 .find(|external| external.object.id == id)
                 .map(|external| external.object),
             ContractObjectKind::Task
+            | ContractObjectKind::RunnableQueue
             | ContractObjectKind::Resource
             | ContractObjectKind::FaultDomain
             | ContractObjectKind::MemoryObject

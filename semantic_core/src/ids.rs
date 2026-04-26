@@ -1,4 +1,5 @@
 pub type TaskId = u32;
+pub type RunnableQueueId = u64;
 pub type ResourceId = u64;
 pub type CapabilityId = u64;
 pub type FaultDomainId = u64;
