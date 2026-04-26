@@ -34,6 +34,7 @@ pub struct SemanticGraph {
     mmio_region_objects: Vec<MmioRegionObjectRecord>,
     irq_line_objects: Vec<IrqLineObjectRecord>,
     irq_events: Vec<IrqEventRecord>,
+    device_capabilities: Vec<DeviceCapabilityRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -79,6 +80,7 @@ pub struct SemanticGraph {
     next_mmio_region_object_id: MmioRegionObjectId,
     next_irq_line_object_id: IrqLineObjectId,
     next_irq_event_id: IrqEventId,
+    next_device_capability_id: DeviceCapabilityId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -103,6 +105,7 @@ mod command;
 mod context;
 mod cross_scheduler;
 mod descriptor_object;
+mod device_capability;
 mod device_object;
 mod dma_buffer_object;
 mod hart;
@@ -171,6 +174,7 @@ impl SemanticGraph {
             mmio_region_objects: Vec::new(),
             irq_line_objects: Vec::new(),
             irq_events: Vec::new(),
+            device_capabilities: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -216,6 +220,7 @@ impl SemanticGraph {
             next_mmio_region_object_id: 1,
             next_irq_line_object_id: 1,
             next_irq_event_id: 1,
+            next_device_capability_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

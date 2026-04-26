@@ -1408,6 +1408,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::MmioRegionObject
             | ContractObjectKind::IrqLineObject
             | ContractObjectKind::IrqEvent
+            | ContractObjectKind::DeviceCapability
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

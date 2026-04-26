@@ -279,6 +279,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub irq_event_count: usize,
     #[serde(default)]
+    pub device_capability_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -409,6 +411,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub irq_events: Vec<IrqEventManifest>,
     #[serde(default)]
+    pub device_capabilities: Vec<DeviceCapabilityManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -518,6 +522,8 @@ pub struct SemanticRootSetManifest {
     pub irq_line_object_roots: Vec<String>,
     #[serde(default)]
     pub irq_event_roots: Vec<String>,
+    #[serde(default)]
+    pub device_capability_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1253,6 +1259,25 @@ pub struct IrqEventManifest {
     pub driver_store_generation: u64,
     pub irq_number: u32,
     pub sequence: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct DeviceCapabilityManifest {
+    pub id: u64,
+    pub driver_store: u64,
+    pub driver_store_generation: u64,
+    pub target: ContractObjectRefManifest,
+    pub class: String,
+    pub operation: String,
+    pub capability: u64,
+    pub capability_generation: u64,
+    pub handle_slot: u32,
+    pub handle_generation: u32,
+    pub handle_tag: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

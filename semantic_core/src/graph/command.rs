@@ -313,6 +313,16 @@ pub enum SemanticCommand {
         sequence: u64,
         note: String,
     },
+    RecordDeviceCapability {
+        device_capability: DeviceCapabilityId,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        target: ContractObjectRef,
+        class: CapabilityClass,
+        operation: String,
+        handle: CapabilityHandle,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -547,6 +557,7 @@ impl SemanticCommand {
             Self::RecordMmioRegionObject { .. } => "record-mmio-region-object",
             Self::RecordIrqLineObject { .. } => "record-irq-line-object",
             Self::RecordIrqEvent { .. } => "record-irq-event",
+            Self::RecordDeviceCapability { .. } => "record-device-capability",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1791,6 +1802,27 @@ impl SemanticGraph {
                     *sequence,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordDeviceCapability {
+                device_capability,
+                driver_store,
+                driver_store_generation,
+                target,
+                class,
+                operation,
+                handle,
+                ..
+            } => self
+                .validate_device_capability(
+                    *device_capability,
+                    *driver_store,
+                    *driver_store_generation,
+                    *target,
+                    *class,
+                    operation,
+                    handle,
+                )
+                .map(|_| ())
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2815,6 +2847,25 @@ impl SemanticGraph {
                 driver_store,
                 driver_store_generation,
                 sequence,
+                &note,
+            ),
+            SemanticCommand::RecordDeviceCapability {
+                device_capability,
+                driver_store,
+                driver_store_generation,
+                target,
+                class,
+                operation,
+                handle,
+                note,
+            } => self.record_device_capability_with_id(
+                device_capability,
+                driver_store,
+                driver_store_generation,
+                target,
+                class,
+                &operation,
+                handle,
                 &note,
             ),
             SemanticCommand::ResumeActivation {

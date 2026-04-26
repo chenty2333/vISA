@@ -1,0 +1,137 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "I7-device-capability",
+  "name": "golden_i7_device_capability",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md",
+    "references/specs/substrate-api-v0/01-authority-traits.md"
+  ],
+  "no_goals": [
+    "real MMIO read/write",
+    "real DMA sync or mapping",
+    "real IRQ acknowledge or masking",
+    "real substrate device operation",
+    "virtio or smoltcp integration"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "record-device-capability",
+        "device_capability": "device-capability:9951@1",
+        "target": "device-object:9701@1",
+        "class": "device",
+        "operation": "probe",
+        "driver_store": "store:2@2",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "record-device-capability",
+        "device_capability": "device-capability:9952@1",
+        "target": "mmio-region-object:9921@1",
+        "class": "mmio-region",
+        "operation": "write32",
+        "driver_store": "store:2@2",
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "record-device-capability",
+        "device_capability": "device-capability:9953@1",
+        "target": "dma-buffer-object:9911@1",
+        "class": "dma-buffer",
+        "operation": "sync-for-device",
+        "driver_store": "store:2@2",
+        "expected": "applied"
+      },
+      {
+        "id": 4,
+        "command": "record-device-capability",
+        "device_capability": "device-capability:9954@1",
+        "target": "irq-line-object:9931@1",
+        "class": "irq-line",
+        "operation": "ack",
+        "driver_store": "store:2@2",
+        "expected": "applied"
+      },
+      {
+        "id": 5,
+        "command": "record-device-capability",
+        "target": "mmio-region-object:9921@1",
+        "handle_source": "debug-label-derived-resource-ref",
+        "expected": "rejected",
+        "violation": "device capability handle is not authorized"
+      },
+      {
+        "id": 6,
+        "command": "record-device-capability",
+        "target": "mmio-region-object:9921@2",
+        "expected": "rejected",
+        "violation": "device capability target generation is missing or inactive"
+      },
+      {
+        "id": 7,
+        "command": "record-device-capability",
+        "capability_state": "revoked",
+        "expected": "rejected",
+        "violation": "device capability handle is not authorized"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "DeviceCapabilityRecorded",
+      "device_capability": "device-capability:9952@1",
+      "target": "mmio-region-object:9921@1",
+      "class": "mmio-region",
+      "operation": "write32",
+      "capability": "capability:2@1",
+      "driver_store": "store:2@2"
+    }
+  ],
+  "expected": {
+    "views": {
+      "device-capability": {
+        "count": 4,
+        "driver_store": "store:2@2",
+        "targets": [
+          "device-object:9701@1",
+          "mmio-region-object:9921@1",
+          "dma-buffer-object:9911@1",
+          "irq-line-object:9931@1"
+        ],
+        "handle_shape": "store-local slot + generation + tag",
+        "state": "active"
+      },
+      "graph-history": {
+        "edges": [
+          "device-capability:9952@1 --device-capability-target--> mmio-region-object:9921@1",
+          "device-capability:9952@1 --device-capability-driver-store--> store:2@2",
+          "device-capability:9952@1 --device-capability-ledger--> capability:2@1"
+        ]
+      }
+    },
+    "invariants": [
+      "DeviceCapability must derive subject from exact driver Store generation",
+      "DeviceCapability target must be an exact active IO object generation",
+      "DeviceCapability authorization must use store-local CapabilityHandle slot/generation/tag",
+      "Debug labels and global object ids cannot authorize device access",
+      "Revoked or stale capability generations cannot authorize device access"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "io_runtime_i7_device_capability_records_store_local_authority",
+      "io_runtime_i7_rejects_label_only_stale_revoked_or_duplicate_capability",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "semantic_roots_reject_device_capability_root_mismatch"
+    ]
+  }
+}

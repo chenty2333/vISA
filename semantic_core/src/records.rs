@@ -828,6 +828,35 @@ impl IrqEventRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeviceCapabilityRecord {
+    pub id: DeviceCapabilityId,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub target: ContractObjectRef,
+    pub class: CapabilityClass,
+    pub operation: String,
+    pub capability: CapabilityId,
+    pub capability_generation: Generation,
+    pub handle_slot: u32,
+    pub handle_generation: u32,
+    pub handle_tag: u64,
+    pub generation: Generation,
+    pub state: DeviceCapabilityState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl DeviceCapabilityRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::DeviceCapability,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

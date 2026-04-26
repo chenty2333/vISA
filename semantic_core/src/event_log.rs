@@ -325,6 +325,19 @@ pub enum EventKind {
         sequence: u64,
         generation: Generation,
     },
+    DeviceCapabilityRecorded {
+        device_capability: DeviceCapabilityId,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        target: ContractObjectRef,
+        class: CapabilityClass,
+        operation: String,
+        capability: CapabilityId,
+        capability_generation: Generation,
+        handle_slot: u32,
+        handle_generation: u32,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1116,6 +1129,23 @@ impl EventKind {
                 generation,
             } => format!(
                 "IrqEventRecorded irq_event={irq_event} irq_line={irq_line}@{irq_line_generation} device={device}@{device_generation} driver_store={driver_store}@{driver_store_generation} irq_number={irq_number} sequence={sequence} generation={generation}"
+            ),
+            Self::DeviceCapabilityRecorded {
+                device_capability,
+                driver_store,
+                driver_store_generation,
+                target,
+                class,
+                operation,
+                capability,
+                capability_generation,
+                handle_slot,
+                handle_generation,
+                generation,
+            } => format!(
+                "DeviceCapabilityRecorded device_capability={device_capability} driver_store={driver_store}@{driver_store_generation} target={} class={} operation={operation} capability={capability}@{capability_generation} handle_slot={handle_slot} handle_generation={handle_generation} generation={generation}",
+                target.summary(),
+                class.as_str()
             ),
             Self::RuntimeActivationResumed {
                 resume,

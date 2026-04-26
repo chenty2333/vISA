@@ -11,15 +11,16 @@ use artifact_manifest::{
     ArtifactBundleManifest, BoundaryValidationReportManifest, CapabilityRecordManifest,
     CleanupTransactionManifest, CodeObjectManifest, CommandResultManifest,
     ContractObjectRefManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceObjectManifest, DmaBufferObjectManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
-    SavedContextManifest, SchedulerDecisionManifest, SmpCleanupQuiescenceManifest,
-    SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
-    SmpSnapshotBarrierManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
-    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
+    DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
+    MigrationPackageManifest, MmioRegionObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
+    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
+    SmpStressRunManifest, StopTheWorldRendezvousManifest, StoreRecordManifest,
+    SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
     TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
@@ -265,6 +266,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "irq-line"
         | "irq-line-object"
         | "irq-event"
+        | "device-capability"
+        | "io-capability"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -435,7 +438,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -657,6 +660,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "mmio-region" | "mmio-region-object" => "mmio-region",
         "irq-line" | "irq-line-object" => "irq-line",
         "irq-event" => "irq-event",
+        "device-capability" | "io-capability" => "device-capability",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -1896,6 +1900,56 @@ fn irq_event_view_v1(irq_event: &IrqEventManifest) -> serde_json::Value {
     })
 }
 
+fn device_capability_view_v1(device_capability: &DeviceCapabilityManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "device-capability",
+        "id": device_capability.id,
+        "generation": device_capability.generation,
+        "state": device_capability.state,
+        "owner": {
+            "driver_store": object_ref_json(
+                "store",
+                device_capability.driver_store,
+                device_capability.driver_store_generation
+            ),
+        },
+        "references": {
+            "target": object_ref_manifest_json(&device_capability.target),
+            "capability": object_ref_json(
+                "capability",
+                device_capability.capability,
+                device_capability.capability_generation
+            ),
+            "driver_store": object_ref_json(
+                "store",
+                device_capability.driver_store,
+                device_capability.driver_store_generation
+            ),
+            "event": {
+                "id": device_capability.recorded_at_event,
+            },
+        },
+        "authority": {
+            "class": device_capability.class,
+            "operation": device_capability.operation,
+            "handle": {
+                "slot": device_capability.handle_slot,
+                "generation": device_capability.handle_generation,
+                "tag": device_capability.handle_tag,
+            },
+        },
+        "note": device_capability.note,
+        "last_transition": {
+            "recorded_at_event": device_capability.recorded_at_event,
+            "driver_store_generation": device_capability.driver_store_generation,
+            "target_generation": device_capability.target.generation,
+            "capability_generation": device_capability.capability_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -2917,6 +2971,12 @@ fn stable_views_for_kind(
             .iter()
             .map(irq_event_view_v1)
             .collect()),
+        "device-capability" | "io-capability" => Ok(package
+            .semantic
+            .device_capabilities
+            .iter()
+            .map(device_capability_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -3563,7 +3623,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -3594,6 +3654,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.mmio_region_object_count,
             package.semantic.irq_line_object_count,
             package.semantic.irq_event_count,
+            package.semantic.device_capability_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -3726,7 +3787,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} descriptor_roots={} dma_buffer_roots={} mmio_region_roots={} irq_line_roots={} irq_event_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} descriptor_roots={} dma_buffer_roots={} mmio_region_roots={} irq_line_roots={} irq_event_roots={} device_capability_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -3774,6 +3835,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.mmio_region_object_roots.len(),
         package.semantic.roots.irq_line_object_roots.len(),
         package.semantic.roots.irq_event_roots.len(),
+        package.semantic.roots.device_capability_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -3854,6 +3916,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     );
     print_roots("irq-line", &package.semantic.roots.irq_line_object_roots);
     print_roots("irq-event", &package.semantic.roots.irq_event_roots);
+    print_roots(
+        "device-capability",
+        &package.semantic.roots.device_capability_roots,
+    );
     print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
@@ -4209,6 +4275,45 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "irq-line-resource",
             "live",
             Some(irq_line.recorded_at_event),
+        ));
+    }
+    for device_capability in &package.semantic.device_capabilities {
+        if device_capability.state != "active" {
+            continue;
+        }
+        let from = object_ref_json(
+            "device-capability",
+            device_capability.id,
+            device_capability.generation,
+        );
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "store",
+                device_capability.driver_store,
+                device_capability.driver_store_generation,
+            ),
+            "device-capability-driver-store",
+            "live",
+            Some(device_capability.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_manifest_json(&device_capability.target),
+            "device-capability-target",
+            "live",
+            Some(device_capability.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "capability",
+                device_capability.capability,
+                device_capability.capability_generation,
+            ),
+            "device-capability-ledger",
+            "live",
+            Some(device_capability.recorded_at_event),
         ));
     }
     for wait in &package.semantic.wait_records {
@@ -5051,6 +5156,42 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "irq-event-driver-store",
             "historical",
             Some(irq_event.recorded_at_event),
+        ));
+    }
+    for device_capability in &package.semantic.device_capabilities {
+        let from = object_ref_json(
+            "device-capability",
+            device_capability.id,
+            device_capability.generation,
+        );
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "store",
+                device_capability.driver_store,
+                device_capability.driver_store_generation,
+            ),
+            "device-capability-driver-store",
+            "live",
+            Some(device_capability.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_manifest_json(&device_capability.target),
+            "device-capability-target",
+            "live",
+            Some(device_capability.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "capability",
+                device_capability.capability,
+                device_capability.capability_generation,
+            ),
+            "device-capability-ledger",
+            "live",
+            Some(device_capability.recorded_at_event),
         ));
     }
     for resume in &package.semantic.activation_resumes {
@@ -6479,7 +6620,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -6509,6 +6650,7 @@ fn replay_until(
         package.semantic.roots.mmio_region_object_roots.len(),
         package.semantic.roots.irq_line_object_roots.len(),
         package.semantic.roots.irq_event_roots.len(),
+        package.semantic.roots.device_capability_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -6582,6 +6724,9 @@ fn replay_until(
     }
     for irq_event in &package.semantic.roots.irq_event_roots {
         println!("replay irq-event {irq_event}");
+    }
+    for device_capability in &package.semantic.roots.device_capability_roots {
+        println!("replay device-capability {device_capability}");
     }
     Ok(())
 }
@@ -6680,6 +6825,10 @@ fn print_replay_json(
     roots.insert(
         "irq_events".to_owned(),
         serde_json::json!(package.semantic.roots.irq_event_roots.len()),
+    );
+    roots.insert(
+        "device_capabilities".to_owned(),
+        serde_json::json!(package.semantic.roots.device_capability_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -6934,6 +7083,10 @@ fn print_replay_json(
         serde_json::json!(&package.semantic.roots.irq_event_roots),
     );
     roots.insert(
+        "device_capability_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.device_capability_roots),
+    );
+    roots.insert(
         "cleanup_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.cleanup_roots),
     );
@@ -7017,7 +7170,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -7058,6 +7211,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.mmio_region_object_count,
         package.semantic.irq_line_object_count,
         package.semantic.irq_event_count,
+        package.semantic.device_capability_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -8081,6 +8235,30 @@ mod tests {
         });
         package
             .semantic
+            .device_capabilities
+            .push(DeviceCapabilityManifest {
+                id: 42,
+                driver_store: 1,
+                driver_store_generation: 2,
+                target: ContractObjectRefManifest {
+                    kind: "mmio-region-object".to_owned(),
+                    id: 39,
+                    generation: 1,
+                },
+                class: "mmio-region".to_owned(),
+                operation: "write32".to_owned(),
+                capability: 7,
+                capability_generation: 1,
+                handle_slot: 3,
+                handle_generation: 1,
+                handle_tag: 9001,
+                generation: 1,
+                state: "active".to_owned(),
+                recorded_at_event: 36,
+                note: "device capability".to_owned(),
+            });
+        package
+            .semantic
             .activation_resumes
             .push(ActivationResumeManifest {
                 id: 17,
@@ -8433,6 +8611,15 @@ mod tests {
         assert_eq!(irq_event["references"]["irq_line"]["generation"], 1);
         assert_eq!(irq_event["identity"]["irq_number"], 5);
         assert_eq!(irq_event["identity"]["sequence"], 1);
+        let device_capability = device_capability_view_v1(&package.semantic.device_capabilities[0]);
+        assert_eq!(device_capability["kind"], "device-capability");
+        assert_eq!(device_capability["owner"]["driver_store"]["generation"], 2);
+        assert_eq!(device_capability["references"]["target"]["id"], 39);
+        assert_eq!(device_capability["references"]["target"]["generation"], 1);
+        assert_eq!(device_capability["references"]["capability"]["id"], 7);
+        assert_eq!(device_capability["authority"]["class"], "mmio-region");
+        assert_eq!(device_capability["authority"]["operation"], "write32");
+        assert_eq!(device_capability["authority"]["handle"]["slot"], 3);
         let resume = activation_resume_view_v1(&package.semantic.activation_resumes[0]);
         assert_eq!(resume["kind"], "activation-resume");
         assert_eq!(resume["references"]["activation"]["generation_before"], 3);

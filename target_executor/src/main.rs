@@ -13,18 +13,19 @@ use artifact_manifest::{
     CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
     CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
     CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
-    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceObjectManifest,
-    DmaBufferObjectManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
-    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
+    DeviceObjectManifest, DmaBufferObjectManifest, GuestStateManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    MmioRegionObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
+    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
+    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -63,6 +64,7 @@ use target_abi::{
 };
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
+const SEMANTIC_EVIDENCE_CAPABILITY_SOURCES: &[&str] = &["i7-device-capability"];
 
 #[derive(Clone, Debug, Default)]
 struct TargetExecutorV1Report {
@@ -1242,6 +1244,125 @@ fn record_preemptive_runtime_context_evidence(
             .into());
         }
     }
+
+    let device_ref = ContractObjectRef::new(ContractObjectKind::DeviceObject, 9701, 1);
+    let mmio_ref = ContractObjectRef::new(ContractObjectKind::MmioRegionObject, 9921, 1);
+    let dma_ref = ContractObjectRef::new(ContractObjectKind::DmaBufferObject, 9911, 1);
+    let irq_ref = ContractObjectRef::new(ContractObjectKind::IrqLineObject, 9931, 1);
+    let device_capability = semantic.grant_capability_with_authority_ref(
+        "i6.irq.driver",
+        "device.fake-io0",
+        AuthorityObjectRef::internal(CapabilityClass::Device, device_ref),
+        &["probe"],
+        "store",
+        "i7-device-capability",
+        true,
+    );
+    let mmio_capability = semantic.grant_capability_with_authority_ref(
+        "i6.irq.driver",
+        "mmio.fake-io0.regs",
+        AuthorityObjectRef::internal(CapabilityClass::MmioRegion, mmio_ref),
+        &["write32"],
+        "store",
+        "i7-device-capability",
+        true,
+    );
+    let dma_capability = semantic.grant_capability_with_authority_ref(
+        "i6.irq.driver",
+        "dma.fake-io0.rx0",
+        AuthorityObjectRef::internal(CapabilityClass::DmaBuffer, dma_ref),
+        &["sync-for-device"],
+        "store",
+        "i7-device-capability",
+        true,
+    );
+    let irq_capability = semantic.grant_capability_with_authority_ref(
+        "i6.irq.driver",
+        "irq.fake-io0.rx",
+        AuthorityObjectRef::internal(CapabilityClass::IrqLine, irq_ref),
+        &["ack"],
+        "store",
+        "i7-device-capability",
+        true,
+    );
+    let capability_handle = |semantic: &SemanticGraph, capability, operation: &str| {
+        semantic
+            .capabilities()
+            .record(capability)
+            .and_then(|record| record.store_local_handle(vec![operation.to_owned()]))
+            .ok_or("i7 device capability handle is missing")
+    };
+    let i7_commands = [
+        CommandEnvelope::new(
+            107,
+            "target-executor-i7",
+            SemanticCommand::RecordDeviceCapability {
+                device_capability: 9951,
+                driver_store: io_driver_store,
+                driver_store_generation: io_driver_store_generation,
+                target: device_ref,
+                class: CapabilityClass::Device,
+                operation: "probe".to_owned(),
+                handle: capability_handle(semantic, device_capability, "probe")?,
+                note: "i7-record-device-capability-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            108,
+            "target-executor-i7",
+            SemanticCommand::RecordDeviceCapability {
+                device_capability: 9952,
+                driver_store: io_driver_store,
+                driver_store_generation: io_driver_store_generation,
+                target: mmio_ref,
+                class: CapabilityClass::MmioRegion,
+                operation: "write32".to_owned(),
+                handle: capability_handle(semantic, mmio_capability, "write32")?,
+                note: "i7-record-mmio-capability-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            109,
+            "target-executor-i7",
+            SemanticCommand::RecordDeviceCapability {
+                device_capability: 9953,
+                driver_store: io_driver_store,
+                driver_store_generation: io_driver_store_generation,
+                target: dma_ref,
+                class: CapabilityClass::DmaBuffer,
+                operation: "sync-for-device".to_owned(),
+                handle: capability_handle(semantic, dma_capability, "sync-for-device")?,
+                note: "i7-record-dma-capability-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            110,
+            "target-executor-i7",
+            SemanticCommand::RecordDeviceCapability {
+                device_capability: 9954,
+                driver_store: io_driver_store,
+                driver_store_generation: io_driver_store_generation,
+                target: irq_ref,
+                class: CapabilityClass::IrqLine,
+                operation: "ack".to_owned(),
+                handle: capability_handle(semantic, irq_capability, "ack")?,
+                note: "i7-record-irq-capability-harness".to_owned(),
+            },
+        ),
+    ];
+    for command in i7_commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "preemptive runtime evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
     Ok(())
 }
 
@@ -2267,6 +2388,7 @@ fn demo_migration_package(
             mmio_region_object_count: semantic.mmio_region_object_count(),
             irq_line_object_count: semantic.irq_line_object_count(),
             irq_event_count: semantic.irq_event_count(),
+            device_capability_count: semantic.device_capability_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2437,6 +2559,11 @@ fn demo_migration_package(
                 .irq_events()
                 .iter()
                 .map(irq_event_manifest)
+                .collect(),
+            device_capabilities: semantic
+                .device_capabilities()
+                .iter()
+                .map(device_capability_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -3046,6 +3173,25 @@ fn semantic_roots(
                     irq_event.sequence,
                     irq_event.state.as_str(),
                     irq_event.generation
+                )
+            })
+            .collect(),
+        device_capability_roots: semantic
+            .device_capabilities()
+            .iter()
+            .map(|device_capability| {
+                format!(
+                    "device-capability id={} driver_store={}@{} target={} class={} operation={} capability={}@{} state={} generation={}",
+                    device_capability.id,
+                    device_capability.driver_store,
+                    device_capability.driver_store_generation,
+                    device_capability.target.summary(),
+                    device_capability.class.as_str(),
+                    device_capability.operation,
+                    device_capability.capability,
+                    device_capability.capability_generation,
+                    device_capability.state.as_str(),
+                    device_capability.generation
                 )
             })
             .collect(),
@@ -4290,6 +4436,28 @@ fn irq_event_manifest(irq_event: &semantic_core::IrqEventRecord) -> IrqEventMani
     }
 }
 
+fn device_capability_manifest(
+    device_capability: &semantic_core::DeviceCapabilityRecord,
+) -> DeviceCapabilityManifest {
+    DeviceCapabilityManifest {
+        id: device_capability.id,
+        driver_store: device_capability.driver_store,
+        driver_store_generation: device_capability.driver_store_generation,
+        target: contract_object_ref_manifest(device_capability.target),
+        class: device_capability.class.as_str().to_owned(),
+        operation: device_capability.operation.clone(),
+        capability: device_capability.capability,
+        capability_generation: device_capability.capability_generation,
+        handle_slot: device_capability.handle_slot,
+        handle_generation: device_capability.handle_generation,
+        handle_tag: device_capability.handle_tag,
+        generation: device_capability.generation,
+        state: device_capability.state.as_str().to_owned(),
+        recorded_at_event: device_capability.recorded_at_event,
+        note: device_capability.note.clone(),
+    }
+}
+
 fn activation_resume_manifest(
     resume: &semantic_core::ActivationResumeRecord,
 ) -> ActivationResumeManifest {
@@ -4910,6 +5078,9 @@ fn restore_migration_package(
         );
     }
     for capability in &package.logical_capabilities {
+        if is_semantic_evidence_capability(capability) {
+            continue;
+        }
         let Some(module) = plan.entry(&capability.subject) else {
             return Err(format!(
                 "migration package capability subject {} is not in target load plan",
@@ -4998,6 +5169,10 @@ fn restore_migration_package(
         package.not_migrated.join(", ")
     );
     Ok(())
+}
+
+fn is_semantic_evidence_capability(capability: &MigrationCapabilityManifest) -> bool {
+    SEMANTIC_EVIDENCE_CAPABILITY_SOURCES.contains(&capability.source.as_str())
 }
 
 fn short_hash(hash: &str) -> &str {

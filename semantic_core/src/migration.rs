@@ -888,6 +888,28 @@ pub enum SemanticInvariantError {
     IrqEventMissingEvent {
         irq_event: IrqEventId,
     },
+    DeviceCapabilityInvalid {
+        device_capability: DeviceCapabilityId,
+    },
+    DeviceCapabilityMissingStore {
+        device_capability: DeviceCapabilityId,
+        store: StoreId,
+    },
+    DeviceCapabilityMissingTarget {
+        device_capability: DeviceCapabilityId,
+        target: ContractObjectRef,
+    },
+    DeviceCapabilityMissingCapability {
+        device_capability: DeviceCapabilityId,
+        capability: CapabilityId,
+    },
+    DeviceCapabilityDuplicateTarget {
+        device_capability: DeviceCapabilityId,
+        target: ContractObjectRef,
+    },
+    DeviceCapabilityMissingEvent {
+        device_capability: DeviceCapabilityId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

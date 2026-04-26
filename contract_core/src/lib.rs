@@ -93,6 +93,7 @@ pub enum ObjectKind {
     MmioRegionObject,
     IrqLineObject,
     IrqEvent,
+    DeviceCapability,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -151,6 +152,7 @@ impl ObjectKind {
             Self::MmioRegionObject => "mmio-region-object",
             Self::IrqLineObject => "irq-line-object",
             Self::IrqEvent => "irq-event",
+            Self::DeviceCapability => "device-capability",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -369,6 +371,7 @@ typed_ref!(DmaBufferObjectRef, ObjectKind::DmaBufferObject);
 typed_ref!(MmioRegionObjectRef, ObjectKind::MmioRegionObject);
 typed_ref!(IrqLineObjectRef, ObjectKind::IrqLineObject);
 typed_ref!(IrqEventRef, ObjectKind::IrqEvent);
+typed_ref!(DeviceCapabilityRef, ObjectKind::DeviceCapability);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1659,6 +1662,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("irq event root/count mismatch"));
     }
+    if roots.device_capability_roots.len() != package.semantic.device_capability_count
+        || package.semantic.device_capabilities.len() != package.semantic.device_capability_count
+    {
+        return Err(ContractError::new("device capability root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2208,6 +2216,7 @@ mod tests {
                 mmio_region_object_count: 0,
                 irq_line_object_count: 0,
                 irq_event_count: 0,
+                device_capability_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2275,6 +2284,7 @@ mod tests {
                 mmio_region_objects: Vec::new(),
                 irq_line_objects: Vec::new(),
                 irq_events: Vec::new(),
+                device_capabilities: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3172,6 +3182,39 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_device_capability_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.device_capability_count = 1;
+        package
+            .semantic
+            .device_capabilities
+            .push(artifact_manifest::DeviceCapabilityManifest {
+                id: 24,
+                driver_store: 2,
+                driver_store_generation: 2,
+                target: artifact_manifest::ContractObjectRefManifest {
+                    kind: "mmio-region-object".to_owned(),
+                    id: 21,
+                    generation: 1,
+                },
+                class: "mmio-region".to_owned(),
+                operation: "write32".to_owned(),
+                capability: 7,
+                capability_generation: 1,
+                handle_slot: 1,
+                handle_generation: 1,
+                handle_tag: 99,
+                generation: 1,
+                state: "active".to_owned(),
+                recorded_at_event: 60,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "device capability root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3672,6 +3715,8 @@ mod tests {
         assert!(IrqLineObjectRef::try_from_ref(irq_line_object).is_ok());
         let irq_event = ObjectRef::new(ObjectKind::IrqEvent, 23, 1).unwrap();
         assert!(IrqEventRef::try_from_ref(irq_event).is_ok());
+        let device_capability = ObjectRef::new(ObjectKind::DeviceCapability, 24, 1).unwrap();
+        assert!(DeviceCapabilityRef::try_from_ref(device_capability).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

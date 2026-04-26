@@ -25,6 +25,7 @@ pub type DmaBufferObjectId = u64;
 pub type MmioRegionObjectId = u64;
 pub type IrqLineObjectId = u64;
 pub type IrqEventId = u64;
+pub type DeviceCapabilityId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

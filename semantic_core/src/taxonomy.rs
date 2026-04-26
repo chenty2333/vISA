@@ -595,6 +595,21 @@ impl IrqEventState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceCapabilityState {
+    Active,
+    Revoked,
+}
+
+impl DeviceCapabilityState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Revoked => "revoked",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,
