@@ -19,6 +19,7 @@ pub struct SemanticGraph {
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
     preemption_latency_samples: Vec<PreemptionLatencySampleRecord>,
+    hart_event_attributions: Vec<HartEventAttributionRecord>,
     resources: Vec<ResourceRecord>,
     authority_bindings: Vec<AuthorityBindingRecord>,
     waits: Vec<WaitRecord>,
@@ -44,6 +45,7 @@ pub struct SemanticGraph {
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
     next_preemption_latency_sample_id: PreemptionLatencySampleId,
+    next_hart_event_attribution_id: HartEventAttributionId,
     next_authority_id: AuthorityId,
     next_fault_domain_id: FaultDomainId,
     next_store_id: StoreId,
@@ -61,6 +63,7 @@ mod cleanup;
 mod command;
 mod context;
 mod hart;
+mod hart_event;
 mod interface;
 mod latency;
 mod network;
@@ -96,6 +99,7 @@ impl SemanticGraph {
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
             preemption_latency_samples: Vec::new(),
+            hart_event_attributions: Vec::new(),
             resources: Vec::new(),
             authority_bindings: Vec::new(),
             waits: Vec::new(),
@@ -121,6 +125,7 @@ impl SemanticGraph {
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,
             next_preemption_latency_sample_id: 1,
+            next_hart_event_attribution_id: 1,
             next_authority_id: 1,
             next_fault_domain_id: 1,
             next_store_id: 1,

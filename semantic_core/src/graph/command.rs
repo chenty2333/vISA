@@ -80,7 +80,8 @@ pub enum SemanticCommand {
     RecordTimerInterrupt {
         interrupt: TimerInterruptId,
         timer_epoch: u64,
-        hart: u32,
+        hart: HartId,
+        hart_generation: Generation,
         target_activation: Option<ActivationId>,
         target_activation_generation: Option<Generation>,
         note: String,
@@ -875,6 +876,8 @@ impl SemanticGraph {
             SemanticCommand::RecordTimerInterrupt {
                 interrupt,
                 timer_epoch,
+                hart,
+                hart_generation,
                 target_activation,
                 target_activation_generation,
                 ..
@@ -902,6 +905,14 @@ impl SemanticGraph {
                 {
                     Err(CommandError::precondition(
                         "timer interrupt epoch must be monotonic",
+                    ))
+                } else if !self.harts.iter().any(|record| {
+                    record.id == *hart
+                        && record.generation == *hart_generation
+                        && !matches!(record.state, HartState::Offline | HartState::Faulted)
+                }) {
+                    Err(CommandError::precondition(
+                        "timer interrupt hart generation is missing or inactive",
                     ))
                 } else if let Some(activation) = target_activation {
                     let Some(generation) = target_activation_generation else {
@@ -1675,6 +1686,7 @@ impl SemanticGraph {
                 interrupt,
                 timer_epoch,
                 hart,
+                hart_generation,
                 target_activation,
                 target_activation_generation,
                 note,
@@ -1682,6 +1694,7 @@ impl SemanticGraph {
                 interrupt,
                 timer_epoch,
                 hart,
+                hart_generation,
                 target_activation,
                 target_activation_generation,
                 &note,

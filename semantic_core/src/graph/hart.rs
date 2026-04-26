@@ -47,6 +47,15 @@ impl SemanticGraph {
             last_current_event: None,
             note: note.to_string(),
         });
+        let _ = self.push_hart_event_attribution(
+            hart,
+            generation,
+            event,
+            "HartRegistered",
+            None,
+            None,
+            note,
+        );
         true
     }
 
@@ -89,6 +98,17 @@ impl SemanticGraph {
             },
         );
         self.harts[index].last_event = Some(event);
+        let current_activation = self.harts[index].current_activation;
+        let current_activation_generation = self.harts[index].current_activation_generation;
+        let _ = self.push_hart_event_attribution(
+            hart,
+            generation,
+            event,
+            "HartStateChanged",
+            current_activation,
+            current_activation_generation,
+            note,
+        );
         true
     }
 
@@ -164,6 +184,15 @@ impl SemanticGraph {
         );
         self.harts[hart_index].last_event = Some(event);
         self.harts[hart_index].last_current_event = Some(event);
+        let _ = self.push_hart_event_attribution(
+            hart,
+            generation,
+            event,
+            "HartCurrentActivationBound",
+            Some(activation),
+            Some(activation_generation),
+            note,
+        );
         true
     }
 
@@ -215,6 +244,15 @@ impl SemanticGraph {
         );
         self.harts[hart_index].last_event = Some(event);
         self.harts[hart_index].last_current_event = Some(event);
+        let _ = self.push_hart_event_attribution(
+            hart,
+            generation,
+            event,
+            "HartCurrentActivationCleared",
+            Some(activation),
+            Some(activation_generation),
+            note,
+        );
         true
     }
 

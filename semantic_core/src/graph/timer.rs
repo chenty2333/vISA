@@ -5,7 +5,8 @@ impl SemanticGraph {
         &mut self,
         interrupt: TimerInterruptId,
         timer_epoch: u64,
-        hart: u32,
+        hart: HartId,
+        hart_generation: Generation,
         target_activation: Option<ActivationId>,
         target_activation_generation: Option<Generation>,
         note: &str,
@@ -19,6 +20,17 @@ impl SemanticGraph {
         {
             return false;
         }
+        let Some(hart_record) = self
+            .harts
+            .iter()
+            .find(|record| record.id == hart && record.generation == hart_generation)
+        else {
+            return false;
+        };
+        if matches!(hart_record.state, HartState::Offline | HartState::Faulted) {
+            return false;
+        }
+        let hardware_hart = hart_record.hardware_id;
         if let Some(previous) = self
             .timer_interrupts
             .iter()
@@ -57,6 +69,8 @@ impl SemanticGraph {
                 interrupt,
                 timer_epoch,
                 hart,
+                hart_generation,
+                hardware_hart,
                 target_activation,
                 target_activation_generation,
                 generation: 1,
@@ -66,6 +80,8 @@ impl SemanticGraph {
             id: interrupt,
             timer_epoch,
             hart,
+            hart_generation,
+            hardware_hart,
             target_activation,
             target_activation_generation,
             target_task,
@@ -75,6 +91,15 @@ impl SemanticGraph {
             recorded_at_event: event,
             note: note.to_string(),
         });
+        let _ = self.push_hart_event_attribution(
+            hart,
+            hart_generation,
+            event,
+            "TimerInterruptRecorded",
+            target_activation,
+            target_activation_generation,
+            note,
+        );
         true
     }
 
@@ -119,6 +144,40 @@ impl SemanticGraph {
                 });
             }
             previous_epoch = interrupt.timer_epoch;
+            match (
+                self.harts.iter().find(|record| record.id == interrupt.hart),
+                interrupt.hart_generation,
+            ) {
+                (Some(hart), generation)
+                    if generation != 0
+                        && hart.generation >= generation
+                        && hart.hardware_id == interrupt.hardware_hart => {}
+                (Some(_), _) => {
+                    return Err(SemanticInvariantError::TimerInterruptHartMismatch {
+                        interrupt: interrupt.id,
+                        hart: interrupt.hart,
+                    });
+                }
+                (None, _) => {
+                    return Err(SemanticInvariantError::TimerInterruptMissingHart {
+                        interrupt: interrupt.id,
+                        hart: interrupt.hart,
+                    });
+                }
+            }
+            if !self.hart_event_attributions.iter().any(|attribution| {
+                attribution.event == interrupt.recorded_at_event
+                    && attribution.hart == interrupt.hart
+                    && attribution.hart_generation == interrupt.hart_generation
+                    && attribution.event_kind == "TimerInterruptRecorded"
+            }) {
+                return Err(
+                    SemanticInvariantError::TimerInterruptMissingHartEventAttribution {
+                        interrupt: interrupt.id,
+                        event: interrupt.recorded_at_event,
+                    },
+                );
+            }
             match (
                 interrupt.target_activation,
                 interrupt.target_activation_generation,

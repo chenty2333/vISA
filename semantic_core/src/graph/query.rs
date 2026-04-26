@@ -76,6 +76,7 @@ impl SemanticGraph {
         self.check_scheduler_invariants()?;
         self.check_context_invariants()?;
         self.check_timer_invariants()?;
+        self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;
         self.check_preemption_latency_invariants()?;

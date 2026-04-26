@@ -9,12 +9,13 @@ use artifact_manifest::{
     ActivationCleanupManifest, ActivationContextManifest, ActivationRecordManifest,
     ActivationResumeManifest, ActivationWaitManifest, ArtifactBundleManifest,
     BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
-    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest, HartRecordManifest,
-    HostcallTraceManifest, InterfaceEventManifest, MigrationPackageManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
-    TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
+    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
+    InterfaceEventManifest, MigrationPackageManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
+    SavedContextManifest, SchedulerDecisionManifest, StoreRecordManifest, SubstrateEventManifest,
+    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -208,10 +209,28 @@ fn run() -> Result<(), Box<dyn Error>> {
             let path = path.ok_or("caps requires a manifest/package JSON path")?;
             print_caps(Path::new(&path), subject.as_deref())
         }
-        "hart" | "task" | "store" | "cap" | "capability" | "wait" | "cleanup" | "command"
-        | "scheduler" | "runtime-activation" | "runnable-queue" | "activation-context"
-        | "saved-context" | "timer-interrupt" | "preemption" | "scheduler-decision"
-        | "activation-resume" | "activation-wait" | "activation-cleanup" | "preemption-latency"
+        "hart"
+        | "task"
+        | "store"
+        | "cap"
+        | "capability"
+        | "wait"
+        | "cleanup"
+        | "command"
+        | "scheduler"
+        | "runtime-activation"
+        | "runnable-queue"
+        | "activation-context"
+        | "saved-context"
+        | "timer-interrupt"
+        | "preemption"
+        | "scheduler-decision"
+        | "activation-resume"
+        | "activation-wait"
+        | "activation-cleanup"
+        | "preemption-latency"
+        | "hart-event"
+        | "hart-event-attribution"
         | "context" => handle_view_command(&command, args.collect()),
         "state" => {
             let Some(path) = args.next() else {
@@ -376,7 +395,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler-decision|activation-resume|activation-wait|activation-cleanup|preemption-latency|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler-decision|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -581,6 +600,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
         "preemption-latency" => "preemption-latency",
+        "hart-event" | "hart-event-attribution" => "hart-event-attribution",
         "scheduler" => "scheduler",
         "runnable-queue" => "runnable-queue",
         "cap" | "capability" => "capability",
@@ -795,7 +815,11 @@ fn timer_interrupt_view_v1(interrupt: &TimerInterruptManifest) -> serde_json::Va
         "generation": interrupt.generation,
         "state": interrupt.state,
         "owner": {
-            "hart": interrupt.hart,
+            "hart": {
+                "id": interrupt.hart,
+                "generation": interrupt.hart_generation,
+                "hardware_id": interrupt.hardware_hart,
+            },
             "timer_epoch": interrupt.timer_epoch,
         },
         "references": {
@@ -811,6 +835,47 @@ fn timer_interrupt_view_v1(interrupt: &TimerInterruptManifest) -> serde_json::Va
         "note": interrupt.note,
         "last_transition": {
             "recorded_at_event": interrupt.recorded_at_event,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn hart_event_attribution_view_v1(attribution: &HartEventAttributionManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "hart-event-attribution",
+        "id": attribution.id,
+        "generation": attribution.generation,
+        "state": attribution.state,
+        "owner": {
+            "hart": {
+                "id": attribution.hart,
+                "generation": attribution.hart_generation,
+                "hardware_id": attribution.hardware_hart,
+            },
+        },
+        "references": {
+            "event": {
+                "id": attribution.event,
+                "source": attribution.event_source,
+                "kind": attribution.event_kind,
+            },
+            "activation": attribution.activation.map(|id| serde_json::json!({
+                "id": id,
+                "generation": attribution.activation_generation,
+            })),
+            "task": attribution.task.map(|id| serde_json::json!({
+                "id": id,
+                "generation": attribution.task_generation,
+            })),
+            "store": attribution.store.map(|id| serde_json::json!({
+                "id": id,
+                "generation": attribution.store_generation,
+            })),
+        },
+        "note": attribution.note,
+        "last_transition": {
+            "event": attribution.event,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -1112,6 +1177,14 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "target_activation": interrupt.target_activation,
                 "target_activation_generation": interrupt.target_activation_generation,
             })).collect::<Vec<_>>(),
+            "hart_event_attributions": package.semantic.hart_event_attributions.iter().map(|attribution| serde_json::json!({
+                "id": attribution.id,
+                "generation": attribution.generation,
+                "hart": attribution.hart,
+                "hart_generation": attribution.hart_generation,
+                "event": attribution.event,
+                "event_kind": attribution.event_kind,
+            })).collect::<Vec<_>>(),
             "preemptions": package.semantic.preemptions.iter().map(|preemption| serde_json::json!({
                 "id": preemption.id,
                 "generation": preemption.generation,
@@ -1174,6 +1247,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "activation_context_count": package.semantic.activation_context_count,
             "saved_context_count": package.semantic.saved_context_count,
             "timer_interrupt_count": package.semantic.timer_interrupt_count,
+            "hart_event_attribution_count": package.semantic.hart_event_attribution_count,
             "preemption_count": package.semantic.preemption_count,
             "scheduler_decision_count": package.semantic.scheduler_decision_count,
             "activation_resume_count": package.semantic.activation_resume_count,
@@ -1617,6 +1691,12 @@ fn stable_views_for_kind(
             .preemption_latency_samples
             .iter()
             .map(preemption_latency_view_v1)
+            .collect()),
+        "hart-event" | "hart-event-attribution" => Ok(package
+            .semantic
+            .hart_event_attributions
+            .iter()
+            .map(hart_event_attribution_view_v1)
             .collect()),
         "store" => Ok(package
             .semantic
@@ -2234,7 +2314,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} scheduler_decisions={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} scheduler_decisions={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -2250,6 +2330,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
             package.semantic.preemption_latency_sample_count,
+            package.semantic.hart_event_attribution_count,
             package.semantic.resource_count,
             package.semantic.store_count,
             package.semantic.capability_count,
@@ -2377,7 +2458,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -2404,7 +2485,8 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
-        package.semantic.roots.preemption_latency_roots.len()
+        package.semantic.roots.preemption_latency_roots.len(),
+        package.semantic.roots.hart_event_attribution_roots.len()
     );
     print_roots("hart", &package.semantic.roots.hart_roots);
     print_roots("task", &package.semantic.roots.task_roots);
@@ -2437,6 +2519,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "preemption-latency",
         &package.semantic.roots.preemption_latency_roots,
+    );
+    print_roots(
+        "hart-event-attribution",
+        &package.semantic.roots.hart_event_attribution_roots,
     );
     print_roots("resource", &package.semantic.roots.resource_roots);
     print_roots("authority", &package.semantic.roots.authority_roots);
@@ -2746,6 +2832,15 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
     let mut edges = Vec::new();
     for interrupt in &package.semantic.timer_interrupts {
         let from = object_ref_json("timer-interrupt", interrupt.id, interrupt.generation);
+        if let Some(hart_generation) = interrupt.hart_generation {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("hart", interrupt.hart, hart_generation),
+                "recorded-on-hart",
+                "historical",
+                Some(interrupt.recorded_at_event),
+            ));
+        }
         if let (Some(activation), Some(generation)) = (
             interrupt.target_activation,
             interrupt.target_activation_generation,
@@ -2767,6 +2862,40 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "recorded-task",
                 "historical",
                 Some(interrupt.recorded_at_event),
+            ));
+        }
+    }
+    for attribution in &package.semantic.hart_event_attributions {
+        let from = object_ref_json(
+            "hart-event-attribution",
+            attribution.id,
+            attribution.generation,
+        );
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("hart", attribution.hart, attribution.hart_generation),
+            "attributed-to-hart",
+            "historical",
+            Some(attribution.event),
+        ));
+        if let (Some(activation), Some(generation)) =
+            (attribution.activation, attribution.activation_generation)
+        {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("activation", activation, generation),
+                "attributed-activation",
+                "historical",
+                Some(attribution.event),
+            ));
+        }
+        if let (Some(task), Some(generation)) = (attribution.task, attribution.task_generation) {
+            edges.push(graph_edge(
+                from,
+                object_ref_json("task", task, generation),
+                "attributed-task",
+                "historical",
+                Some(attribution.event),
             ));
         }
     }
@@ -4400,6 +4529,7 @@ fn print_replay_json(
             "cleanup": package.semantic.roots.cleanup_roots.len(),
             "activation_cleanup": package.semantic.roots.activation_cleanup_roots.len(),
             "preemption_latency": package.semantic.roots.preemption_latency_roots.len(),
+            "hart_event_attribution": package.semantic.roots.hart_event_attribution_roots.len(),
             "memory_policies": package.semantic.roots.memory_policy_roots.len(),
             "snapshot_validation": package.semantic.roots.snapshot_validation_roots.len(),
             "replay_validation": package.semantic.roots.replay_validation_roots.len(),
@@ -4424,6 +4554,7 @@ fn print_replay_json(
             "cleanup_roots": &package.semantic.roots.cleanup_roots,
             "activation_cleanup_roots": &package.semantic.roots.activation_cleanup_roots,
             "preemption_latency_roots": &package.semantic.roots.preemption_latency_roots,
+            "hart_event_attribution_roots": &package.semantic.roots.hart_event_attribution_roots,
             "memory_policy_roots": &package.semantic.roots.memory_policy_roots,
             "snapshot_validation_roots": &package.semantic.roots.snapshot_validation_roots,
             "replay_validation_roots": &package.semantic.roots.replay_validation_roots,
@@ -4447,7 +4578,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} activation_cleanups={} preemption_latency_samples={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -4470,6 +4601,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.migration_object_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
+        package.semantic.hart_event_attribution_count,
         package.semantic.substrate_event_count,
         package.semantic.command_result_count,
         package.semantic.interface_event_count
@@ -4824,6 +4956,7 @@ mod tests {
         package.semantic.activation_wait_count = 1;
         package.semantic.activation_cleanup_count = 1;
         package.semantic.preemption_latency_sample_count = 1;
+        package.semantic.hart_event_attribution_count = 1;
         package.substrate_boundary.timer_epoch = 3;
         package.semantic.hart_records.push(HartRecordManifest {
             id: 1,
@@ -4925,7 +5058,9 @@ mod tests {
             .push(TimerInterruptManifest {
                 id: 14,
                 timer_epoch: 3,
-                hart: 0,
+                hart: 1,
+                hart_generation: Some(2),
+                hardware_hart: Some(0),
                 target_activation: Some(11),
                 target_activation_generation: Some(2),
                 target_task: Some(7),
@@ -4934,6 +5069,27 @@ mod tests {
                 state: "recorded".to_owned(),
                 recorded_at_event: 11,
                 note: "timer tick".to_owned(),
+            });
+        package
+            .semantic
+            .hart_event_attributions
+            .push(HartEventAttributionManifest {
+                id: 22,
+                hart: 1,
+                hart_generation: 2,
+                hardware_hart: 0,
+                event: 11,
+                event_source: "timer".to_owned(),
+                event_kind: "TimerInterruptRecorded".to_owned(),
+                activation: Some(11),
+                activation_generation: Some(2),
+                task: Some(7),
+                task_generation: Some(1),
+                store: None,
+                store_generation: None,
+                generation: 1,
+                state: "recorded".to_owned(),
+                note: "timer event attributed to hart".to_owned(),
             });
         package.semantic.preemptions.push(PreemptionManifest {
             id: 15,
@@ -5123,7 +5279,19 @@ mod tests {
         let timer = timer_interrupt_view_v1(&package.semantic.timer_interrupts[0]);
         assert_eq!(timer["kind"], "timer-interrupt");
         assert_eq!(timer["owner"]["timer_epoch"], 3);
+        assert_eq!(timer["owner"]["hart"]["id"], 1);
+        assert_eq!(timer["owner"]["hart"]["generation"], 2);
+        assert_eq!(timer["owner"]["hart"]["hardware_id"], 0);
         assert_eq!(timer["references"]["activation"]["generation"], 2);
+        let hart_event =
+            hart_event_attribution_view_v1(&package.semantic.hart_event_attributions[0]);
+        assert_eq!(hart_event["kind"], "hart-event-attribution");
+        assert_eq!(hart_event["owner"]["hart"]["generation"], 2);
+        assert_eq!(
+            hart_event["references"]["event"]["kind"],
+            "TimerInterruptRecorded"
+        );
+        assert_eq!(hart_event["references"]["activation"]["id"], 11);
         let preemption = preemption_view_v1(&package.semantic.preemptions[0]);
         assert_eq!(preemption["kind"], "preemption");
         assert_eq!(
@@ -5197,6 +5365,14 @@ mod tests {
         assert_eq!(scheduler["last_transition"]["activation_context_count"], 1);
         assert_eq!(scheduler["last_transition"]["saved_context_count"], 1);
         assert_eq!(scheduler["last_transition"]["timer_interrupt_count"], 1);
+        assert_eq!(
+            scheduler["last_transition"]["hart_event_attribution_count"],
+            1
+        );
+        assert_eq!(
+            scheduler["references"]["hart_event_attributions"][0]["event_kind"],
+            "TimerInterruptRecorded"
+        );
         assert_eq!(scheduler["last_transition"]["preemption_count"], 1);
         assert_eq!(scheduler["last_transition"]["scheduler_decision_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_resume_count"], 1);

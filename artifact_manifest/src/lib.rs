@@ -248,6 +248,8 @@ pub struct SemanticSnapshotManifest {
     pub activation_cleanup_count: usize,
     #[serde(default)]
     pub preemption_latency_sample_count: usize,
+    #[serde(default)]
+    pub hart_event_attribution_count: usize,
     pub resource_count: usize,
     #[serde(default)]
     pub authority_count: usize,
@@ -339,6 +341,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub preemption_latency_samples: Vec<PreemptionLatencySampleManifest>,
     #[serde(default)]
+    pub hart_event_attributions: Vec<HartEventAttributionManifest>,
+    #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
     #[serde(default)]
     pub store_records: Vec<StoreRecordManifest>,
@@ -408,6 +412,8 @@ pub struct SemanticRootSetManifest {
     pub activation_cleanup_roots: Vec<String>,
     #[serde(default)]
     pub preemption_latency_roots: Vec<String>,
+    #[serde(default)]
+    pub hart_event_attribution_roots: Vec<String>,
     #[serde(default)]
     pub resource_roots: Vec<String>,
     #[serde(default)]
@@ -635,7 +641,11 @@ pub struct SavedContextManifest {
 pub struct TimerInterruptManifest {
     pub id: u64,
     pub timer_epoch: u64,
-    pub hart: u32,
+    pub hart: u64,
+    #[serde(default)]
+    pub hart_generation: Option<u64>,
+    #[serde(default)]
+    pub hardware_hart: Option<u32>,
     pub target_activation: Option<u64>,
     #[serde(default)]
     pub target_activation_generation: Option<u64>,
@@ -645,6 +655,29 @@ pub struct TimerInterruptManifest {
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct HartEventAttributionManifest {
+    pub id: u64,
+    pub hart: u64,
+    pub hart_generation: u64,
+    pub hardware_hart: u32,
+    pub event: u64,
+    pub event_source: String,
+    pub event_kind: String,
+    pub activation: Option<u64>,
+    #[serde(default)]
+    pub activation_generation: Option<u64>,
+    pub task: Option<u64>,
+    #[serde(default)]
+    pub task_generation: Option<u64>,
+    pub store: Option<u64>,
+    #[serde(default)]
+    pub store_generation: Option<u64>,
+    pub generation: u64,
+    pub state: String,
     pub note: String,
 }
 

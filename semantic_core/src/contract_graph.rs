@@ -1393,6 +1393,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup
             | ContractObjectKind::PreemptionLatencySample
+            | ContractObjectKind::HartEventAttribution
             | ContractObjectKind::Resource
             | ContractObjectKind::FaultDomain
             | ContractObjectKind::MemoryObject

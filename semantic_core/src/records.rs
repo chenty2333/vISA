@@ -148,7 +148,9 @@ impl SavedContextRecord {
 pub struct TimerInterruptRecord {
     pub id: TimerInterruptId,
     pub timer_epoch: u64,
-    pub hart: u32,
+    pub hart: HartId,
+    pub hart_generation: Generation,
+    pub hardware_hart: u32,
     pub target_activation: Option<ActivationId>,
     pub target_activation_generation: Option<Generation>,
     pub target_task: Option<TaskId>,
@@ -162,6 +164,36 @@ pub struct TimerInterruptRecord {
 impl TimerInterruptRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
         ContractObjectRef::new(ContractObjectKind::TimerInterrupt, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HartEventAttributionRecord {
+    pub id: HartEventAttributionId,
+    pub hart: HartId,
+    pub hart_generation: Generation,
+    pub hardware_hart: u32,
+    pub event: EventId,
+    pub event_source: String,
+    pub event_kind: String,
+    pub activation: Option<ActivationId>,
+    pub activation_generation: Option<Generation>,
+    pub task: Option<TaskId>,
+    pub task_generation: Option<Generation>,
+    pub store: Option<StoreId>,
+    pub store_generation: Option<Generation>,
+    pub generation: Generation,
+    pub state: HartEventAttributionState,
+    pub note: String,
+}
+
+impl HartEventAttributionRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::HartEventAttribution,
+            self.id,
+            self.generation,
+        )
     }
 }
 

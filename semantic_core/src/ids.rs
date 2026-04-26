@@ -10,6 +10,7 @@ pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;
 pub type PreemptionLatencySampleId = u64;
+pub type HartEventAttributionId = u64;
 pub type ResourceId = u64;
 pub type CapabilityId = u64;
 pub type FaultDomainId = u64;

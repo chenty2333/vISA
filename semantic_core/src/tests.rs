@@ -1840,6 +1840,129 @@ fn smp_runtime_s1_invariants_reject_stale_current_activation_generation() {
 }
 
 #[test]
+fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
+    let mut graph = SemanticGraph::new();
+    let hart_generation = register_idle_test_hart(&mut graph);
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(graph.dequeue_runnable_activation(1, 11));
+
+    let timer = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s2-test",
+        SemanticCommand::RecordTimerInterrupt {
+            interrupt: 5,
+            timer_epoch: 1,
+            hart: 1,
+            hart_generation,
+            target_activation: Some(11),
+            target_activation_generation: Some(3),
+            note: "timer attributed to hart0".to_string(),
+        },
+    ));
+
+    assert_eq!(timer.status, CommandStatus::Applied);
+    assert_eq!(graph.timer_interrupts()[0].hart, 1);
+    assert_eq!(graph.timer_interrupts()[0].hart_generation, 2);
+    assert_eq!(graph.timer_interrupts()[0].hardware_hart, 0);
+    let attribution = graph.hart_event_attributions().last().unwrap();
+    assert_eq!(attribution.event_kind, "TimerInterruptRecorded");
+    assert_eq!(attribution.event_source, "timer");
+    assert_eq!(attribution.hart, 1);
+    assert_eq!(attribution.hart_generation, 2);
+    assert_eq!(attribution.activation, Some(11));
+    assert_eq!(attribution.activation_generation, Some(3));
+    assert_eq!(attribution.task, Some(7));
+    assert_eq!(attribution.task_generation, Some(1));
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s2_rejects_stale_or_missing_hart_ref() {
+    let mut graph = SemanticGraph::new();
+    register_idle_test_hart(&mut graph);
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+
+    let stale_hart = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s2-test",
+        SemanticCommand::RecordTimerInterrupt {
+            interrupt: 5,
+            timer_epoch: 1,
+            hart: 1,
+            hart_generation: 99,
+            target_activation: Some(11),
+            target_activation_generation: Some(1),
+            note: "stale hart generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_hart.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("timer interrupt hart generation is missing or inactive".to_string());
+    assert_eq!(stale_hart.violations, expected);
+    assert!(graph.timer_interrupts().is_empty());
+}
+
+#[test]
+fn smp_runtime_s2_invariants_reject_bad_hart_event_generation() {
+    let mut graph = SemanticGraph::new();
+    let hart_generation = register_idle_test_hart(&mut graph);
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.record_timer_interrupt_with_id(
+        5,
+        1,
+        1,
+        hart_generation,
+        Some(11),
+        Some(1),
+        "timer"
+    ));
+    graph.corrupt_hart_event_attribution_hart_generation_for_test(1, 99);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::HartEventAttributionHartGenerationMismatch {
+                attribution: 1,
+                hart: 1,
+            }
+        )
+    );
+}
+
+#[test]
+fn smp_runtime_s2_invariants_reject_timer_without_hart_event_attribution() {
+    let mut graph = SemanticGraph::new();
+    let hart_generation = register_idle_test_hart(&mut graph);
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.record_timer_interrupt_with_id(
+        5,
+        1,
+        1,
+        hart_generation,
+        Some(11),
+        Some(1),
+        "timer"
+    ));
+    graph.clear_hart_event_attributions_for_test();
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::TimerInterruptMissingHartEventAttribution {
+                interrupt: 5,
+                event: graph.timer_interrupts()[0].recorded_at_event,
+            }
+        )
+    );
+}
+
+#[test]
 fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let mut graph = SemanticGraph::new();
     graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
@@ -2189,9 +2312,16 @@ fn preemptive_runtime_p1_invariants_reject_context_saved_generation_leak() {
     );
 }
 
+fn register_idle_test_hart(graph: &mut SemanticGraph) -> Generation {
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    2
+}
+
 #[test]
 fn preemptive_runtime_p2_timer_interrupt_records_event_and_passes_invariants() {
     let mut graph = SemanticGraph::new();
+    let hart_generation = register_idle_test_hart(&mut graph);
     graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
     assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
     assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
@@ -2204,7 +2334,8 @@ fn preemptive_runtime_p2_timer_interrupt_records_event_and_passes_invariants() {
         SemanticCommand::RecordTimerInterrupt {
             interrupt: 5,
             timer_epoch: 1,
-            hart: 0,
+            hart: 1,
+            hart_generation,
             target_activation: Some(11),
             target_activation_generation: Some(3),
             note: "timer tick".to_string(),
@@ -2212,18 +2343,23 @@ fn preemptive_runtime_p2_timer_interrupt_records_event_and_passes_invariants() {
     ));
     assert_eq!(timer.status, CommandStatus::Applied);
     assert_eq!(graph.timer_interrupts()[0].timer_epoch, 1);
+    assert_eq!(graph.timer_interrupts()[0].hart, 1);
+    assert_eq!(graph.timer_interrupts()[0].hart_generation, 2);
+    assert_eq!(graph.timer_interrupts()[0].hardware_hart, 0);
+    assert_eq!(graph.hart_event_attributions().len(), 3);
     assert_eq!(graph.timer_epoch(), 1);
     assert_eq!(graph.timer_interrupts()[0].target_task, Some(7));
     assert!(graph.check_invariants().is_ok());
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
-        "TimerInterruptRecorded interrupt=5 epoch=1 hart=0 target=11@3 generation=1"
+        "TimerInterruptRecorded interrupt=5 epoch=1 hart=1@2 hardware_id=0 target=11@3 generation=1"
     );
 }
 
 #[test]
 fn preemptive_runtime_p2_rejects_stale_target_and_non_monotonic_epoch() {
     let mut graph = SemanticGraph::new();
+    let hart_generation = register_idle_test_hart(&mut graph);
     graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
     assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
 
@@ -2233,7 +2369,8 @@ fn preemptive_runtime_p2_rejects_stale_target_and_non_monotonic_epoch() {
         SemanticCommand::RecordTimerInterrupt {
             interrupt: 5,
             timer_epoch: 1,
-            hart: 0,
+            hart: 1,
+            hart_generation,
             target_activation: Some(11),
             target_activation_generation: Some(99),
             note: "stale target".to_string(),
@@ -2242,15 +2379,32 @@ fn preemptive_runtime_p2_rejects_stale_target_and_non_monotonic_epoch() {
     assert_eq!(stale.status, CommandStatus::Rejected);
     assert!(graph.timer_interrupts().is_empty());
 
-    assert!(graph.record_timer_interrupt_with_id(5, 1, 0, Some(11), Some(1), "first tick"));
-    assert!(graph.record_timer_interrupt_with_id(6, 3, 0, Some(11), Some(1), "third tick"));
+    assert!(graph.record_timer_interrupt_with_id(
+        5,
+        1,
+        1,
+        hart_generation,
+        Some(11),
+        Some(1),
+        "first tick"
+    ));
+    assert!(graph.record_timer_interrupt_with_id(
+        6,
+        3,
+        1,
+        hart_generation,
+        Some(11),
+        Some(1),
+        "third tick"
+    ));
     let non_monotonic = graph.apply_envelope(CommandEnvelope::new(
         2,
         "p2-test",
         SemanticCommand::RecordTimerInterrupt {
             interrupt: 7,
             timer_epoch: 2,
-            hart: 0,
+            hart: 1,
+            hart_generation,
             target_activation: Some(11),
             target_activation_generation: Some(1),
             note: "old epoch".to_string(),
@@ -2265,10 +2419,27 @@ fn preemptive_runtime_p2_rejects_stale_target_and_non_monotonic_epoch() {
 #[test]
 fn preemptive_runtime_p2_invariants_reject_timer_epoch_regression() {
     let mut graph = SemanticGraph::new();
+    let hart_generation = register_idle_test_hart(&mut graph);
     graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
     assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
-    assert!(graph.record_timer_interrupt_with_id(5, 1, 0, Some(11), Some(1), "first tick"));
-    assert!(graph.record_timer_interrupt_with_id(6, 2, 0, Some(11), Some(1), "second tick"));
+    assert!(graph.record_timer_interrupt_with_id(
+        5,
+        1,
+        1,
+        hart_generation,
+        Some(11),
+        Some(1),
+        "first tick"
+    ));
+    assert!(graph.record_timer_interrupt_with_id(
+        6,
+        2,
+        1,
+        hart_generation,
+        Some(11),
+        Some(1),
+        "second tick"
+    ));
     graph.corrupt_timer_interrupt_epoch_for_test(6, 1);
 
     assert_eq!(
@@ -2282,12 +2453,21 @@ fn preemptive_runtime_p2_invariants_reject_timer_epoch_regression() {
 
 fn p3_running_activation_with_timer() -> SemanticGraph {
     let mut graph = SemanticGraph::new();
+    let hart_generation = register_idle_test_hart(&mut graph);
     graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
     assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
     assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
     assert!(graph.enqueue_runnable_activation(1, 11, 1));
     assert!(graph.dequeue_runnable_activation(1, 11));
-    assert!(graph.record_timer_interrupt_with_id(5, 1, 0, Some(11), Some(3), "timer tick"));
+    assert!(graph.record_timer_interrupt_with_id(
+        5,
+        1,
+        1,
+        hart_generation,
+        Some(11),
+        Some(3),
+        "timer tick"
+    ));
     graph
 }
 
@@ -3033,7 +3213,7 @@ fn preemptive_runtime_p7_rejects_preempt_or_resume_of_waiting_activation() {
         RestartPolicy::RestartIfAllowed,
         "block"
     ));
-    assert!(graph.record_timer_interrupt_with_id(18, 2, 0, Some(11), Some(6), "timer"));
+    assert!(graph.record_timer_interrupt_with_id(18, 2, 1, 2, Some(11), Some(6), "timer"));
 
     let rejected_preempt = graph.apply_envelope(CommandEnvelope::new(
         3,

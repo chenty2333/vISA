@@ -87,7 +87,9 @@ pub enum EventKind {
     TimerInterruptRecorded {
         interrupt: TimerInterruptId,
         timer_epoch: u64,
-        hart: u32,
+        hart: HartId,
+        hart_generation: Generation,
+        hardware_hart: u32,
         target_activation: Option<ActivationId>,
         target_activation_generation: Option<Generation>,
         generation: Generation,
@@ -607,11 +609,13 @@ impl EventKind {
                 interrupt,
                 timer_epoch,
                 hart,
+                hart_generation,
+                hardware_hart,
                 target_activation,
                 target_activation_generation,
                 generation,
             } => format!(
-                "TimerInterruptRecorded interrupt={interrupt} epoch={timer_epoch} hart={hart} target={}@{} generation={generation}",
+                "TimerInterruptRecorded interrupt={interrupt} epoch={timer_epoch} hart={hart}@{hart_generation} hardware_id={hardware_hart} target={}@{} generation={generation}",
                 target_activation
                     .map(|activation| activation.to_string())
                     .unwrap_or_else(|| "none".to_string()),

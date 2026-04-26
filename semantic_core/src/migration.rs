@@ -262,6 +262,29 @@ pub enum SemanticInvariantError {
         hart: HartId,
         activation: ActivationId,
     },
+    HartEventAttributionInvalid {
+        attribution: HartEventAttributionId,
+    },
+    HartEventAttributionMissingHart {
+        attribution: HartEventAttributionId,
+        hart: HartId,
+    },
+    HartEventAttributionHartGenerationMismatch {
+        attribution: HartEventAttributionId,
+        hart: HartId,
+    },
+    HartEventAttributionMissingEvent {
+        attribution: HartEventAttributionId,
+        event: EventId,
+    },
+    HartEventAttributionEventMismatch {
+        attribution: HartEventAttributionId,
+        event: EventId,
+    },
+    HartEventAttributionActivationMismatch {
+        attribution: HartEventAttributionId,
+        activation: ActivationId,
+    },
     TaskReferencesMissingResource {
         task: TaskId,
         resource: ResourceId,
@@ -391,6 +414,18 @@ pub enum SemanticInvariantError {
     TimerInterruptEpochNonMonotonic {
         interrupt: TimerInterruptId,
         timer_epoch: u64,
+    },
+    TimerInterruptMissingHart {
+        interrupt: TimerInterruptId,
+        hart: HartId,
+    },
+    TimerInterruptHartMismatch {
+        interrupt: TimerInterruptId,
+        hart: HartId,
+    },
+    TimerInterruptMissingHartEventAttribution {
+        interrupt: TimerInterruptId,
+        event: EventId,
     },
     TimerInterruptMissingActivationGeneration {
         interrupt: TimerInterruptId,

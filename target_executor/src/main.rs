@@ -12,17 +12,18 @@ use artifact_manifest::{
     BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
     CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
-    ContractViolationManifest, GuestStateManifest, HartRecordManifest, HostcallSpecManifest,
-    HostcallTraceManifest, InterfaceEventManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    StoreRecordManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
-    TargetAddressMapEntryManifest, TargetArtifactImageManifest, TargetCapabilitySpecManifest,
-    TargetMemoryPlanManifest, TargetTrapMetadataManifest, TaskRecordManifest,
-    TimerInterruptManifest, TombstoneManifest, TrapRecordManifest, WaitRecordManifest,
+    ContractViolationManifest, GuestStateManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, RequiredArtifactProfileManifest,
+    RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
+    SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
+    SemanticSnapshotManifest, StoreRecordManifest, SubstrateBoundaryManifest,
+    SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
+    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
+    TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -477,7 +478,8 @@ fn record_preemptive_runtime_context_evidence(
             SemanticCommand::RecordTimerInterrupt {
                 interrupt: 9001,
                 timer_epoch: 1,
-                hart: 0,
+                hart: 1,
+                hart_generation: 3,
                 target_activation: Some(9002),
                 target_activation_generation: Some(3),
                 note: "p2-timer-interrupt-harness".to_owned(),
@@ -1699,6 +1701,7 @@ fn demo_migration_package(
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
             preemption_latency_sample_count: semantic.preemption_latency_sample_count(),
+            hart_event_attribution_count: semantic.hart_event_attribution_count(),
             resource_count: semantic.resource_count(),
             authority_count: semantic.authority_count(),
             active_authority_count: semantic.active_authority_count(),
@@ -1789,6 +1792,11 @@ fn demo_migration_package(
                 .preemption_latency_samples()
                 .iter()
                 .map(preemption_latency_manifest)
+                .collect(),
+            hart_event_attributions: semantic
+                .hart_event_attributions()
+                .iter()
+                .map(hart_event_attribution_manifest)
                 .collect(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
@@ -2102,6 +2110,22 @@ fn semantic_roots(
                     sample.budget_nanos,
                     sample.state.as_str(),
                     sample.generation
+                )
+            })
+            .collect(),
+        hart_event_attribution_roots: semantic
+            .hart_event_attributions()
+            .iter()
+            .map(|attribution| {
+                format!(
+                    "hart-event-attribution id={} hart={}@{} hardware_id={} event={} kind={} generation={}",
+                    attribution.id,
+                    attribution.hart,
+                    attribution.hart_generation,
+                    attribution.hardware_hart,
+                    attribution.event,
+                    attribution.event_kind,
+                    attribution.generation
                 )
             })
             .collect(),
@@ -2700,7 +2724,9 @@ fn timer_interrupt_manifest(
     TimerInterruptManifest {
         id: interrupt.id,
         timer_epoch: interrupt.timer_epoch,
-        hart: interrupt.hart,
+        hart: u64::from(interrupt.hart),
+        hart_generation: Some(interrupt.hart_generation),
+        hardware_hart: Some(interrupt.hardware_hart),
         target_activation: interrupt.target_activation,
         target_activation_generation: interrupt.target_activation_generation,
         target_task: interrupt.target_task.map(u64::from),
@@ -2709,6 +2735,29 @@ fn timer_interrupt_manifest(
         state: interrupt.state.as_str().to_owned(),
         recorded_at_event: interrupt.recorded_at_event,
         note: interrupt.note.clone(),
+    }
+}
+
+fn hart_event_attribution_manifest(
+    attribution: &semantic_core::HartEventAttributionRecord,
+) -> HartEventAttributionManifest {
+    HartEventAttributionManifest {
+        id: attribution.id,
+        hart: u64::from(attribution.hart),
+        hart_generation: attribution.hart_generation,
+        hardware_hart: attribution.hardware_hart,
+        event: attribution.event,
+        event_source: attribution.event_source.clone(),
+        event_kind: attribution.event_kind.clone(),
+        activation: attribution.activation,
+        activation_generation: attribution.activation_generation,
+        task: attribution.task.map(u64::from),
+        task_generation: attribution.task_generation,
+        store: attribution.store,
+        store_generation: attribution.store_generation,
+        generation: attribution.generation,
+        state: attribution.state.as_str().to_owned(),
+        note: attribution.note.clone(),
     }
 }
 

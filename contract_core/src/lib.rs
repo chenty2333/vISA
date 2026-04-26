@@ -78,6 +78,7 @@ pub enum ObjectKind {
     ActivationWait,
     ActivationCleanup,
     PreemptionLatency,
+    HartEventAttribution,
     Resource,
     Capability,
     WaitToken,
@@ -116,6 +117,7 @@ impl ObjectKind {
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
             Self::PreemptionLatency => "preemption-latency",
+            Self::HartEventAttribution => "hart-event-attribution",
             Self::Resource => "resource",
             Self::Capability => "capability",
             Self::WaitToken => "wait-token",
@@ -308,6 +310,7 @@ typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
 typed_ref!(PreemptionLatencyRef, ObjectKind::PreemptionLatency);
+typed_ref!(HartEventAttributionRef, ObjectKind::HartEventAttribution);
 typed_ref!(FaultDomainRef, ObjectKind::FaultDomain);
 typed_ref!(ArtifactRef, ObjectKind::Artifact);
 typed_ref!(CodeObjectRef, ObjectKind::CodeObject);
@@ -1496,6 +1499,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("preemption latency root/count mismatch"));
     }
+    if roots.hart_event_attribution_roots.len() != package.semantic.hart_event_attribution_count
+        || package.semantic.hart_event_attributions.len()
+            != package.semantic.hart_event_attribution_count
+    {
+        return Err(ContractError::new(
+            "hart event attribution root/count mismatch",
+        ));
+    }
     if roots.resource_roots.len() != package.semantic.resource_count {
         return Err(ContractError::new("resource root/count mismatch"));
     }
@@ -2001,6 +2012,7 @@ mod tests {
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
                 preemption_latency_sample_count: 0,
+                hart_event_attribution_count: 0,
                 resource_count: 0,
                 authority_count: 0,
                 active_authority_count: 0,
@@ -2048,6 +2060,7 @@ mod tests {
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
                 preemption_latency_samples: Vec::new(),
+                hart_event_attributions: Vec::new(),
                 code_objects: Vec::new(),
                 store_records: Vec::new(),
                 capability_records: Vec::new(),
@@ -2213,7 +2226,9 @@ mod tests {
             .push(artifact_manifest::TimerInterruptManifest {
                 id: 3,
                 timer_epoch: 1,
-                hart: 0,
+                hart: 1,
+                hart_generation: Some(2),
+                hardware_hart: Some(0),
                 target_activation: Some(11),
                 target_activation_generation: Some(2),
                 target_task: Some(7),
@@ -2416,6 +2431,38 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "preemption latency root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_hart_event_attribution_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.hart_event_attribution_count = 1;
+        package.semantic.hart_event_attributions.push(
+            artifact_manifest::HartEventAttributionManifest {
+                id: 12,
+                hart: 1,
+                hart_generation: 2,
+                hardware_hart: 0,
+                event: 10,
+                event_source: "timer".to_owned(),
+                event_kind: "TimerInterruptRecorded".to_owned(),
+                activation: Some(11),
+                activation_generation: Some(3),
+                task: Some(7),
+                task_generation: Some(1),
+                store: None,
+                store_generation: None,
+                generation: 1,
+                state: "recorded".to_owned(),
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "hart event attribution root/count mismatch"
+        );
     }
 
     #[test]
@@ -2714,6 +2761,8 @@ mod tests {
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();
         assert!(ActivationWaitRef::try_from_ref(activation_wait).is_ok());
+        let hart_event = ObjectRef::new(ObjectKind::HartEventAttribution, 10, 1).unwrap();
+        assert!(HartEventAttributionRef::try_from_ref(hart_event).is_ok());
     }
 
     #[test]
