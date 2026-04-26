@@ -373,6 +373,28 @@ fn record_preemptive_runtime_context_evidence(
             },
         ),
         CommandEnvelope::new(
+            3,
+            "target-executor-s4",
+            SemanticCommand::RegisterHart {
+                hart: 2,
+                hardware_id: 1,
+                label: "secondary-hart1".to_owned(),
+                boot: false,
+                note: "s4-secondary-hart-object-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            4,
+            "target-executor-s4",
+            SemanticCommand::SetHartState {
+                hart: 2,
+                hart_generation: 1,
+                state: HartState::Idle,
+                reason: "secondary-scheduler-ready".to_owned(),
+                note: "s4-secondary-hart-idle-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
             10,
             "target-executor-p0",
             SemanticCommand::CreateRunnableQueue {

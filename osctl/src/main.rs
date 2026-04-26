@@ -1152,6 +1152,29 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "current_activation": hart.current_activation,
                 "current_activation_generation": hart.current_activation_generation,
             })).collect::<Vec<_>>(),
+            "current_activation_owners": package.semantic.hart_records.iter().filter_map(|hart| {
+                let activation = hart.current_activation?;
+                let activation_generation = hart.current_activation_generation?;
+                Some(serde_json::json!({
+                    "hart": {
+                        "id": hart.id,
+                        "generation": hart.generation,
+                        "hardware_id": hart.hardware_id,
+                    },
+                    "activation": {
+                        "id": activation,
+                        "generation": activation_generation,
+                    },
+                    "task": hart.current_task.map(|id| serde_json::json!({
+                        "id": id,
+                        "generation": hart.current_task_generation,
+                    })),
+                    "store": hart.current_store.map(|id| serde_json::json!({
+                        "id": id,
+                        "generation": hart.current_store_generation,
+                    })),
+                }))
+            }).collect::<Vec<_>>(),
             "tasks": package.semantic.task_records.iter().map(|task| serde_json::json!({
                 "id": task.id,
                 "generation": task.generation,
@@ -5511,6 +5534,44 @@ mod tests {
                     && edge["to"]["generation"] == 1
                     && edge["relation"] == "measured-resume"
                     && edge["mode"] == "historical")
+        );
+    }
+
+    #[test]
+    fn scheduler_view_v1_exposes_current_activation_owners() {
+        let mut package = minimal_graph_package();
+        package.package_id = "s4-test".to_owned();
+        package.semantic.hart_count = 1;
+        package.semantic.hart_records.push(HartRecordManifest {
+            id: 2,
+            hardware_id: 1,
+            label: "hart1".to_owned(),
+            state: "running".to_owned(),
+            generation: 3,
+            boot: false,
+            current_activation: Some(11),
+            current_activation_generation: Some(4),
+            current_task: Some(7),
+            current_task_generation: Some(1),
+            current_store: Some(5),
+            current_store_generation: Some(2),
+            last_event: Some(21),
+            last_current_event: Some(21),
+            note: "s4 current owner".to_owned(),
+        });
+
+        let scheduler = scheduler_view_v1(&package);
+        assert_eq!(
+            scheduler["references"]["current_activation_owners"][0]["hart"]["id"],
+            2
+        );
+        assert_eq!(
+            scheduler["references"]["current_activation_owners"][0]["activation"]["generation"],
+            4
+        );
+        assert_eq!(
+            scheduler["references"]["current_activation_owners"][0]["store"]["generation"],
+            2
         );
     }
 

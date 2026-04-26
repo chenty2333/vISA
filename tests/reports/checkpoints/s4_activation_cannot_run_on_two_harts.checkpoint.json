@@ -1,0 +1,113 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "S4-activation-cannot-run-on-two-harts",
+  "phase": "Phase 2 Full SMP Runtime",
+  "status": "pass",
+  "scope": [
+    "Close the Hart current-activation uniqueness invariant",
+    "Reject BindHartCurrentActivation when the activation is already current on another hart",
+    "Expose current activation owners in osctl scheduler ViewV1",
+    "Add a secondary idle hart to target_executor semantic evidence"
+  ],
+  "no_goals": [
+    "IPI delivery",
+    "remote preempt or park",
+    "activation migration",
+    "cross-hart scheduler decision",
+    "stop-the-world safe point",
+    "target-side execution"
+  ],
+  "changed_files": [
+    "osctl/src/main.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/hart.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/smp/golden_s4_activation_single_hart.trace.json",
+    "tests/reports/checkpoints/s4_activation_cannot_run_on_two_harts.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/smp/golden_s4_activation_single_hart.trace.json",
+    "tests/reports/checkpoints/s4_activation_cannot_run_on_two_harts.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "BindHartCurrentActivation now checks all other harts before assigning current_activation",
+      "check_hart_invariants now rejects duplicate current activation ownership even if malformed state bypasses commands",
+      "osctl scheduler ViewV1 exposes current_activation_owners without leaking adapter internals"
+    ],
+    "residual_notes": [
+      "S5 must introduce IPI event semantics before remote preempt/park",
+      "S8 must define cross-hart scheduler decisions instead of overloading S4 uniqueness checks"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core smp_runtime_s4",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl scheduler_view_v1_exposes_current_activation_owners",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only && python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- scheduler list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/smp/golden_s4_activation_single_hart.trace.json",
+    "osctl_views": [
+      "osctl scheduler list --json <migration.json>",
+      "osctl hart list --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "hart_roots",
+      "runtime_activation_roots"
+    ]
+  },
+  "residual_gaps": [
+    "S5 IPI event model remains unimplemented",
+    "S6 remote preempt and S7 remote park remain unimplemented"
+  ],
+  "next_checkpoint": "S5-ipi-event-model"
+}

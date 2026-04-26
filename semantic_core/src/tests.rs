@@ -2098,6 +2098,114 @@ fn smp_runtime_s3_invariants_reject_partial_queue_owner_ref() {
 }
 
 #[test]
+fn smp_runtime_s4_allows_distinct_current_activations_on_distinct_harts() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "created"));
+    assert!(graph.set_hart_state(2, 1, HartState::Idle, "ready", "idle"));
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    graph.ensure_task(8, FrontendKind::LinuxElf, "linux-thread-8");
+    assert!(graph.create_runnable_queue_with_id(1, "hart0-rq"));
+    assert!(graph.create_runnable_queue_with_id(2, "hart1-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.create_runtime_activation_with_id(12, 8, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(graph.enqueue_runnable_activation(2, 12, 1));
+    assert!(graph.dequeue_runnable_activation(1, 11));
+    assert!(graph.dequeue_runnable_activation(2, 12));
+
+    let hart0 = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s4-test",
+        SemanticCommand::BindHartCurrentActivation {
+            hart: 1,
+            hart_generation: 2,
+            activation: 11,
+            activation_generation: 3,
+            note: "dispatch activation 11 on hart0".to_string(),
+        },
+    ));
+    assert_eq!(hart0.status, CommandStatus::Applied);
+    let hart1 = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s4-test",
+        SemanticCommand::BindHartCurrentActivation {
+            hart: 2,
+            hart_generation: 2,
+            activation: 12,
+            activation_generation: 3,
+            note: "dispatch activation 12 on hart1".to_string(),
+        },
+    ));
+    assert_eq!(hart1.status, CommandStatus::Applied);
+    assert_eq!(graph.harts()[0].current_activation, Some(11));
+    assert_eq!(graph.harts()[1].current_activation, Some(12));
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s4_rejects_activation_current_on_another_hart() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "created"));
+    assert!(graph.set_hart_state(2, 1, HartState::Idle, "ready", "idle"));
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "hart0-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(graph.dequeue_runnable_activation(1, 11));
+    assert!(graph.bind_hart_current_activation(1, 2, 11, 3, "dispatch hart0"));
+
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s4-test",
+        SemanticCommand::BindHartCurrentActivation {
+            hart: 2,
+            hart_generation: 2,
+            activation: 11,
+            activation_generation: 3,
+            note: "must reject duplicate current activation".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("activation is already current on another hart".to_string());
+    assert_eq!(duplicate.violations, expected);
+    assert_eq!(graph.harts()[1].current_activation, None);
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn smp_runtime_s4_invariants_reject_duplicate_current_activation() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "hart0-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(graph.dequeue_runnable_activation(1, 11));
+    assert!(graph.bind_hart_current_activation(1, 2, 11, 3, "dispatch hart0"));
+    let mut duplicate = graph.harts()[0].clone();
+    duplicate.id = 2;
+    duplicate.hardware_id = 1;
+    duplicate.label = "hart1-duplicate-current".to_string();
+    duplicate.boot = false;
+    graph.duplicate_hart_for_test(duplicate);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::ActivationCurrentOnMultipleHarts {
+            activation: 11,
+            first_hart: 1,
+            second_hart: 2,
+        })
+    );
+}
+
+#[test]
 fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let mut graph = SemanticGraph::new();
     graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");

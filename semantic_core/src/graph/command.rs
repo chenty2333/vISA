@@ -488,6 +488,15 @@ impl SemanticGraph {
                         "hart already has current activation",
                     ));
                 }
+                if self.harts.iter().any(|record| {
+                    record.id != *hart
+                        && record.current_activation == Some(*activation)
+                        && record.current_activation_generation == Some(*activation_generation)
+                }) {
+                    return Err(CommandError::precondition(
+                        "activation is already current on another hart",
+                    ));
+                }
                 let Some(activation_record) = self.runtime_activations.iter().find(|record| {
                     record.id == *activation
                         && record.generation == *activation_generation

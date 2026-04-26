@@ -132,6 +132,13 @@ impl SemanticGraph {
         {
             return false;
         }
+        if self.harts.iter().any(|record| {
+            record.id != hart
+                && record.current_activation == Some(activation)
+                && record.current_activation_generation == Some(activation_generation)
+        }) {
+            return false;
+        }
         let Some(activation_record) = self.runtime_activations.iter().find(|record| {
             record.id == activation
                 && record.generation == activation_generation
@@ -371,6 +378,20 @@ impl SemanticGraph {
                 .any(|other| other.id == hart.id)
             {
                 return Err(SemanticInvariantError::DuplicateHart { hart: hart.id });
+            }
+            if let (Some(activation), Some(activation_generation)) =
+                (hart.current_activation, hart.current_activation_generation)
+            {
+                if let Some(other) = self.harts[index + 1..].iter().find(|other| {
+                    other.current_activation == Some(activation)
+                        && other.current_activation_generation == Some(activation_generation)
+                }) {
+                    return Err(SemanticInvariantError::ActivationCurrentOnMultipleHarts {
+                        activation,
+                        first_hart: hart.id,
+                        second_hart: other.id,
+                    });
+                }
             }
             if self.harts[index + 1..]
                 .iter()

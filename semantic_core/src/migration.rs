@@ -262,6 +262,11 @@ pub enum SemanticInvariantError {
         hart: HartId,
         activation: ActivationId,
     },
+    ActivationCurrentOnMultipleHarts {
+        activation: ActivationId,
+        first_hart: HartId,
+        second_hart: HartId,
+    },
     HartEventAttributionInvalid {
         attribution: HartEventAttributionId,
     },
