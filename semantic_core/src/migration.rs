@@ -426,6 +426,25 @@ pub enum SemanticInvariantError {
         resume: ActivationResumeId,
         task: TaskId,
     },
+    PreemptionLatencyMissingTimerInterrupt {
+        sample: PreemptionLatencySampleId,
+        interrupt: TimerInterruptId,
+    },
+    PreemptionLatencyMissingPreemption {
+        sample: PreemptionLatencySampleId,
+        preemption: PreemptionId,
+    },
+    PreemptionLatencyMissingDecision {
+        sample: PreemptionLatencySampleId,
+        decision: SchedulerDecisionId,
+    },
+    PreemptionLatencyMissingResume {
+        sample: PreemptionLatencySampleId,
+        resume: ActivationResumeId,
+    },
+    PreemptionLatencyTimelineMismatch {
+        sample: PreemptionLatencySampleId,
+    },
     ActivationWaitMissingActivation {
         activation_wait: ActivationWaitId,
         activation: ActivationId,

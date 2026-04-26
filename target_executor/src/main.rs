@@ -15,14 +15,14 @@ use artifact_manifest::{
     ContractViolationManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
     InterfaceEventManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, PreemptionManifest, RequiredArtifactProfileManifest,
-    RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
-    SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
-    SemanticSnapshotManifest, StoreRecordManifest, SubstrateBoundaryManifest,
-    SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
-    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
-    TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
-    WaitRecordManifest,
+    MigrationTargetManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
+    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
+    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
+    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
+    TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -500,6 +500,24 @@ fn record_preemptive_runtime_context_evidence(
                 activation: 9002,
                 activation_generation: 4,
                 note: "p6-resume-activation-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            61,
+            "target-executor-p9",
+            SemanticCommand::RecordPreemptionLatencySample {
+                sample: 9001,
+                timer_interrupt: 9001,
+                timer_interrupt_generation: 1,
+                preemption: 9001,
+                preemption_generation: 1,
+                scheduler_decision: 9001,
+                scheduler_decision_generation: 1,
+                activation_resume: 9001,
+                activation_resume_generation: 1,
+                measured_nanos: 8_500,
+                budget_nanos: 50_000,
+                note: "p9-host-validation-preemption-latency-harness".to_owned(),
             },
         ),
         CommandEnvelope::new(
@@ -1634,6 +1652,7 @@ fn demo_migration_package(
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
+            preemption_latency_sample_count: semantic.preemption_latency_sample_count(),
             resource_count: semantic.resource_count(),
             authority_count: semantic.authority_count(),
             active_authority_count: semantic.active_authority_count(),
@@ -1718,6 +1737,11 @@ fn demo_migration_package(
                 .activation_cleanups()
                 .iter()
                 .map(activation_cleanup_manifest)
+                .collect(),
+            preemption_latency_samples: semantic
+                .preemption_latency_samples()
+                .iter()
+                .map(preemption_latency_manifest)
                 .collect(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
@@ -1987,6 +2011,29 @@ fn semantic_roots(
                         .unwrap_or_else(|| "none".to_owned()),
                     cleanup.state.as_str(),
                     cleanup.generation
+                )
+            })
+            .collect(),
+        preemption_latency_roots: semantic
+            .preemption_latency_samples()
+            .iter()
+            .map(|sample| {
+                format!(
+                    "preemption-latency id={} timer={}@{} preemption={}@{} decision={}@{} resume={}@{} events={} measured_nanos={} budget_nanos={} state={} generation={}",
+                    sample.id,
+                    sample.timer_interrupt,
+                    sample.timer_interrupt_generation,
+                    sample.preemption,
+                    sample.preemption_generation,
+                    sample.scheduler_decision,
+                    sample.scheduler_decision_generation,
+                    sample.activation_resume,
+                    sample.activation_resume_generation,
+                    sample.interrupt_to_resume_events,
+                    sample.measured_nanos,
+                    sample.budget_nanos,
+                    sample.state.as_str(),
+                    sample.generation
                 )
             })
             .collect(),
@@ -2694,6 +2741,41 @@ fn activation_cleanup_manifest(
             })
             .collect(),
         note: cleanup.note.clone(),
+    }
+}
+
+fn preemption_latency_manifest(
+    sample: &semantic_core::PreemptionLatencySampleRecord,
+) -> PreemptionLatencySampleManifest {
+    PreemptionLatencySampleManifest {
+        id: sample.id,
+        timer_interrupt: sample.timer_interrupt,
+        timer_interrupt_generation: sample.timer_interrupt_generation,
+        preemption: sample.preemption,
+        preemption_generation: sample.preemption_generation,
+        scheduler_decision: sample.scheduler_decision,
+        scheduler_decision_generation: sample.scheduler_decision_generation,
+        activation_resume: sample.activation_resume,
+        activation_resume_generation: sample.activation_resume_generation,
+        activation: sample.activation,
+        activation_generation_before: sample.activation_generation_before,
+        activation_generation_after: sample.activation_generation_after,
+        queue: sample.queue,
+        queue_generation: sample.queue_generation,
+        interrupt_recorded_at_event: sample.interrupt_recorded_at_event,
+        preempted_at_event: sample.preempted_at_event,
+        decided_at_event: sample.decided_at_event,
+        resumed_at_event: sample.resumed_at_event,
+        interrupt_to_preempt_events: sample.interrupt_to_preempt_events,
+        preempt_to_decision_events: sample.preempt_to_decision_events,
+        decision_to_resume_events: sample.decision_to_resume_events,
+        interrupt_to_resume_events: sample.interrupt_to_resume_events,
+        measured_nanos: sample.measured_nanos,
+        budget_nanos: sample.budget_nanos,
+        generation: sample.generation,
+        state: sample.state.as_str().to_owned(),
+        recorded_at_event: sample.recorded_at_event,
+        note: sample.note.clone(),
     }
 }
 

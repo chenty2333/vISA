@@ -94,6 +94,20 @@ pub enum EventKind {
         queue_generation: Generation,
         generation: Generation,
     },
+    PreemptionLatencySampleRecorded {
+        sample: PreemptionLatencySampleId,
+        timer_interrupt: TimerInterruptId,
+        timer_interrupt_generation: Generation,
+        preemption: PreemptionId,
+        preemption_generation: Generation,
+        scheduler_decision: SchedulerDecisionId,
+        scheduler_decision_generation: Generation,
+        activation_resume: ActivationResumeId,
+        activation_resume_generation: Generation,
+        measured_nanos: u64,
+        budget_nanos: u64,
+        generation: Generation,
+    },
     RuntimeActivationWaitBlocked {
         activation_wait: ActivationWaitId,
         activation: ActivationId,
@@ -573,6 +587,22 @@ impl EventKind {
                 generation,
             } => format!(
                 "RuntimeActivationResumed resume={resume} decision={decision}@{decision_generation} activation={activation}@{from_generation}->{to_generation} queue={queue}@{queue_generation} generation={generation}"
+            ),
+            Self::PreemptionLatencySampleRecorded {
+                sample,
+                timer_interrupt,
+                timer_interrupt_generation,
+                preemption,
+                preemption_generation,
+                scheduler_decision,
+                scheduler_decision_generation,
+                activation_resume,
+                activation_resume_generation,
+                measured_nanos,
+                budget_nanos,
+                generation,
+            } => format!(
+                "PreemptionLatencySampleRecorded sample={sample} timer={timer_interrupt}@{timer_interrupt_generation} preemption={preemption}@{preemption_generation} decision={scheduler_decision}@{scheduler_decision_generation} resume={activation_resume}@{activation_resume_generation} measured_nanos={measured_nanos} budget_nanos={budget_nanos} generation={generation}"
             ),
             Self::RuntimeActivationWaitBlocked {
                 activation_wait,

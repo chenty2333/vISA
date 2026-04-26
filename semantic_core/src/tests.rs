@@ -2566,6 +2566,115 @@ fn p7_resumed_activation() -> SemanticGraph {
 }
 
 #[test]
+fn preemptive_runtime_p9_latency_sample_records_measured_window() {
+    let mut graph = p7_resumed_activation();
+
+    let sample = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p9-test",
+        SemanticCommand::RecordPreemptionLatencySample {
+            sample: 18,
+            timer_interrupt: 5,
+            timer_interrupt_generation: 1,
+            preemption: 6,
+            preemption_generation: 1,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 1,
+            activation_resume: 15,
+            activation_resume_generation: 1,
+            measured_nanos: 8_500,
+            budget_nanos: 50_000,
+            note: "host-validation measured window".to_string(),
+        },
+    ));
+
+    assert_eq!(sample.status, CommandStatus::Applied);
+    assert_eq!(graph.preemption_latency_samples().len(), 1);
+    let sample = &graph.preemption_latency_samples()[0];
+    assert_eq!(sample.state, PreemptionLatencySampleState::Recorded);
+    assert_eq!(sample.activation, 11);
+    assert_eq!(sample.activation_generation_before, 3);
+    assert_eq!(sample.activation_generation_after, 5);
+    assert_eq!(sample.measured_nanos, 8_500);
+    assert!(sample.measured_nanos <= sample.budget_nanos);
+    assert_eq!(
+        sample.interrupt_to_resume_events,
+        sample.resumed_at_event - sample.interrupt_recorded_at_event
+    );
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "PreemptionLatencySampleRecorded sample=18 timer=5@1 preemption=6@1 decision=14@1 resume=15@1 measured_nanos=8500 budget_nanos=50000 generation=1"
+    );
+}
+
+#[test]
+fn preemptive_runtime_p9_latency_sample_rejects_bad_measurement_and_chain() {
+    let mut graph = p7_resumed_activation();
+
+    let zero_measurement = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p9-test",
+        SemanticCommand::RecordPreemptionLatencySample {
+            sample: 18,
+            timer_interrupt: 5,
+            timer_interrupt_generation: 1,
+            preemption: 6,
+            preemption_generation: 1,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 1,
+            activation_resume: 15,
+            activation_resume_generation: 1,
+            measured_nanos: 0,
+            budget_nanos: 50_000,
+            note: "invalid".to_string(),
+        },
+    ));
+    assert_eq!(zero_measurement.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("preemption latency measured nanos must be nonzero".to_string());
+    assert_eq!(zero_measurement.violations, expected);
+
+    let missing_resume = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p9-test",
+        SemanticCommand::RecordPreemptionLatencySample {
+            sample: 18,
+            timer_interrupt: 5,
+            timer_interrupt_generation: 1,
+            preemption: 6,
+            preemption_generation: 1,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 1,
+            activation_resume: 99,
+            activation_resume_generation: 1,
+            measured_nanos: 8_500,
+            budget_nanos: 50_000,
+            note: "missing resume".to_string(),
+        },
+    ));
+    assert_eq!(missing_resume.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("preemption latency chain is invalid".to_string());
+    assert_eq!(missing_resume.violations, expected);
+    assert!(graph.preemption_latency_samples().is_empty());
+}
+
+#[test]
+fn preemptive_runtime_p9_invariants_reject_latency_delta_drift() {
+    let mut graph = p7_resumed_activation();
+    assert!(graph.record_preemption_latency_sample_with_id(
+        18, 5, 1, 6, 1, 14, 1, 15, 1, 8_500, 50_000, "sample"
+    ));
+    graph.corrupt_preemption_latency_interrupt_to_resume_for_test(18, 99);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::PreemptionLatencyTimelineMismatch { sample: 18 })
+    );
+}
+
+#[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();
     let blocker = ContractObjectRef::new(ContractObjectKind::TimerInterrupt, 5, 1);

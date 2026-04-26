@@ -10,10 +10,11 @@ use artifact_manifest::{
     ActivationResumeManifest, ActivationWaitManifest, ArtifactBundleManifest,
     BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
     CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest, HostcallTraceManifest,
-    InterfaceEventManifest, MigrationPackageManifest, PreemptionManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
-    TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
+    InterfaceEventManifest, MigrationPackageManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
+    SavedContextManifest, SchedulerDecisionManifest, StoreRecordManifest, SubstrateEventManifest,
+    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -210,7 +211,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "task" | "store" | "cap" | "capability" | "wait" | "cleanup" | "command" | "scheduler"
         | "runtime-activation" | "runnable-queue" | "activation-context" | "saved-context"
         | "timer-interrupt" | "preemption" | "scheduler-decision" | "activation-resume"
-        | "activation-wait" | "activation-cleanup" | "context" => {
+        | "activation-wait" | "activation-cleanup" | "preemption-latency" | "context" => {
             handle_view_command(&command, args.collect())
         }
         "state" => {
@@ -376,7 +377,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler-decision|activation-resume|activation-wait|activation-cleanup|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler-decision|activation-resume|activation-wait|activation-cleanup|preemption-latency|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -579,6 +580,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
+        "preemption-latency" => "preemption-latency",
         "scheduler" => "scheduler",
         "runnable-queue" => "runnable-queue",
         "cap" | "capability" => "capability",
@@ -963,6 +965,61 @@ fn activation_cleanup_view_v1(cleanup: &ActivationCleanupManifest) -> serde_json
     })
 }
 
+fn preemption_latency_view_v1(sample: &PreemptionLatencySampleManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "preemption-latency",
+        "id": sample.id,
+        "generation": sample.generation,
+        "state": sample.state,
+        "owner": {
+            "activation": sample.activation,
+            "activation_generation_before": sample.activation_generation_before,
+            "activation_generation_after": sample.activation_generation_after,
+            "queue": sample.queue,
+            "queue_generation": sample.queue_generation,
+        },
+        "references": {
+            "timer_interrupt": {
+                "id": sample.timer_interrupt,
+                "generation": sample.timer_interrupt_generation,
+            },
+            "preemption": {
+                "id": sample.preemption,
+                "generation": sample.preemption_generation,
+            },
+            "scheduler_decision": {
+                "id": sample.scheduler_decision,
+                "generation": sample.scheduler_decision_generation,
+            },
+            "activation_resume": {
+                "id": sample.activation_resume,
+                "generation": sample.activation_resume_generation,
+            },
+        },
+        "event_window": {
+            "interrupt_recorded_at_event": sample.interrupt_recorded_at_event,
+            "preempted_at_event": sample.preempted_at_event,
+            "decided_at_event": sample.decided_at_event,
+            "resumed_at_event": sample.resumed_at_event,
+            "interrupt_to_preempt_events": sample.interrupt_to_preempt_events,
+            "preempt_to_decision_events": sample.preempt_to_decision_events,
+            "decision_to_resume_events": sample.decision_to_resume_events,
+            "interrupt_to_resume_events": sample.interrupt_to_resume_events,
+        },
+        "metrics": {
+            "measured_nanos": sample.measured_nanos,
+            "budget_nanos": sample.budget_nanos,
+            "within_budget": sample.measured_nanos <= sample.budget_nanos,
+        },
+        "last_transition": {
+            "recorded_at_event": sample.recorded_at_event,
+        },
+        "last_error": serde_json::Value::Null,
+        "note": sample.note,
+    })
+}
+
 fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -1049,6 +1106,15 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "activation_generation_after": cleanup.activation_generation_after,
                 "state": cleanup.state,
             })).collect::<Vec<_>>(),
+            "preemption_latency_samples": package.semantic.preemption_latency_samples.iter().map(|sample| serde_json::json!({
+                "id": sample.id,
+                "generation": sample.generation,
+                "activation": sample.activation,
+                "interrupt_to_resume_events": sample.interrupt_to_resume_events,
+                "measured_nanos": sample.measured_nanos,
+                "budget_nanos": sample.budget_nanos,
+                "state": sample.state,
+            })).collect::<Vec<_>>(),
         },
         "last_transition": {
             "scheduler_decision_cursor": package.substrate_boundary.scheduler_decision_cursor,
@@ -1064,6 +1130,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "activation_resume_count": package.semantic.activation_resume_count,
             "activation_wait_count": package.semantic.activation_wait_count,
             "activation_cleanup_count": package.semantic.activation_cleanup_count,
+            "preemption_latency_sample_count": package.semantic.preemption_latency_sample_count,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -1489,6 +1556,12 @@ fn stable_views_for_kind(
             .activation_cleanups
             .iter()
             .map(activation_cleanup_view_v1)
+            .collect()),
+        "preemption-latency" => Ok(package
+            .semantic
+            .preemption_latency_samples
+            .iter()
+            .map(preemption_latency_view_v1)
             .collect()),
         "store" => Ok(package
             .semantic
@@ -2106,7 +2179,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} scheduler_decisions={} activation_resumes={} activation_waits={} activation_cleanups={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} scheduler_decisions={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.task_count,
@@ -2120,6 +2193,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
+            package.semantic.preemption_latency_sample_count,
             package.semantic.resource_count,
             package.semantic.store_count,
             package.semantic.capability_count,
@@ -2247,7 +2321,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={}",
+        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.task_roots.len(),
@@ -2272,7 +2346,8 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.contract_violation_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
-        package.semantic.roots.activation_cleanup_roots.len()
+        package.semantic.roots.activation_cleanup_roots.len(),
+        package.semantic.roots.preemption_latency_roots.len()
     );
     print_roots("task", &package.semantic.roots.task_roots);
     print_roots(
@@ -2300,6 +2375,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "activation-cleanup",
         &package.semantic.roots.activation_cleanup_roots,
+    );
+    print_roots(
+        "preemption-latency",
+        &package.semantic.roots.preemption_latency_roots,
     );
     print_roots("resource", &package.semantic.roots.resource_roots);
     print_roots("authority", &package.semantic.roots.authority_roots);
@@ -2881,6 +2960,53 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 Some(cleanup.completed_at_event),
             ));
         }
+    }
+    for sample in &package.semantic.preemption_latency_samples {
+        let from = object_ref_json("preemption-latency", sample.id, sample.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "timer-interrupt",
+                sample.timer_interrupt,
+                sample.timer_interrupt_generation,
+            ),
+            "measured-from-timer",
+            "historical",
+            Some(sample.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "preemption",
+                sample.preemption,
+                sample.preemption_generation,
+            ),
+            "measured-preemption",
+            "historical",
+            Some(sample.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "scheduler-decision",
+                sample.scheduler_decision,
+                sample.scheduler_decision_generation,
+            ),
+            "measured-decision",
+            "historical",
+            Some(sample.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "activation-resume",
+                sample.activation_resume,
+                sample.activation_resume_generation,
+            ),
+            "measured-resume",
+            "historical",
+            Some(sample.recorded_at_event),
+        ));
     }
     for trap in &package.semantic.trap_records {
         let from = object_ref_json("trap", trap.id, trap.generation);
@@ -4214,6 +4340,7 @@ fn print_replay_json(
             "contract_violations": package.semantic.roots.contract_violation_roots.len(),
             "cleanup": package.semantic.roots.cleanup_roots.len(),
             "activation_cleanup": package.semantic.roots.activation_cleanup_roots.len(),
+            "preemption_latency": package.semantic.roots.preemption_latency_roots.len(),
             "memory_policies": package.semantic.roots.memory_policy_roots.len(),
             "snapshot_validation": package.semantic.roots.snapshot_validation_roots.len(),
             "replay_validation": package.semantic.roots.replay_validation_roots.len(),
@@ -4237,6 +4364,7 @@ fn print_replay_json(
             "contract_violation_roots": &package.semantic.roots.contract_violation_roots,
             "cleanup_roots": &package.semantic.roots.cleanup_roots,
             "activation_cleanup_roots": &package.semantic.roots.activation_cleanup_roots,
+            "preemption_latency_roots": &package.semantic.roots.preemption_latency_roots,
             "memory_policy_roots": &package.semantic.roots.memory_policy_roots,
             "snapshot_validation_roots": &package.semantic.roots.snapshot_validation_roots,
             "replay_validation_roots": &package.semantic.roots.replay_validation_roots,
@@ -4260,7 +4388,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} activation_cleanups={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} activation_cleanups={} preemption_latency_samples={} substrate_events={} command_results={} interface_events={}",
         package.semantic.task_count,
         package.semantic.resource_count,
         package.semantic.active_authority_count,
@@ -4281,6 +4409,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.hostcall_trace_count,
         package.semantic.migration_object_count,
         package.semantic.activation_cleanup_count,
+        package.semantic.preemption_latency_sample_count,
         package.semantic.substrate_event_count,
         package.semantic.command_result_count,
         package.semantic.interface_event_count
@@ -4632,6 +4761,7 @@ mod tests {
         package.semantic.activation_resume_count = 1;
         package.semantic.activation_wait_count = 1;
         package.semantic.activation_cleanup_count = 1;
+        package.semantic.preemption_latency_sample_count = 1;
         package.substrate_boundary.timer_epoch = 3;
         package.semantic.task_records.push(TaskRecordManifest {
             id: 7,
@@ -4837,6 +4967,39 @@ mod tests {
                 }],
                 note: "cleanup".to_owned(),
             });
+        package
+            .semantic
+            .preemption_latency_samples
+            .push(PreemptionLatencySampleManifest {
+                id: 21,
+                timer_interrupt: 14,
+                timer_interrupt_generation: 1,
+                preemption: 15,
+                preemption_generation: 1,
+                scheduler_decision: 16,
+                scheduler_decision_generation: 1,
+                activation_resume: 17,
+                activation_resume_generation: 1,
+                activation: 11,
+                activation_generation_before: 2,
+                activation_generation_after: 4,
+                queue: 1,
+                queue_generation: 1,
+                interrupt_recorded_at_event: 11,
+                preempted_at_event: 12,
+                decided_at_event: 13,
+                resumed_at_event: 14,
+                interrupt_to_preempt_events: 1,
+                preempt_to_decision_events: 1,
+                decision_to_resume_events: 1,
+                interrupt_to_resume_events: 3,
+                measured_nanos: 8_500,
+                budget_nanos: 50_000,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 19,
+                note: "latency sample".to_owned(),
+            });
         let context = activation_context_view_v1(&package.semantic.activation_contexts[0]);
         assert_eq!(context["kind"], "activation-context");
         assert_eq!(context["references"]["activation"]["generation"], 2);
@@ -4909,6 +5072,12 @@ mod tests {
             activation_cleanup["references"]["steps"][0]["target"]["kind"],
             "wait-token"
         );
+        let latency = preemption_latency_view_v1(&package.semantic.preemption_latency_samples[0]);
+        assert_eq!(latency["kind"], "preemption-latency");
+        assert_eq!(latency["references"]["timer_interrupt"]["generation"], 1);
+        assert_eq!(latency["event_window"]["interrupt_to_resume_events"], 3);
+        assert_eq!(latency["metrics"]["measured_nanos"], 8_500);
+        assert_eq!(latency["metrics"]["within_budget"], true);
         let scheduler = scheduler_view_v1(&package);
         assert_eq!(scheduler["kind"], "scheduler");
         assert_eq!(scheduler["references"]["queues"][0]["entries"], 1);
@@ -4925,6 +5094,10 @@ mod tests {
         assert_eq!(scheduler["last_transition"]["activation_resume_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_wait_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_cleanup_count"], 1);
+        assert_eq!(
+            scheduler["last_transition"]["preemption_latency_sample_count"],
+            1
+        );
         assert_eq!(scheduler["last_transition"]["timer_epoch"], 3);
         assert_eq!(
             scheduler["last_transition"]["scheduler_decision_cursor"],
@@ -5013,6 +5186,15 @@ mod tests {
                     && edge["to"]["kind"] == "activation"
                     && edge["to"]["generation"] == 6
                     && edge["relation"] == "cancelled-to"
+                    && edge["mode"] == "historical")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "preemption-latency"
+                    && edge["to"]["kind"] == "activation-resume"
+                    && edge["to"]["generation"] == 1
+                    && edge["relation"] == "measured-resume"
                     && edge["mode"] == "historical")
         );
     }

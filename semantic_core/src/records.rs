@@ -222,6 +222,48 @@ impl ActivationResumeRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreemptionLatencySampleRecord {
+    pub id: PreemptionLatencySampleId,
+    pub timer_interrupt: TimerInterruptId,
+    pub timer_interrupt_generation: Generation,
+    pub preemption: PreemptionId,
+    pub preemption_generation: Generation,
+    pub scheduler_decision: SchedulerDecisionId,
+    pub scheduler_decision_generation: Generation,
+    pub activation_resume: ActivationResumeId,
+    pub activation_resume_generation: Generation,
+    pub activation: ActivationId,
+    pub activation_generation_before: Generation,
+    pub activation_generation_after: Generation,
+    pub queue: RunnableQueueId,
+    pub queue_generation: Generation,
+    pub interrupt_recorded_at_event: EventId,
+    pub preempted_at_event: EventId,
+    pub decided_at_event: EventId,
+    pub resumed_at_event: EventId,
+    pub interrupt_to_preempt_events: u64,
+    pub preempt_to_decision_events: u64,
+    pub decision_to_resume_events: u64,
+    pub interrupt_to_resume_events: u64,
+    pub measured_nanos: u64,
+    pub budget_nanos: u64,
+    pub generation: Generation,
+    pub state: PreemptionLatencySampleState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl PreemptionLatencySampleRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::PreemptionLatencySample,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationWaitRecord {
     pub id: ActivationWaitId,
     pub activation: ActivationId,

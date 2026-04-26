@@ -77,6 +77,7 @@ impl SemanticGraph {
         self.check_timer_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;
+        self.check_preemption_latency_invariants()?;
 
         for authority in &self.authority_bindings {
             if authority.state != AuthorityState::Bound {

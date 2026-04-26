@@ -76,6 +76,7 @@ pub enum ObjectKind {
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
+    PreemptionLatency,
     Resource,
     Capability,
     WaitToken,
@@ -112,6 +113,7 @@ impl ObjectKind {
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
+            Self::PreemptionLatency => "preemption-latency",
             Self::Resource => "resource",
             Self::Capability => "capability",
             Self::WaitToken => "wait-token",
@@ -302,6 +304,7 @@ typed_ref!(SchedulerDecisionRef, ObjectKind::SchedulerDecision);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
+typed_ref!(PreemptionLatencyRef, ObjectKind::PreemptionLatency);
 typed_ref!(FaultDomainRef, ObjectKind::FaultDomain);
 typed_ref!(ArtifactRef, ObjectKind::Artifact);
 typed_ref!(CodeObjectRef, ObjectKind::CodeObject);
@@ -1479,6 +1482,12 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("activation cleanup root/count mismatch"));
     }
+    if roots.preemption_latency_roots.len() != package.semantic.preemption_latency_sample_count
+        || package.semantic.preemption_latency_samples.len()
+            != package.semantic.preemption_latency_sample_count
+    {
+        return Err(ContractError::new("preemption latency root/count mismatch"));
+    }
     if roots.resource_roots.len() != package.semantic.resource_count {
         return Err(ContractError::new("resource root/count mismatch"));
     }
@@ -1982,6 +1991,7 @@ mod tests {
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
+                preemption_latency_sample_count: 0,
                 resource_count: 0,
                 authority_count: 0,
                 active_authority_count: 0,
@@ -2027,6 +2037,7 @@ mod tests {
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
+                preemption_latency_samples: Vec::new(),
                 code_objects: Vec::new(),
                 store_records: Vec::new(),
                 capability_records: Vec::new(),
@@ -2354,6 +2365,47 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "activation cleanup root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_preemption_latency_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.preemption_latency_sample_count = 1;
+        package.semantic.preemption_latency_samples.push(
+            artifact_manifest::PreemptionLatencySampleManifest {
+                id: 11,
+                timer_interrupt: 5,
+                timer_interrupt_generation: 1,
+                preemption: 6,
+                preemption_generation: 1,
+                scheduler_decision: 7,
+                scheduler_decision_generation: 1,
+                activation_resume: 8,
+                activation_resume_generation: 1,
+                activation: 12,
+                activation_generation_before: 3,
+                activation_generation_after: 5,
+                queue: 2,
+                queue_generation: 1,
+                interrupt_recorded_at_event: 10,
+                preempted_at_event: 11,
+                decided_at_event: 12,
+                resumed_at_event: 13,
+                interrupt_to_preempt_events: 1,
+                preempt_to_decision_events: 1,
+                decision_to_resume_events: 1,
+                interrupt_to_resume_events: 3,
+                measured_nanos: 500,
+                budget_nanos: 50_000,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 14,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "preemption latency root/count mismatch");
     }
 
     #[test]

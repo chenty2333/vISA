@@ -244,6 +244,8 @@ pub struct SemanticSnapshotManifest {
     pub activation_wait_count: usize,
     #[serde(default)]
     pub activation_cleanup_count: usize,
+    #[serde(default)]
+    pub preemption_latency_sample_count: usize,
     pub resource_count: usize,
     #[serde(default)]
     pub authority_count: usize,
@@ -331,6 +333,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub activation_cleanups: Vec<ActivationCleanupManifest>,
     #[serde(default)]
+    pub preemption_latency_samples: Vec<PreemptionLatencySampleManifest>,
+    #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
     #[serde(default)]
     pub store_records: Vec<StoreRecordManifest>,
@@ -396,6 +400,8 @@ pub struct SemanticRootSetManifest {
     pub activation_wait_roots: Vec<String>,
     #[serde(default)]
     pub activation_cleanup_roots: Vec<String>,
+    #[serde(default)]
+    pub preemption_latency_roots: Vec<String>,
     #[serde(default)]
     pub resource_roots: Vec<String>,
     #[serde(default)]
@@ -726,6 +732,38 @@ pub struct ActivationCleanupStepManifest {
     pub status: String,
     #[serde(default)]
     pub event: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct PreemptionLatencySampleManifest {
+    pub id: u64,
+    pub timer_interrupt: u64,
+    pub timer_interrupt_generation: u64,
+    pub preemption: u64,
+    pub preemption_generation: u64,
+    pub scheduler_decision: u64,
+    pub scheduler_decision_generation: u64,
+    pub activation_resume: u64,
+    pub activation_resume_generation: u64,
+    pub activation: u64,
+    pub activation_generation_before: u64,
+    pub activation_generation_after: u64,
+    pub queue: u64,
+    pub queue_generation: u64,
+    pub interrupt_recorded_at_event: u64,
+    pub preempted_at_event: u64,
+    pub decided_at_event: u64,
+    pub resumed_at_event: u64,
+    pub interrupt_to_preempt_events: u64,
+    pub preempt_to_decision_events: u64,
+    pub decision_to_resume_events: u64,
+    pub interrupt_to_resume_events: u64,
+    pub measured_nanos: u64,
+    pub budget_nanos: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

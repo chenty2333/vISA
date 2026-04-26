@@ -296,6 +296,21 @@ impl ActivationCleanupStepStatus {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreemptionLatencySampleState {
+    Recorded,
+    Dropped,
+}
+
+impl PreemptionLatencySampleState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResourceKind {
     Fd,
     Timer,

@@ -1391,6 +1391,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup
+            | ContractObjectKind::PreemptionLatencySample
             | ContractObjectKind::Resource
             | ContractObjectKind::FaultDomain
             | ContractObjectKind::MemoryObject
