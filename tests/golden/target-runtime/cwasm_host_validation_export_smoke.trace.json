@@ -1,0 +1,49 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "C5-cwasm-host-validation-evidence",
+  "name": "cwasm_host_validation_export_smoke",
+  "contract_refs": [
+    "references/specs/target-runtime-abi/03-hostcall-frame.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md"
+  ],
+  "no_goals": [
+    "target-side-hostcall-trampoline",
+    "wasi-component-runtime",
+    "real-target-pc-attribution"
+  ],
+  "stimulus": {
+    "runner": "target_executor host-side validation",
+    "entry": "wasmtime Module::deserialize after TargetArtifactImage profile gate",
+    "smoke_export": "buffer_capacity"
+  },
+  "events": [
+    {
+      "kind": "ActivationStarted",
+      "entry": "cwasm-smoke:buffer_capacity",
+      "source": "host-side cwasm export smoke"
+    },
+    {
+      "kind": "HostcallTrace",
+      "name": "cwasm.host-validation.buffer_capacity",
+      "object": "host-validation.<package>",
+      "operation": "buffer_capacity",
+      "allowed": true,
+      "ref_mode": "historical"
+    },
+    {
+      "kind": "ActivationReturned",
+      "return_tag": "ok"
+    }
+  ],
+  "expected": {
+    "smoke_call_is_osctl_visible": true,
+    "activation_store_code_artifact_generations_are_recorded": true,
+    "debug_string_does_not_authorize_capability": true
+  },
+  "validation": {
+    "ok": true,
+    "query": "semantic.hostcall_trace[name starts with cwasm.host-validation.]"
+  }
+}

@@ -3986,6 +3986,34 @@ mod tests {
         replay_cleanup_golden(&cleanup);
     }
 
+    #[test]
+    fn target_runtime_cwasm_golden_traces_parse() {
+        for source in [
+            include_str!(
+                "../../tests/golden/target-runtime/cwasm_payload_loaded_as_target_artifact.trace.json"
+            ),
+            include_str!(
+                "../../tests/golden/target-runtime/cwasm_host_validation_export_smoke.trace.json"
+            ),
+            include_str!(
+                "../../tests/golden/target-runtime/cwasm_host_validation_trap_visible.trace.json"
+            ),
+        ] {
+            let value: serde_json::Value =
+                serde_json::from_str(source).expect("target-runtime golden trace JSON");
+            assert_eq!(value["schema"], "vmos-golden-trace");
+            assert!(
+                value["contract_refs"]
+                    .as_array()
+                    .expect("contract_refs")
+                    .len()
+                    > 0
+            );
+            assert!(value["events"].as_array().expect("events").len() > 0);
+            assert!(value["validation"]["ok"].as_bool().expect("validation ok"));
+        }
+    }
+
     fn parse_golden(source: &str) -> serde_json::Value {
         let value: serde_json::Value = serde_json::from_str(source).expect("golden trace JSON");
         assert_eq!(value["schema"], "vmos-golden-trace-v1");

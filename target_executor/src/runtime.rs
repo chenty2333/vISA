@@ -81,13 +81,15 @@ impl RuntimeOnlyExecutor {
         validate_exports(entry, &module)?;
         let mut store = Store::new(&self.engine, ());
         let instance = Instance::new(&mut store, &module, &[])?;
-        smoke_instance(entry, &instance, &mut store)?;
+        let mut smoke_trace = Vec::new();
+        smoke_instance(entry, &instance, &mut store, &mut smoke_trace)?;
         Ok(LoadedRuntimeStore {
             package: entry.package.clone(),
             role: entry.role.clone(),
             fault_policy: entry.fault_policy.clone(),
             abi_fingerprint: entry.abi_fingerprint.clone(),
             manifest_binding_hash: entry.manifest_binding_hash.clone(),
+            smoke_trace,
         })
     }
 
@@ -115,6 +117,14 @@ pub struct LoadedRuntimeStore {
     pub fault_policy: String,
     pub abi_fingerprint: String,
     pub manifest_binding_hash: String,
+    pub smoke_trace: Vec<HostValidationSmokeTrace>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostValidationSmokeTrace {
+    pub export: String,
+    pub result: String,
+    pub trap: Option<String>,
 }
 
 fn validate_exports(entry: &ValidatedArtifactEntry, module: &Module) -> Result<(), Box<dyn Error>> {
@@ -134,21 +144,33 @@ fn smoke_instance(
     entry: &ValidatedArtifactEntry,
     instance: &Instance,
     store: &mut Store<()>,
+    smoke_trace: &mut Vec<HostValidationSmokeTrace>,
 ) -> Result<(), Box<dyn Error>> {
-    check_u32_export(instance, store, "request_capacity")?;
-    check_u32_export(instance, store, "response_capacity")?;
-    check_u32_export(instance, store, "buffer_capacity")?;
-    check_u32_export(instance, store, "arg_buffer_capacity")?;
-    check_u32_export(instance, store, "result_buffer_capacity")?;
-    check_u32_export(instance, store, "request_ptr")?;
-    check_u32_export(instance, store, "response_ptr")?;
-    check_u32_export(instance, store, "buffer_ptr")?;
-    check_u32_export(instance, store, "arg_buffer_ptr")?;
-    check_u32_export(instance, store, "result_buffer_ptr")?;
+    check_u32_export(instance, store, smoke_trace, "request_capacity")?;
+    check_u32_export(instance, store, smoke_trace, "response_capacity")?;
+    check_u32_export(instance, store, smoke_trace, "buffer_capacity")?;
+    check_u32_export(instance, store, smoke_trace, "arg_buffer_capacity")?;
+    check_u32_export(instance, store, smoke_trace, "result_buffer_capacity")?;
+    check_u32_export(instance, store, smoke_trace, "request_ptr")?;
+    check_u32_export(instance, store, smoke_trace, "response_ptr")?;
+    check_u32_export(instance, store, smoke_trace, "buffer_ptr")?;
+    check_u32_export(instance, store, smoke_trace, "arg_buffer_ptr")?;
+    check_u32_export(instance, store, smoke_trace, "result_buffer_ptr")?;
 
     if entry.package == "console_service" {
         if let Ok(func) = instance.get_typed_func::<(u32, u32), i32>(&mut *store, "commit_write") {
-            let rc = func.call(&mut *store, (0, 0))?;
+            let rc = match func.call(&mut *store, (0, 0)) {
+                Ok(value) => value,
+                Err(error) => {
+                    record_smoke_trap(smoke_trace, "commit_write", &error);
+                    return Err(error.into());
+                }
+            };
+            smoke_trace.push(HostValidationSmokeTrace {
+                export: "commit_write".to_owned(),
+                result: format!("i32:{rc}"),
+                trap: None,
+            });
             if rc != 0 {
                 return Err("console_service commit_write(0, 0) failed".into());
             }
@@ -156,7 +178,18 @@ fn smoke_instance(
     }
     if entry.package == "wasm_app" {
         if let Ok(func) = instance.get_typed_func::<(), u64>(&mut *store, "run") {
-            let _ = func.call(&mut *store, ())?;
+            let value = match func.call(&mut *store, ()) {
+                Ok(value) => value,
+                Err(error) => {
+                    record_smoke_trap(smoke_trace, "run", &error);
+                    return Err(error.into());
+                }
+            };
+            smoke_trace.push(HostValidationSmokeTrace {
+                export: "run".to_owned(),
+                result: format!("u64:{value}"),
+                trap: None,
+            });
         }
     }
     if matches!(
@@ -166,21 +199,24 @@ fn smoke_instance(
         check_u32_export_eq(
             instance,
             store,
+            smoke_trace,
             "network_contract_version",
             NETWORK_CONTRACT_ABI_VERSION,
         )?;
     }
     if matches!(entry.package.as_str(), "driver_virtio_net" | "net_core") {
-        check_u32_export_eq(instance, store, "packet_mtu", VIRTIO_NET0_MTU)?;
+        check_u32_export_eq(instance, store, smoke_trace, "packet_mtu", VIRTIO_NET0_MTU)?;
         check_u32_export_eq(
             instance,
             store,
+            smoke_trace,
             "packet_rx_queue_depth",
             VIRTIO_NET0_RX_QUEUE_DEPTH,
         )?;
         check_u32_export_eq(
             instance,
             store,
+            smoke_trace,
             "packet_tx_queue_depth",
             VIRTIO_NET0_TX_QUEUE_DEPTH,
         )?;
@@ -191,10 +227,22 @@ fn smoke_instance(
 fn check_u32_export(
     instance: &Instance,
     store: &mut Store<()>,
+    smoke_trace: &mut Vec<HostValidationSmokeTrace>,
     export: &str,
 ) -> Result<(), Box<dyn Error>> {
     if let Ok(func) = instance.get_typed_func::<(), u32>(&mut *store, export) {
-        let value = func.call(&mut *store, ())?;
+        let value = match func.call(&mut *store, ()) {
+            Ok(value) => value,
+            Err(error) => {
+                record_smoke_trap(smoke_trace, export, &error);
+                return Err(error.into());
+            }
+        };
+        smoke_trace.push(HostValidationSmokeTrace {
+            export: export.to_owned(),
+            result: format!("u32:{value}"),
+            trap: None,
+        });
         if value == 0 {
             return Err(format!("export `{export}` returned zero").into());
         }
@@ -205,15 +253,39 @@ fn check_u32_export(
 fn check_u32_export_eq(
     instance: &Instance,
     store: &mut Store<()>,
+    smoke_trace: &mut Vec<HostValidationSmokeTrace>,
     export: &str,
     expected: u32,
 ) -> Result<(), Box<dyn Error>> {
     let func = instance.get_typed_func::<(), u32>(&mut *store, export)?;
-    let value = func.call(&mut *store, ())?;
+    let value = match func.call(&mut *store, ()) {
+        Ok(value) => value,
+        Err(error) => {
+            record_smoke_trap(smoke_trace, export, &error);
+            return Err(error.into());
+        }
+    };
+    smoke_trace.push(HostValidationSmokeTrace {
+        export: export.to_owned(),
+        result: format!("u32:{value}"),
+        trap: None,
+    });
     if value != expected {
         return Err(format!("export `{export}` returned {value}, expected {expected}").into());
     }
     Ok(())
+}
+
+fn record_smoke_trap(
+    smoke_trace: &mut Vec<HostValidationSmokeTrace>,
+    export: &str,
+    error: &wasmtime::Error,
+) {
+    smoke_trace.push(HostValidationSmokeTrace {
+        export: export.to_owned(),
+        result: "trap".to_owned(),
+        trap: Some(error.to_string()),
+    });
 }
 
 fn validate_profile_requirements_payload(

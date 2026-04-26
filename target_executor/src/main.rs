@@ -24,7 +24,7 @@ use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
     validate_migration_against_manifest, validate_replay_quiescent,
 };
-use runtime::RuntimeOnlyExecutor;
+use runtime::{HostValidationSmokeTrace, RuntimeOnlyExecutor};
 use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, AuthorityObjectRef, BoundaryKind,
     BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass,
@@ -104,7 +104,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
-    let target_v1 = build_target_executor_v1(&plan, &semantic)?;
+    let target_v1 = build_target_executor_v1(&plan, &semantic, &stores)?;
 
     println!(
         "target executor loaded {} runtime-only stores with {} capability grants across {} fault domains in {} mode",
@@ -352,6 +352,7 @@ fn substrate_requester_parts(
 fn build_target_executor_v1(
     plan: &ValidatedArtifactPlan,
     semantic: &SemanticGraph,
+    runtime_stores: &[runtime::LoadedRuntimeStore],
 ) -> Result<TargetExecutorV1Report, Box<dyn Error>> {
     let mut registry = ArtifactRegistry::with_expected(expected_target_artifacts(plan));
     let mut publisher = CodePublisher::new();
@@ -394,12 +395,34 @@ fn build_target_executor_v1(
         publisher
             .bind_to_store(code_id, &store.store)
             .map_err(|error| error.message())?;
+        if let Some(runtime_store) = runtime_stores
+            .iter()
+            .find(|store| store.package == entry.package)
+        {
+            let code_object = publisher
+                .object_mut(code_id)
+                .map_err(|error| error.message())?;
+            append_cwasm_smoke_hostcalls(code_object, index, &runtime_store.smoke_trace);
+        }
         let code = publisher
             .object(code_id)
             .ok_or("publisher lost code object after bind")?
             .clone();
 
         run_activation_harness(index, &mut executor, store, &code, &ledger)?;
+        if let Some(runtime_store) = runtime_stores
+            .iter()
+            .find(|store| store.package == entry.package)
+        {
+            run_cwasm_smoke_evidence(
+                index,
+                &mut executor,
+                store,
+                &code,
+                &ledger,
+                &runtime_store.smoke_trace,
+            )?;
+        }
     }
 
     if let Some(cleanup_artifact) = verified_artifacts.first() {
@@ -612,6 +635,79 @@ fn declared_authority_objects(capabilities: &[CapabilityRecord]) -> Vec<External
         ));
     }
     declarations
+}
+
+fn append_cwasm_smoke_hostcalls(
+    code: &mut CodeObject,
+    module_index: usize,
+    smoke_trace: &[HostValidationSmokeTrace],
+) {
+    for (index, trace) in smoke_trace.iter().enumerate() {
+        let number = cwasm_smoke_hostcall_number(module_index, index);
+        let name = format!("cwasm.host-validation.{}", trace.export);
+        let object = format!("host-validation.{}", code.package);
+        code.hostcalls.push(HostcallSpec::new(
+            number,
+            &name,
+            HostcallCategory::Service,
+            &object,
+            &trace.export,
+            false,
+        ));
+    }
+}
+
+fn run_cwasm_smoke_evidence(
+    module_index: usize,
+    executor: &mut TargetExecutor,
+    store: &ManagedStoreRecord,
+    code: &CodeObject,
+    ledger: &CapabilityLedger,
+    smoke_trace: &[HostValidationSmokeTrace],
+) -> Result<(), Box<dyn Error>> {
+    for (index, trace) in smoke_trace.iter().enumerate() {
+        let activation = executor
+            .start_activation(
+                &store.store,
+                code,
+                ActivationEntry::Symbol(format!("cwasm-smoke:{}", trace.export)),
+            )
+            .map_err(|error| error.message())?;
+        if trace.trap.is_some() {
+            executor.synthetic_trap(
+                TargetTrapClass::CodeObjectTrap,
+                store.store.id,
+                Some(activation),
+                Some(code),
+                Some(&format!("cwasm.host-validation.{}", trace.export)),
+                "UnknownCodeTrap: host-validation Wasmtime trap attribution unavailable",
+            );
+            continue;
+        }
+        let number = cwasm_smoke_hostcall_number(module_index, index);
+        let object = format!("host-validation.{}", code.package);
+        let frame = HostcallFrame::new_bound(
+            activation,
+            &store.store,
+            code,
+            number,
+            &object,
+            &trace.export,
+            1,
+        )
+        .to_wire_frame();
+        executor
+            .invoke_hostcall(code, frame, ledger)
+            .map_err(|error| error.message())?;
+        executor
+            .return_exit(activation)
+            .map_err(|error| error.message())?;
+    }
+    Ok(())
+}
+
+fn cwasm_smoke_hostcall_number(module_index: usize, trace_index: usize) -> u32 {
+    9500 + module_index as u32 * 100 + trace_index as u32
 }
 
 fn run_activation_harness(

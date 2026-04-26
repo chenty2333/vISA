@@ -1,0 +1,66 @@
+{
+  "schema": "json-schema-draft-07",
+  "title": "VMOS Golden Trace",
+  "type": "object",
+  "required": [
+    "schema",
+    "checkpoint",
+    "contract_refs",
+    "no_goals",
+    "stimulus",
+    "events",
+    "expected",
+    "validation"
+  ],
+  "properties": {
+    "schema": {
+      "const": "vmos-golden-trace"
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "checkpoint": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "contract_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "no_goals": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stimulus": {
+      "type": "object"
+    },
+    "events": {
+      "type": "array"
+    },
+    "expected": {
+      "type": "object"
+    },
+    "validation": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "required_tests": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

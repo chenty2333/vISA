@@ -1,0 +1,52 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "T3-pcrange-trapmap-attribution",
+  "name": "fake_aot_ebreak_trap",
+  "contract_refs": [
+    "references/specs/target-runtime-abi/01-target-artifact-image.md",
+    "references/specs/target-runtime-abi/04-trap-map-and-attribution.md",
+    "references/specs/target-runtime-abi/08-default-profile.md"
+  ],
+  "no_goals": [
+    "real-cwasm-execution",
+    "real-smp-dynamic-code-publish"
+  ],
+  "stimulus": {
+    "artifact": {
+      "payload": "FakeAotBlobV1",
+      "entry": "entry_trap_ebreak",
+      "entry_offset": "0x0020",
+      "entry_bytes_le": "73 00 10 00"
+    },
+    "trap": {
+      "instruction": "ebreak",
+      "pc_semantics": "pc points at ebreak instruction"
+    }
+  },
+  "events": [
+    {
+      "kind": "TrapRecord",
+      "trap_kind": "InjectedTrap",
+      "code_offset": "0x0020",
+      "edges": [
+        "TrapRecord --HistoricalRef--> CodeObject",
+        "TrapRecord --HistoricalRef--> Activation",
+        "TrapRecord --HistoricalRef--> Store"
+      ]
+    }
+  ],
+  "expected": {
+    "pc_maps_to_code_object_offset": true,
+    "trap_record_uses_historical_refs": true,
+    "handler_must_not_resume_by_blind_pc_advance": true
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "rv64_stub_ebreak_exact_bytes",
+      "fake_aot_ebreak_trap_maps_to_code_offset",
+      "trap_pc_maps_to_codeobject_offset"
+    ]
+  }
+}

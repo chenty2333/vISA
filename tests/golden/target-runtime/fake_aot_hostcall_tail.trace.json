@@ -1,0 +1,55 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "T2-hostcall-frame-harness",
+  "name": "fake_aot_hostcall_tail",
+  "contract_refs": [
+    "references/specs/target-runtime-abi/01-target-artifact-image.md",
+    "references/specs/target-runtime-abi/03-hostcall-frame.md",
+    "references/specs/target-runtime-abi/08-default-profile.md"
+  ],
+  "no_goals": [
+    "real-cwasm-execution",
+    "full-wasi-component-runtime",
+    "real-aot-relocation"
+  ],
+  "stimulus": {
+    "artifact": {
+      "payload": "FakeAotBlobV1",
+      "entry": "entry_hostcall_tail",
+      "entry_offset": "0x0010",
+      "entry_bytes_le": "67 80 05 00"
+    },
+    "registers": {
+      "a0": "HostcallFrameV1* inside activation scratch",
+      "a1": "fake trampoline pointer"
+    }
+  },
+  "events": [
+    {
+      "kind": "HostcallEnter",
+      "subject_source": "active ActivationRecord",
+      "frame_status": "validated"
+    },
+    {
+      "kind": "HostcallExit",
+      "status": "Ok",
+      "register_returns": ["a0", "a1", "a2", "a3"],
+      "frame_written": true
+    }
+  ],
+  "expected": {
+    "tail_call_preserves_original_ra": true,
+    "frame_pointer_must_be_in_activation_scratch": true,
+    "osctl_visible_on_invalid_frame": true
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "rv64_stub_hostcall_tail_exact_bytes",
+      "fake_aot_hostcall_uses_a0_frame_ptr",
+      "hostcall_trampoline_rejects_frame_outside_activation_scratch",
+      "hostcall_tail_preserves_original_ra_semantics"
+    ]
+  }
+}

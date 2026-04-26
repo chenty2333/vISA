@@ -1,0 +1,39 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "C5-cwasm-host-validation-trap-boundary",
+  "name": "cwasm_host_validation_trap_visible",
+  "contract_refs": [
+    "references/specs/target-runtime-abi/04-trap-map-and-attribution.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/06-store-fault-cleanup.md"
+  ],
+  "no_goals": [
+    "native-pc-attribution-for-host-wasmtime",
+    "target-side-cwasm-execution",
+    "fake-pc-for-wasmtime-traps"
+  ],
+  "stimulus": {
+    "runner": "target_executor host-side validation",
+    "trap_fixture": "not part of current host-validation module set",
+    "policy": "if Wasmtime smoke call traps, record UnknownCodeTrap with host-validation attribution unavailable"
+  },
+  "events": [
+    {
+      "kind": "TrapRecord",
+      "class": "code-object-trap",
+      "trap_kind": "UnknownCodeTrap",
+      "attribution": "host-validation unavailable",
+      "ref_mode": "historical"
+    }
+  ],
+  "expected": {
+    "trap_is_not_silent_err": true,
+    "trap_does_not_forge_target_pc": true,
+    "trap_keeps_store_activation_code_artifact_refs": true
+  },
+  "validation": {
+    "ok": true,
+    "status": "contract-golden-no-dedicated-trapping-cwasm-fixture-yet"
+  }
+}
