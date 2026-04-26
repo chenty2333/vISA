@@ -240,6 +240,28 @@ pub enum SemanticInvariantError {
         hardware_id: u32,
     },
     MultipleBootHarts,
+    HartRunningWithoutCurrentActivation {
+        hart: HartId,
+    },
+    HartInactiveOwnsCurrentActivation {
+        hart: HartId,
+        activation: ActivationId,
+    },
+    HartCurrentActivationGenerationMissing {
+        hart: HartId,
+    },
+    HartCurrentActivationMissing {
+        hart: HartId,
+        activation: ActivationId,
+    },
+    HartCurrentTaskMismatch {
+        hart: HartId,
+        activation: ActivationId,
+    },
+    HartCurrentStoreMismatch {
+        hart: HartId,
+        activation: ActivationId,
+    },
     TaskReferencesMissingResource {
         task: TaskId,
         resource: ResourceId,

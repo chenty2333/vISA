@@ -474,7 +474,21 @@ pub struct HartRecordManifest {
     pub state: String,
     pub generation: u64,
     pub boot: bool,
+    #[serde(default)]
+    pub current_activation: Option<u64>,
+    #[serde(default)]
+    pub current_activation_generation: Option<u64>,
+    #[serde(default)]
+    pub current_task: Option<u64>,
+    #[serde(default)]
+    pub current_task_generation: Option<u64>,
+    #[serde(default)]
+    pub current_store: Option<u64>,
+    #[serde(default)]
+    pub current_store_generation: Option<u64>,
     pub last_event: Option<u64>,
+    #[serde(default)]
+    pub last_current_event: Option<u64>,
     pub note: String,
 }
 

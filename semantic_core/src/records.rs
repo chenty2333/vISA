@@ -12,7 +12,14 @@ pub struct HartRecord {
     pub state: HartState,
     pub generation: Generation,
     pub boot: bool,
+    pub current_activation: Option<ActivationId>,
+    pub current_activation_generation: Option<Generation>,
+    pub current_task: Option<TaskId>,
+    pub current_task_generation: Option<Generation>,
+    pub current_store: Option<StoreId>,
+    pub current_store_generation: Option<Generation>,
     pub last_event: Option<EventId>,
+    pub last_current_event: Option<EventId>,
     pub note: String,
 }
 

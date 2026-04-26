@@ -462,6 +462,17 @@ fn record_preemptive_runtime_context_evidence(
         ),
         CommandEnvelope::new(
             24,
+            "target-executor-s1",
+            SemanticCommand::BindHartCurrentActivation {
+                hart: 1,
+                hart_generation: 2,
+                activation: 9002,
+                activation_generation: 3,
+                note: "s1-hart-current-activation-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            25,
             "target-executor-p2",
             SemanticCommand::RecordTimerInterrupt {
                 interrupt: 9001,
@@ -470,6 +481,18 @@ fn record_preemptive_runtime_context_evidence(
                 target_activation: Some(9002),
                 target_activation_generation: Some(3),
                 note: "p2-timer-interrupt-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            29,
+            "target-executor-s1",
+            SemanticCommand::ClearHartCurrentActivation {
+                hart: 1,
+                hart_generation: 3,
+                activation: 9002,
+                activation_generation: 3,
+                reason: "timer-preempt".to_owned(),
+                note: "s1-clear-current-before-preempt".to_owned(),
             },
         ),
         CommandEnvelope::new(
@@ -1831,13 +1854,19 @@ fn semantic_roots(
             .iter()
             .map(|hart| {
                 format!(
-                    "hart id={} hardware_id={} label={} state={} generation={} boot={}",
+                    "hart id={} hardware_id={} label={} state={} generation={} boot={} current={}@{}",
                     hart.id,
                     hart.hardware_id,
                     hart.label,
                     hart.state.as_str(),
                     hart.generation,
-                    hart.boot
+                    hart.boot,
+                    hart.current_activation
+                        .map(|activation| activation.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    hart.current_activation_generation
+                        .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "none".to_owned())
                 )
             })
             .collect(),
@@ -2562,7 +2591,14 @@ fn hart_record_manifest(hart: &semantic_core::HartRecord) -> HartRecordManifest 
         state: hart.state.as_str().to_owned(),
         generation: hart.generation,
         boot: hart.boot,
+        current_activation: hart.current_activation,
+        current_activation_generation: hart.current_activation_generation,
+        current_task: hart.current_task.map(u64::from),
+        current_task_generation: hart.current_task_generation,
+        current_store: hart.current_store,
+        current_store_generation: hart.current_store_generation,
         last_event: hart.last_event,
+        last_current_event: hart.last_current_event,
         note: hart.note.clone(),
     }
 }

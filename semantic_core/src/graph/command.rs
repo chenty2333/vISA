@@ -16,6 +16,21 @@ pub enum SemanticCommand {
         reason: String,
         note: String,
     },
+    BindHartCurrentActivation {
+        hart: HartId,
+        hart_generation: Generation,
+        activation: ActivationId,
+        activation_generation: Generation,
+        note: String,
+    },
+    ClearHartCurrentActivation {
+        hart: HartId,
+        hart_generation: Generation,
+        activation: ActivationId,
+        activation_generation: Generation,
+        reason: String,
+        note: String,
+    },
     CreateRuntimeActivation {
         activation: ActivationId,
         owner_task: TaskId,
@@ -290,6 +305,8 @@ impl SemanticCommand {
         match self {
             Self::RegisterHart { .. } => "register-hart",
             Self::SetHartState { .. } => "set-hart-state",
+            Self::BindHartCurrentActivation { .. } => "bind-hart-current-activation",
+            Self::ClearHartCurrentActivation { .. } => "clear-hart-current-activation",
             Self::CreateRuntimeActivation { .. } => "create-runtime-activation",
             Self::CreateRunnableQueue { .. } => "create-runnable-queue",
             Self::EnqueueRunnable { .. } => "enqueue-runnable",
@@ -438,6 +455,93 @@ impl SemanticGraph {
                     Ok(())
                 } else {
                     Err(CommandError::precondition("hart generation is missing"))
+                }
+            }
+            SemanticCommand::BindHartCurrentActivation {
+                hart,
+                hart_generation,
+                activation,
+                activation_generation,
+                ..
+            } => {
+                let Some(hart_record) = self
+                    .harts
+                    .iter()
+                    .find(|record| record.id == *hart && record.generation == *hart_generation)
+                else {
+                    return Err(CommandError::precondition("hart generation is missing"));
+                };
+                if hart_record.state != HartState::Idle {
+                    return Err(CommandError::precondition("hart is not idle"));
+                }
+                if hart_record.current_activation.is_some() {
+                    return Err(CommandError::precondition(
+                        "hart already has current activation",
+                    ));
+                }
+                let Some(activation_record) = self.runtime_activations.iter().find(|record| {
+                    record.id == *activation
+                        && record.generation == *activation_generation
+                        && record.state == RuntimeActivationState::Running
+                }) else {
+                    return Err(CommandError::precondition(
+                        "current activation generation is missing or not running",
+                    ));
+                };
+                if !self.tasks.iter().any(|task| {
+                    task.id == activation_record.owner_task
+                        && task.generation == activation_record.owner_task_generation
+                }) {
+                    return Err(CommandError::precondition(
+                        "current activation owner task generation is missing",
+                    ));
+                }
+                if let Some(store) = activation_record.owner_store {
+                    let Some(generation) = activation_record.owner_store_generation else {
+                        return Err(CommandError::precondition(
+                            "current activation owner store generation is required",
+                        ));
+                    };
+                    if !self.stores.iter().any(|store_record| {
+                        store_record.id == store
+                            && store_record.generation == generation
+                            && store_record.state != StoreState::Dead
+                    }) {
+                        return Err(CommandError::precondition(
+                            "current activation owner store generation is missing or dead",
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            SemanticCommand::ClearHartCurrentActivation {
+                hart,
+                hart_generation,
+                activation,
+                activation_generation,
+                reason,
+                ..
+            } => {
+                if reason.is_empty() {
+                    return Err(CommandError::precondition(
+                        "clear hart current activation reason is empty",
+                    ));
+                }
+                let Some(hart_record) = self
+                    .harts
+                    .iter()
+                    .find(|record| record.id == *hart && record.generation == *hart_generation)
+                else {
+                    return Err(CommandError::precondition("hart generation is missing"));
+                };
+                if hart_record.current_activation == Some(*activation)
+                    && hart_record.current_activation_generation == Some(*activation_generation)
+                {
+                    Ok(())
+                } else {
+                    Err(CommandError::precondition(
+                        "hart current activation generation mismatch",
+                    ))
                 }
             }
             SemanticCommand::CreateRuntimeActivation {
@@ -1470,6 +1574,34 @@ impl SemanticGraph {
                 reason,
                 note,
             } => self.set_hart_state(hart, hart_generation, state, &reason, &note),
+            SemanticCommand::BindHartCurrentActivation {
+                hart,
+                hart_generation,
+                activation,
+                activation_generation,
+                note,
+            } => self.bind_hart_current_activation(
+                hart,
+                hart_generation,
+                activation,
+                activation_generation,
+                &note,
+            ),
+            SemanticCommand::ClearHartCurrentActivation {
+                hart,
+                hart_generation,
+                activation,
+                activation_generation,
+                reason,
+                note,
+            } => self.clear_hart_current_activation(
+                hart,
+                hart_generation,
+                activation,
+                activation_generation,
+                &reason,
+                &note,
+            ),
             SemanticCommand::CreateRuntimeActivation {
                 activation,
                 owner_task,

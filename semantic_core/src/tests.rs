@@ -1703,6 +1703,143 @@ fn smp_runtime_s0_invariants_reject_duplicate_hardware_hart() {
 }
 
 #[test]
+fn smp_runtime_s1_binds_and_clears_hart_local_current_activation() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(graph.dequeue_runnable_activation(1, 11));
+
+    let bound = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s1-test",
+        SemanticCommand::BindHartCurrentActivation {
+            hart: 1,
+            hart_generation: 2,
+            activation: 11,
+            activation_generation: 3,
+            note: "dispatch on hart0".to_string(),
+        },
+    ));
+    assert_eq!(bound.status, CommandStatus::Applied);
+    assert_eq!(graph.harts()[0].state, HartState::Running);
+    assert_eq!(graph.harts()[0].generation, 3);
+    assert_eq!(graph.harts()[0].current_activation, Some(11));
+    assert_eq!(graph.harts()[0].current_activation_generation, Some(3));
+    assert_eq!(graph.harts()[0].current_task, Some(7));
+    assert_eq!(graph.harts()[0].current_task_generation, Some(1));
+    assert!(graph.check_invariants().is_ok());
+
+    let cleared = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s1-test",
+        SemanticCommand::ClearHartCurrentActivation {
+            hart: 1,
+            hart_generation: 3,
+            activation: 11,
+            activation_generation: 3,
+            reason: "timer-preempt".to_string(),
+            note: "hart local slot cleared".to_string(),
+        },
+    ));
+    assert_eq!(cleared.status, CommandStatus::Applied);
+    assert_eq!(graph.harts()[0].state, HartState::Idle);
+    assert_eq!(graph.harts()[0].generation, 4);
+    assert_eq!(graph.harts()[0].current_activation, None);
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "HartCurrentActivationCleared hart=1 activation=11@3 reason=timer-preempt generation=4"
+    );
+}
+
+#[test]
+fn smp_runtime_s1_rejects_stale_hart_and_non_running_activation() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+
+    let non_running = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "s1-test",
+        SemanticCommand::BindHartCurrentActivation {
+            hart: 1,
+            hart_generation: 2,
+            activation: 11,
+            activation_generation: 1,
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(non_running.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("current activation generation is missing or not running".to_string());
+    assert_eq!(non_running.violations, expected);
+
+    let stale_hart = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "s1-test",
+        SemanticCommand::BindHartCurrentActivation {
+            hart: 1,
+            hart_generation: 99,
+            activation: 11,
+            activation_generation: 1,
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_hart.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("hart generation is missing".to_string());
+    assert_eq!(stale_hart.violations, expected);
+
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(graph.dequeue_runnable_activation(1, 11));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "created"));
+    let non_idle_hart = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "s1-test",
+        SemanticCommand::BindHartCurrentActivation {
+            hart: 2,
+            hart_generation: 1,
+            activation: 11,
+            activation_generation: 3,
+            note: "must reject".to_string(),
+        },
+    ));
+    assert_eq!(non_idle_hart.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("hart is not idle".to_string());
+    assert_eq!(non_idle_hart.violations, expected);
+}
+
+#[test]
+fn smp_runtime_s1_invariants_reject_stale_current_activation_generation() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "boot"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "ready", "idle"));
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(graph.dequeue_runnable_activation(1, 11));
+    assert!(graph.bind_hart_current_activation(1, 2, 11, 3, "dispatch"));
+    graph.corrupt_hart_current_activation_generation_for_test(1, 99);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::HartCurrentActivationMissing {
+            hart: 1,
+            activation: 11,
+        })
+    );
+}
+
+#[test]
 fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let mut graph = SemanticGraph::new();
     graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");

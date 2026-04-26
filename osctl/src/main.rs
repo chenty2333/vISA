@@ -619,11 +619,24 @@ fn hart_view_v1(hart: &HartRecordManifest) -> serde_json::Value {
                 "id": 1,
                 "generation": 1,
             },
+            "current_activation": hart.current_activation.map(|id| serde_json::json!({
+                "id": id,
+                "generation": hart.current_activation_generation,
+            })),
+            "current_task": hart.current_task.map(|id| serde_json::json!({
+                "id": id,
+                "generation": hart.current_task_generation,
+            })),
+            "current_store": hart.current_store.map(|id| serde_json::json!({
+                "id": id,
+                "generation": hart.current_store_generation,
+            })),
         },
         "label": hart.label,
         "note": hart.note,
         "last_transition": {
             "last_event": hart.last_event,
+            "last_current_event": hart.last_current_event,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -1063,6 +1076,8 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "generation": hart.generation,
                 "state": hart.state,
                 "boot": hart.boot,
+                "current_activation": hart.current_activation,
+                "current_activation_generation": hart.current_activation_generation,
             })).collect::<Vec<_>>(),
             "tasks": package.semantic.task_records.iter().map(|task| serde_json::json!({
                 "id": task.id,
@@ -4817,7 +4832,14 @@ mod tests {
             state: "idle".to_owned(),
             generation: 2,
             boot: true,
+            current_activation: None,
+            current_activation_generation: None,
+            current_task: None,
+            current_task_generation: None,
+            current_store: None,
+            current_store_generation: None,
             last_event: Some(2),
+            last_current_event: None,
             note: "s0 hart object".to_owned(),
         });
         package.semantic.task_records.push(TaskRecordManifest {
@@ -5062,6 +5084,28 @@ mod tests {
         assert_eq!(hart["owner"]["hardware_id"], 0);
         assert_eq!(hart["generation"], 2);
         assert_eq!(hart["state"], "idle");
+        let current_hart = hart_view_v1(&HartRecordManifest {
+            id: 2,
+            hardware_id: 1,
+            label: "hart1".to_owned(),
+            state: "running".to_owned(),
+            generation: 3,
+            boot: false,
+            current_activation: Some(11),
+            current_activation_generation: Some(2),
+            current_task: Some(7),
+            current_task_generation: Some(1),
+            current_store: None,
+            current_store_generation: None,
+            last_event: Some(21),
+            last_current_event: Some(21),
+            note: "current activation".to_owned(),
+        });
+        assert_eq!(
+            current_hart["references"]["current_activation"]["generation"],
+            2
+        );
+        assert_eq!(current_hart["references"]["current_task"]["id"], 7);
         let context = activation_context_view_v1(&package.semantic.activation_contexts[0]);
         assert_eq!(context["kind"], "activation-context");
         assert_eq!(context["references"]["activation"]["generation"], 2);

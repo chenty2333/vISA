@@ -2432,7 +2432,14 @@ mod tests {
                 state: "idle".to_owned(),
                 generation: 2,
                 boot: true,
+                current_activation: None,
+                current_activation_generation: None,
+                current_task: None,
+                current_task_generation: None,
+                current_store: None,
+                current_store_generation: None,
                 last_event: Some(2),
+                last_current_event: None,
                 note: "test".to_owned(),
             });
 

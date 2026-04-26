@@ -37,7 +37,14 @@ impl SemanticGraph {
             state: HartState::Created,
             generation,
             boot,
+            current_activation: None,
+            current_activation_generation: None,
+            current_task: None,
+            current_task_generation: None,
+            current_store: None,
+            current_store_generation: None,
             last_event: Some(event),
+            last_current_event: None,
             note: note.to_string(),
         });
         true
@@ -85,6 +92,132 @@ impl SemanticGraph {
         true
     }
 
+    pub fn bind_hart_current_activation(
+        &mut self,
+        hart: HartId,
+        hart_generation: Generation,
+        activation: ActivationId,
+        activation_generation: Generation,
+        note: &str,
+    ) -> bool {
+        let Some(hart_index) = self
+            .harts
+            .iter()
+            .position(|record| record.id == hart && record.generation == hart_generation)
+        else {
+            return false;
+        };
+        if self.harts[hart_index].state != HartState::Idle
+            || self.harts[hart_index].current_activation.is_some()
+        {
+            return false;
+        }
+        let Some(activation_record) = self.runtime_activations.iter().find(|record| {
+            record.id == activation
+                && record.generation == activation_generation
+                && record.state == RuntimeActivationState::Running
+        }) else {
+            return false;
+        };
+        if !self.tasks.iter().any(|task| {
+            task.id == activation_record.owner_task
+                && task.generation == activation_record.owner_task_generation
+        }) {
+            return false;
+        }
+        if let Some(store) = activation_record.owner_store {
+            let Some(generation) = activation_record.owner_store_generation else {
+                return false;
+            };
+            if !self.stores.iter().any(|store_record| {
+                store_record.id == store
+                    && store_record.generation == generation
+                    && store_record.state != StoreState::Dead
+            }) {
+                return false;
+            }
+        }
+
+        let from = self.harts[hart_index].state;
+        self.harts[hart_index].state = HartState::Running;
+        self.harts[hart_index].generation += 1;
+        self.harts[hart_index].current_activation = Some(activation);
+        self.harts[hart_index].current_activation_generation = Some(activation_generation);
+        self.harts[hart_index].current_task = Some(activation_record.owner_task);
+        self.harts[hart_index].current_task_generation =
+            Some(activation_record.owner_task_generation);
+        self.harts[hart_index].current_store = activation_record.owner_store;
+        self.harts[hart_index].current_store_generation = activation_record.owner_store_generation;
+        if !note.is_empty() {
+            self.harts[hart_index].note = note.to_string();
+        }
+        let generation = self.harts[hart_index].generation;
+        let event = self.event_log.push(
+            "scheduler",
+            EventKind::HartCurrentActivationBound {
+                hart,
+                from,
+                activation,
+                activation_generation,
+                generation,
+            },
+        );
+        self.harts[hart_index].last_event = Some(event);
+        self.harts[hart_index].last_current_event = Some(event);
+        true
+    }
+
+    pub fn clear_hart_current_activation(
+        &mut self,
+        hart: HartId,
+        hart_generation: Generation,
+        activation: ActivationId,
+        activation_generation: Generation,
+        reason: &str,
+        note: &str,
+    ) -> bool {
+        if reason.is_empty() {
+            return false;
+        }
+        let Some(hart_index) = self
+            .harts
+            .iter()
+            .position(|record| record.id == hart && record.generation == hart_generation)
+        else {
+            return false;
+        };
+        if self.harts[hart_index].current_activation != Some(activation)
+            || self.harts[hart_index].current_activation_generation != Some(activation_generation)
+        {
+            return false;
+        }
+        self.harts[hart_index].state = HartState::Idle;
+        self.harts[hart_index].generation += 1;
+        self.harts[hart_index].current_activation = None;
+        self.harts[hart_index].current_activation_generation = None;
+        self.harts[hart_index].current_task = None;
+        self.harts[hart_index].current_task_generation = None;
+        self.harts[hart_index].current_store = None;
+        self.harts[hart_index].current_store_generation = None;
+        if !note.is_empty() {
+            self.harts[hart_index].note = note.to_string();
+        }
+        let generation = self.harts[hart_index].generation;
+        let event = self.event_log.push(
+            "scheduler",
+            EventKind::HartCurrentActivationCleared {
+                hart,
+                activation,
+                activation_generation,
+                reason: reason.to_string(),
+                generation,
+            },
+        );
+        self.harts[hart_index].last_event = Some(event);
+        self.harts[hart_index].last_current_event = Some(event);
+        true
+    }
+
     pub fn harts(&self) -> &[HartRecord] {
         &self.harts
     }
@@ -109,6 +242,17 @@ impl SemanticGraph {
         self.harts.push(hart);
     }
 
+    #[cfg(test)]
+    pub(crate) fn corrupt_hart_current_activation_generation_for_test(
+        &mut self,
+        hart: HartId,
+        generation: Generation,
+    ) {
+        if let Some(record) = self.harts.iter_mut().find(|record| record.id == hart) {
+            record.current_activation_generation = Some(generation);
+        }
+    }
+
     pub fn check_hart_invariants(&self) -> Result<(), SemanticInvariantError> {
         let mut boot_harts = 0;
         for (index, hart) in self.harts.iter().enumerate() {
@@ -117,6 +261,72 @@ impl SemanticGraph {
             }
             if hart.boot {
                 boot_harts += 1;
+            }
+            match (
+                hart.current_activation,
+                hart.current_activation_generation,
+                hart.current_task,
+                hart.current_task_generation,
+                hart.current_store,
+                hart.current_store_generation,
+            ) {
+                (
+                    Some(activation),
+                    Some(activation_generation),
+                    Some(task),
+                    Some(task_generation),
+                    store,
+                    store_generation,
+                ) => {
+                    if hart.state != HartState::Running {
+                        return Err(SemanticInvariantError::HartInactiveOwnsCurrentActivation {
+                            hart: hart.id,
+                            activation,
+                        });
+                    }
+                    let Some(activation_record) = self.runtime_activations.iter().find(|record| {
+                        record.id == activation
+                            && record.generation == activation_generation
+                            && record.state == RuntimeActivationState::Running
+                    }) else {
+                        return Err(SemanticInvariantError::HartCurrentActivationMissing {
+                            hart: hart.id,
+                            activation,
+                        });
+                    };
+                    if activation_record.owner_task != task
+                        || activation_record.owner_task_generation != task_generation
+                    {
+                        return Err(SemanticInvariantError::HartCurrentTaskMismatch {
+                            hart: hart.id,
+                            activation,
+                        });
+                    }
+                    if activation_record.owner_store != store
+                        || activation_record.owner_store_generation != store_generation
+                    {
+                        return Err(SemanticInvariantError::HartCurrentStoreMismatch {
+                            hart: hart.id,
+                            activation,
+                        });
+                    }
+                }
+                (None, None, None, None, None, None) => {
+                    if hart.state == HartState::Running {
+                        return Err(
+                            SemanticInvariantError::HartRunningWithoutCurrentActivation {
+                                hart: hart.id,
+                            },
+                        );
+                    }
+                }
+                _ => {
+                    return Err(
+                        SemanticInvariantError::HartCurrentActivationGenerationMissing {
+                            hart: hart.id,
+                        },
+                    );
+                }
             }
             if self.harts[index + 1..]
                 .iter()

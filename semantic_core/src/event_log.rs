@@ -20,6 +20,20 @@ pub enum EventKind {
         reason: String,
         generation: Generation,
     },
+    HartCurrentActivationBound {
+        hart: HartId,
+        from: HartState,
+        activation: ActivationId,
+        activation_generation: Generation,
+        generation: Generation,
+    },
+    HartCurrentActivationCleared {
+        hart: HartId,
+        activation: ActivationId,
+        activation_generation: Generation,
+        reason: String,
+        generation: Generation,
+    },
     TaskCreated {
         task: TaskId,
         frontend: FrontendKind,
@@ -501,6 +515,25 @@ impl EventKind {
                 "HartStateChanged hart={hart} from={} to={} reason={reason} generation={generation}",
                 from.as_str(),
                 to.as_str()
+            ),
+            Self::HartCurrentActivationBound {
+                hart,
+                from,
+                activation,
+                activation_generation,
+                generation,
+            } => format!(
+                "HartCurrentActivationBound hart={hart} from={} activation={activation}@{activation_generation} generation={generation}",
+                from.as_str()
+            ),
+            Self::HartCurrentActivationCleared {
+                hart,
+                activation,
+                activation_generation,
+                reason,
+                generation,
+            } => format!(
+                "HartCurrentActivationCleared hart={hart} activation={activation}@{activation_generation} reason={reason} generation={generation}"
             ),
             Self::TaskCreated { task, frontend } => {
                 format!("TaskCreated task={task} frontend={}", frontend.as_str())
