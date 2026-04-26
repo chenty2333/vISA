@@ -13,12 +13,12 @@ use artifact_manifest::{
     ContractObjectRefManifest, CrossHartSchedulerDecisionManifest, DeviceObjectManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
     InterfaceEventManifest, IpiEventManifest, MigrationPackageManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, RemoteParkManifest, RemotePreemptManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
-    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
-    SmpStressRunManifest, StopTheWorldRendezvousManifest, StoreRecordManifest,
-    SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
+    SavedContextManifest, SchedulerDecisionManifest, SmpCleanupQuiescenceManifest,
+    SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
+    SmpSnapshotBarrierManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
+    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
     TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
@@ -253,6 +253,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "smp-scaling"
         | "device"
         | "device-object"
+        | "queue"
+        | "queue-object"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -423,7 +425,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -639,6 +641,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "smp-stress-run" | "smp-stress" => "smp-stress-run",
         "smp-scaling-benchmark" | "smp-scaling" => "smp-scaling-benchmark",
         "device" | "device-object" => "device",
+        "queue" | "queue-object" => "queue",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -1610,6 +1613,39 @@ fn device_object_view_v1(device: &DeviceObjectManifest) -> serde_json::Value {
         "last_transition": {
             "recorded_at_event": device.recorded_at_event,
             "resource_generation": device.resource_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn queue_object_view_v1(queue: &QueueObjectManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "queue",
+        "id": queue.id,
+        "generation": queue.generation,
+        "state": queue.state,
+        "owner": {
+            "device": object_ref_json("device", queue.device, queue.device_generation),
+        },
+        "references": {
+            "device": object_ref_json("device", queue.device, queue.device_generation),
+            "event": {
+                "id": queue.recorded_at_event,
+            },
+        },
+        "identity": {
+            "name": queue.name,
+            "role": queue.role,
+            "queue_index": queue.queue_index,
+        },
+        "capacity": {
+            "depth": queue.depth,
+        },
+        "note": queue.note,
+        "last_transition": {
+            "recorded_at_event": queue.recorded_at_event,
+            "device_generation": queue.device_generation,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -2600,6 +2636,12 @@ fn stable_views_for_kind(
             .iter()
             .map(device_object_view_v1)
             .collect()),
+        "queue" | "queue-object" => Ok(package
+            .semantic
+            .queue_objects
+            .iter()
+            .map(queue_object_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -3246,7 +3288,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -3271,6 +3313,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.smp_stress_run_count,
             package.semantic.smp_scaling_benchmark_count,
             package.semantic.device_object_count,
+            package.semantic.queue_object_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -3403,7 +3446,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -3445,6 +3488,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.smp_stress_run_roots.len(),
         package.semantic.roots.smp_scaling_benchmark_roots.len(),
         package.semantic.roots.device_object_roots.len(),
+        package.semantic.roots.queue_object_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -3510,6 +3554,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.smp_scaling_benchmark_roots,
     );
     print_roots("device", &package.semantic.roots.device_object_roots);
+    print_roots("queue", &package.semantic.roots.queue_object_roots);
     print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
@@ -3772,6 +3817,18 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "device-resource",
             "live",
             Some(device.recorded_at_event),
+        ));
+    }
+    for queue in &package.semantic.queue_objects {
+        if queue.state != "registered" {
+            continue;
+        }
+        edges.push(graph_edge(
+            object_ref_json("queue", queue.id, queue.generation),
+            object_ref_json("device", queue.device, queue.device_generation),
+            "queue-device",
+            "live",
+            Some(queue.recorded_at_event),
         ));
     }
     for wait in &package.semantic.wait_records {
@@ -4504,6 +4561,15 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "device-resource",
             "live",
             Some(device.recorded_at_event),
+        ));
+    }
+    for queue in &package.semantic.queue_objects {
+        edges.push(graph_edge(
+            object_ref_json("queue", queue.id, queue.generation),
+            object_ref_json("device", queue.device, queue.device_generation),
+            "queue-device",
+            "live",
+            Some(queue.recorded_at_event),
         ));
     }
     for resume in &package.semantic.activation_resumes {
@@ -5932,7 +5998,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -5956,6 +6022,7 @@ fn replay_until(
         package.semantic.roots.smp_stress_run_roots.len(),
         package.semantic.roots.smp_scaling_benchmark_roots.len(),
         package.semantic.roots.device_object_roots.len(),
+        package.semantic.roots.queue_object_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -6011,6 +6078,9 @@ fn replay_until(
     }
     for device in &package.semantic.roots.device_object_roots {
         println!("replay device {device}");
+    }
+    for queue in &package.semantic.roots.queue_object_roots {
+        println!("replay queue {queue}");
     }
     Ok(())
 }
@@ -6085,6 +6155,10 @@ fn print_replay_json(
     roots.insert(
         "devices".to_owned(),
         serde_json::json!(package.semantic.roots.device_object_roots.len()),
+    );
+    roots.insert(
+        "queues".to_owned(),
+        serde_json::json!(package.semantic.roots.queue_object_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -6315,6 +6389,10 @@ fn print_replay_json(
         serde_json::json!(&package.semantic.roots.device_object_roots),
     );
     roots.insert(
+        "queue_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.queue_object_roots),
+    );
+    roots.insert(
         "cleanup_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.cleanup_roots),
     );
@@ -6398,7 +6476,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -6433,6 +6511,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.smp_stress_run_count,
         package.semantic.smp_scaling_benchmark_count,
         package.semantic.device_object_count,
+        package.semantic.queue_object_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -6799,6 +6878,7 @@ mod tests {
         package.semantic.smp_stress_run_count = 1;
         package.semantic.smp_scaling_benchmark_count = 1;
         package.semantic.device_object_count = 1;
+        package.semantic.queue_object_count = 1;
         package.semantic.activation_resume_count = 1;
         package.semantic.activation_wait_count = 1;
         package.semantic.activation_cleanup_count = 1;
@@ -7354,6 +7434,19 @@ mod tests {
             recorded_at_event: 29,
             note: "device object".to_owned(),
         });
+        package.semantic.queue_objects.push(QueueObjectManifest {
+            id: 36,
+            name: "fake-io0-rx".to_owned(),
+            role: "rx".to_owned(),
+            queue_index: 0,
+            depth: 64,
+            device: 35,
+            device_generation: 1,
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 30,
+            note: "queue object".to_owned(),
+        });
         package
             .semantic
             .activation_resumes
@@ -7658,6 +7751,13 @@ mod tests {
         assert_eq!(device["owner"]["backend"], "fake-io-backend");
         assert_eq!(device["references"]["resource"]["generation"], 1);
         assert_eq!(device["identity"]["model"], "fake-io-v1");
+        let queue = queue_object_view_v1(&package.semantic.queue_objects[0]);
+        assert_eq!(queue["kind"], "queue");
+        assert_eq!(queue["owner"]["device"]["id"], 35);
+        assert_eq!(queue["owner"]["device"]["generation"], 1);
+        assert_eq!(queue["identity"]["role"], "rx");
+        assert_eq!(queue["identity"]["queue_index"], 0);
+        assert_eq!(queue["capacity"]["depth"], 64);
         let resume = activation_resume_view_v1(&package.semantic.activation_resumes[0]);
         assert_eq!(resume["kind"], "activation-resume");
         assert_eq!(resume["references"]["activation"]["generation_before"], 3);
@@ -7829,6 +7929,12 @@ mod tests {
                     && edge["relation"] == "device-resource"
                     && edge["mode"] == "live")
         );
+        assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "queue"
+            && edge["to"]["kind"] == "device"
+            && edge["to"]["id"] == 35
+            && edge["to"]["generation"] == 1
+            && edge["relation"] == "queue-device"
+            && edge["mode"] == "live"));
         assert!(
             live_edges
                 .iter()
@@ -7999,6 +8105,15 @@ mod tests {
                     && edge["to"]["kind"] == "resource"
                     && edge["to"]["id"] == 99
                     && edge["relation"] == "device-resource"
+                    && edge["mode"] == "live")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "queue"
+                    && edge["to"]["kind"] == "device"
+                    && edge["to"]["id"] == 35
+                    && edge["relation"] == "queue-device"
                     && edge["mode"] == "live")
         );
         assert!(

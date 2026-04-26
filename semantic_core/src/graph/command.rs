@@ -250,6 +250,16 @@ pub enum SemanticCommand {
         model: String,
         note: String,
     },
+    RecordQueueObject {
+        queue: QueueObjectId,
+        name: String,
+        role: QueueObjectRole,
+        queue_index: u16,
+        depth: u32,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        note: String,
+    },
     ResumeActivation {
         resume: ActivationResumeId,
         scheduler_decision: SchedulerDecisionId,
@@ -478,6 +488,7 @@ impl SemanticCommand {
             Self::RecordSmpStressRun { .. } => "record-smp-stress-run",
             Self::RecordSmpScalingBenchmark { .. } => "record-smp-scaling-benchmark",
             Self::RecordDeviceObject { .. } => "record-device-object",
+            Self::RecordQueueObject { .. } => "record-queue-object",
             Self::ResumeActivation { .. } => "resume-activation",
             Self::RecordPreemptionLatencySample { .. } => "record-preemption-latency-sample",
             Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
@@ -1596,6 +1607,26 @@ impl SemanticGraph {
                     backend,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordQueueObject {
+                queue,
+                name,
+                role,
+                queue_index,
+                depth,
+                device,
+                device_generation,
+                ..
+            } => self
+                .validate_queue_object(
+                    *queue,
+                    name,
+                    *role,
+                    *queue_index,
+                    *depth,
+                    *device,
+                    *device_generation,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -2500,6 +2531,25 @@ impl SemanticGraph {
                 &bus,
                 &vendor,
                 &model,
+                &note,
+            ),
+            SemanticCommand::RecordQueueObject {
+                queue,
+                name,
+                role,
+                queue_index,
+                depth,
+                device,
+                device_generation,
+                note,
+            } => self.record_queue_object_with_id(
+                queue,
+                &name,
+                role,
+                queue_index,
+                depth,
+                device,
+                device_generation,
                 &note,
             ),
             SemanticCommand::ResumeActivation {

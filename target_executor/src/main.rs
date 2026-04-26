@@ -18,10 +18,10 @@ use artifact_manifest::{
     InterfaceEventManifest, IpiEventManifest, MemoryClassPolicyManifest,
     MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
     MigrationPackageManifest, MigrationTargetManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, RemoteParkManifest, RemotePreemptManifest, RequiredArtifactProfileManifest,
-    RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
-    SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
-    SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
     SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
     SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
@@ -46,10 +46,10 @@ use semantic_core::{
     EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HartState,
     HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
     IpiEventKind, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
-    PackageReplayValidator, ReplayPackageValidationState, ResourceKind, RestartPolicy, RuntimeMode,
-    SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind,
-    SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState,
-    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    PackageReplayValidator, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
+    RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
+    SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
+    StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
     TombstoneRecord, TrapSurfaceState, VerifiedArtifact, memory_class_policies,
     validate_contract_graph,
@@ -1110,6 +1110,20 @@ fn record_preemptive_runtime_context_evidence(
                 note: "i0-record-device-object-harness".to_owned(),
             },
         ),
+        CommandEnvelope::new(
+            101,
+            "target-executor-i1",
+            SemanticCommand::RecordQueueObject {
+                queue: 9801,
+                name: "fake-io0-rx".to_owned(),
+                role: QueueObjectRole::Rx,
+                queue_index: 0,
+                depth: 64,
+                device: 9701,
+                device_generation: 1,
+                note: "i1-record-queue-object-harness".to_owned(),
+            },
+        ),
     ];
     for command in commands {
         let result = semantic.apply_envelope(command);
@@ -2143,6 +2157,7 @@ fn demo_migration_package(
             smp_stress_run_count: semantic.smp_stress_run_count(),
             smp_scaling_benchmark_count: semantic.smp_scaling_benchmark_count(),
             device_object_count: semantic.device_object_count(),
+            queue_object_count: semantic.queue_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2283,6 +2298,11 @@ fn demo_migration_package(
                 .device_objects()
                 .iter()
                 .map(device_object_manifest)
+                .collect(),
+            queue_objects: semantic
+                .queue_objects()
+                .iter()
+                .map(queue_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2780,6 +2800,24 @@ fn semantic_roots(
                     device.backend,
                     device.state.as_str(),
                     device.generation
+                )
+            })
+            .collect(),
+        queue_object_roots: semantic
+            .queue_objects()
+            .iter()
+            .map(|queue| {
+                format!(
+                    "queue-object id={} name={} role={} index={} depth={} device={}@{} state={} generation={}",
+                    queue.id,
+                    queue.name,
+                    queue.role.as_str(),
+                    queue.queue_index,
+                    queue.depth,
+                    queue.device,
+                    queue.device_generation,
+                    queue.state.as_str(),
+                    queue.generation
                 )
             })
             .collect(),
@@ -3913,6 +3951,22 @@ fn device_object_manifest(device: &semantic_core::DeviceObjectRecord) -> DeviceO
         state: device.state.as_str().to_owned(),
         recorded_at_event: device.recorded_at_event,
         note: device.note.clone(),
+    }
+}
+
+fn queue_object_manifest(queue: &semantic_core::QueueObjectRecord) -> QueueObjectManifest {
+    QueueObjectManifest {
+        id: queue.id,
+        name: queue.name.clone(),
+        role: queue.role.as_str().to_owned(),
+        queue_index: queue.queue_index,
+        depth: queue.depth,
+        device: queue.device,
+        device_generation: queue.device_generation,
+        generation: queue.generation,
+        state: queue.state.as_str().to_owned(),
+        recorded_at_event: queue.recorded_at_event,
+        note: queue.note.clone(),
     }
 }
 

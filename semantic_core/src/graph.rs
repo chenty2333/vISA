@@ -28,6 +28,7 @@ pub struct SemanticGraph {
     smp_stress_runs: Vec<SmpStressRunRecord>,
     smp_scaling_benchmarks: Vec<SmpScalingBenchmarkRecord>,
     device_objects: Vec<DeviceObjectRecord>,
+    queue_objects: Vec<QueueObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -67,6 +68,7 @@ pub struct SemanticGraph {
     next_smp_stress_run_id: SmpStressRunId,
     next_smp_scaling_benchmark_id: SmpScalingBenchmarkId,
     next_device_object_id: DeviceObjectId,
+    next_queue_object_id: QueueObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -98,6 +100,7 @@ mod ipi;
 mod latency;
 mod network;
 mod query;
+mod queue_object;
 mod remote;
 mod remote_park;
 mod resource;
@@ -147,6 +150,7 @@ impl SemanticGraph {
             smp_stress_runs: Vec::new(),
             smp_scaling_benchmarks: Vec::new(),
             device_objects: Vec::new(),
+            queue_objects: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -186,6 +190,7 @@ impl SemanticGraph {
             next_smp_stress_run_id: 1,
             next_smp_scaling_benchmark_id: 1,
             next_device_object_id: 1,
+            next_queue_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

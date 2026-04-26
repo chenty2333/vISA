@@ -779,6 +779,21 @@ pub enum SemanticInvariantError {
     DeviceObjectMissingEvent {
         device: DeviceObjectId,
     },
+    QueueObjectInvalid {
+        queue: QueueObjectId,
+    },
+    QueueObjectMissingDevice {
+        queue: QueueObjectId,
+        device: DeviceObjectId,
+    },
+    QueueObjectDuplicateIndex {
+        queue: QueueObjectId,
+        device: DeviceObjectId,
+        queue_index: u16,
+    },
+    QueueObjectMissingEvent {
+        queue: QueueObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

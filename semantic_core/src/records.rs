@@ -686,6 +686,27 @@ impl DeviceObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueueObjectRecord {
+    pub id: QueueObjectId,
+    pub name: String,
+    pub role: QueueObjectRole,
+    pub queue_index: u16,
+    pub depth: u32,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub generation: Generation,
+    pub state: QueueObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl QueueObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::QueueObject, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

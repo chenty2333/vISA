@@ -262,6 +262,15 @@ pub enum EventKind {
         backend: String,
         generation: Generation,
     },
+    QueueObjectRecorded {
+        queue: QueueObjectId,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        role: QueueObjectRole,
+        queue_index: u16,
+        depth: u32,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -972,6 +981,18 @@ impl EventKind {
                 generation,
             } => format!(
                 "DeviceObjectRecorded device={device} resource={resource}@{resource_generation} class={class} backend={backend} generation={generation}"
+            ),
+            Self::QueueObjectRecorded {
+                queue,
+                device,
+                device_generation,
+                role,
+                queue_index,
+                depth,
+                generation,
+            } => format!(
+                "QueueObjectRecorded queue={queue} device={device}@{device_generation} role={} index={queue_index} depth={depth} generation={generation}",
+                role.as_str()
             ),
             Self::RuntimeActivationResumed {
                 resume,

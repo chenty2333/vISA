@@ -1367,6 +1367,156 @@ fn io_runtime_i0_rejects_stale_or_non_device_resource() {
 }
 
 #[test]
+fn io_runtime_i1_queue_object_records_device_identity() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        resource,
+        resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "device object harness",
+    ));
+    let cursor_before = graph.event_log().cursor();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i1-test",
+        SemanticCommand::RecordQueueObject {
+            queue: 501,
+            name: "fake-io0-rx".to_string(),
+            role: QueueObjectRole::Rx,
+            queue_index: 0,
+            depth: 64,
+            device: 401,
+            device_generation: 1,
+            note: "queue object harness".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.queue_objects().len(), 1);
+    let queue = &graph.queue_objects()[0];
+    assert_eq!(queue.id, 501);
+    assert_eq!(queue.device, 401);
+    assert_eq!(queue.device_generation, 1);
+    assert_eq!(queue.role, QueueObjectRole::Rx);
+    assert_eq!(queue.queue_index, 0);
+    assert_eq!(queue.depth, 64);
+    assert_eq!(queue.state, QueueObjectState::Registered);
+    assert!(queue.recorded_at_event > cursor_before);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "QueueObjectRecorded queue=501 device=401@1 role=rx index=0 depth=64 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn io_runtime_i1_rejects_stale_or_duplicate_queue() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        resource,
+        resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "device object harness",
+    ));
+
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i1-test",
+        SemanticCommand::RecordQueueObject {
+            queue: 501,
+            name: "fake-io0-rx".to_string(),
+            role: QueueObjectRole::Rx,
+            queue_index: 0,
+            depth: 64,
+            device: 401,
+            device_generation: 2,
+            note: "stale device generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale.violations,
+        vec!["queue object device generation is missing or inactive".to_string()]
+    );
+
+    let zero_depth = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i1-test",
+        SemanticCommand::RecordQueueObject {
+            queue: 501,
+            name: "fake-io0-rx".to_string(),
+            role: QueueObjectRole::Rx,
+            queue_index: 0,
+            depth: 0,
+            device: 401,
+            device_generation: 1,
+            note: "zero depth must reject".to_string(),
+        },
+    ));
+    assert_eq!(zero_depth.status, CommandStatus::Rejected);
+    assert_eq!(
+        zero_depth.violations,
+        vec!["queue object depth is zero".to_string()]
+    );
+
+    assert!(graph.record_queue_object_with_id(
+        501,
+        "fake-io0-rx",
+        QueueObjectRole::Rx,
+        0,
+        64,
+        401,
+        1,
+        "queue object harness",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "i1-test",
+        SemanticCommand::RecordQueueObject {
+            queue: 502,
+            name: "fake-io0-tx".to_string(),
+            role: QueueObjectRole::Tx,
+            queue_index: 0,
+            depth: 64,
+            device: 401,
+            device_generation: 1,
+            note: "duplicate index must reject".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["queue object index already exists for device generation".to_string()]
+    );
+
+    graph.corrupt_queue_object_device_generation_for_test(501, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::QueueObjectMissingDevice {
+            queue: 501,
+            device: 401
+        })
+    );
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

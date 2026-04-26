@@ -87,6 +87,7 @@ pub enum ObjectKind {
     SmpStressRun,
     SmpScalingBenchmark,
     DeviceObject,
+    QueueObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -139,6 +140,7 @@ impl ObjectKind {
             Self::SmpStressRun => "smp-stress-run",
             Self::SmpScalingBenchmark => "smp-scaling-benchmark",
             Self::DeviceObject => "device-object",
+            Self::QueueObject => "queue-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -351,6 +353,7 @@ typed_ref!(SmpSnapshotBarrierRef, ObjectKind::SmpSnapshotBarrier);
 typed_ref!(SmpStressRunRef, ObjectKind::SmpStressRun);
 typed_ref!(SmpScalingBenchmarkRef, ObjectKind::SmpScalingBenchmark);
 typed_ref!(DeviceObjectRef, ObjectKind::DeviceObject);
+typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1611,6 +1614,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("device object root/count mismatch"));
     }
+    if roots.queue_object_roots.len() != package.semantic.queue_object_count
+        || package.semantic.queue_objects.len() != package.semantic.queue_object_count
+    {
+        return Err(ContractError::new("queue object root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2154,6 +2162,7 @@ mod tests {
                 smp_stress_run_count: 0,
                 smp_scaling_benchmark_count: 0,
                 device_object_count: 0,
+                queue_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2215,6 +2224,7 @@ mod tests {
                 smp_stress_runs: Vec::new(),
                 smp_scaling_benchmarks: Vec::new(),
                 device_objects: Vec::new(),
+                queue_objects: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -2958,6 +2968,31 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_queue_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.queue_object_count = 1;
+        package
+            .semantic
+            .queue_objects
+            .push(artifact_manifest::QueueObjectManifest {
+                id: 18,
+                name: "fake-io0-rx".to_owned(),
+                role: "rx".to_owned(),
+                queue_index: 0,
+                depth: 64,
+                device: 17,
+                device_generation: 1,
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 54,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "queue object root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3446,6 +3481,8 @@ mod tests {
         assert!(SmpScalingBenchmarkRef::try_from_ref(scaling_benchmark).is_ok());
         let device_object = ObjectRef::new(ObjectKind::DeviceObject, 17, 1).unwrap();
         assert!(DeviceObjectRef::try_from_ref(device_object).is_ok());
+        let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
+        assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

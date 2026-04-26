@@ -403,6 +403,42 @@ impl DeviceObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueueObjectRole {
+    Rx,
+    Tx,
+    Control,
+    Submission,
+    Completion,
+}
+
+impl QueueObjectRole {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rx => "rx",
+            Self::Tx => "tx",
+            Self::Control => "control",
+            Self::Submission => "submission",
+            Self::Completion => "completion",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueueObjectState {
+    Registered,
+    Removed,
+}
+
+impl QueueObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Registered => "registered",
+            Self::Removed => "removed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,
