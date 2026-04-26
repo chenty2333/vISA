@@ -4341,6 +4341,231 @@ fn network_runtime_n0_invariants_reject_packet_device_generation_leak() {
 }
 
 #[test]
+fn network_runtime_n1_packet_buffer_object_records_generation_safe_identity() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::PacketDevice, None, "packet-device:net0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1510,
+        "virtio-net0",
+        "packet-device",
+        resource,
+        resource_generation,
+        "fake-net-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-net-v1",
+        "n1 backing device",
+    ));
+    assert!(graph.record_packet_device_object_with_id(
+        1511,
+        "net0",
+        1510,
+        1,
+        1500,
+        4,
+        4,
+        [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
+        2,
+        512,
+        "n1 packet device",
+    ));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n1-test",
+        SemanticCommand::RecordPacketBufferObject {
+            packet_buffer: 1512,
+            packet_device: 1511,
+            packet_device_generation: 1,
+            direction: PacketBufferDirection::Rx,
+            frame_format_version: 2,
+            capacity: 512,
+            payload_len: 64,
+            sequence: 7,
+            state: PacketBufferObjectState::Filled,
+            note: "n1 packet buffer object".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.packet_buffer_object_count(), 1);
+    let packet_buffer = &graph.packet_buffer_objects()[0];
+    assert_eq!(
+        packet_buffer.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::PacketBufferObject, 1512, 1)
+    );
+    assert_eq!(packet_buffer.packet_device, 1511);
+    assert_eq!(packet_buffer.packet_device_generation, 1);
+    assert_eq!(packet_buffer.direction, PacketBufferDirection::Rx);
+    assert_eq!(packet_buffer.frame_format_version, 2);
+    assert_eq!(packet_buffer.capacity, 512);
+    assert_eq!(packet_buffer.payload_len, 64);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "PacketBufferObjectRecorded packet_buffer=1512 packet_device=1511@1 direction=rx frame_format_version=2 capacity=512 payload_len=64 sequence=7 state=filled generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn network_runtime_n1_rejects_stale_format_and_oversized_buffer() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::PacketDevice, None, "packet-device:net1");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1513,
+        "virtio-net1",
+        "packet-device",
+        resource,
+        resource_generation,
+        "fake-net-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-net-v1",
+        "n1 backing device",
+    ));
+    assert!(graph.record_packet_device_object_with_id(
+        1514,
+        "net1",
+        1513,
+        1,
+        1500,
+        4,
+        4,
+        [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x02],
+        2,
+        512,
+        "n1 packet device",
+    ));
+
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n1-test",
+        SemanticCommand::RecordPacketBufferObject {
+            packet_buffer: 1515,
+            packet_device: 1514,
+            packet_device_generation: 2,
+            direction: PacketBufferDirection::Rx,
+            frame_format_version: 2,
+            capacity: 512,
+            payload_len: 64,
+            sequence: 1,
+            state: PacketBufferObjectState::Filled,
+            note: "n1 stale packet device".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+
+    let bad_format = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n1-test",
+        SemanticCommand::RecordPacketBufferObject {
+            packet_buffer: 1516,
+            packet_device: 1514,
+            packet_device_generation: 1,
+            direction: PacketBufferDirection::Rx,
+            frame_format_version: 3,
+            capacity: 512,
+            payload_len: 64,
+            sequence: 2,
+            state: PacketBufferObjectState::Filled,
+            note: "n1 bad frame format".to_string(),
+        },
+    ));
+    assert_eq!(bad_format.status, CommandStatus::Rejected);
+
+    let oversized = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "n1-test",
+        SemanticCommand::RecordPacketBufferObject {
+            packet_buffer: 1517,
+            packet_device: 1514,
+            packet_device_generation: 1,
+            direction: PacketBufferDirection::Tx,
+            frame_format_version: 2,
+            capacity: 513,
+            payload_len: 64,
+            sequence: 3,
+            state: PacketBufferObjectState::Filled,
+            note: "n1 oversized capacity".to_string(),
+        },
+    ));
+    assert_eq!(oversized.status, CommandStatus::Rejected);
+
+    let empty_filled = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "n1-test",
+        SemanticCommand::RecordPacketBufferObject {
+            packet_buffer: 1518,
+            packet_device: 1514,
+            packet_device_generation: 1,
+            direction: PacketBufferDirection::Tx,
+            frame_format_version: 2,
+            capacity: 512,
+            payload_len: 0,
+            sequence: 4,
+            state: PacketBufferObjectState::Filled,
+            note: "n1 empty filled buffer".to_string(),
+        },
+    ));
+    assert_eq!(empty_filled.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn network_runtime_n1_invariants_reject_packet_buffer_generation_leak() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::PacketDevice, None, "packet-device:net0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1519,
+        "virtio-net0",
+        "packet-device",
+        resource,
+        resource_generation,
+        "fake-net-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-net-v1",
+        "n1 invariant backing device",
+    ));
+    assert!(graph.record_packet_device_object_with_id(
+        1520,
+        "net0",
+        1519,
+        1,
+        1500,
+        4,
+        4,
+        [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
+        2,
+        512,
+        "n1 invariant packet device",
+    ));
+    assert!(graph.record_packet_buffer_object_with_id(
+        1521,
+        1520,
+        1,
+        PacketBufferDirection::Rx,
+        2,
+        512,
+        64,
+        1,
+        PacketBufferObjectState::Filled,
+        "n1 invariant packet buffer",
+    ));
+    graph.corrupt_packet_buffer_packet_device_generation_for_test(1521, 2);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::PacketBufferObjectMissingDevice {
+            packet_buffer: 1521,
+            packet_device: 1520,
+        })
+    );
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

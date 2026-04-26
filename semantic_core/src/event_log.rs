@@ -439,6 +439,18 @@ pub enum EventKind {
         max_payload_len: u32,
         generation: Generation,
     },
+    PacketBufferObjectRecorded {
+        packet_buffer: PacketBufferObjectId,
+        packet_device: PacketDeviceObjectId,
+        packet_device_generation: Generation,
+        direction: PacketBufferDirection,
+        frame_format_version: u32,
+        capacity: u32,
+        payload_len: u32,
+        sequence: u64,
+        state: PacketBufferObjectState,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1370,6 +1382,22 @@ impl EventKind {
                 generation,
             } => format!(
                 "PacketDeviceObjectRecorded packet_device={packet_device} device={device}@{device_generation} mtu={mtu} rx_queue_depth={rx_queue_depth} tx_queue_depth={tx_queue_depth} frame_format_version={frame_format_version} max_payload_len={max_payload_len} generation={generation}"
+            ),
+            Self::PacketBufferObjectRecorded {
+                packet_buffer,
+                packet_device,
+                packet_device_generation,
+                direction,
+                frame_format_version,
+                capacity,
+                payload_len,
+                sequence,
+                state,
+                generation,
+            } => format!(
+                "PacketBufferObjectRecorded packet_buffer={packet_buffer} packet_device={packet_device}@{packet_device_generation} direction={} frame_format_version={frame_format_version} capacity={capacity} payload_len={payload_len} sequence={sequence} state={} generation={generation}",
+                direction.as_str(),
+                state.as_str()
             ),
             Self::RuntimeActivationResumed {
                 resume,

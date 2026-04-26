@@ -1,0 +1,112 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "N1-packet-buffer-object",
+  "name": "golden_n1_packet_buffer_object",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md"
+  ],
+  "no_goals": [
+    "packet queues",
+    "packet descriptors",
+    "RX/TX datapath",
+    "fake net backend behavior",
+    "virtio-net backend",
+    "smoltcp integration"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "record-device-object",
+        "device": "device:10001@1",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "record-packet-device-object",
+        "packet_device": "packet-device:10002@1",
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "record-packet-buffer-object",
+        "packet_buffer": "packet-buffer:10003@1",
+        "packet_device": "packet-device:10002@1",
+        "expected": "applied"
+      },
+      {
+        "id": 4,
+        "command": "record-packet-buffer-object",
+        "scenario": "stale packet device generation",
+        "expected": "rejected"
+      },
+      {
+        "id": 5,
+        "command": "record-packet-buffer-object",
+        "scenario": "frame format mismatch",
+        "expected": "rejected"
+      },
+      {
+        "id": 6,
+        "command": "record-packet-buffer-object",
+        "scenario": "capacity exceeds packet device max payload",
+        "expected": "rejected"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "PacketBufferObjectRecorded",
+      "packet_buffer": "packet-buffer:10003@1",
+      "packet_device": "packet-device:10002@1",
+      "direction": "rx",
+      "frame_format_version": 2,
+      "capacity": 512,
+      "payload_len": 64,
+      "sequence": 1,
+      "state": "filled"
+    }
+  ],
+  "expected": {
+    "views": {
+      "packet-buffer": {
+        "count": 1,
+        "id": 10003,
+        "generation": 1,
+        "state": "filled",
+        "packet_device": "packet-device:10002@1",
+        "direction": "rx",
+        "frame_format_version": 2,
+        "capacity": 512,
+        "payload_len": 64,
+        "sequence": 1
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "PacketBufferObject is a semantic object, not service_core PacketSlot state",
+      "PacketBufferObject references exact PacketDeviceObject generation",
+      "PacketBufferObject frame_format_version must match PacketDeviceObject",
+      "PacketBufferObject capacity cannot exceed PacketDeviceObject max_payload_len",
+      "PacketBufferObject is osctl-visible through stable ViewV1"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "network_runtime_n1_packet_buffer_object_records_generation_safe_identity",
+      "network_runtime_n1_rejects_stale_format_and_oversized_buffer",
+      "network_runtime_n1_invariants_reject_packet_buffer_generation_leak",
+      "packet_buffer_view_v1_exposes_contract_and_packet_device_generation",
+      "semantic_roots_reject_packet_buffer_object_root_mismatch"
+    ],
+    "osctl_json_view": "packet-buffer list --json"
+  }
+}

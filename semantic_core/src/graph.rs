@@ -41,6 +41,7 @@ pub struct SemanticGraph {
     io_fault_injections: Vec<IoFaultInjectionRecord>,
     io_validation_reports: Vec<IoValidationReportRecord>,
     packet_device_objects: Vec<PacketDeviceObjectRecord>,
+    packet_buffer_objects: Vec<PacketBufferObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -93,6 +94,7 @@ pub struct SemanticGraph {
     next_io_fault_injection_id: IoFaultInjectionId,
     next_io_validation_report_id: IoValidationReportId,
     next_packet_device_object_id: PacketDeviceObjectId,
+    next_packet_buffer_object_id: PacketBufferObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -134,6 +136,7 @@ mod irq_line_object;
 mod latency;
 mod mmio_region_object;
 mod network;
+mod packet_buffer_object;
 mod packet_device_object;
 mod query;
 mod queue_object;
@@ -199,6 +202,7 @@ impl SemanticGraph {
             io_fault_injections: Vec::new(),
             io_validation_reports: Vec::new(),
             packet_device_objects: Vec::new(),
+            packet_buffer_objects: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -251,6 +255,7 @@ impl SemanticGraph {
             next_io_fault_injection_id: 1,
             next_io_validation_report_id: 1,
             next_packet_device_object_id: 1,
+            next_packet_buffer_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

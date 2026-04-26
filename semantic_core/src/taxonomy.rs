@@ -790,6 +790,38 @@ impl PacketDeviceObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacketBufferDirection {
+    Rx,
+    Tx,
+}
+
+impl PacketBufferDirection {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rx => "rx",
+            Self::Tx => "tx",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacketBufferObjectState {
+    Allocated,
+    Filled,
+    Released,
+}
+
+impl PacketBufferObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allocated => "allocated",
+            Self::Filled => "filled",
+            Self::Released => "released",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

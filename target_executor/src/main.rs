@@ -21,8 +21,8 @@ use artifact_manifest::{
     IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
     MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
     MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    PacketDeviceObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    PacketBufferObjectManifest, PacketDeviceObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -51,13 +51,14 @@ use semantic_core::{
     ExternalObjectDeclaration, FrontendKind, HartState, HostcallCategory, HostcallFrame,
     HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind, IrqLinePolarity,
     IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
-    MigrationObjectRecord, MmioRegionObjectAccess, PackageReplayValidator, QueueObjectRole,
-    ReplayPackageValidationState, ResourceKind, RestartPolicy, RuntimeMode, SavedContextReason,
-    SemanticCommand, SemanticGraph, SemanticWaitKind, SnapshotBarrierValidationState,
-    SnapshotBarrierValidator, StoreRecord, StoreState, TargetAddressMapEntry, TargetArtifactImage,
-    TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass,
-    TargetTrapMetadata, TaskState, TombstoneRecord, TrapSurfaceState, VerifiedArtifact,
-    memory_class_policies, validate_contract_graph,
+    MigrationObjectRecord, MmioRegionObjectAccess, PackageReplayValidator, PacketBufferDirection,
+    PacketBufferObjectState, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
+    RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
+    SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
+    StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
+    TombstoneRecord, TrapSurfaceState, VerifiedArtifact, memory_class_policies,
+    validate_contract_graph,
 };
 use service_core::net_contract::{
     PACKET_FRAME_FORMAT_VERSION, PACKET_MAX_PAYLOAD_LEN, VIRTIO_NET0_CONTRACT,
@@ -1564,6 +1565,22 @@ fn record_preemptive_runtime_context_evidence(
                 note: "n0-record-packet-device-object-harness".to_owned(),
             },
         ),
+        CommandEnvelope::new(
+            122,
+            "target-executor-n1",
+            SemanticCommand::RecordPacketBufferObject {
+                packet_buffer: 10_003,
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                direction: PacketBufferDirection::Rx,
+                frame_format_version: PACKET_FRAME_FORMAT_VERSION,
+                capacity: PACKET_MAX_PAYLOAD_LEN,
+                payload_len: 64,
+                sequence: 1,
+                state: PacketBufferObjectState::Filled,
+                note: "n1-record-packet-buffer-object-harness".to_owned(),
+            },
+        ),
     ];
     for command in io_evidence_commands {
         let result = semantic.apply_envelope(command);
@@ -2610,6 +2627,7 @@ fn demo_migration_package(
             io_fault_injection_count: semantic.io_fault_injection_count(),
             io_validation_report_count: semantic.io_validation_report_count(),
             packet_device_object_count: semantic.packet_device_object_count(),
+            packet_buffer_object_count: semantic.packet_buffer_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2811,6 +2829,11 @@ fn demo_migration_package(
                 .packet_device_objects()
                 .iter()
                 .map(packet_device_object_manifest)
+                .collect(),
+            packet_buffer_objects: semantic
+                .packet_buffer_objects()
+                .iter()
+                .map(packet_buffer_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -3563,6 +3586,25 @@ fn semantic_roots(
                     packet_device.max_payload_len,
                     packet_device.state.as_str(),
                     packet_device.generation
+                )
+            })
+            .collect(),
+        packet_buffer_object_roots: semantic
+            .packet_buffer_objects()
+            .iter()
+            .map(|packet_buffer| {
+                format!(
+                    "packet-buffer-object id={} packet_device={}@{} direction={} frame_format_version={} capacity={} payload_len={} sequence={} state={} generation={}",
+                    packet_buffer.id,
+                    packet_buffer.packet_device,
+                    packet_buffer.packet_device_generation,
+                    packet_buffer.direction.as_str(),
+                    packet_buffer.frame_format_version,
+                    packet_buffer.capacity,
+                    packet_buffer.payload_len,
+                    packet_buffer.sequence,
+                    packet_buffer.state.as_str(),
+                    packet_buffer.generation
                 )
             })
             .collect(),
@@ -5015,6 +5057,25 @@ fn packet_device_object_manifest(
         state: packet_device.state.as_str().to_owned(),
         recorded_at_event: packet_device.recorded_at_event,
         note: packet_device.note.clone(),
+    }
+}
+
+fn packet_buffer_object_manifest(
+    packet_buffer: &semantic_core::PacketBufferObjectRecord,
+) -> PacketBufferObjectManifest {
+    PacketBufferObjectManifest {
+        id: packet_buffer.id,
+        packet_device: packet_buffer.packet_device,
+        packet_device_generation: packet_buffer.packet_device_generation,
+        direction: packet_buffer.direction.as_str().to_owned(),
+        frame_format_version: packet_buffer.frame_format_version,
+        capacity: packet_buffer.capacity,
+        payload_len: packet_buffer.payload_len,
+        sequence: packet_buffer.sequence,
+        generation: packet_buffer.generation,
+        state: packet_buffer.state.as_str().to_owned(),
+        recorded_at_event: packet_buffer.recorded_at_event,
+        note: packet_buffer.note.clone(),
     }
 }
 
