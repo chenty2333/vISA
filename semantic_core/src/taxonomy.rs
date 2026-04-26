@@ -203,6 +203,25 @@ impl ActivationResumeState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivationWaitState {
+    Pending,
+    Cancelled,
+    Resolved,
+    Dropped,
+}
+
+impl ActivationWaitState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Cancelled => "cancelled",
+            Self::Resolved => "resolved",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
 impl TaskState {
     pub const fn as_str(self) -> &'static str {
         match self {

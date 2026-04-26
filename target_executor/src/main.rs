@@ -7,21 +7,21 @@ mod runtime;
 
 use artifact_manifest::{
     ActivationContextManifest, ActivationRecordManifest, ActivationResumeManifest,
-    ArtifactBundleManifest, AuthorityObjectRefManifest, BoundaryValidationReportManifest,
-    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
-    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
-    ContractViolationManifest, GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, PreemptionManifest, RequiredArtifactProfileManifest,
-    RunnableQueueEntryManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
-    SavedContextManifest, SchedulerDecisionManifest, SemanticRootSetManifest,
-    SemanticSnapshotManifest, StoreRecordManifest, SubstrateBoundaryManifest,
-    SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
-    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
-    TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
-    WaitRecordManifest,
+    ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
+    BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
+    CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
+    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
+    CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
+    GuestStateManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest, PreemptionManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, StoreRecordManifest,
+    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
+    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
+    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
+    TrapRecordManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -487,6 +487,41 @@ fn record_preemptive_runtime_context_evidence(
                 activation: 9002,
                 activation_generation: 4,
                 note: "p6-resume-activation-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            70,
+            "target-executor-p7",
+            SemanticCommand::BlockActivationOnWait {
+                activation_wait: 9001,
+                activation: 9002,
+                activation_generation: 5,
+                wait: 9003,
+                kind: SemanticWaitKind::Timer,
+                blockers: {
+                    let mut blockers = Vec::new();
+                    blockers.push(ContractObjectRef::new(
+                        ContractObjectKind::TimerInterrupt,
+                        9001,
+                        1,
+                    ));
+                    blockers
+                },
+                deadline: Some(200),
+                restart_policy: RestartPolicy::RestartIfAllowed,
+                note: "p7-block-on-wait-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            71,
+            "target-executor-p7",
+            SemanticCommand::CancelActivationWait {
+                activation_wait: 9001,
+                activation_wait_generation: 1,
+                wait_generation: 1,
+                errno: 110,
+                reason: semantic_core::WaitCancelReason::Timeout,
+                note: "p7-cancel-wait-harness".to_owned(),
             },
         ),
     ];
@@ -1454,6 +1489,12 @@ fn demo_migration_package(
         })
         .collect::<Vec<_>>();
     let capability_count = logical_capabilities.len();
+    let wait_records = target_v1
+        .wait_records
+        .iter()
+        .cloned()
+        .chain(semantic.wait_records().iter().map(wait_record_manifest))
+        .collect::<Vec<_>>();
     let roots = semantic_roots(manifest, &logical_capabilities, semantic, target_v1);
     MigrationPackageManifest {
         schema_version: 1,
@@ -1492,7 +1533,7 @@ fn demo_migration_package(
             barrier_id: 1,
             event_log_cursor: semantic.event_log().cursor(),
             roots,
-            pending_wait_count: 0,
+            pending_wait_count: semantic.pending_wait_count(),
             task_count: semantic.task_count(),
             task_record_count: semantic.tasks().len(),
             runtime_activation_count: semantic.runtime_activation_count(),
@@ -1503,11 +1544,12 @@ fn demo_migration_package(
             preemption_count: semantic.preemption_count(),
             scheduler_decision_count: semantic.scheduler_decision_count(),
             activation_resume_count: semantic.activation_resume_count(),
+            activation_wait_count: semantic.activation_wait_count(),
             resource_count: semantic.resource_count(),
             authority_count: semantic.authority_count(),
             active_authority_count: semantic.active_authority_count(),
-            wait_token_count: target_v1.wait_records.len(),
-            wait_record_count: target_v1.wait_records.len(),
+            wait_token_count: wait_records.len(),
+            wait_record_count: wait_records.len(),
             capability_count,
             capability_record_count: target_v1.capability_records.len(),
             fault_domain_count: semantic.fault_domain_count(),
@@ -1578,10 +1620,15 @@ fn demo_migration_package(
                 .iter()
                 .map(activation_resume_manifest)
                 .collect(),
+            activation_waits: semantic
+                .activation_waits()
+                .iter()
+                .map(activation_wait_manifest)
+                .collect(),
             code_objects: target_v1.code_objects.clone(),
             store_records: target_v1.store_records.clone(),
             capability_records: target_v1.capability_records.clone(),
-            wait_records: target_v1.wait_records.clone(),
+            wait_records,
             activation_records: target_v1.activation_records.clone(),
             trap_records: target_v1.trap_records.clone(),
             hostcall_trace: target_v1.hostcall_trace.clone(),
@@ -1807,6 +1854,23 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        activation_wait_roots: semantic
+            .activation_waits()
+            .iter()
+            .map(|activation_wait| {
+                format!(
+                    "activation-wait id={} activation={}@{}->{} wait={}@{} state={} generation={}",
+                    activation_wait.id,
+                    activation_wait.activation,
+                    activation_wait.activation_generation_before,
+                    activation_wait.activation_generation_after_block,
+                    activation_wait.wait,
+                    activation_wait.wait_generation,
+                    activation_wait.state.as_str(),
+                    activation_wait.generation
+                )
+            })
+            .collect(),
         resource_roots: manifest
             .modules
             .iter()
@@ -1826,7 +1890,24 @@ fn semantic_roots(
                 )
             })
             .collect(),
-        wait_roots: Vec::new(),
+        wait_roots: target_v1
+            .wait_records
+            .iter()
+            .map(|wait| {
+                format!(
+                    "wait id={} state={} generation={}",
+                    wait.id, wait.state, wait.generation
+                )
+            })
+            .chain(semantic.wait_records().iter().map(|wait| {
+                format!(
+                    "wait id={} state={} generation={}",
+                    wait.id,
+                    wait.state.as_str(),
+                    wait.generation
+                )
+            }))
+            .collect(),
         store_roots: manifest
             .modules
             .iter()
@@ -2420,6 +2501,51 @@ fn activation_resume_manifest(
         state: resume.state.as_str().to_owned(),
         resumed_at_event: resume.resumed_at_event,
         note: resume.note.clone(),
+    }
+}
+
+fn activation_wait_manifest(wait: &semantic_core::ActivationWaitRecord) -> ActivationWaitManifest {
+    ActivationWaitManifest {
+        id: wait.id,
+        activation: wait.activation,
+        activation_generation_before: wait.activation_generation_before,
+        activation_generation_after_block: wait.activation_generation_after_block,
+        activation_generation_after_cancel: wait.activation_generation_after_cancel,
+        wait: wait.wait,
+        wait_generation: wait.wait_generation,
+        owner_task: u64::from(wait.owner_task),
+        owner_task_generation: wait.owner_task_generation,
+        queue: wait.queue,
+        queue_generation: wait.queue_generation,
+        generation: wait.generation,
+        state: wait.state.as_str().to_owned(),
+        blocked_at_event: wait.blocked_at_event,
+        completed_at_event: wait.completed_at_event,
+        cancel_reason: wait.cancel_reason.map(|reason| reason.as_str().to_owned()),
+        note: wait.note.clone(),
+    }
+}
+
+fn wait_record_manifest(wait: &semantic_core::WaitRecord) -> WaitRecordManifest {
+    WaitRecordManifest {
+        id: wait.id,
+        owner_task: wait.owner_task.map(u64::from),
+        owner_task_generation: wait.owner_task_generation,
+        owner_store: wait.owner_store,
+        owner_store_generation: wait.owner_store_generation,
+        kind: wait.kind.as_str().to_owned(),
+        generation: wait.generation,
+        state: wait.state.as_str().to_owned(),
+        blockers: wait
+            .blockers
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        deadline: wait.deadline,
+        cancel_reason: wait.cancel_reason.map(|reason| reason.as_str().to_owned()),
+        restart_policy: wait.restart_policy.as_str().to_owned(),
+        saved_context: wait.saved_context.clone(),
     }
 }
 

@@ -222,6 +222,33 @@ impl ActivationResumeRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivationWaitRecord {
+    pub id: ActivationWaitId,
+    pub activation: ActivationId,
+    pub activation_generation_before: Generation,
+    pub activation_generation_after_block: Generation,
+    pub activation_generation_after_cancel: Option<Generation>,
+    pub wait: WaitId,
+    pub wait_generation: Generation,
+    pub owner_task: TaskId,
+    pub owner_task_generation: Generation,
+    pub queue: Option<RunnableQueueId>,
+    pub queue_generation: Option<Generation>,
+    pub generation: Generation,
+    pub state: ActivationWaitState,
+    pub blocked_at_event: EventId,
+    pub completed_at_event: Option<EventId>,
+    pub cancel_reason: Option<WaitCancelReason>,
+    pub note: String,
+}
+
+impl ActivationWaitRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::ActivationWait, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceRecord {
     pub id: ResourceId,
     pub label: String,
@@ -252,6 +279,7 @@ pub struct AuthorityBindingRecord {
 pub struct WaitRecord {
     pub id: WaitId,
     pub owner_task: Option<TaskId>,
+    pub owner_task_generation: Option<Generation>,
     pub owner_store: Option<StoreId>,
     pub owner_store_generation: Option<Generation>,
     pub kind: SemanticWaitKind,
@@ -264,10 +292,16 @@ pub struct WaitRecord {
     pub saved_context: Option<String>,
 }
 
+impl WaitRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::WaitToken, self.id, self.generation)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WaitIndex {
     pub by_resource: Vec<(ContractObjectRef, WaitId)>,
-    pub by_task: Vec<(TaskId, WaitId)>,
+    pub by_task: Vec<(TaskId, Generation, WaitId)>,
     pub by_store: Vec<(StoreId, Generation, WaitId)>,
     pub by_deadline: Vec<(u64, WaitId)>,
 }

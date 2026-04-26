@@ -94,6 +94,25 @@ pub enum EventKind {
         queue_generation: Generation,
         generation: Generation,
     },
+    RuntimeActivationWaitBlocked {
+        activation_wait: ActivationWaitId,
+        activation: ActivationId,
+        from_generation: Generation,
+        to_generation: Generation,
+        wait: WaitId,
+        wait_generation: Generation,
+        generation: Generation,
+    },
+    RuntimeActivationWaitCancelled {
+        activation_wait: ActivationWaitId,
+        activation: ActivationId,
+        from_generation: Generation,
+        to_generation: Generation,
+        wait: WaitId,
+        wait_generation: Generation,
+        reason: WaitCancelReason,
+        generation: Generation,
+    },
     ResourceCreated {
         resource: ResourceId,
         kind: ResourceKind,
@@ -536,6 +555,30 @@ impl EventKind {
                 generation,
             } => format!(
                 "RuntimeActivationResumed resume={resume} decision={decision}@{decision_generation} activation={activation}@{from_generation}->{to_generation} queue={queue}@{queue_generation} generation={generation}"
+            ),
+            Self::RuntimeActivationWaitBlocked {
+                activation_wait,
+                activation,
+                from_generation,
+                to_generation,
+                wait,
+                wait_generation,
+                generation,
+            } => format!(
+                "RuntimeActivationWaitBlocked activation_wait={activation_wait} activation={activation}@{from_generation}->{to_generation} wait={wait}@{wait_generation} generation={generation}"
+            ),
+            Self::RuntimeActivationWaitCancelled {
+                activation_wait,
+                activation,
+                from_generation,
+                to_generation,
+                wait,
+                wait_generation,
+                reason,
+                generation,
+            } => format!(
+                "RuntimeActivationWaitCancelled activation_wait={activation_wait} activation={activation}@{from_generation}->{to_generation} wait={wait}@{wait_generation} reason={} generation={generation}",
+                reason.as_str()
             ),
             Self::ResourceCreated {
                 resource,

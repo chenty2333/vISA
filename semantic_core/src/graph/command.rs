@@ -82,6 +82,25 @@ pub enum SemanticCommand {
         activation_generation: Generation,
         note: String,
     },
+    BlockActivationOnWait {
+        activation_wait: ActivationWaitId,
+        activation: ActivationId,
+        activation_generation: Generation,
+        wait: WaitId,
+        kind: SemanticWaitKind,
+        blockers: Vec<ContractObjectRef>,
+        deadline: Option<u64>,
+        restart_policy: RestartPolicy,
+        note: String,
+    },
+    CancelActivationWait {
+        activation_wait: ActivationWaitId,
+        activation_wait_generation: Generation,
+        wait_generation: Generation,
+        errno: i32,
+        reason: WaitCancelReason,
+        note: String,
+    },
     GrantCapability {
         subject: String,
         debug_object_label: String,
@@ -241,6 +260,8 @@ impl SemanticCommand {
             Self::PreemptActivation { .. } => "preempt-activation",
             Self::RecordSchedulerDecision { .. } => "record-scheduler-decision",
             Self::ResumeActivation { .. } => "resume-activation",
+            Self::BlockActivationOnWait { .. } => "block-activation-on-wait",
+            Self::CancelActivationWait { .. } => "cancel-activation-wait",
             Self::GrantCapability { .. } => "grant-capability",
             Self::RevokeCapability { .. } => "revoke-capability",
             Self::CreateWait { .. } => "create-wait",
@@ -1016,6 +1037,101 @@ impl SemanticGraph {
                     Ok(())
                 }
             }
+            SemanticCommand::BlockActivationOnWait {
+                activation_wait,
+                activation,
+                activation_generation,
+                wait,
+                blockers,
+                deadline,
+                ..
+            } => {
+                if *activation_wait == 0 {
+                    Err(CommandError::precondition(
+                        "activation wait id=0 is invalid",
+                    ))
+                } else if *wait == 0 {
+                    Err(CommandError::precondition("wait id=0 is invalid"))
+                } else if blockers.is_empty() && deadline.is_none() {
+                    Err(CommandError::precondition(
+                        "activation wait requires blocker or deadline",
+                    ))
+                } else if self
+                    .activation_waits
+                    .iter()
+                    .any(|record| record.id == *activation_wait)
+                {
+                    Err(CommandError::precondition("activation wait already exists"))
+                } else if self.waits.iter().any(|record| record.id == *wait) {
+                    Err(CommandError::precondition("wait already exists"))
+                } else {
+                    let Some(record) = self.runtime_activations.iter().find(|record| {
+                        record.id == *activation
+                            && record.generation == *activation_generation
+                            && record.state == RuntimeActivationState::Running
+                            && record.runnable_queue.is_none()
+                            && record.runnable_queue_generation.is_none()
+                    }) else {
+                        return Err(CommandError::precondition(
+                            "activation wait target generation is not running",
+                        ));
+                    };
+                    if !self.tasks.iter().any(|task| {
+                        task.id == record.owner_task
+                            && task.generation == record.owner_task_generation
+                            && matches!(task.state, TaskState::Runnable | TaskState::Running)
+                    }) {
+                        return Err(CommandError::precondition(
+                            "activation wait owner task generation is missing or not runnable",
+                        ));
+                    }
+                    if let Some(store) = record.owner_store {
+                        let Some(generation) = record.owner_store_generation else {
+                            return Err(CommandError::precondition(
+                                "activation wait owner store generation is required",
+                            ));
+                        };
+                        if !self.stores.iter().any(|store_record| {
+                            store_record.id == store
+                                && store_record.generation == generation
+                                && store_record.state != StoreState::Dead
+                        }) {
+                            return Err(CommandError::precondition(
+                                "activation wait owner store generation is missing or dead",
+                            ));
+                        }
+                    }
+                    Ok(())
+                }
+            }
+            SemanticCommand::CancelActivationWait {
+                activation_wait,
+                activation_wait_generation,
+                wait_generation,
+                ..
+            } => {
+                let Some(record) = self.activation_waits.iter().find(|record| {
+                    record.id == *activation_wait
+                        && record.generation == *activation_wait_generation
+                        && record.wait_generation == *wait_generation
+                        && record.state == ActivationWaitState::Pending
+                }) else {
+                    return Err(CommandError::precondition(
+                        "activation wait generation is missing or not pending",
+                    ));
+                };
+                if self.waits.iter().any(|wait| {
+                    wait.id == record.wait
+                        && wait.generation == *wait_generation
+                        && wait.state == WaitState::Pending
+                }) {
+                    Ok(())
+                } else {
+                    Err(CommandError::precondition(
+                        "activation wait token generation is missing or not pending",
+                    ))
+                }
+            }
             SemanticCommand::GrantCapability { operations, .. } if operations.is_empty() => Err(
                 CommandError::precondition("grant-capability requires at least one operation"),
             ),
@@ -1070,26 +1186,31 @@ impl SemanticGraph {
                     Err(CommandError::precondition(
                         "create-wait requires blocker or deadline",
                     ))
-                } else if let Some(store) = owner_store {
-                    if let Some(generation) = owner_store_generation {
-                        if self
-                            .stores
-                            .iter()
-                            .any(|record| record.id == *store && record.generation == *generation)
-                        {
-                            Ok(())
+                } else {
+                    if let Some(task) = owner_task
+                        && !self.tasks.iter().any(|record| record.id == *task)
+                    {
+                        return Err(CommandError::precondition("owner task is missing"));
+                    }
+                    if let Some(store) = owner_store {
+                        if let Some(generation) = owner_store_generation {
+                            if self.stores.iter().any(|record| {
+                                record.id == *store && record.generation == *generation
+                            }) {
+                                Ok(())
+                            } else {
+                                Err(CommandError::precondition(
+                                    "owner store generation is missing",
+                                ))
+                            }
                         } else {
                             Err(CommandError::precondition(
-                                "owner store generation is missing",
+                                "owner store generation is required",
                             ))
                         }
                     } else {
-                        Err(CommandError::precondition(
-                            "owner store generation is required",
-                        ))
+                        Ok(())
                     }
-                } else {
-                    Ok(())
                 }
             }
             SemanticCommand::ResolveWait { wait, .. }
@@ -1277,6 +1398,42 @@ impl SemanticGraph {
                 scheduler_decision_generation,
                 activation,
                 activation_generation,
+                &note,
+            ),
+            SemanticCommand::BlockActivationOnWait {
+                activation_wait,
+                activation,
+                activation_generation,
+                wait,
+                kind,
+                blockers,
+                deadline,
+                restart_policy,
+                note,
+            } => self.block_activation_on_wait_with_id(
+                activation_wait,
+                activation,
+                activation_generation,
+                wait,
+                kind,
+                blockers,
+                deadline,
+                restart_policy,
+                &note,
+            ),
+            SemanticCommand::CancelActivationWait {
+                activation_wait,
+                activation_wait_generation,
+                wait_generation,
+                errno,
+                reason,
+                note,
+            } => self.cancel_activation_wait(
+                activation_wait,
+                activation_wait_generation,
+                wait_generation,
+                errno,
+                reason,
                 &note,
             ),
             SemanticCommand::GrantCapability {

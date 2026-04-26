@@ -244,6 +244,13 @@ pub enum SemanticInvariantError {
         wait: WaitId,
         task: TaskId,
     },
+    WaitReferencesMissingStore {
+        wait: WaitId,
+        store: StoreId,
+    },
+    WaitMissingBlocker {
+        wait: WaitId,
+    },
     ActivationReferencesMissingTask {
         activation: ActivationId,
         task: TaskId,
@@ -418,6 +425,22 @@ pub enum SemanticInvariantError {
     ActivationResumeMissingTask {
         resume: ActivationResumeId,
         task: TaskId,
+    },
+    ActivationWaitMissingActivation {
+        activation_wait: ActivationWaitId,
+        activation: ActivationId,
+    },
+    ActivationWaitMissingWait {
+        activation_wait: ActivationWaitId,
+        wait: WaitId,
+    },
+    ActivationWaitMissingTask {
+        activation_wait: ActivationWaitId,
+        task: TaskId,
+    },
+    ActivationWaitRunnableLeak {
+        activation_wait: ActivationWaitId,
+        activation: ActivationId,
     },
     StoreReferencesMissingFaultDomain {
         store: StoreId,

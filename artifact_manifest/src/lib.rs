@@ -240,6 +240,8 @@ pub struct SemanticSnapshotManifest {
     pub scheduler_decision_count: usize,
     #[serde(default)]
     pub activation_resume_count: usize,
+    #[serde(default)]
+    pub activation_wait_count: usize,
     pub resource_count: usize,
     #[serde(default)]
     pub authority_count: usize,
@@ -323,6 +325,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
+    pub activation_waits: Vec<ActivationWaitManifest>,
+    #[serde(default)]
     pub code_objects: Vec<CodeObjectManifest>,
     #[serde(default)]
     pub store_records: Vec<StoreRecordManifest>,
@@ -384,6 +388,8 @@ pub struct SemanticRootSetManifest {
     pub scheduler_decision_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
+    #[serde(default)]
+    pub activation_wait_roots: Vec<String>,
     #[serde(default)]
     pub resource_roots: Vec<String>,
     #[serde(default)]
@@ -657,6 +663,31 @@ pub struct ActivationResumeManifest {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ActivationWaitManifest {
+    pub id: u64,
+    pub activation: u64,
+    pub activation_generation_before: u64,
+    pub activation_generation_after_block: u64,
+    #[serde(default)]
+    pub activation_generation_after_cancel: Option<u64>,
+    pub wait: u64,
+    pub wait_generation: u64,
+    pub owner_task: u64,
+    pub owner_task_generation: u64,
+    pub queue: Option<u64>,
+    #[serde(default)]
+    pub queue_generation: Option<u64>,
+    pub generation: u64,
+    pub state: String,
+    pub blocked_at_event: u64,
+    #[serde(default)]
+    pub completed_at_event: Option<u64>,
+    #[serde(default)]
+    pub cancel_reason: Option<String>,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct TargetArtifactImageManifest {
     pub id: u64,
     pub package: String,
@@ -792,6 +823,8 @@ pub struct AuthorityObjectRefManifest {
 pub struct WaitRecordManifest {
     pub id: u64,
     pub owner_task: Option<u64>,
+    #[serde(default)]
+    pub owner_task_generation: Option<u64>,
     pub owner_store: Option<u64>,
     #[serde(default)]
     pub owner_store_generation: Option<u64>,

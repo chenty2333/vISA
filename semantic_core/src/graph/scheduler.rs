@@ -834,6 +834,21 @@ impl SemanticGraph {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn corrupt_runtime_activation_state_for_test(
+        &mut self,
+        activation: ActivationId,
+        state: RuntimeActivationState,
+    ) {
+        if let Some(record) = self
+            .runtime_activations
+            .iter_mut()
+            .find(|record| record.id == activation)
+        {
+            record.state = state;
+        }
+    }
+
     pub fn check_scheduler_invariants(&self) -> Result<(), SemanticInvariantError> {
         for activation in &self.runtime_activations {
             let Some(task) = self.tasks.iter().find(|task| {
@@ -1027,9 +1042,17 @@ impl SemanticGraph {
                     queue: decision.queue,
                 });
             };
-            if !self.tasks.iter().any(|task| {
-                task.id == decision.owner_task && task.generation == decision.owner_task_generation
-            }) {
+            let Some(task) = self
+                .tasks
+                .iter()
+                .find(|task| task.id == decision.owner_task)
+            else {
+                return Err(SemanticInvariantError::SchedulerDecisionMissingTask {
+                    decision: decision.id,
+                    task: decision.owner_task,
+                });
+            };
+            if task.generation < decision.owner_task_generation {
                 return Err(SemanticInvariantError::SchedulerDecisionMissingTask {
                     decision: decision.id,
                     task: decision.owner_task,
@@ -1122,11 +1145,16 @@ impl SemanticGraph {
                     decision: resume.scheduler_decision,
                 });
             }
-            if !self.tasks.iter().any(|task| {
-                task.id == resume.owner_task
-                    && task.generation == resume.owner_task_generation
-                    && matches!(task.state, TaskState::Runnable | TaskState::Running)
-            }) {
+            let Some(task) = self.tasks.iter().find(|task| task.id == resume.owner_task) else {
+                return Err(SemanticInvariantError::ActivationResumeMissingTask {
+                    resume: resume.id,
+                    task: resume.owner_task,
+                });
+            };
+            if task.generation < resume.owner_task_generation
+                || (task.generation == resume.owner_task_generation
+                    && !matches!(task.state, TaskState::Runnable | TaskState::Running))
+            {
                 return Err(SemanticInvariantError::ActivationResumeMissingTask {
                     resume: resume.id,
                     task: resume.owner_task,

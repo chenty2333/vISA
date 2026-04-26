@@ -44,26 +44,6 @@ impl SemanticGraph {
             }
         }
 
-        for wait in &self.waits {
-            if wait.state == WaitState::Pending
-                && wait.owner_task.is_none()
-                && wait.owner_store.is_none()
-            {
-                return Err(SemanticInvariantError::WaitReferencesMissingTask {
-                    wait: wait.id,
-                    task: 0,
-                });
-            }
-            if let Some(owner_task) = wait.owner_task
-                && !self.tasks.iter().any(|entry| entry.id == owner_task)
-            {
-                return Err(SemanticInvariantError::WaitReferencesMissingTask {
-                    wait: wait.id,
-                    task: owner_task,
-                });
-            }
-        }
-
         for store in &self.stores {
             if !self
                 .fault_domains
@@ -95,6 +75,7 @@ impl SemanticGraph {
         self.check_scheduler_invariants()?;
         self.check_context_invariants()?;
         self.check_timer_invariants()?;
+        self.check_wait_invariants()?;
 
         for authority in &self.authority_bindings {
             if authority.state != AuthorityState::Bound {

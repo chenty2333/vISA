@@ -20,6 +20,7 @@ pub enum ContractObjectKind {
     Preemption,
     SchedulerDecision,
     ActivationResume,
+    ActivationWait,
     Resource,
     Artifact,
     CodeObject,
@@ -51,6 +52,7 @@ impl ContractObjectKind {
             Self::Preemption => "preemption",
             Self::SchedulerDecision => "scheduler-decision",
             Self::ActivationResume => "activation-resume",
+            Self::ActivationWait => "activation-wait",
             Self::Resource => "resource",
             Self::Artifact => "artifact",
             Self::CodeObject => "code-object",
@@ -5608,6 +5610,7 @@ mod tests {
         let wait = WaitRecord {
             id: 77,
             owner_task: None,
+            owner_task_generation: None,
             owner_store: Some(dead_store.id),
             owner_store_generation: Some(dead_store.generation),
             kind: SemanticWaitKind::Futex,

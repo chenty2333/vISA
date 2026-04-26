@@ -567,6 +567,15 @@ impl ContractGraphValidator {
                 ));
             }
             if wait.state == WaitState::Pending {
+                if wait.owner_task.is_some() && wait.owner_task_generation.is_none() {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::HistoricalEdgeMissingGeneration,
+                        "wait->owner-task",
+                        from,
+                        None,
+                        "pending wait owner task is missing generation",
+                    ));
+                }
                 if let Some(owner_store) = wait.owner_store {
                     Self::check_generation_edge(
                         snapshot,
@@ -1380,6 +1389,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::Preemption
             | ContractObjectKind::SchedulerDecision
             | ContractObjectKind::ActivationResume
+            | ContractObjectKind::ActivationWait
             | ContractObjectKind::Resource
             | ContractObjectKind::FaultDomain
             | ContractObjectKind::MemoryObject
@@ -1540,12 +1550,6 @@ impl HostcallTraceRecord {
 impl CapabilityRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
         ContractObjectRef::new(ContractObjectKind::Capability, self.id, self.generation)
-    }
-}
-
-impl WaitRecord {
-    pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(ContractObjectKind::WaitToken, self.id, self.generation)
     }
 }
 

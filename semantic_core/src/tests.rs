@@ -548,7 +548,7 @@ fn wait_token_event_bridge_indexes_resolves_cancels_and_restarts() {
     let index = graph.wait_index();
     assert_eq!(index.by_task, {
         let mut expected = Vec::new();
-        expected.push((7, 21));
+        expected.push((7, 2, 21));
         expected
     });
     assert_eq!(index.by_store, {
@@ -623,6 +623,7 @@ fn wait_contract_graph_rejects_hidden_or_stale_live_waits() {
     let missing_owner = WaitRecord {
         id: 31,
         owner_task: None,
+        owner_task_generation: None,
         owner_store: None,
         owner_store_generation: None,
         kind: SemanticWaitKind::Futex,
@@ -637,6 +638,7 @@ fn wait_contract_graph_rejects_hidden_or_stale_live_waits() {
     let dead_store_wait = WaitRecord {
         id: 32,
         owner_task: None,
+        owner_task_generation: None,
         owner_store: Some(dead_store.id),
         owner_store_generation: Some(dead_store.generation),
         kind: SemanticWaitKind::DeviceIrq,
@@ -655,6 +657,7 @@ fn wait_contract_graph_rejects_hidden_or_stale_live_waits() {
     let resolved_wait = WaitRecord {
         id: 33,
         owner_task: None,
+        owner_task_generation: None,
         owner_store: Some(running_store.id),
         owner_store_generation: Some(running_store.generation),
         kind: SemanticWaitKind::Timer,
@@ -757,6 +760,7 @@ fn contract_graph_rejects_active_capability_and_wait_owned_by_old_store_generati
     let wait = WaitRecord {
         id: 8,
         owner_task: None,
+        owner_task_generation: None,
         owner_store: Some(store.id),
         owner_store_generation: Some(1),
         kind: SemanticWaitKind::DeviceIrq,
@@ -2549,6 +2553,183 @@ fn preemptive_runtime_p6_invariants_reject_resume_generation_leak() {
         graph.check_invariants(),
         Err(SemanticInvariantError::ActivationResumeMissingActivation {
             resume: 15,
+            activation: 11,
+        })
+    );
+}
+
+fn p7_resumed_activation() -> SemanticGraph {
+    let mut graph = p6_decided_preempted_activation();
+    assert!(graph.resume_activation_with_id(15, 14, 1, 11, 4, "resume"));
+    graph
+}
+
+#[test]
+fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
+    let mut graph = p7_resumed_activation();
+    let blocker = ContractObjectRef::new(ContractObjectKind::TimerInterrupt, 5, 1);
+
+    let blocked = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "p7-test",
+        SemanticCommand::BlockActivationOnWait {
+            activation_wait: 16,
+            activation: 11,
+            activation_generation: 5,
+            wait: 17,
+            kind: SemanticWaitKind::Timer,
+            blockers: {
+                let mut blockers = Vec::new();
+                blockers.push(blocker);
+                blockers
+            },
+            deadline: Some(200),
+            restart_policy: RestartPolicy::RestartIfAllowed,
+            note: "block on timer wait".to_string(),
+        },
+    ));
+    assert_eq!(blocked.status, CommandStatus::Applied);
+    assert_eq!(graph.activation_waits().len(), 1);
+    assert_eq!(graph.wait_records().len(), 1);
+    assert_eq!(graph.pending_wait_count(), 1);
+    assert_eq!(graph.wait_records()[0].owner_task_generation, Some(2));
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Pending
+    );
+    assert_eq!(graph.runtime_activations()[0].generation, 6);
+    assert_eq!(graph.runtime_activations()[0].owner_task_generation, 2);
+    assert_eq!(graph.tasks()[0].state, TaskState::Pending);
+    assert_eq!(graph.tasks()[0].pending_wait, Some(17));
+    assert!(graph.check_invariants().is_ok());
+
+    let cancelled = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "p7-test",
+        SemanticCommand::CancelActivationWait {
+            activation_wait: 16,
+            activation_wait_generation: 1,
+            wait_generation: 1,
+            errno: 110,
+            reason: WaitCancelReason::Timeout,
+            note: "timer timeout".to_string(),
+        },
+    ));
+    assert_eq!(cancelled.status, CommandStatus::Applied);
+    assert_eq!(graph.pending_wait_count(), 0);
+    assert_eq!(graph.wait_records()[0].state, WaitState::Cancelled);
+    assert_eq!(
+        graph.wait_records()[0].cancel_reason,
+        Some(WaitCancelReason::Timeout)
+    );
+    assert_eq!(
+        graph.activation_waits()[0].state,
+        ActivationWaitState::Cancelled
+    );
+    assert_eq!(
+        graph.activation_waits()[0].activation_generation_after_cancel,
+        Some(7)
+    );
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Blocked
+    );
+    assert_eq!(graph.runtime_activations()[0].generation, 7);
+    assert!(graph.runnable_queues()[0].entries.is_empty());
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "RuntimeActivationWaitCancelled activation_wait=16 activation=11@6->7 wait=17@1 reason=timeout generation=1"
+    );
+}
+
+#[test]
+fn preemptive_runtime_p7_rejects_preempt_or_resume_of_waiting_activation() {
+    let mut graph = p7_resumed_activation();
+    assert!(graph.block_activation_on_wait_with_id(
+        16,
+        11,
+        5,
+        17,
+        SemanticWaitKind::Timer,
+        {
+            let mut blockers = Vec::new();
+            blockers.push(ContractObjectRef::new(
+                ContractObjectKind::TimerInterrupt,
+                5,
+                1,
+            ));
+            blockers
+        },
+        Some(200),
+        RestartPolicy::RestartIfAllowed,
+        "block"
+    ));
+    assert!(graph.record_timer_interrupt_with_id(18, 2, 0, Some(11), Some(6), "timer"));
+
+    let rejected_preempt = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "p7-test",
+        SemanticCommand::PreemptActivation {
+            preemption: 19,
+            activation: 11,
+            activation_generation: 6,
+            timer_interrupt: 18,
+            timer_interrupt_generation: 1,
+            queue: 1,
+            note: "preempt pending activation".to_string(),
+        },
+    ));
+    assert_eq!(rejected_preempt.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("preemption target activation generation is not running".to_string());
+    assert_eq!(rejected_preempt.violations, expected);
+
+    let rejected_enqueue = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "p7-test",
+        SemanticCommand::EnqueueRunnable {
+            queue: 1,
+            activation: 11,
+            activation_generation: 6,
+        },
+    ));
+    assert_eq!(rejected_enqueue.status, CommandStatus::Rejected);
+    let mut expected = Vec::new();
+    expected.push("activation is not enqueueable".to_string());
+    assert_eq!(rejected_enqueue.violations, expected);
+    assert!(graph.runnable_queues()[0].entries.is_empty());
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn preemptive_runtime_p7_invariants_reject_waiting_activation_runnable_leak() {
+    let mut graph = p7_resumed_activation();
+    assert!(graph.block_activation_on_wait_with_id(
+        16,
+        11,
+        5,
+        17,
+        SemanticWaitKind::Timer,
+        {
+            let mut blockers = Vec::new();
+            blockers.push(ContractObjectRef::new(
+                ContractObjectKind::TimerInterrupt,
+                5,
+                1,
+            ));
+            blockers
+        },
+        Some(200),
+        RestartPolicy::RestartIfAllowed,
+        "block"
+    ));
+    graph.corrupt_runtime_activation_state_for_test(11, RuntimeActivationState::Runnable);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::PendingTaskHasRunnableActivation {
+            task: 7,
             activation: 11,
         })
     );

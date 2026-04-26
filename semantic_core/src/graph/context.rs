@@ -517,9 +517,16 @@ impl SemanticGraph {
                     activation: saved.activation,
                 });
             }
-            if !self.tasks.iter().any(|task| {
-                task.id == saved.owner_task && task.generation == saved.owner_task_generation
-            }) {
+            let saved_task_exists = if historical_saved {
+                self.tasks.iter().any(|task| {
+                    task.id == saved.owner_task && task.generation >= saved.owner_task_generation
+                })
+            } else {
+                self.tasks.iter().any(|task| {
+                    task.id == saved.owner_task && task.generation == saved.owner_task_generation
+                })
+            };
+            if !saved_task_exists {
                 return Err(SemanticInvariantError::SavedContextMissingTask {
                     saved_context: saved.id,
                     task: saved.owner_task,

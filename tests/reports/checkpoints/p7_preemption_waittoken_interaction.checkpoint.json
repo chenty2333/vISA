@@ -1,0 +1,140 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "P7-preemption-waittoken-interaction",
+  "phase": "Phase 1 Preemptive Runtime",
+  "status": "pass",
+  "scope": [
+    "Add ActivationWait semantic object with exact activation, wait, task, and cancellation generation references",
+    "Add BlockActivationOnWait command that moves a running activation into explicit WaitToken Pending state",
+    "Add CancelActivationWait command that cancels the WaitToken without implicitly resuming the activation",
+    "Record RuntimeActivationWaitBlocked and RuntimeActivationWaitCancelled EventLog evidence",
+    "Expose activation waits and exact wait owner task generation through semantic package roots and osctl stable JSON views"
+  ],
+  "no_goals": [
+    "real IRQ scheduler",
+    "real syscall restart path",
+    "SMP scheduler",
+    "target-side execution",
+    "cleanup interaction"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/context.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/graph/scheduler.rs",
+    "semantic_core/src/graph/wait.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/preemptive/golden_preempt_wait_cancel.trace.json",
+    "tests/reports/checkpoints/p7_preemption_waittoken_interaction.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/preemptive/golden_preempt_wait_cancel.trace.json",
+    "tests/reports/checkpoints/p7_preemption_waittoken_interaction.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "WaitRecord owner_task is now generation-qualified for P7-created waits",
+      "Historical scheduler decision and resume records tolerate later task generation advance while live activation edges remain exact",
+      "ActivationContext owner task generation is advanced with activation wait block/cancel transitions"
+    ],
+    "residual_notes": [
+      "P8 must connect the same blocked/pending activation states to cleanup quiescence and dead-store rejection",
+      "P9 must add measured latency evidence rather than semantic-only traces"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core preemptive_runtime_p7",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core semantic_roots_reject_activation_wait_root_mismatch",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- activation-wait list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- wait list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/preemptive/golden_preempt_wait_cancel.trace.json",
+    "osctl_views": [
+      "osctl activation-wait list --json <migration.json>",
+      "osctl wait list --json <migration.json>",
+      "osctl scheduler list --json <migration.json>",
+      "osctl graph --history --json <migration.json>"
+    ],
+    "semantic_tests": [
+      "preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume",
+      "preemptive_runtime_p7_rejects_preempt_or_resume_of_waiting_activation",
+      "preemptive_runtime_p7_invariants_reject_waiting_activation_runnable_leak"
+    ]
+  },
+  "residual_gaps": [
+    "P8 must define preemption and cleanup interaction",
+    "P9 must add preemption latency benchmark evidence"
+  ],
+  "next_checkpoint": "P8-preemption-cleanup-interaction"
+}

@@ -7,10 +7,10 @@ use std::path::Path;
 
 use artifact_manifest::{
     ActivationContextManifest, ActivationRecordManifest, ActivationResumeManifest,
-    ArtifactBundleManifest, BoundaryValidationReportManifest, CapabilityRecordManifest,
-    CleanupTransactionManifest, CodeObjectManifest, CommandResultManifest,
-    ContractObjectRefManifest, HostcallTraceManifest, InterfaceEventManifest,
-    MigrationPackageManifest, PreemptionManifest, RunnableQueueManifest,
+    ActivationWaitManifest, ArtifactBundleManifest, BoundaryValidationReportManifest,
+    CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
+    CommandResultManifest, ContractObjectRefManifest, HostcallTraceManifest,
+    InterfaceEventManifest, MigrationPackageManifest, PreemptionManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
     TimerInterruptManifest, TrapRecordManifest, WaitRecordManifest,
@@ -210,7 +210,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "task" | "store" | "cap" | "capability" | "wait" | "cleanup" | "command" | "scheduler"
         | "runtime-activation" | "runnable-queue" | "activation-context" | "saved-context"
         | "timer-interrupt" | "preemption" | "scheduler-decision" | "activation-resume"
-        | "context" => handle_view_command(&command, args.collect()),
+        | "activation-wait" | "context" => handle_view_command(&command, args.collect()),
         "state" => {
             let Some(path) = args.next() else {
                 return Err("state requires a manifest/package JSON path".into());
@@ -374,7 +374,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler-decision|activation-resume|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl task|activation|activation-context|saved-context|timer-interrupt|preemption|scheduler-decision|activation-resume|activation-wait|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -575,6 +575,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "preemption" => "preemption",
         "scheduler-decision" => "scheduler-decision",
         "activation-resume" => "activation-resume",
+        "activation-wait" => "activation-wait",
         "scheduler" => "scheduler",
         "runnable-queue" => "runnable-queue",
         "cap" | "capability" => "capability",
@@ -879,6 +880,43 @@ fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::V
     })
 }
 
+fn activation_wait_view_v1(wait: &ActivationWaitManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "activation-wait",
+        "id": wait.id,
+        "generation": wait.generation,
+        "state": wait.state,
+        "owner": {
+            "task": wait.owner_task,
+            "task_generation": wait.owner_task_generation,
+        },
+        "references": {
+            "activation": {
+                "id": wait.activation,
+                "generation_before": wait.activation_generation_before,
+                "generation_after_block": wait.activation_generation_after_block,
+                "generation_after_cancel": wait.activation_generation_after_cancel,
+            },
+            "wait": {
+                "id": wait.wait,
+                "generation": wait.wait_generation,
+            },
+            "queue": wait.queue.map(|id| serde_json::json!({
+                "id": id,
+                "generation": wait.queue_generation,
+            })),
+        },
+        "cancel_reason": wait.cancel_reason,
+        "note": wait.note,
+        "last_transition": {
+            "blocked_at_event": wait.blocked_at_event,
+            "completed_at_event": wait.completed_at_event,
+        },
+        "last_error": wait.cancel_reason,
+    })
+}
+
 fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -947,6 +985,15 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "activation": resume.activation,
                 "activation_generation_after": resume.activation_generation_after,
             })).collect::<Vec<_>>(),
+            "activation_waits": package.semantic.activation_waits.iter().map(|wait| serde_json::json!({
+                "id": wait.id,
+                "generation": wait.generation,
+                "activation": wait.activation,
+                "activation_generation_after_block": wait.activation_generation_after_block,
+                "wait": wait.wait,
+                "wait_generation": wait.wait_generation,
+                "state": wait.state,
+            })).collect::<Vec<_>>(),
         },
         "last_transition": {
             "scheduler_decision_cursor": package.substrate_boundary.scheduler_decision_cursor,
@@ -960,6 +1007,7 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
             "preemption_count": package.semantic.preemption_count,
             "scheduler_decision_count": package.semantic.scheduler_decision_count,
             "activation_resume_count": package.semantic.activation_resume_count,
+            "activation_wait_count": package.semantic.activation_wait_count,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -1244,6 +1292,7 @@ fn wait_view_v1(wait: &WaitRecordManifest) -> serde_json::Value {
         "state": wait.state,
         "owner": {
             "task": wait.owner_task,
+            "task_generation": wait.owner_task_generation,
             "store": wait.owner_store,
             "store_generation": wait.owner_store_generation,
         },
@@ -1372,6 +1421,12 @@ fn stable_views_for_kind(
             .activation_resumes
             .iter()
             .map(activation_resume_view_v1)
+            .collect()),
+        "activation-wait" => Ok(package
+            .semantic
+            .activation_waits
+            .iter()
+            .map(activation_wait_view_v1)
             .collect()),
         "store" => Ok(package
             .semantic
@@ -1989,7 +2044,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} scheduler_decisions={} activation_resumes={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} preemptions={} scheduler_decisions={} activation_resumes={} activation_waits={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.task_count,
@@ -2001,6 +2056,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.preemption_count,
             package.semantic.scheduler_decision_count,
             package.semantic.activation_resume_count,
+            package.semantic.activation_wait_count,
             package.semantic.resource_count,
             package.semantic.store_count,
             package.semantic.capability_count,
@@ -2128,7 +2184,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} activation_resume_roots={}",
+        "graph package={} cursor={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} activation_resume_roots={} activation_wait_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.task_roots.len(),
@@ -2151,7 +2207,8 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.migration_object_roots.len(),
         package.semantic.roots.tombstone_roots.len(),
         package.semantic.roots.contract_violation_roots.len(),
-        package.semantic.roots.activation_resume_roots.len()
+        package.semantic.roots.activation_resume_roots.len(),
+        package.semantic.roots.activation_wait_roots.len()
     );
     print_roots("task", &package.semantic.roots.task_roots);
     print_roots(
@@ -2171,6 +2228,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
+    );
+    print_roots(
+        "activation-wait",
+        &package.semantic.roots.activation_wait_roots,
     );
     print_roots("resource", &package.semantic.roots.resource_roots);
     print_roots("authority", &package.semantic.roots.authority_roots);
@@ -2410,7 +2471,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         if let Some(task) = wait.owner_task {
             edges.push(graph_edge(
                 object_ref_json("wait-token", wait.id, wait.generation),
-                object_ref_json("task", task, 1),
+                object_ref_json("task", task, wait.owner_task_generation.unwrap_or(0)),
                 "belongs-to",
                 "live",
                 None,
@@ -2429,6 +2490,49 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
                 None,
             ));
         }
+    }
+    for activation_wait in &package.semantic.activation_waits {
+        if activation_wait.state != "pending" {
+            continue;
+        }
+        let from = object_ref_json(
+            "activation-wait",
+            activation_wait.id,
+            activation_wait.generation,
+        );
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "activation",
+                activation_wait.activation,
+                activation_wait.activation_generation_after_block,
+            ),
+            "parks",
+            "live",
+            Some(activation_wait.blocked_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "wait-token",
+                activation_wait.wait,
+                activation_wait.wait_generation,
+            ),
+            "waits-on",
+            "live",
+            Some(activation_wait.blocked_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "task",
+                activation_wait.owner_task,
+                activation_wait.owner_task_generation,
+            ),
+            "blocks-task",
+            "live",
+            Some(activation_wait.blocked_at_event),
+        ));
     }
     edges
 }
@@ -2610,6 +2714,55 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "restored-saved-context",
                 "historical",
                 Some(resume.resumed_at_event),
+            ));
+        }
+    }
+    for activation_wait in &package.semantic.activation_waits {
+        let from = object_ref_json(
+            "activation-wait",
+            activation_wait.id,
+            activation_wait.generation,
+        );
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "activation",
+                activation_wait.activation,
+                activation_wait.activation_generation_before,
+            ),
+            "blocked-from",
+            "historical",
+            Some(activation_wait.blocked_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "activation",
+                activation_wait.activation,
+                activation_wait.activation_generation_after_block,
+            ),
+            "blocked-to",
+            "historical",
+            Some(activation_wait.blocked_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "wait-token",
+                activation_wait.wait,
+                activation_wait.wait_generation,
+            ),
+            "created-wait",
+            "historical",
+            Some(activation_wait.blocked_at_event),
+        ));
+        if let Some(cancel_generation) = activation_wait.activation_generation_after_cancel {
+            edges.push(graph_edge(
+                from,
+                object_ref_json("activation", activation_wait.activation, cancel_generation),
+                "cancelled-to",
+                "historical",
+                activation_wait.completed_at_event,
             ));
         }
     }
@@ -4283,6 +4436,7 @@ mod tests {
         let view = wait_view_v1(&WaitRecordManifest {
             id: 8,
             owner_task: Some(2),
+            owner_task_generation: Some(3),
             owner_store: Some(1),
             owner_store_generation: Some(1),
             kind: "timer".to_owned(),
@@ -4299,6 +4453,7 @@ mod tests {
             saved_context: Some("ctx".to_owned()),
         });
         assert_eq!(view["kind"], "wait");
+        assert_eq!(view["owner"]["task_generation"], 3);
         assert_eq!(view["owner"]["store_generation"], 1);
         assert_eq!(view["references"]["blockers"][0]["kind"], "capability");
         assert_eq!(view["cancel_reason"], "capability-revoked");
@@ -4356,6 +4511,7 @@ mod tests {
         package.semantic.preemption_count = 1;
         package.semantic.scheduler_decision_count = 1;
         package.semantic.activation_resume_count = 1;
+        package.semantic.activation_wait_count = 1;
         package.substrate_boundary.timer_epoch = 3;
         package.semantic.task_records.push(TaskRecordManifest {
             id: 7,
@@ -4505,6 +4661,28 @@ mod tests {
                 resumed_at_event: 14,
                 note: "resume activation".to_owned(),
             });
+        package
+            .semantic
+            .activation_waits
+            .push(ActivationWaitManifest {
+                id: 18,
+                activation: 11,
+                activation_generation_before: 4,
+                activation_generation_after_block: 5,
+                activation_generation_after_cancel: Some(6),
+                wait: 19,
+                wait_generation: 1,
+                owner_task: 7,
+                owner_task_generation: 2,
+                queue: None,
+                queue_generation: None,
+                generation: 1,
+                state: "cancelled".to_owned(),
+                blocked_at_event: 15,
+                completed_at_event: Some(16),
+                cancel_reason: Some("timeout".to_owned()),
+                note: "activation wait".to_owned(),
+            });
         let context = activation_context_view_v1(&package.semantic.activation_contexts[0]);
         assert_eq!(context["kind"], "activation-context");
         assert_eq!(context["references"]["activation"]["generation"], 2);
@@ -4548,6 +4726,22 @@ mod tests {
         assert_eq!(resume["references"]["activation"]["generation_after"], 4);
         assert_eq!(resume["references"]["scheduler_decision"]["generation"], 1);
         assert_eq!(resume["references"]["saved_context"]["generation"], 2);
+        let activation_wait = activation_wait_view_v1(&package.semantic.activation_waits[0]);
+        assert_eq!(activation_wait["kind"], "activation-wait");
+        assert_eq!(
+            activation_wait["references"]["activation"]["generation_before"],
+            4
+        );
+        assert_eq!(
+            activation_wait["references"]["activation"]["generation_after_block"],
+            5
+        );
+        assert_eq!(
+            activation_wait["references"]["activation"]["generation_after_cancel"],
+            6
+        );
+        assert_eq!(activation_wait["references"]["wait"]["generation"], 1);
+        assert_eq!(activation_wait["cancel_reason"], "timeout");
         let scheduler = scheduler_view_v1(&package);
         assert_eq!(scheduler["kind"], "scheduler");
         assert_eq!(scheduler["references"]["queues"][0]["entries"], 1);
@@ -4562,6 +4756,7 @@ mod tests {
         assert_eq!(scheduler["last_transition"]["preemption_count"], 1);
         assert_eq!(scheduler["last_transition"]["scheduler_decision_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_resume_count"], 1);
+        assert_eq!(scheduler["last_transition"]["activation_wait_count"], 1);
         assert_eq!(scheduler["last_transition"]["timer_epoch"], 3);
         assert_eq!(
             scheduler["last_transition"]["scheduler_decision_cursor"],
@@ -4641,6 +4836,15 @@ mod tests {
                     && edge["to"]["kind"] == "activation"
                     && edge["to"]["generation"] == 4
                     && edge["relation"] == "resumed-to"
+                    && edge["mode"] == "historical")
+        );
+        assert!(
+            history_edges
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "activation-wait"
+                    && edge["to"]["kind"] == "activation"
+                    && edge["to"]["generation"] == 6
+                    && edge["relation"] == "cancelled-to"
                     && edge["mode"] == "historical")
         );
     }

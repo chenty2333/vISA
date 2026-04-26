@@ -74,6 +74,7 @@ pub enum ObjectKind {
     Preemption,
     SchedulerDecision,
     ActivationResume,
+    ActivationWait,
     Resource,
     Capability,
     WaitToken,
@@ -108,6 +109,7 @@ impl ObjectKind {
             Self::Preemption => "preemption",
             Self::SchedulerDecision => "scheduler-decision",
             Self::ActivationResume => "activation-resume",
+            Self::ActivationWait => "activation-wait",
             Self::Resource => "resource",
             Self::Capability => "capability",
             Self::WaitToken => "wait-token",
@@ -296,6 +298,7 @@ typed_ref!(TimerInterruptRef, ObjectKind::TimerInterrupt);
 typed_ref!(PreemptionRef, ObjectKind::Preemption);
 typed_ref!(SchedulerDecisionRef, ObjectKind::SchedulerDecision);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
+typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(FaultDomainRef, ObjectKind::FaultDomain);
 typed_ref!(ArtifactRef, ObjectKind::Artifact);
 typed_ref!(CodeObjectRef, ObjectKind::CodeObject);
@@ -1463,6 +1466,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("activation resume root/count mismatch"));
     }
+    if roots.activation_wait_roots.len() != package.semantic.activation_wait_count
+        || package.semantic.activation_waits.len() != package.semantic.activation_wait_count
+    {
+        return Err(ContractError::new("activation wait root/count mismatch"));
+    }
     if roots.resource_roots.len() != package.semantic.resource_count {
         return Err(ContractError::new("resource root/count mismatch"));
     }
@@ -1964,6 +1972,7 @@ mod tests {
                 preemption_count: 0,
                 scheduler_decision_count: 0,
                 activation_resume_count: 0,
+                activation_wait_count: 0,
                 resource_count: 0,
                 authority_count: 0,
                 active_authority_count: 0,
@@ -2007,6 +2016,7 @@ mod tests {
                 preemptions: Vec::new(),
                 scheduler_decisions: Vec::new(),
                 activation_resumes: Vec::new(),
+                activation_waits: Vec::new(),
                 code_objects: Vec::new(),
                 store_records: Vec::new(),
                 capability_records: Vec::new(),
@@ -2270,6 +2280,37 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "activation resume root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_activation_wait_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.activation_wait_count = 1;
+        package
+            .semantic
+            .activation_waits
+            .push(artifact_manifest::ActivationWaitManifest {
+                id: 9,
+                activation: 11,
+                activation_generation_before: 5,
+                activation_generation_after_block: 6,
+                activation_generation_after_cancel: None,
+                wait: 41,
+                wait_generation: 1,
+                owner_task: 7,
+                owner_task_generation: 2,
+                queue: None,
+                queue_generation: None,
+                generation: 1,
+                state: "pending".to_owned(),
+                blocked_at_event: 8,
+                completed_at_event: None,
+                cancel_reason: None,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "activation wait root/count mismatch");
     }
 
     #[test]
@@ -2537,6 +2578,8 @@ mod tests {
         assert!(SchedulerDecisionRef::try_from_ref(decision).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
+        let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();
+        assert!(ActivationWaitRef::try_from_ref(activation_wait).is_ok());
     }
 
     #[test]
