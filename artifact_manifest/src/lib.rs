@@ -291,6 +291,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub io_validation_report_count: usize,
     #[serde(default)]
+    pub packet_device_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -433,6 +435,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub io_validation_reports: Vec<IoValidationReportManifest>,
     #[serde(default)]
+    pub packet_device_objects: Vec<PacketDeviceObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -554,6 +558,8 @@ pub struct SemanticRootSetManifest {
     pub io_fault_injection_roots: Vec<String>,
     #[serde(default)]
     pub io_validation_report_roots: Vec<String>,
+    #[serde(default)]
+    pub packet_device_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1446,6 +1452,24 @@ pub struct IoValidationReportManifest {
     pub observed_io_fault_injection_count: usize,
     pub violation_count: usize,
     pub violations: Vec<IoValidationViolationManifest>,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct PacketDeviceObjectManifest {
+    pub id: u64,
+    pub name: String,
+    pub device: u64,
+    pub device_generation: u64,
+    pub mtu: u32,
+    pub rx_queue_depth: u32,
+    pub tx_queue_depth: u32,
+    pub mac: [u8; 6],
+    pub frame_format_version: u32,
+    pub max_payload_len: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
     pub note: String,
 }
 

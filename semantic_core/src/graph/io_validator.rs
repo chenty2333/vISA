@@ -644,6 +644,10 @@ impl SemanticGraph {
                 .io_validation_reports
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::PacketDeviceObject => self
+                .packet_device_objects
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

@@ -4153,6 +4153,194 @@ fn io_runtime_i12_validator_rejects_future_cleanup_capability_generation() {
 }
 
 #[test]
+fn network_runtime_n0_packet_device_object_records_contract_identity() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::PacketDevice, None, "packet-device:net0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1501,
+        "virtio-net0",
+        "packet-device",
+        resource,
+        resource_generation,
+        "fake-net-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-net-v1",
+        "n0 backing device",
+    ));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n0-test",
+        SemanticCommand::RecordPacketDeviceObject {
+            packet_device: 1502,
+            name: "net0".to_string(),
+            device: 1501,
+            device_generation: 1,
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
+            frame_format_version: 2,
+            max_payload_len: 512,
+            note: "n0 packet device object".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.packet_device_object_count(), 1);
+    let packet_device = &graph.packet_device_objects()[0];
+    assert_eq!(
+        packet_device.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::PacketDeviceObject, 1502, 1)
+    );
+    assert_eq!(packet_device.device, 1501);
+    assert_eq!(packet_device.device_generation, 1);
+    assert_eq!(packet_device.mtu, 1500);
+    assert_eq!(packet_device.rx_queue_depth, 4);
+    assert_eq!(packet_device.tx_queue_depth, 4);
+    assert_eq!(packet_device.max_payload_len, 512);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "PacketDeviceObjectRecorded packet_device=1502 device=1501@1 mtu=1500 rx_queue_depth=4 tx_queue_depth=4 frame_format_version=2 max_payload_len=512 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn network_runtime_n0_rejects_stale_or_non_packet_device() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::Device, None, "device:not-packet");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1503,
+        "not-net0",
+        "fake-device",
+        resource,
+        resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "n0 wrong backing device",
+    ));
+
+    let wrong_class = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n0-test",
+        SemanticCommand::RecordPacketDeviceObject {
+            packet_device: 1504,
+            name: "net0".to_string(),
+            device: 1503,
+            device_generation: 1,
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
+            frame_format_version: 2,
+            max_payload_len: 512,
+            note: "n0 wrong class".to_string(),
+        },
+    ));
+    assert_eq!(wrong_class.status, CommandStatus::Rejected);
+
+    let packet_resource =
+        graph.register_resource(ResourceKind::PacketDevice, None, "packet-device:net1");
+    let packet_resource_generation = graph.resource_handle(packet_resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1505,
+        "virtio-net1",
+        "packet-device",
+        packet_resource,
+        packet_resource_generation,
+        "fake-net-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-net-v1",
+        "n0 stale backing device",
+    ));
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n0-test",
+        SemanticCommand::RecordPacketDeviceObject {
+            packet_device: 1506,
+            name: "net1".to_string(),
+            device: 1505,
+            device_generation: 2,
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x02],
+            frame_format_version: 2,
+            max_payload_len: 512,
+            note: "n0 stale generation".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+
+    let bad_contract = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "n0-test",
+        SemanticCommand::RecordPacketDeviceObject {
+            packet_device: 1509,
+            name: "net1".to_string(),
+            device: 1505,
+            device_generation: 1,
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x02],
+            frame_format_version: 0,
+            max_payload_len: 512,
+            note: "n0 bad frame format".to_string(),
+        },
+    ));
+    assert_eq!(bad_contract.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn network_runtime_n0_invariants_reject_packet_device_generation_leak() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::PacketDevice, None, "packet-device:net0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1507,
+        "virtio-net0",
+        "packet-device",
+        resource,
+        resource_generation,
+        "fake-net-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-net-v1",
+        "n0 invariant backing device",
+    ));
+    assert!(graph.record_packet_device_object_with_id(
+        1508,
+        "net0",
+        1507,
+        1,
+        1500,
+        4,
+        4,
+        [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
+        2,
+        512,
+        "n0 invariant packet device",
+    ));
+    graph.corrupt_packet_device_object_device_generation_for_test(1508, 2);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::PacketDeviceObjectMissingDevice {
+            packet_device: 1508,
+            device: 1507,
+        })
+    );
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

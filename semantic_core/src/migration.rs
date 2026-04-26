@@ -1020,6 +1020,16 @@ pub enum SemanticInvariantError {
     IoValidationReportMissingEvent {
         report: IoValidationReportId,
     },
+    PacketDeviceObjectInvalid {
+        packet_device: PacketDeviceObjectId,
+    },
+    PacketDeviceObjectMissingDevice {
+        packet_device: PacketDeviceObjectId,
+        device: DeviceObjectId,
+    },
+    PacketDeviceObjectMissingEvent {
+        packet_device: PacketDeviceObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

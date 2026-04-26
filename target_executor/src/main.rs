@@ -21,12 +21,13 @@ use artifact_manifest::{
     IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
     MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
     MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
-    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    PacketDeviceObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
+    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
+    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -57,6 +58,9 @@ use semantic_core::{
     TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass,
     TargetTrapMetadata, TaskState, TombstoneRecord, TrapSurfaceState, VerifiedArtifact,
     memory_class_policies, validate_contract_graph,
+};
+use service_core::net_contract::{
+    PACKET_FRAME_FORMAT_VERSION, PACKET_MAX_PAYLOAD_LEN, VIRTIO_NET0_CONTRACT,
 };
 use substrate_api::{SubstrateEvent, SubstrateRequester};
 use target_abi::{
@@ -387,6 +391,12 @@ fn record_preemptive_runtime_context_evidence(
         .resource_handle(io_irq_line_resource)
         .map(|handle| handle.generation)
         .ok_or("i5 irq line resource handle is missing")?;
+    let packet_device_resource =
+        semantic.register_resource(ResourceKind::PacketDevice, None, "packet-device:net0");
+    let packet_device_resource_generation = semantic
+        .resource_handle(packet_device_resource)
+        .map(|handle| handle.generation)
+        .ok_or("n0 packet device resource handle is missing")?;
     let io_driver_store = semantic.register_store(
         "i6.irq.driver",
         "i6-irq-driver.fake-aot",
@@ -1521,6 +1531,39 @@ fn record_preemptive_runtime_context_evidence(
                 note: "i12-io-validator-harness".to_owned(),
             },
         ),
+        CommandEnvelope::new(
+            120,
+            "target-executor-n0",
+            SemanticCommand::RecordDeviceObject {
+                device: 10_001,
+                name: "virtio-net0".to_owned(),
+                class: "packet-device".to_owned(),
+                resource: packet_device_resource,
+                resource_generation: packet_device_resource_generation,
+                backend: "fake-net-backend".to_owned(),
+                bus: "semantic-harness".to_owned(),
+                vendor: "vmos".to_owned(),
+                model: "fake-net-v1".to_owned(),
+                note: "n0-record-packet-backing-device-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            121,
+            "target-executor-n0",
+            SemanticCommand::RecordPacketDeviceObject {
+                packet_device: 10_002,
+                name: "net0".to_owned(),
+                device: 10_001,
+                device_generation: 1,
+                mtu: VIRTIO_NET0_CONTRACT.mtu,
+                rx_queue_depth: VIRTIO_NET0_CONTRACT.rx_queue_depth,
+                tx_queue_depth: VIRTIO_NET0_CONTRACT.tx_queue_depth,
+                mac: VIRTIO_NET0_CONTRACT.mac,
+                frame_format_version: PACKET_FRAME_FORMAT_VERSION,
+                max_payload_len: PACKET_MAX_PAYLOAD_LEN,
+                note: "n0-record-packet-device-object-harness".to_owned(),
+            },
+        ),
     ];
     for command in io_evidence_commands {
         let result = semantic.apply_envelope(command);
@@ -2566,6 +2609,7 @@ fn demo_migration_package(
             io_cleanup_count: semantic.io_cleanup_count(),
             io_fault_injection_count: semantic.io_fault_injection_count(),
             io_validation_report_count: semantic.io_validation_report_count(),
+            packet_device_object_count: semantic.packet_device_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2762,6 +2806,11 @@ fn demo_migration_package(
                 .io_validation_reports()
                 .iter()
                 .map(io_validation_report_manifest)
+                .collect(),
+            packet_device_objects: semantic
+                .packet_device_objects()
+                .iter()
+                .map(packet_device_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -3494,6 +3543,26 @@ fn semantic_roots(
                     report.observed_io_cleanup_count,
                     report.observed_io_fault_injection_count,
                     report.generation
+                )
+            })
+            .collect(),
+        packet_device_object_roots: semantic
+            .packet_device_objects()
+            .iter()
+            .map(|packet_device| {
+                format!(
+                    "packet-device-object id={} name={} device={}@{} mtu={} rx_queue_depth={} tx_queue_depth={} frame_format_version={} max_payload_len={} state={} generation={}",
+                    packet_device.id,
+                    packet_device.name,
+                    packet_device.device,
+                    packet_device.device_generation,
+                    packet_device.mtu,
+                    packet_device.rx_queue_depth,
+                    packet_device.tx_queue_depth,
+                    packet_device.frame_format_version,
+                    packet_device.max_payload_len,
+                    packet_device.state.as_str(),
+                    packet_device.generation
                 )
             })
             .collect(),
@@ -4925,6 +4994,27 @@ fn io_validation_report_manifest(
             })
             .collect(),
         note: report.note.clone(),
+    }
+}
+
+fn packet_device_object_manifest(
+    packet_device: &semantic_core::PacketDeviceObjectRecord,
+) -> PacketDeviceObjectManifest {
+    PacketDeviceObjectManifest {
+        id: packet_device.id,
+        name: packet_device.name.clone(),
+        device: packet_device.device,
+        device_generation: packet_device.device_generation,
+        mtu: packet_device.mtu,
+        rx_queue_depth: packet_device.rx_queue_depth,
+        tx_queue_depth: packet_device.tx_queue_depth,
+        mac: packet_device.mac,
+        frame_format_version: packet_device.frame_format_version,
+        max_payload_len: packet_device.max_payload_len,
+        generation: packet_device.generation,
+        state: packet_device.state.as_str().to_owned(),
+        recorded_at_event: packet_device.recorded_at_event,
+        note: packet_device.note.clone(),
     }
 }
 

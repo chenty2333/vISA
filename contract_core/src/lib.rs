@@ -99,6 +99,7 @@ pub enum ObjectKind {
     IoCleanup,
     IoFaultInjection,
     IoValidationReport,
+    PacketDeviceObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -163,6 +164,7 @@ impl ObjectKind {
             Self::IoCleanup => "io-cleanup",
             Self::IoFaultInjection => "io-fault-injection",
             Self::IoValidationReport => "io-validation-report",
+            Self::PacketDeviceObject => "packet-device-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -387,6 +389,7 @@ typed_ref!(IoWaitRef, ObjectKind::IoWait);
 typed_ref!(IoCleanupRef, ObjectKind::IoCleanup);
 typed_ref!(IoFaultInjectionRef, ObjectKind::IoFaultInjection);
 typed_ref!(IoValidationReportRef, ObjectKind::IoValidationReport);
+typed_ref!(PacketDeviceObjectRef, ObjectKind::PacketDeviceObject);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1713,6 +1716,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "io validation report root/count mismatch",
         ));
     }
+    if roots.packet_device_object_roots.len() != package.semantic.packet_device_object_count
+        || package.semantic.packet_device_objects.len()
+            != package.semantic.packet_device_object_count
+    {
+        return Err(ContractError::new(
+            "packet device object root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2268,6 +2279,7 @@ mod tests {
                 io_cleanup_count: 0,
                 io_fault_injection_count: 0,
                 io_validation_report_count: 0,
+                packet_device_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2341,6 +2353,7 @@ mod tests {
                 io_cleanups: Vec::new(),
                 io_fault_injections: Vec::new(),
                 io_validation_reports: Vec::new(),
+                packet_device_objects: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3433,6 +3446,33 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_packet_device_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.packet_device_object_count = 1;
+        package.semantic.packet_device_objects.push(
+            artifact_manifest::PacketDeviceObjectManifest {
+                id: 31,
+                name: "net0".to_owned(),
+                device: 17,
+                device_generation: 1,
+                mtu: 1500,
+                rx_queue_depth: 4,
+                tx_queue_depth: 4,
+                mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
+                frame_format_version: 2,
+                max_payload_len: 512,
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 67,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "packet device object root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3921,6 +3961,8 @@ mod tests {
         assert!(SmpScalingBenchmarkRef::try_from_ref(scaling_benchmark).is_ok());
         let device_object = ObjectRef::new(ObjectKind::DeviceObject, 17, 1).unwrap();
         assert!(DeviceObjectRef::try_from_ref(device_object).is_ok());
+        let packet_device_object = ObjectRef::new(ObjectKind::PacketDeviceObject, 30, 1).unwrap();
+        assert!(PacketDeviceObjectRef::try_from_ref(packet_device_object).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

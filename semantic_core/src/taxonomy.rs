@@ -775,6 +775,21 @@ impl IoValidationViolationCode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacketDeviceObjectState {
+    Registered,
+    Retired,
+}
+
+impl PacketDeviceObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Registered => "registered",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

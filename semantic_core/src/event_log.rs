@@ -428,6 +428,17 @@ pub enum EventKind {
         fault_injection_count: usize,
         generation: Generation,
     },
+    PacketDeviceObjectRecorded {
+        packet_device: PacketDeviceObjectId,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        mtu: u32,
+        rx_queue_depth: u32,
+        tx_queue_depth: u32,
+        frame_format_version: u32,
+        max_payload_len: u32,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1346,6 +1357,19 @@ impl EventKind {
                 generation,
             } => format!(
                 "IoValidationReportRecorded report={report} ok={ok} violations={violation_count} devices={device_count} dma_buffers={dma_buffer_count} irq_events={irq_event_count} cleanups={cleanup_count} fault_injections={fault_injection_count} generation={generation}"
+            ),
+            Self::PacketDeviceObjectRecorded {
+                packet_device,
+                device,
+                device_generation,
+                mtu,
+                rx_queue_depth,
+                tx_queue_depth,
+                frame_format_version,
+                max_payload_len,
+                generation,
+            } => format!(
+                "PacketDeviceObjectRecorded packet_device={packet_device} device={device}@{device_generation} mtu={mtu} rx_queue_depth={rx_queue_depth} tx_queue_depth={tx_queue_depth} frame_format_version={frame_format_version} max_payload_len={max_payload_len} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

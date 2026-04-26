@@ -1,0 +1,99 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "N0-packet-device-object",
+  "name": "golden_n0_packet_device_object",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md"
+  ],
+  "no_goals": [
+    "real virtio-net backend",
+    "smoltcp integration",
+    "packet queues or packet buffers",
+    "RX/TX datapath",
+    "real DMA/MMIO/IRQ"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "record-device-object",
+        "device": "device:10001@1",
+        "resource": "resource:packet-device:net0",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "record-packet-device-object",
+        "packet_device": "packet-device:10002@1",
+        "device": "device:10001@1",
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "record-packet-device-object",
+        "scenario": "stale device generation",
+        "expected": "rejected"
+      },
+      {
+        "id": 4,
+        "command": "record-packet-device-object",
+        "scenario": "zero frame format version",
+        "expected": "rejected"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "PacketDeviceObjectRecorded",
+      "packet_device": "packet-device:10002@1",
+      "device": "device:10001@1",
+      "mtu": 1500,
+      "rx_queue_depth": 4,
+      "tx_queue_depth": 4,
+      "frame_format_version": 2,
+      "max_payload_len": 512
+    }
+  ],
+  "expected": {
+    "views": {
+      "packet-device": {
+        "count": 1,
+        "id": 10002,
+        "generation": 1,
+        "state": "registered",
+        "device": "device:10001@1",
+        "mtu": 1500,
+        "rx_queue_depth": 4,
+        "tx_queue_depth": 4,
+        "max_payload_len": 512
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "PacketDeviceObject is a semantic object, not service_core PacketDeviceState",
+      "PacketDeviceObject references exact DeviceObject generation",
+      "Backing DeviceObject must be class packet-device",
+      "Backing resource must be ResourceKind::PacketDevice",
+      "Network contract fields are osctl-visible"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "network_runtime_n0_packet_device_object_records_contract_identity",
+      "network_runtime_n0_rejects_stale_or_non_packet_device",
+      "network_runtime_n0_invariants_reject_packet_device_generation_leak",
+      "packet_device_view_v1_exposes_contract_and_device_generation",
+      "semantic_roots_reject_packet_device_object_root_mismatch"
+    ],
+    "osctl_json_view": "packet-device list --json"
+  }
+}

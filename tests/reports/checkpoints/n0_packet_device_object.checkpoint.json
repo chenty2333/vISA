@@ -1,0 +1,161 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "N0-packet-device-object",
+  "phase": "Phase 4 Network Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add PacketDeviceObject as the first network vertical semantic object",
+    "Record PacketDeviceObject through SemanticCommand::RecordPacketDeviceObject",
+    "Require exact DeviceObject generation and a live PacketDevice resource backing",
+    "Expose packet-device roots/counts through semantic package, osctl ViewV1, graph, and replay roots",
+    "Keep service_core PacketDeviceState as adapter/demo state, not semantic truth"
+  ],
+  "no_goals": [
+    "Real virtio-net backend",
+    "smoltcp integration",
+    "PacketBufferObject",
+    "TxQueue or RxQueue",
+    "RX/TX datapath",
+    "Real DMA/MMIO/IRQ"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/packet_device_object.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/network/golden_n0_packet_device_object.trace.json",
+    "tests/reports/checkpoints/n0_packet_device_object.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/network/golden_n0_packet_device_object.trace.json",
+    "tests/reports/checkpoints/n0_packet_device_object.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "PacketDeviceObject is a narrow semantic object and does not import service_core runtime state",
+      "PacketDeviceObject validates exact DeviceObject generation before recording",
+      "PacketDeviceObject rejects non packet-device classes and non PacketDevice resources",
+      "Network contract fields are validated as nonzero and exposed through ViewV1",
+      "PacketDeviceObjectRecorded event includes max_payload_len so event evidence covers full packet payload contract",
+      "frame_format_version is validated instead of being recorded-only"
+    ],
+    "residual_notes": [
+      "N1 still needs PacketBufferObject",
+      "N2 still needs semantic TxQueue/RxQueue objects",
+      "N4/N5 will introduce backend adapters without making backend state semantic truth"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core network_runtime_n0",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core packet_device_object",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl packet_device_view_v1_exposes_contract_and_device_generation",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- packet-device list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- replay --until 306 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/network/golden_n0_packet_device_object.trace.json",
+    "osctl_views": [
+      "osctl packet-device list --json <migration.json>",
+      "osctl contract validate --json <migration.json>",
+      "osctl replay --until 306 --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "packet_device_object_roots",
+      "device_object_roots",
+      "resource_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 306,
+      "packet_device_object_count": 1,
+      "packet_device": "packet-device:10002@1",
+      "device": "device:10001@1",
+      "mtu": 1500,
+      "rx_queue_depth": 4,
+      "tx_queue_depth": 4,
+      "frame_format_version": 2,
+      "max_payload_len": 512
+    }
+  },
+  "residual_gaps": [
+    "Packet buffers, packet queues, packet descriptors, fake backend, virtio backend, smoltcp adapter, sockets, and datapath are later Phase 4 checkpoints"
+  ],
+  "next_checkpoint": "N1-packet-buffer-object"
+}

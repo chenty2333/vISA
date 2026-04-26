@@ -1021,6 +1021,34 @@ impl IoValidationReportRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PacketDeviceObjectRecord {
+    pub id: PacketDeviceObjectId,
+    pub name: String,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub mtu: u32,
+    pub rx_queue_depth: u32,
+    pub tx_queue_depth: u32,
+    pub mac: [u8; 6],
+    pub frame_format_version: u32,
+    pub max_payload_len: u32,
+    pub generation: Generation,
+    pub state: PacketDeviceObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl PacketDeviceObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::PacketDeviceObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,
