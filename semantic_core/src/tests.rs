@@ -2335,6 +2335,279 @@ fn io_runtime_i5_rejects_stale_wrong_resource_or_duplicate_irq_line() {
 }
 
 #[test]
+fn io_runtime_i6_irq_event_records_line_device_and_driver_store_identity() {
+    let mut graph = SemanticGraph::new();
+    let device_resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let device_resource_generation = graph.resource_handle(device_resource).unwrap().generation;
+    let irq_resource = graph.register_resource(ResourceKind::IrqLine, None, "irq:fake-io0-rx");
+    let irq_resource_generation = graph.resource_handle(irq_resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        device_resource,
+        device_resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "device object harness",
+    ));
+    assert!(graph.record_irq_line_object_with_id(
+        901,
+        401,
+        1,
+        irq_resource,
+        irq_resource_generation,
+        5,
+        IrqLineTrigger::Level,
+        IrqLinePolarity::ActiveHigh,
+        "irq line object harness",
+    ));
+    let driver_store = graph.register_store(
+        "driver.fake-io0",
+        "driver.fake-io0.fake-aot",
+        "driver",
+        "restartable",
+    );
+    graph.set_store_state(driver_store, StoreState::Running);
+    let driver_store_generation = graph.store_handle(driver_store).unwrap().generation;
+    let cursor_before = graph.event_log().cursor();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i6-test",
+        SemanticCommand::RecordIrqEvent {
+            irq_event: 1001,
+            irq_line: 901,
+            irq_line_generation: 1,
+            device: 401,
+            device_generation: 1,
+            driver_store,
+            driver_store_generation,
+            sequence: 1,
+            note: "irq event harness".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.irq_events().len(), 1);
+    let irq_event = &graph.irq_events()[0];
+    assert_eq!(irq_event.id, 1001);
+    assert_eq!(irq_event.irq_line, 901);
+    assert_eq!(irq_event.irq_line_generation, 1);
+    assert_eq!(irq_event.device, 401);
+    assert_eq!(irq_event.device_generation, 1);
+    assert_eq!(irq_event.driver_store, driver_store);
+    assert_eq!(irq_event.driver_store_generation, driver_store_generation);
+    assert_eq!(irq_event.irq_number, 5);
+    assert_eq!(irq_event.sequence, 1);
+    assert_eq!(irq_event.state, IrqEventState::Recorded);
+    assert!(irq_event.recorded_at_event > cursor_before);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "IrqEventRecorded irq_event=1001 irq_line=901@1 device=401@1 driver_store={driver_store}@{driver_store_generation} irq_number=5 sequence=1 generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn io_runtime_i6_rejects_stale_wrong_store_or_duplicate_irq_event() {
+    let mut graph = SemanticGraph::new();
+    let device_resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let device_resource_generation = graph.resource_handle(device_resource).unwrap().generation;
+    let irq_resource = graph.register_resource(ResourceKind::IrqLine, None, "irq:fake-io0-rx");
+    let irq_resource_generation = graph.resource_handle(irq_resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        device_resource,
+        device_resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "device object harness",
+    ));
+    assert!(graph.record_irq_line_object_with_id(
+        901,
+        401,
+        1,
+        irq_resource,
+        irq_resource_generation,
+        5,
+        IrqLineTrigger::Level,
+        IrqLinePolarity::ActiveHigh,
+        "irq line object harness",
+    ));
+    let driver_store = graph.register_store(
+        "driver.fake-io0",
+        "driver.fake-io0.fake-aot",
+        "driver",
+        "restartable",
+    );
+    graph.set_store_state(driver_store, StoreState::Running);
+    let driver_store_generation = graph.store_handle(driver_store).unwrap().generation;
+    let service_store = graph.register_store(
+        "service.fake-io0",
+        "service.fake-io0.fake-aot",
+        "service",
+        "restartable",
+    );
+    graph.set_store_state(service_store, StoreState::Running);
+    let service_store_generation = graph.store_handle(service_store).unwrap().generation;
+
+    let stale_line = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "i6-test",
+        SemanticCommand::RecordIrqEvent {
+            irq_event: 1001,
+            irq_line: 901,
+            irq_line_generation: 2,
+            device: 401,
+            device_generation: 1,
+            driver_store,
+            driver_store_generation,
+            sequence: 1,
+            note: "stale line generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_line.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_line.violations,
+        vec!["irq event line generation is missing or inactive".to_string()]
+    );
+
+    let wrong_device = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "i6-test",
+        SemanticCommand::RecordIrqEvent {
+            irq_event: 1001,
+            irq_line: 901,
+            irq_line_generation: 1,
+            device: 402,
+            device_generation: 1,
+            driver_store,
+            driver_store_generation,
+            sequence: 1,
+            note: "wrong device must reject".to_string(),
+        },
+    ));
+    assert_eq!(wrong_device.status, CommandStatus::Rejected);
+    assert_eq!(
+        wrong_device.violations,
+        vec!["irq event device does not match irq line".to_string()]
+    );
+
+    let stale_store = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "i6-test",
+        SemanticCommand::RecordIrqEvent {
+            irq_event: 1001,
+            irq_line: 901,
+            irq_line_generation: 1,
+            device: 401,
+            device_generation: 1,
+            driver_store,
+            driver_store_generation: driver_store_generation + 1,
+            sequence: 1,
+            note: "stale driver store generation must reject".to_string(),
+        },
+    ));
+    assert_eq!(stale_store.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_store.violations,
+        vec!["irq event driver store generation mismatch".to_string()]
+    );
+
+    let non_driver_store = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "i6-test",
+        SemanticCommand::RecordIrqEvent {
+            irq_event: 1001,
+            irq_line: 901,
+            irq_line_generation: 1,
+            device: 401,
+            device_generation: 1,
+            driver_store: service_store,
+            driver_store_generation: service_store_generation,
+            sequence: 1,
+            note: "non-driver store must reject".to_string(),
+        },
+    ));
+    assert_eq!(non_driver_store.status, CommandStatus::Rejected);
+    assert_eq!(
+        non_driver_store.violations,
+        vec!["irq event driver store role is not driver".to_string()]
+    );
+
+    let zero_sequence = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "i6-test",
+        SemanticCommand::RecordIrqEvent {
+            irq_event: 1001,
+            irq_line: 901,
+            irq_line_generation: 1,
+            device: 401,
+            device_generation: 1,
+            driver_store,
+            driver_store_generation,
+            sequence: 0,
+            note: "zero sequence must reject".to_string(),
+        },
+    ));
+    assert_eq!(zero_sequence.status, CommandStatus::Rejected);
+    assert_eq!(
+        zero_sequence.violations,
+        vec!["irq event sequence is zero".to_string()]
+    );
+
+    assert!(graph.record_irq_event_with_id(
+        1001,
+        901,
+        1,
+        401,
+        1,
+        driver_store,
+        driver_store_generation,
+        1,
+        "irq event harness",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        6,
+        "i6-test",
+        SemanticCommand::RecordIrqEvent {
+            irq_event: 1002,
+            irq_line: 901,
+            irq_line_generation: 1,
+            device: 401,
+            device_generation: 1,
+            driver_store,
+            driver_store_generation,
+            sequence: 1,
+            note: "duplicate sequence must reject".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["irq event sequence already exists for irq line generation".to_string()]
+    );
+
+    graph.corrupt_irq_event_driver_store_generation_for_test(1001, driver_store_generation + 1);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::IrqEventMissingDriverStore {
+            irq_event: 1001,
+            store: driver_store,
+        })
+    );
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

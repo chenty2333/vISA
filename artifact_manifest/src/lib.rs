@@ -277,6 +277,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub irq_line_object_count: usize,
     #[serde(default)]
+    pub irq_event_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -405,6 +407,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub irq_line_objects: Vec<IrqLineObjectManifest>,
     #[serde(default)]
+    pub irq_events: Vec<IrqEventManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -512,6 +516,8 @@ pub struct SemanticRootSetManifest {
     pub mmio_region_object_roots: Vec<String>,
     #[serde(default)]
     pub irq_line_object_roots: Vec<String>,
+    #[serde(default)]
+    pub irq_event_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1230,6 +1236,23 @@ pub struct IrqLineObjectManifest {
     pub irq_number: u32,
     pub trigger: String,
     pub polarity: String,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IrqEventManifest {
+    pub id: u64,
+    pub irq_line: u64,
+    pub irq_line_generation: u64,
+    pub device: u64,
+    pub device_generation: u64,
+    pub driver_store: u64,
+    pub driver_store_generation: u64,
+    pub irq_number: u32,
+    pub sequence: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

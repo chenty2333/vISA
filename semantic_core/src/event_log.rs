@@ -313,6 +313,18 @@ pub enum EventKind {
         polarity: IrqLinePolarity,
         generation: Generation,
     },
+    IrqEventRecorded {
+        irq_event: IrqEventId,
+        irq_line: IrqLineObjectId,
+        irq_line_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        irq_number: u32,
+        sequence: u64,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1090,6 +1102,20 @@ impl EventKind {
                 "IrqLineObjectRecorded irq_line={irq_line} device={device}@{device_generation} resource={resource}@{resource_generation} irq_number={irq_number} trigger={} polarity={} generation={generation}",
                 trigger.as_str(),
                 polarity.as_str()
+            ),
+            Self::IrqEventRecorded {
+                irq_event,
+                irq_line,
+                irq_line_generation,
+                device,
+                device_generation,
+                driver_store,
+                driver_store_generation,
+                irq_number,
+                sequence,
+                generation,
+            } => format!(
+                "IrqEventRecorded irq_event={irq_event} irq_line={irq_line}@{irq_line_generation} device={device}@{device_generation} driver_store={driver_store}@{driver_store_generation} irq_number={irq_number} sequence={sequence} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

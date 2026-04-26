@@ -94,6 +94,7 @@ impl SemanticGraph {
         self.check_dma_buffer_object_invariants()?;
         self.check_mmio_region_object_invariants()?;
         self.check_irq_line_object_invariants()?;
+        self.check_irq_event_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;

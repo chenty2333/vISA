@@ -1,0 +1,118 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "I6-irq-event",
+  "name": "golden_i6_irq_event",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md",
+    "references/specs/semantic-contract-v0.1/05-wait-token-event-bridge.md"
+  ],
+  "no_goals": [
+    "real IRQ delivery",
+    "real interrupt-controller programming",
+    "scheduler wakeup",
+    "WaitToken resolution",
+    "real DMA/MMIO/IRQ access"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "record-irq-line-object",
+        "irq_line": "irq-line:9931@1",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "record-irq-event",
+        "irq_event": "irq-event:9941@1",
+        "irq_line": "irq-line:9931@1",
+        "device": "device:9701@1",
+        "driver_store": "store:2@2",
+        "irq_number": 5,
+        "sequence": 1,
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "record-irq-event",
+        "irq_line": "irq-line:9931@2",
+        "expected": "rejected",
+        "violation": "irq event line generation is missing or inactive"
+      },
+      {
+        "id": 4,
+        "command": "record-irq-event",
+        "device": "device:9702@1",
+        "expected": "rejected",
+        "violation": "irq event device does not match irq line"
+      },
+      {
+        "id": 5,
+        "command": "record-irq-event",
+        "driver_store": "store:2@3",
+        "expected": "rejected",
+        "violation": "irq event driver store generation mismatch"
+      },
+      {
+        "id": 6,
+        "command": "record-irq-event",
+        "sequence": 1,
+        "expected": "rejected",
+        "violation": "irq event sequence already exists for irq line generation"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "IrqEventRecorded",
+      "irq_event": "irq-event:9941@1",
+      "irq_line": "irq-line:9931@1",
+      "device": "device:9701@1",
+      "driver_store": "store:2@2",
+      "irq_number": 5,
+      "sequence": 1
+    }
+  ],
+  "expected": {
+    "views": {
+      "irq-event": {
+        "id": 9941,
+        "generation": 1,
+        "state": "recorded",
+        "irq_line": "irq-line:9931@1",
+        "device": "device:9701@1",
+        "driver_store": "store:2@2",
+        "irq_number": 5,
+        "sequence": 1
+      },
+      "graph-history": {
+        "edges": [
+          "irq-event:9941@1 --irq-event-line--> irq-line:9931@1",
+          "irq-event:9941@1 --irq-event-device--> device:9701@1",
+          "irq-event:9941@1 --irq-event-driver-store--> store:2@2"
+        ]
+      }
+    },
+    "invariants": [
+      "IrqEvent must reference an exact registered IrqLineObject generation",
+      "IrqEvent device ref must match the IrqLineObject device ref",
+      "IrqEvent must reference an exact live driver Store generation",
+      "IrqEvent sequence is unique within an IrqLineObject generation",
+      "IrqEvent is historical attribution evidence, not scheduler wakeup or hardware delivery"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "io_runtime_i6_irq_event_records_line_device_and_driver_store_identity",
+      "io_runtime_i6_rejects_stale_wrong_store_or_duplicate_irq_event",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "semantic_roots_reject_irq_event_root_mismatch"
+    ]
+  }
+}

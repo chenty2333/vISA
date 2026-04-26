@@ -16,15 +16,15 @@ use artifact_manifest::{
     CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceObjectManifest,
     DmaBufferObjectManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
     HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IpiEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
-    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
-    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
+    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -384,6 +384,17 @@ fn record_preemptive_runtime_context_evidence(
         .resource_handle(io_irq_line_resource)
         .map(|handle| handle.generation)
         .ok_or("i5 irq line resource handle is missing")?;
+    let io_driver_store = semantic.register_store(
+        "i6.irq.driver",
+        "i6-irq-driver.fake-aot",
+        "driver",
+        "restartable",
+    );
+    semantic.set_store_state(io_driver_store, StoreState::Running);
+    let io_driver_store_generation = semantic
+        .store_handle(io_driver_store)
+        .map(|handle| handle.generation)
+        .ok_or("i6 driver store handle is missing")?;
     // The P8 cleanup command moves the store through Cleaning and Dead, bumping
     // the semantic generation once for each transition before S13 validates it.
     let cleanup_result_store_generation = cleanup_store_generation + 2;
@@ -1200,6 +1211,21 @@ fn record_preemptive_runtime_context_evidence(
                 trigger: IrqLineTrigger::Level,
                 polarity: IrqLinePolarity::ActiveHigh,
                 note: "i5-record-irq-line-object-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            106,
+            "target-executor-i6",
+            SemanticCommand::RecordIrqEvent {
+                irq_event: 9941,
+                irq_line: 9931,
+                irq_line_generation: 1,
+                device: 9701,
+                device_generation: 1,
+                driver_store: io_driver_store,
+                driver_store_generation: io_driver_store_generation,
+                sequence: 1,
+                note: "i6-record-irq-event-harness".to_owned(),
             },
         ),
     ];
@@ -2240,6 +2266,7 @@ fn demo_migration_package(
             dma_buffer_object_count: semantic.dma_buffer_object_count(),
             mmio_region_object_count: semantic.mmio_region_object_count(),
             irq_line_object_count: semantic.irq_line_object_count(),
+            irq_event_count: semantic.irq_event_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -2405,6 +2432,11 @@ fn demo_migration_package(
                 .irq_line_objects()
                 .iter()
                 .map(irq_line_object_manifest)
+                .collect(),
+            irq_events: semantic
+                .irq_events()
+                .iter()
+                .map(irq_event_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -2994,6 +3026,26 @@ fn semantic_roots(
                     irq_line.polarity.as_str(),
                     irq_line.state.as_str(),
                     irq_line.generation
+                )
+            })
+            .collect(),
+        irq_event_roots: semantic
+            .irq_events()
+            .iter()
+            .map(|irq_event| {
+                format!(
+                    "irq-event id={} irq_line={}@{} device={}@{} driver_store={}@{} irq_number={} sequence={} state={} generation={}",
+                    irq_event.id,
+                    irq_event.irq_line,
+                    irq_event.irq_line_generation,
+                    irq_event.device,
+                    irq_event.device_generation,
+                    irq_event.driver_store,
+                    irq_event.driver_store_generation,
+                    irq_event.irq_number,
+                    irq_event.sequence,
+                    irq_event.state.as_str(),
+                    irq_event.generation
                 )
             })
             .collect(),
@@ -4217,6 +4269,24 @@ fn irq_line_object_manifest(
         state: irq_line.state.as_str().to_owned(),
         recorded_at_event: irq_line.recorded_at_event,
         note: irq_line.note.clone(),
+    }
+}
+
+fn irq_event_manifest(irq_event: &semantic_core::IrqEventRecord) -> IrqEventManifest {
+    IrqEventManifest {
+        id: irq_event.id,
+        irq_line: irq_event.irq_line,
+        irq_line_generation: irq_event.irq_line_generation,
+        device: irq_event.device,
+        device_generation: irq_event.device_generation,
+        driver_store: irq_event.driver_store,
+        driver_store_generation: irq_event.driver_store_generation,
+        irq_number: irq_event.irq_number,
+        sequence: irq_event.sequence,
+        generation: irq_event.generation,
+        state: irq_event.state.as_str().to_owned(),
+        recorded_at_event: irq_event.recorded_at_event,
+        note: irq_event.note.clone(),
     }
 }
 

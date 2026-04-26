@@ -33,6 +33,7 @@ pub struct SemanticGraph {
     dma_buffer_objects: Vec<DmaBufferObjectRecord>,
     mmio_region_objects: Vec<MmioRegionObjectRecord>,
     irq_line_objects: Vec<IrqLineObjectRecord>,
+    irq_events: Vec<IrqEventRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -77,6 +78,7 @@ pub struct SemanticGraph {
     next_dma_buffer_object_id: DmaBufferObjectId,
     next_mmio_region_object_id: MmioRegionObjectId,
     next_irq_line_object_id: IrqLineObjectId,
+    next_irq_event_id: IrqEventId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -107,6 +109,7 @@ mod hart;
 mod hart_event;
 mod interface;
 mod ipi;
+mod irq_event;
 mod irq_line_object;
 mod latency;
 mod mmio_region_object;
@@ -167,6 +170,7 @@ impl SemanticGraph {
             dma_buffer_objects: Vec::new(),
             mmio_region_objects: Vec::new(),
             irq_line_objects: Vec::new(),
+            irq_events: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -211,6 +215,7 @@ impl SemanticGraph {
             next_dma_buffer_object_id: 1,
             next_mmio_region_object_id: 1,
             next_irq_line_object_id: 1,
+            next_irq_event_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

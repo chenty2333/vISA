@@ -865,6 +865,29 @@ pub enum SemanticInvariantError {
     IrqLineObjectMissingEvent {
         irq_line: IrqLineObjectId,
     },
+    IrqEventInvalid {
+        irq_event: IrqEventId,
+    },
+    IrqEventMissingLine {
+        irq_event: IrqEventId,
+        irq_line: IrqLineObjectId,
+    },
+    IrqEventMissingDevice {
+        irq_event: IrqEventId,
+        device: DeviceObjectId,
+    },
+    IrqEventMissingDriverStore {
+        irq_event: IrqEventId,
+        store: StoreId,
+    },
+    IrqEventDuplicateSequence {
+        irq_event: IrqEventId,
+        irq_line: IrqLineObjectId,
+        sequence: u64,
+    },
+    IrqEventMissingEvent {
+        irq_event: IrqEventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

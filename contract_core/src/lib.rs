@@ -92,6 +92,7 @@ pub enum ObjectKind {
     DmaBufferObject,
     MmioRegionObject,
     IrqLineObject,
+    IrqEvent,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -149,6 +150,7 @@ impl ObjectKind {
             Self::DmaBufferObject => "dma-buffer-object",
             Self::MmioRegionObject => "mmio-region-object",
             Self::IrqLineObject => "irq-line-object",
+            Self::IrqEvent => "irq-event",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -366,6 +368,7 @@ typed_ref!(DescriptorObjectRef, ObjectKind::DescriptorObject);
 typed_ref!(DmaBufferObjectRef, ObjectKind::DmaBufferObject);
 typed_ref!(MmioRegionObjectRef, ObjectKind::MmioRegionObject);
 typed_ref!(IrqLineObjectRef, ObjectKind::IrqLineObject);
+typed_ref!(IrqEventRef, ObjectKind::IrqEvent);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1651,6 +1654,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("irq line object root/count mismatch"));
     }
+    if roots.irq_event_roots.len() != package.semantic.irq_event_count
+        || package.semantic.irq_events.len() != package.semantic.irq_event_count
+    {
+        return Err(ContractError::new("irq event root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2199,6 +2207,7 @@ mod tests {
                 dma_buffer_object_count: 0,
                 mmio_region_object_count: 0,
                 irq_line_object_count: 0,
+                irq_event_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2265,6 +2274,7 @@ mod tests {
                 dma_buffer_objects: Vec::new(),
                 mmio_region_objects: Vec::new(),
                 irq_line_objects: Vec::new(),
+                irq_events: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3135,6 +3145,33 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_irq_event_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.irq_event_count = 1;
+        package
+            .semantic
+            .irq_events
+            .push(artifact_manifest::IrqEventManifest {
+                id: 23,
+                irq_line: 22,
+                irq_line_generation: 1,
+                device: 17,
+                device_generation: 1,
+                driver_store: 24,
+                driver_store_generation: 3,
+                irq_number: 5,
+                sequence: 1,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 59,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "irq event root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -3633,6 +3670,8 @@ mod tests {
         assert!(MmioRegionObjectRef::try_from_ref(mmio_region_object).is_ok());
         let irq_line_object = ObjectRef::new(ObjectKind::IrqLineObject, 22, 1).unwrap();
         assert!(IrqLineObjectRef::try_from_ref(irq_line_object).is_ok());
+        let irq_event = ObjectRef::new(ObjectKind::IrqEvent, 23, 1).unwrap();
+        assert!(IrqEventRef::try_from_ref(irq_event).is_ok());
         let resume = ObjectRef::new(ObjectKind::ActivationResume, 8, 1).unwrap();
         assert!(ActivationResumeRef::try_from_ref(resume).is_ok());
         let activation_wait = ObjectRef::new(ObjectKind::ActivationWait, 9, 1).unwrap();

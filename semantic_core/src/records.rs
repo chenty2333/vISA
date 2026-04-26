@@ -805,6 +805,29 @@ impl IrqLineObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrqEventRecord {
+    pub id: IrqEventId,
+    pub irq_line: IrqLineObjectId,
+    pub irq_line_generation: Generation,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub irq_number: u32,
+    pub sequence: u64,
+    pub generation: Generation,
+    pub state: IrqEventState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl IrqEventRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::IrqEvent, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

@@ -1,0 +1,160 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "I6-irq-event",
+  "phase": "Phase 3 IO Semantic Core",
+  "status": "pass",
+  "scope": [
+    "Add IrqEvent as the seventh IO semantic core evidence object",
+    "Bind IrqEvent to exact IrqLineObject, DeviceObject, and driver Store generations",
+    "Expose IrqEvent through semantic package roots/counts, target_executor host-validation output, osctl ViewV1, replay roots, and history graph edges",
+    "Reject stale line generations, device attribution mismatch, stale driver store generations, non-driver stores, zero sequence, and duplicate IRQ event sequence within one line generation"
+  ],
+  "no_goals": [
+    "Real IRQ delivery",
+    "Real interrupt-controller programming",
+    "Scheduler wakeup",
+    "WaitToken resolution",
+    "Real DMA/MMIO/IRQ access",
+    "Network or block vertical implementation"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/irq_event.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/io/golden_i6_irq_event.trace.json",
+    "tests/reports/checkpoints/i6_irq_event.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/io/golden_i6_irq_event.trace.json",
+    "tests/reports/checkpoints/i6_irq_event.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "IrqEvent is modeled as historical semantic evidence and does not trigger scheduler wakeups or hidden WaitToken resolution",
+      "IrqEvent carries exact IrqLineObject, DeviceObject, and driver Store generations",
+      "IrqEvent rejects non-driver store attribution and stale driver generations",
+      "Sequence uniqueness is scoped to an IrqLineObject generation",
+      "osctl uses an explicit ViewV1 for irq-event output and history edges rather than internal struct dumps"
+    ],
+    "residual_notes": [
+      "I7 should add capability gates before MMIO/DMA/IRQ use",
+      "I9 should connect IO events to WaitToken resolution",
+      "I10 should ensure IO cleanup cancels or reclassifies pending IRQ-related waits"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core io_runtime_i6",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core irq_event",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- irq-event list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python osctl irq-event/contract/history assertions",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/io/golden_i6_irq_event.trace.json",
+    "osctl_views": [
+      "osctl irq-event list --json <migration.json>",
+      "osctl graph --history --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "irq_event_roots",
+      "irq_line_object_roots",
+      "device_object_roots",
+      "target_store_record_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 275,
+      "irq_event_count": 1,
+      "irq_event": "irq-event:9941@1",
+      "irq_line": "irq-line:9931@1",
+      "device": "device:9701@1",
+      "driver_store": "store:2@2"
+    }
+  },
+  "residual_gaps": [
+    "I7 DeviceCapability remains unimplemented"
+  ],
+  "next_checkpoint": "I7-device-capability"
+}
