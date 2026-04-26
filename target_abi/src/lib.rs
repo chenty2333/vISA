@@ -1,6 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod artifact;
+pub mod control_plane;
 pub mod fake_aot;
 pub mod hostcall;
 pub mod profile;
@@ -10,6 +11,11 @@ pub mod trap;
 pub use artifact::{
     SectionKindV1, TargetArtifactError, TargetArtifactHeaderV1, TargetArtifactImage,
     TargetSectionHeaderV1, canonical_zero_field_image_hash, verify_canonical_zero_field_image_hash,
+};
+pub use control_plane::{
+    ControlPlaneError, JsonlFrameRefV1, JsonlWriteOutcome, OsctlCursorV1, OsctlStreamV1,
+    PANIC_RECORD_MAX_LEN, PANIC_RING_ALIGN, PANIC_RING_MAGIC, PANIC_RING_SIZE, PanicRecordHeaderV1,
+    PanicRecordKindV1, PanicRingHeaderV1, PanicRingV1, PanicWriteOutcome, write_jsonl_frame,
 };
 pub use fake_aot::{
     ArtifactRelocationUnsupportedEventV1, FakeAotBlob, FakeAotEntryKindV1, FakeAotEntryV1,
