@@ -23,9 +23,10 @@ use artifact_manifest::{
     RemotePreemptManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
     SavedContextManifest, SchedulerDecisionManifest, SmpCleanupQuiescenceManifest,
     SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
-    SmpSnapshotBarrierManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
-    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
-    TimerInterruptManifest, TrapRecordManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
+    SmpSnapshotBarrierManifest, SmpStressRunManifest, SocketObjectManifest,
+    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
+    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
+    VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -307,6 +308,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "tx-completion"
         | "network-stack-adapter"
         | "smoltcp-adapter"
+        | "socket-object"
+        | "socket"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -477,7 +480,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -716,6 +719,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "network-tx-capability-gate" | "tx-capability-gate" => "network-tx-capability-gate",
         "network-tx-completion" | "tx-completion" => "network-tx-completion",
         "network-stack-adapter" | "smoltcp-adapter" => "network-stack-adapter",
+        "socket-object" | "socket" => "socket-object",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2958,6 +2962,45 @@ fn network_stack_adapter_view_v1(adapter: &NetworkStackAdapterManifest) -> serde
     })
 }
 
+fn socket_object_view_v1(socket: &SocketObjectManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "socket-object",
+        "id": socket.id,
+        "generation": socket.generation,
+        "state": socket.state,
+        "owner": {
+            "store": object_ref_json("store", socket.owner_store, socket.owner_store_generation),
+        },
+        "references": {
+            "adapter": object_ref_json(
+                "network-stack-adapter",
+                socket.adapter,
+                socket.adapter_generation,
+            ),
+            "owner_store": object_ref_json("store", socket.owner_store, socket.owner_store_generation),
+            "event": {
+                "id": socket.created_at_event,
+            },
+        },
+        "socket": {
+            "domain": socket.domain,
+            "type": socket.socket_type,
+            "protocol": socket.protocol,
+            "canonical_protocol": socket.canonical_protocol,
+            "family": socket.family,
+            "transport": socket.transport,
+        },
+        "note": socket.note,
+        "last_transition": {
+            "created_at_event": socket.created_at_event,
+            "adapter_generation": socket.adapter_generation,
+            "owner_store_generation": socket.owner_store_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -4081,6 +4124,12 @@ fn stable_views_for_kind(
             .iter()
             .map(network_stack_adapter_view_v1)
             .collect()),
+        "socket-object" | "socket" => Ok(package
+            .semantic
+            .socket_objects
+            .iter()
+            .map(socket_object_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -5104,6 +5153,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         "network-stack-adapter",
         &package.semantic.roots.network_stack_adapter_roots,
     );
+    print_roots("socket-object", &package.semantic.roots.socket_object_roots);
     print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
@@ -5465,6 +5515,30 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "network-stack-adapter->tx-queue",
             "live",
             Some(adapter.recorded_at_event),
+        ));
+    }
+    for socket in &package.semantic.socket_objects {
+        if socket.state != "created" {
+            continue;
+        }
+        let from = object_ref_json("socket-object", socket.id, socket.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "network-stack-adapter",
+                socket.adapter,
+                socket.adapter_generation,
+            ),
+            "socket-object->network-stack-adapter",
+            "live",
+            Some(socket.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json("store", socket.owner_store, socket.owner_store_generation),
+            "socket-object->owner-store",
+            "live",
+            Some(socket.created_at_event),
         ));
     }
     for rx in &package.semantic.network_rx_interrupts {
@@ -8504,7 +8578,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -8548,6 +8622,7 @@ fn replay_until(
         package.semantic.roots.virtio_net_backend_object_roots.len(),
         package.semantic.roots.network_tx_completion_roots.len(),
         package.semantic.roots.network_stack_adapter_roots.len(),
+        package.semantic.roots.socket_object_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -8672,6 +8747,9 @@ fn replay_until(
     }
     for adapter in &package.semantic.roots.network_stack_adapter_roots {
         println!("replay network-stack-adapter {adapter}");
+    }
+    for socket in &package.semantic.roots.socket_object_roots {
+        println!("replay socket-object {socket}");
     }
     Ok(())
 }
@@ -8850,6 +8928,10 @@ fn print_replay_json(
     roots.insert(
         "network_stack_adapters".to_owned(),
         serde_json::json!(package.semantic.roots.network_stack_adapter_roots.len()),
+    );
+    roots.insert(
+        "socket_objects".to_owned(),
+        serde_json::json!(package.semantic.roots.socket_object_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -10085,6 +10167,41 @@ mod tests {
         assert_eq!(view["adapter"]["socket_capacity"], 0);
         assert_eq!(view["network"]["ipv4_prefix_len"], 24);
         assert_eq!(view["last_transition"]["recorded_at_event"], 75);
+    }
+
+    #[test]
+    fn socket_object_view_v1_exposes_adapter_store_and_socket_contract() {
+        let view = socket_object_view_v1(&SocketObjectManifest {
+            id: 76,
+            adapter: 74,
+            adapter_generation: 1,
+            owner_store: 7,
+            owner_store_generation: 3,
+            domain: 2,
+            socket_type: 1,
+            protocol: 0,
+            canonical_protocol: 6,
+            family: "inet".to_owned(),
+            transport: "tcp".to_owned(),
+            generation: 1,
+            state: "created".to_owned(),
+            created_at_event: 77,
+            note: "socket object".to_owned(),
+        });
+        assert_eq!(view["kind"], "socket-object");
+        assert_eq!(view["owner"]["store"]["kind"], "store");
+        assert_eq!(view["owner"]["store"]["generation"], 3);
+        assert_eq!(
+            view["references"]["adapter"]["kind"],
+            "network-stack-adapter"
+        );
+        assert_eq!(view["references"]["adapter"]["generation"], 1);
+        assert_eq!(view["socket"]["domain"], 2);
+        assert_eq!(view["socket"]["type"], 1);
+        assert_eq!(view["socket"]["canonical_protocol"], 6);
+        assert_eq!(view["socket"]["family"], "inet");
+        assert_eq!(view["socket"]["transport"], "tcp");
+        assert_eq!(view["last_transition"]["created_at_event"], 77);
     }
 
     #[test]
@@ -12639,6 +12756,23 @@ mod tests {
                 recorded_at_event: 25,
                 note: "network stack adapter graph".to_owned(),
             });
+        package.semantic.socket_objects.push(SocketObjectManifest {
+            id: 94,
+            adapter: 93,
+            adapter_generation: 1,
+            owner_store: 1,
+            owner_store_generation: 2,
+            domain: 2,
+            socket_type: 1,
+            protocol: 0,
+            canonical_protocol: 6,
+            family: "inet".to_owned(),
+            transport: "tcp".to_owned(),
+            generation: 1,
+            state: "created".to_owned(),
+            created_at_event: 26,
+            note: "socket object graph".to_owned(),
+        });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -12690,6 +12824,16 @@ mod tests {
             && edge["from"]["kind"] == "network-stack-adapter"
             && edge["to"]["kind"] == "packet-queue"
             && edge["to"]["id"] == 89));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "socket-object->network-stack-adapter"
+            && edge["from"]["kind"] == "socket-object"
+            && edge["to"]["kind"] == "network-stack-adapter"
+            && edge["to"]["id"] == 93));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "socket-object->owner-store"
+            && edge["from"]["kind"] == "socket-object"
+            && edge["to"]["kind"] == "store"
+            && edge["to"]["generation"] == 2));
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"

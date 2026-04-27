@@ -400,6 +400,17 @@ pub enum SemanticCommand {
         socket_capacity: u16,
         note: String,
     },
+    RecordSocketObject {
+        socket: SocketObjectId,
+        adapter: NetworkStackAdapterId,
+        adapter_generation: Generation,
+        owner_store: StoreId,
+        owner_store_generation: Generation,
+        domain: u32,
+        socket_type: u32,
+        protocol: u32,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -777,6 +788,7 @@ impl SemanticCommand {
             Self::RecordNetworkTxCapabilityGate { .. } => "record-network-tx-capability-gate",
             Self::RecordNetworkTxCompletion { .. } => "record-network-tx-completion",
             Self::RecordNetworkStackAdapter { .. } => "record-network-stack-adapter",
+            Self::RecordSocketObject { .. } => "record-socket-object",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -2206,6 +2218,28 @@ impl SemanticGraph {
                     *tx_queue_depth,
                     *max_payload_len,
                     *socket_capacity,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordSocketObject {
+                socket,
+                adapter,
+                adapter_generation,
+                owner_store,
+                owner_store_generation,
+                domain,
+                socket_type,
+                protocol,
+                ..
+            } => self
+                .validate_socket_object(
+                    *socket,
+                    *adapter,
+                    *adapter_generation,
+                    *owner_store,
+                    *owner_store_generation,
+                    *domain,
+                    *socket_type,
+                    *protocol,
                 )
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
@@ -3728,6 +3762,27 @@ impl SemanticGraph {
                 tx_queue_depth,
                 max_payload_len,
                 socket_capacity,
+                &note,
+            ),
+            SemanticCommand::RecordSocketObject {
+                socket,
+                adapter,
+                adapter_generation,
+                owner_store,
+                owner_store_generation,
+                domain,
+                socket_type,
+                protocol,
+                note,
+            } => self.record_socket_object_with_id(
+                socket,
+                adapter,
+                adapter_generation,
+                owner_store,
+                owner_store_generation,
+                domain,
+                socket_type,
+                protocol,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

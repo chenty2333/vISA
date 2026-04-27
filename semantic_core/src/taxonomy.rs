@@ -1006,6 +1006,21 @@ impl NetworkStackAdapterState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SocketObjectState {
+    Created,
+    Closed,
+}
+
+impl SocketObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Closed => "closed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

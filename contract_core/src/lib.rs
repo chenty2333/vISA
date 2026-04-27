@@ -110,6 +110,7 @@ pub enum ObjectKind {
     NetworkTxCapabilityGate,
     NetworkTxCompletion,
     NetworkStackAdapter,
+    SocketObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -185,6 +186,7 @@ impl ObjectKind {
             Self::NetworkTxCapabilityGate => "network-tx-capability-gate",
             Self::NetworkTxCompletion => "network-tx-completion",
             Self::NetworkStackAdapter => "network-stack-adapter",
+            Self::SocketObject => "socket-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -432,6 +434,7 @@ typed_ref!(
 );
 typed_ref!(NetworkTxCompletionRef, ObjectKind::NetworkTxCompletion);
 typed_ref!(NetworkStackAdapterRef, ObjectKind::NetworkStackAdapter);
+typed_ref!(SocketObjectRef, ObjectKind::SocketObject);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1848,6 +1851,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "network stack adapter root/count mismatch",
         ));
     }
+    if roots.socket_object_roots.len() != package.semantic.socket_object_count
+        || package.semantic.socket_objects.len() != package.semantic.socket_object_count
+    {
+        return Err(ContractError::new("socket object root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2414,6 +2422,7 @@ mod tests {
                 network_tx_capability_gate_count: 0,
                 network_tx_completion_count: 0,
                 network_stack_adapter_count: 0,
+                socket_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2498,6 +2507,7 @@ mod tests {
                 network_tx_capability_gates: Vec::new(),
                 network_tx_completions: Vec::new(),
                 network_stack_adapters: Vec::new(),
+                socket_objects: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3951,6 +3961,35 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_socket_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.socket_object_count = 1;
+        package
+            .semantic
+            .socket_objects
+            .push(artifact_manifest::SocketObjectManifest {
+                id: 42,
+                adapter: 41,
+                adapter_generation: 1,
+                owner_store: 7,
+                owner_store_generation: 1,
+                domain: 2,
+                socket_type: 1,
+                protocol: 0,
+                canonical_protocol: 6,
+                family: "inet".to_owned(),
+                transport: "tcp".to_owned(),
+                generation: 1,
+                state: "created".to_owned(),
+                created_at_event: 78,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "socket object root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -4466,6 +4505,8 @@ mod tests {
         assert!(NetworkTxCompletionRef::try_from_ref(network_tx_completion).is_ok());
         let network_stack_adapter = ObjectRef::new(ObjectKind::NetworkStackAdapter, 40, 1).unwrap();
         assert!(NetworkStackAdapterRef::try_from_ref(network_stack_adapter).is_ok());
+        let socket_object = ObjectRef::new(ObjectKind::SocketObject, 41, 1).unwrap();
+        assert!(SocketObjectRef::try_from_ref(socket_object).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

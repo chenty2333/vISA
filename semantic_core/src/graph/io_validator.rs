@@ -688,6 +688,10 @@ impl SemanticGraph {
                 .network_stack_adapters
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::SocketObject => self
+                .socket_objects
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

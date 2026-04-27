@@ -32,12 +32,12 @@ use artifact_manifest::{
     SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
     SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
-    SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
-    StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
-    SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
-    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
-    TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
-    VirtioNetBackendObjectManifest, WaitRecordManifest,
+    SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, SocketObjectManifest,
+    StopTheWorldRendezvousManifest, StopTheWorldRendezvousParticipantManifest, StoreRecordManifest,
+    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
+    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
+    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
+    TrapRecordManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -173,6 +173,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n8_evidence(&mut semantic)?;
     record_network_runtime_n9_evidence(&mut semantic)?;
     record_network_runtime_n10_evidence(&mut semantic)?;
+    record_network_runtime_n11_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -887,6 +888,74 @@ fn record_network_runtime_n10_evidence(semantic: &mut SemanticGraph) -> Result<(
             duplicate.command,
             duplicate.status.as_str(),
             duplicate.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn record_network_runtime_n11_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let linux_socket_store = semantic
+        .store_id("linux_socket_service")
+        .ok_or("linux_socket_service store is missing for n11 evidence")?;
+    let linux_socket_store_generation = semantic
+        .store_handle(linux_socket_store)
+        .map(|handle| handle.generation)
+        .ok_or("linux_socket_service store handle is missing for n11 evidence")?;
+    let command = CommandEnvelope::new(
+        146,
+        "target-executor-n11",
+        SemanticCommand::RecordSocketObject {
+            socket: 10_027,
+            adapter: 10_025,
+            adapter_generation: 1,
+            owner_store: linux_socket_store,
+            owner_store_generation: linux_socket_store_generation,
+            domain: 2,
+            socket_type: 1,
+            protocol: 0,
+            note: "n11-record-linux-inet-stream-socket-object".to_owned(),
+        },
+    );
+    let result = semantic.apply_envelope(command);
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "network runtime n11 evidence command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+
+    let stale_adapter = semantic.apply_envelope(CommandEnvelope::new(
+        147,
+        "target-executor-n11",
+        SemanticCommand::RecordSocketObject {
+            socket: 10_028,
+            adapter: 10_025,
+            adapter_generation: 2,
+            owner_store: linux_socket_store,
+            owner_store_generation: linux_socket_store_generation,
+            domain: 2,
+            socket_type: 1,
+            protocol: 0,
+            note: "n11-reject-stale-socket-adapter-generation".to_owned(),
+        },
+    ));
+    if stale_adapter.status != CommandStatus::Rejected
+        || !stale_adapter
+            .violations
+            .iter()
+            .any(|violation| violation.contains("adapter generation"))
+    {
+        return Err(format!(
+            "network runtime n11 stale adapter command {} ({}) was not rejected: status={} violations={:?}",
+            stale_adapter.command_id,
+            stale_adapter.command,
+            stale_adapter.status.as_str(),
+            stale_adapter.violations
         )
         .into());
     }
@@ -3273,6 +3342,7 @@ fn demo_migration_package(
             network_tx_capability_gate_count: semantic.network_tx_capability_gate_count(),
             network_tx_completion_count: semantic.network_tx_completion_count(),
             network_stack_adapter_count: semantic.network_stack_adapter_count(),
+            socket_object_count: semantic.socket_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -3524,6 +3594,11 @@ fn demo_migration_package(
                 .network_stack_adapters()
                 .iter()
                 .map(network_stack_adapter_manifest)
+                .collect(),
+            socket_objects: semantic
+                .socket_objects()
+                .iter()
+                .map(socket_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -4523,6 +4598,28 @@ fn semantic_roots(
                     adapter.socket_capacity,
                     adapter.state.as_str(),
                     adapter.generation
+                )
+            })
+            .collect(),
+        socket_object_roots: semantic
+            .socket_objects()
+            .iter()
+            .map(|socket| {
+                format!(
+                    "socket-object id={} adapter={}@{} owner_store={}@{} domain={} type={} protocol={} canonical_protocol={} family={} transport={} state={} generation={}",
+                    socket.id,
+                    socket.adapter,
+                    socket.adapter_generation,
+                    socket.owner_store,
+                    socket.owner_store_generation,
+                    socket.domain,
+                    socket.socket_type,
+                    socket.protocol,
+                    socket.canonical_protocol,
+                    socket.family,
+                    socket.transport,
+                    socket.state.as_str(),
+                    socket.generation
                 )
             })
             .collect(),
@@ -6232,6 +6329,26 @@ fn network_stack_adapter_manifest(
         state: adapter.state.as_str().to_owned(),
         recorded_at_event: adapter.recorded_at_event,
         note: adapter.note.clone(),
+    }
+}
+
+fn socket_object_manifest(socket: &semantic_core::SocketObjectRecord) -> SocketObjectManifest {
+    SocketObjectManifest {
+        id: socket.id,
+        adapter: socket.adapter,
+        adapter_generation: socket.adapter_generation,
+        owner_store: socket.owner_store,
+        owner_store_generation: socket.owner_store_generation,
+        domain: socket.domain,
+        socket_type: socket.socket_type,
+        protocol: socket.protocol,
+        canonical_protocol: socket.canonical_protocol,
+        family: socket.family.clone(),
+        transport: socket.transport.clone(),
+        generation: socket.generation,
+        state: socket.state.as_str().to_owned(),
+        created_at_event: socket.created_at_event,
+        note: socket.note.clone(),
     }
 }
 

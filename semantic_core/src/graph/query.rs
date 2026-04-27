@@ -112,6 +112,7 @@ impl SemanticGraph {
         self.check_network_tx_capability_gate_invariants()?;
         self.check_network_tx_completion_invariants()?;
         self.check_network_stack_adapter_invariants()?;
+        self.check_socket_object_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;

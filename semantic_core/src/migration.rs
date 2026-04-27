@@ -1230,6 +1230,23 @@ pub enum SemanticInvariantError {
     NetworkStackAdapterMissingEvent {
         adapter: NetworkStackAdapterId,
     },
+    SocketObjectInvalid {
+        socket: SocketObjectId,
+    },
+    SocketObjectMissingAdapter {
+        socket: SocketObjectId,
+        adapter: NetworkStackAdapterId,
+    },
+    SocketObjectMissingOwnerStore {
+        socket: SocketObjectId,
+        store: StoreId,
+    },
+    SocketObjectDuplicate {
+        socket: SocketObjectId,
+    },
+    SocketObjectMissingEvent {
+        socket: SocketObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

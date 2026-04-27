@@ -1425,6 +1425,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::NetworkTxCapabilityGate
             | ContractObjectKind::NetworkTxCompletion
             | ContractObjectKind::NetworkStackAdapter
+            | ContractObjectKind::SocketObject
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

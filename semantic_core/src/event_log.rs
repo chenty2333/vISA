@@ -589,6 +589,20 @@ pub enum EventKind {
         socket_capacity: u16,
         generation: Generation,
     },
+    SocketObjectCreated {
+        socket: SocketObjectId,
+        adapter: NetworkStackAdapterId,
+        adapter_generation: Generation,
+        owner_store: StoreId,
+        owner_store_generation: Generation,
+        domain: u32,
+        socket_type: u32,
+        protocol: u32,
+        canonical_protocol: u16,
+        family: String,
+        transport: String,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1706,6 +1720,22 @@ impl EventKind {
                 ipv4_addr[2],
                 ipv4_addr[3],
                 ipv4_prefix_len
+            ),
+            Self::SocketObjectCreated {
+                socket,
+                adapter,
+                adapter_generation,
+                owner_store,
+                owner_store_generation,
+                domain,
+                socket_type,
+                protocol,
+                canonical_protocol,
+                family,
+                transport,
+                generation,
+            } => format!(
+                "SocketObjectCreated socket={socket} adapter={adapter}@{adapter_generation} owner_store={owner_store}@{owner_store_generation} domain={domain} type={socket_type} protocol={protocol} canonical_protocol={canonical_protocol} family={family} transport={transport} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

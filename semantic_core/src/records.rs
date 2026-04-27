@@ -1372,6 +1372,31 @@ impl NetworkStackAdapterRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SocketObjectRecord {
+    pub id: SocketObjectId,
+    pub adapter: NetworkStackAdapterId,
+    pub adapter_generation: Generation,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub domain: u32,
+    pub socket_type: u32,
+    pub protocol: u32,
+    pub canonical_protocol: u16,
+    pub family: String,
+    pub transport: String,
+    pub generation: Generation,
+    pub state: SocketObjectState,
+    pub created_at_event: EventId,
+    pub note: String,
+}
+
+impl SocketObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::SocketObject, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,
