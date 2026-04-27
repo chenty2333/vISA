@@ -1401,6 +1401,17 @@ pub enum SemanticInvariantError {
         cleanup: NetworkDriverCleanupId,
         event: EventId,
     },
+    NetworkGenerationAuditInvalid {
+        audit: NetworkGenerationAuditId,
+    },
+    NetworkGenerationAuditMissingTarget {
+        audit: NetworkGenerationAuditId,
+        target: ContractObjectRef,
+    },
+    NetworkGenerationAuditMissingEvent {
+        audit: NetworkGenerationAuditId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

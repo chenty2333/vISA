@@ -30,7 +30,7 @@
     ],
     "commands": [
       {
-        "id": 170,
+        "id": 178,
         "command": "create-wait",
         "wait": "wait-token:10049@1",
         "owner_store": "store:7@3",
@@ -38,7 +38,7 @@
         "expected": "applied"
       },
       {
-        "id": 171,
+        "id": 179,
         "command": "record-socket-wait",
         "socket_wait": "socket-wait:10050@1",
         "wait": "wait-token:10049@1",
@@ -46,7 +46,7 @@
         "expected": "applied"
       },
       {
-        "id": 172,
+        "id": 180,
         "command": "cleanup-network-driver",
         "cleanup": "network-driver-cleanup:10051@1",
         "io_cleanup": "io-cleanup:10052@1",
@@ -60,7 +60,7 @@
         "expected": "applied"
       },
       {
-        "id": 173,
+        "id": 181,
         "command": "cleanup-network-driver",
         "scenario": "stale adapter generation cannot start cleanup",
         "adapter": "network-stack-adapter:10025@2",
@@ -71,7 +71,7 @@
   },
   "events": [
     {
-      "id": 360,
+      "id": 367,
       "kind": "NetworkDriverCleanupStarted",
       "cleanup": "network-driver-cleanup:10051@1",
       "io_cleanup": "io-cleanup:10052@1",
@@ -83,7 +83,7 @@
       "backend": "virtio-net-backend-object:10010@1"
     },
     {
-      "id": 361,
+      "id": 368,
       "kind": "IoCleanupStarted",
       "cleanup": "io-cleanup:10052@1",
       "driver_store": "store:7@3",
@@ -91,44 +91,50 @@
       "driver_binding": "driver-store-binding:10009@1"
     },
     {
-      "id": 362,
+      "id": 369,
       "kind": "CapabilityRevoked",
       "capability": "capability:28"
     },
     {
-      "id": 363,
+      "id": 370,
       "kind": "CapabilityRevoked",
       "capability": "capability:29"
     },
     {
-      "id": 364,
+      "id": 371,
       "kind": "CapabilityRevoked",
       "capability": "capability:30"
     },
     {
-      "id": 365,
+      "id": 372,
+      "kind": "CapabilityRevoked",
+      "capability": "capability:31"
+    },
+    {
+      "id": 373,
       "kind": "IoCleanupCompleted",
       "cleanup": "io-cleanup:10052@1",
       "cancelled_io_waits": 0,
-      "revoked_device_capabilities": 3,
+      "revoked_device_capabilities": 4,
+      "released_dma_buffers": 1,
       "released_irq_lines": 1
     },
     {
-      "id": 366,
+      "id": 374,
       "kind": "WaitCancelled",
       "wait": "wait-token:10049@1",
       "reason": "device-fault",
       "errno": 5
     },
     {
-      "id": 367,
+      "id": 375,
       "kind": "SocketWaitCancelled",
       "socket_wait": "socket-wait:10050@1",
       "wait": "wait-token:10049@1",
       "reason": "device-fault"
     },
     {
-      "id": 368,
+      "id": 376,
       "kind": "NetworkDriverCleanupCompleted",
       "cleanup": "network-driver-cleanup:10051@1",
       "io_cleanup": "io-cleanup:10052@1",
@@ -149,8 +155,8 @@
         "revoked_packet_capability": "device-capability:10020@1"
       },
       "command": {
-        "applied": "command-result:172:cleanup-network-driver:applied",
-        "rejected": "command-result:173:cleanup-network-driver:rejected",
+        "applied": "command-result:180:cleanup-network-driver:applied",
+        "rejected": "command-result:181:cleanup-network-driver:rejected",
         "violation": "network driver cleanup adapter generation is missing or inactive"
       },
       "contract-validation": {
@@ -195,6 +201,6 @@
       "graph_json_edges_separate_live_history_and_cleanup_modes"
     ],
     "osctl_json_view": "network-driver-cleanup list --json",
-    "target_executor_event_cursor": 370
+    "target_executor_event_cursor": 378
   }
 }

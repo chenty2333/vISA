@@ -1566,6 +1566,39 @@ impl NetworkDriverCleanupRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkGenerationAuditRecord {
+    pub id: NetworkGenerationAuditId,
+    pub adapter: NetworkStackAdapterId,
+    pub adapter_generation: Generation,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub packet_queue: PacketQueueObjectId,
+    pub packet_queue_generation: Generation,
+    pub packet_descriptor: PacketDescriptorObjectId,
+    pub packet_descriptor_generation: Generation,
+    pub packet_buffer: PacketBufferObjectId,
+    pub packet_buffer_generation: Generation,
+    pub dma_buffer: ContractObjectRef,
+    pub device_capability: ContractObjectRef,
+    pub rejected_packet_generation_probes: u32,
+    pub rejected_dma_generation_probes: u32,
+    pub generation: Generation,
+    pub state: NetworkGenerationAuditState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl NetworkGenerationAuditRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::NetworkGenerationAudit,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

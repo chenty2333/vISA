@@ -712,6 +712,10 @@ impl SemanticGraph {
                 .network_driver_cleanups
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::NetworkGenerationAudit => self
+                .network_generation_audits
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

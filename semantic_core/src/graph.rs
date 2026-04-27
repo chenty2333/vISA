@@ -57,6 +57,7 @@ pub struct SemanticGraph {
     socket_waits: Vec<SocketWaitRecord>,
     network_backpressures: Vec<NetworkBackpressureRecord>,
     network_driver_cleanups: Vec<NetworkDriverCleanupRecord>,
+    network_generation_audits: Vec<NetworkGenerationAuditRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -125,6 +126,7 @@ pub struct SemanticGraph {
     next_socket_wait_id: SocketWaitId,
     next_network_backpressure_id: NetworkBackpressureId,
     next_network_driver_cleanup_id: NetworkDriverCleanupId,
+    next_network_generation_audit_id: NetworkGenerationAuditId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -170,6 +172,7 @@ mod mmio_region_object;
 mod network;
 mod network_backpressure;
 mod network_driver_cleanup;
+mod network_generation_audit;
 mod network_rx_interrupt;
 mod network_rx_wait;
 mod network_stack_adapter;
@@ -263,6 +266,7 @@ impl SemanticGraph {
             socket_waits: Vec::new(),
             network_backpressures: Vec::new(),
             network_driver_cleanups: Vec::new(),
+            network_generation_audits: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -331,6 +335,7 @@ impl SemanticGraph {
             next_socket_wait_id: 1,
             next_network_backpressure_id: 1,
             next_network_driver_cleanup_id: 1,
+            next_network_generation_audit_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

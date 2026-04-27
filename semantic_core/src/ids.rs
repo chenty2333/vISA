@@ -48,6 +48,7 @@ pub type SocketOperationId = u64;
 pub type SocketWaitId = u64;
 pub type NetworkBackpressureId = u64;
 pub type NetworkDriverCleanupId = u64;
+pub type NetworkGenerationAuditId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

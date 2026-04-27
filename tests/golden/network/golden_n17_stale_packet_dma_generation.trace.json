@@ -1,0 +1,178 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "N17-stale-packet-dma-generation-tests",
+  "name": "golden_n17_stale_packet_dma_generation",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md"
+  ],
+  "no_goals": [
+    "real virtio datapath",
+    "real smoltcp packet processing",
+    "real DMA/IOMMU/MMIO/IRQ hardware access",
+    "full Linux socket ABI",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "N8 has recorded packet-buffer:10018@1 and packet-descriptor:10019@1 on tx queue packet-queue:10005@1",
+      "N10 has recorded network-stack-adapter:10025@1 bound to packet-device:10002@1",
+      "driver_virtio_net store is store:7@3",
+      "N17 adds semantic DMA fixture dma-buffer-object:10057@1 and device-capability:10058@1 before N16 cleanup"
+    ],
+    "commands": [
+      {
+        "id": 170,
+        "command": "record-queue-object",
+        "queue": "queue-object:10055@1",
+        "expected": "applied"
+      },
+      {
+        "id": 171,
+        "command": "record-descriptor-object",
+        "descriptor": "descriptor-object:10056@1",
+        "expected": "applied"
+      },
+      {
+        "id": 172,
+        "command": "record-dma-buffer-object",
+        "dma_buffer": "dma-buffer-object:10057@1",
+        "expected": "applied"
+      },
+      {
+        "id": 173,
+        "command": "record-device-capability",
+        "device_capability": "device-capability:10058@1",
+        "target": "dma-buffer-object:10057@1",
+        "expected": "applied"
+      },
+      {
+        "id": 174,
+        "command": "record-packet-descriptor-object",
+        "scenario": "stale packet buffer generation cannot create descriptor",
+        "packet_buffer": "packet-buffer:10018@2",
+        "expected": "rejected",
+        "violation": "packet descriptor object buffer generation is missing or inactive"
+      },
+      {
+        "id": 175,
+        "command": "record-network-tx-capability-gate",
+        "scenario": "stale packet descriptor generation cannot pass tx gate",
+        "packet_descriptor": "packet-descriptor:10019@2",
+        "expected": "rejected",
+        "violation": "network tx capability gate descriptor generation is missing or inactive"
+      },
+      {
+        "id": 176,
+        "command": "record-device-capability",
+        "scenario": "stale DMA buffer generation cannot authorize device capability",
+        "target": "dma-buffer-object:10057@2",
+        "expected": "rejected",
+        "violation": "device capability target generation is missing or inactive"
+      },
+      {
+        "id": 177,
+        "command": "record-network-generation-audit",
+        "audit": "network-generation-audit:10062@1",
+        "expected": "applied"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 359,
+      "kind": "QueueObjectRecorded",
+      "queue": "queue-object:10055@1"
+    },
+    {
+      "id": 360,
+      "kind": "DescriptorObjectRecorded",
+      "descriptor": "descriptor-object:10056@1"
+    },
+    {
+      "id": 361,
+      "kind": "DmaBufferObjectRecorded",
+      "dma_buffer": "dma-buffer-object:10057@1"
+    },
+    {
+      "id": 362,
+      "kind": "DeviceCapabilityRecorded",
+      "device_capability": "device-capability:10058@1",
+      "target": "dma-buffer-object:10057@1"
+    },
+    {
+      "id": 363,
+      "kind": "NetworkGenerationAuditRecorded",
+      "audit": "network-generation-audit:10062@1",
+      "packet_descriptor": "packet-descriptor:10019@1",
+      "packet_buffer": "packet-buffer:10018@1",
+      "dma_buffer": "dma-buffer-object:10057@1",
+      "device_capability": "device-capability:10058@1"
+    }
+  ],
+  "expected": {
+    "views": {
+      "network-generation-audit": {
+        "count": 1,
+        "audit": "network-generation-audit:10062@1",
+        "adapter": "network-stack-adapter:10025@1",
+        "packet_device": "packet-device:10002@1",
+        "packet_queue": "packet-queue:10005@1",
+        "packet_descriptor": "packet-descriptor:10019@1",
+        "packet_buffer": "packet-buffer:10018@1",
+        "dma_buffer": "dma-buffer-object:10057@1",
+        "device_capability": "device-capability:10058@1",
+        "rejected_packet_generation_probes": 2,
+        "rejected_dma_generation_probes": 1
+      },
+      "command": {
+        "packet_buffer_rejected": "command-result:174:record-packet-descriptor-object:rejected",
+        "packet_descriptor_rejected": "command-result:175:record-network-tx-capability-gate:rejected",
+        "dma_rejected": "command-result:176:record-device-capability:rejected",
+        "audit_applied": "command-result:177:record-network-generation-audit:applied"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "historical_edges": [
+          "network-generation-audit->network-stack-adapter",
+          "network-generation-audit->packet-device",
+          "network-generation-audit->packet-queue",
+          "network-generation-audit->packet-descriptor",
+          "network-generation-audit->packet-buffer",
+          "network-generation-audit->dma-buffer",
+          "network-generation-audit->device-capability"
+        ],
+        "live_edges": []
+      }
+    },
+    "invariants": [
+      "PacketBufferObject, PacketDescriptorObject, DmaBufferObject, and DeviceCapability references carry exact generations",
+      "stale packet buffer generation rejects descriptor creation before mutation",
+      "stale packet descriptor generation rejects TX capability gate before capability dispatch",
+      "stale DMA buffer generation rejects device capability creation before authority is recorded",
+      "NetworkGenerationAudit is historical evidence only and creates no live ownership edge",
+      "later N16 cleanup may release dma-buffer-object:10057@1 and revoke device-capability:10058@1 without invalidating N17 history"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "network_runtime_n17_records_stale_packet_dma_generation_audit",
+      "network_runtime_n17_rejects_missing_probe_counts_and_stale_audit_refs",
+      "network_runtime_n17_invariants_reject_packet_descriptor_generation_leak",
+      "network_generation_audit_view_v1_exposes_exact_generation_refs",
+      "semantic_roots_reject_network_generation_audit_root_mismatch",
+      "graph_json_edges_separate_live_history_and_cleanup_modes"
+    ],
+    "osctl_json_view": "network-generation-audit list --json",
+    "target_executor_event_cursor": 378
+  }
+}

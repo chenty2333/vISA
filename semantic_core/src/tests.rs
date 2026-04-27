@@ -9031,6 +9031,302 @@ fn smp_runtime_s1_invariants_reject_stale_current_activation_generation() {
     );
 }
 
+fn add_n17_dma_generation_fixture(
+    graph: &mut SemanticGraph,
+) -> (
+    ContractObjectRef,
+    ContractObjectRef,
+    CapabilityHandle,
+    StoreId,
+    Generation,
+) {
+    let binding_record = graph
+        .driver_store_bindings()
+        .iter()
+        .find(|record| record.id == 1552)
+        .cloned()
+        .unwrap();
+    let dma_resource =
+        graph.register_resource(ResourceKind::DmaBuffer, None, "dma:virtio-net2-tx0");
+    let dma_resource_generation = graph.resource_handle(dma_resource).unwrap().generation;
+    assert!(graph.record_queue_object_with_id(
+        1601,
+        "virtio-net2-tx-dma",
+        QueueObjectRole::Tx,
+        1,
+        4,
+        1540,
+        1,
+        "n17 dma queue fixture",
+    ));
+    assert!(graph.record_descriptor_object_with_id(
+        1602,
+        1601,
+        1,
+        0,
+        DescriptorObjectAccess::ReadWrite,
+        2048,
+        "n17 dma descriptor fixture",
+    ));
+    assert!(graph.record_dma_buffer_object_with_id(
+        1603,
+        1602,
+        1,
+        dma_resource,
+        dma_resource_generation,
+        DmaBufferObjectAccess::ReadWrite,
+        2048,
+        "n17 dma buffer fixture",
+    ));
+    let dma_ref = ContractObjectRef::new(ContractObjectKind::DmaBufferObject, 1603, 1);
+    let dma_capability = graph.grant_capability_with_authority_ref(
+        "driver.virtio-net2",
+        "dma.virtio-net2.tx0",
+        AuthorityObjectRef::internal(CapabilityClass::DmaBuffer, dma_ref),
+        &["sync-for-device"],
+        "store",
+        "n17-test",
+        true,
+    );
+    let dma_handle = graph
+        .capabilities()
+        .record(dma_capability)
+        .and_then(|record| record.store_local_handle(vec!["sync-for-device".to_string()]))
+        .unwrap();
+    assert!(graph.record_device_capability_with_id(
+        1604,
+        binding_record.driver_store,
+        binding_record.driver_store_generation,
+        dma_ref,
+        CapabilityClass::DmaBuffer,
+        "sync-for-device",
+        dma_handle.clone(),
+        "n17 dma capability fixture",
+    ));
+    (
+        dma_ref,
+        ContractObjectRef::new(ContractObjectKind::DeviceCapability, 1604, 1),
+        dma_handle,
+        binding_record.driver_store,
+        binding_record.driver_store_generation,
+    )
+}
+
+#[test]
+fn network_runtime_n17_records_stale_packet_dma_generation_audit() {
+    let (mut graph, _, _) = setup_n14_socket_wait_graph();
+    let (dma_ref, dma_capability_ref, dma_handle, driver_store, driver_store_generation) =
+        add_n17_dma_generation_fixture(&mut graph);
+
+    let stale_packet_buffer = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n17-test",
+        SemanticCommand::RecordPacketDescriptorObject {
+            packet_descriptor: 1605,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            packet_buffer: 1543,
+            packet_buffer_generation: 2,
+            slot: 1,
+            length: 64,
+            note: "n17 stale packet buffer generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_packet_buffer.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_packet_buffer.violations,
+        vec!["packet descriptor object buffer generation is missing or inactive".to_string()]
+    );
+
+    let stale_packet_descriptor = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n17-test",
+        SemanticCommand::RecordNetworkTxCapabilityGate {
+            tx_gate: 1606,
+            driver_store,
+            driver_store_generation,
+            packet_descriptor: 1547,
+            packet_descriptor_generation: 2,
+            device_capability: 1570,
+            device_capability_generation: 1,
+            handle: graph
+                .device_capabilities()
+                .iter()
+                .find(|record| record.id == 1570)
+                .and_then(|record| graph.capabilities().record(record.capability))
+                .and_then(|record| record.store_local_handle(vec!["tx".to_string()]))
+                .unwrap(),
+            note: "n17 stale packet descriptor generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_packet_descriptor.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_packet_descriptor.violations,
+        vec!["network tx capability gate descriptor generation is missing or inactive".to_string()]
+    );
+
+    let stale_dma_target = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "n17-test",
+        SemanticCommand::RecordDeviceCapability {
+            device_capability: 1607,
+            driver_store,
+            driver_store_generation,
+            target: ContractObjectRef::new(ContractObjectKind::DmaBufferObject, dma_ref.id, 2),
+            class: CapabilityClass::DmaBuffer,
+            operation: "sync-for-device".to_string(),
+            handle: dma_handle,
+            note: "n17 stale dma buffer generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_dma_target.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_dma_target.violations,
+        vec!["device capability target generation is missing or inactive".to_string()]
+    );
+
+    let audit = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "n17-test",
+        SemanticCommand::RecordNetworkGenerationAudit {
+            audit: 1608,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            packet_descriptor: 1547,
+            packet_descriptor_generation: 1,
+            packet_buffer: 1543,
+            packet_buffer_generation: 1,
+            dma_buffer: dma_ref,
+            device_capability: dma_capability_ref,
+            rejected_packet_generation_probes: 2,
+            rejected_dma_generation_probes: 1,
+            note: "n17 stale packet and dma generation audit".to_string(),
+        },
+    ));
+    assert_eq!(audit.status, CommandStatus::Applied, "{audit:?}");
+    assert_eq!(graph.network_generation_audit_count(), 1);
+    let audit = &graph.network_generation_audits()[0];
+    assert_eq!(
+        audit.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::NetworkGenerationAudit, 1608, 1)
+    );
+    assert_eq!(audit.packet_descriptor_generation, 1);
+    assert_eq!(audit.dma_buffer, dma_ref);
+    assert_eq!(audit.device_capability, dma_capability_ref);
+    assert_eq!(audit.rejected_packet_generation_probes, 2);
+    assert_eq!(audit.rejected_dma_generation_probes, 1);
+    assert!(
+        graph.event_log_tail(1)[0]
+            .kind
+            .summary()
+            .contains("NetworkGenerationAuditRecorded audit=1608")
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn network_runtime_n17_rejects_missing_probe_counts_and_stale_audit_refs() {
+    let (mut graph, _, _) = setup_n14_socket_wait_graph();
+    let (dma_ref, dma_capability_ref, _, _, _) = add_n17_dma_generation_fixture(&mut graph);
+
+    let missing_packet_probe = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n17-test",
+        SemanticCommand::RecordNetworkGenerationAudit {
+            audit: 1608,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            packet_descriptor: 1547,
+            packet_descriptor_generation: 1,
+            packet_buffer: 1543,
+            packet_buffer_generation: 1,
+            dma_buffer: dma_ref,
+            device_capability: dma_capability_ref,
+            rejected_packet_generation_probes: 0,
+            rejected_dma_generation_probes: 1,
+            note: "n17 missing packet probe count".to_string(),
+        },
+    ));
+    assert_eq!(missing_packet_probe.status, CommandStatus::Rejected);
+    assert_eq!(
+        missing_packet_probe.violations,
+        vec!["network generation audit requires rejected packet and dma probes".to_string()]
+    );
+
+    let stale_descriptor = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n17-test",
+        SemanticCommand::RecordNetworkGenerationAudit {
+            audit: 1608,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            packet_descriptor: 1547,
+            packet_descriptor_generation: 2,
+            packet_buffer: 1543,
+            packet_buffer_generation: 1,
+            dma_buffer: dma_ref,
+            device_capability: dma_capability_ref,
+            rejected_packet_generation_probes: 2,
+            rejected_dma_generation_probes: 1,
+            note: "n17 stale descriptor ref".to_string(),
+        },
+    ));
+    assert_eq!(stale_descriptor.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_descriptor.violations,
+        vec![
+            "network generation audit packet descriptor generation is missing or inactive"
+                .to_string()
+        ]
+    );
+}
+
+#[test]
+fn network_runtime_n17_invariants_reject_packet_descriptor_generation_leak() {
+    let (mut graph, _, _) = setup_n14_socket_wait_graph();
+    let (dma_ref, dma_capability_ref, _, _, _) = add_n17_dma_generation_fixture(&mut graph);
+    assert!(graph.record_network_generation_audit_with_id(
+        1608,
+        1575,
+        1,
+        1541,
+        1,
+        1545,
+        1,
+        1547,
+        1,
+        1543,
+        1,
+        dma_ref,
+        dma_capability_ref,
+        2,
+        1,
+        "n17 generation audit",
+    ));
+    graph.corrupt_network_generation_audit_descriptor_generation_for_test(1608, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::NetworkGenerationAuditMissingTarget {
+                audit: 1608,
+                target: ContractObjectRef::new(ContractObjectKind::PacketDescriptorObject, 1547, 2),
+            }
+        )
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

@@ -325,6 +325,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub network_driver_cleanup_count: usize,
     #[serde(default)]
+    pub network_generation_audit_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -501,6 +503,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub network_driver_cleanups: Vec<NetworkDriverCleanupManifest>,
     #[serde(default)]
+    pub network_generation_audits: Vec<NetworkGenerationAuditManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -656,6 +660,8 @@ pub struct SemanticRootSetManifest {
     pub network_backpressure_roots: Vec<String>,
     #[serde(default)]
     pub network_driver_cleanup_roots: Vec<String>,
+    #[serde(default)]
+    pub network_generation_audit_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1943,6 +1949,29 @@ pub struct NetworkDriverCleanupManifest {
     #[serde(default)]
     pub completed_at_event: Option<u64>,
     pub reason: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct NetworkGenerationAuditManifest {
+    pub id: u64,
+    pub adapter: u64,
+    pub adapter_generation: u64,
+    pub packet_device: u64,
+    pub packet_device_generation: u64,
+    pub packet_queue: u64,
+    pub packet_queue_generation: u64,
+    pub packet_descriptor: u64,
+    pub packet_descriptor_generation: u64,
+    pub packet_buffer: u64,
+    pub packet_buffer_generation: u64,
+    pub dma_buffer: ContractObjectRefManifest,
+    pub device_capability: ContractObjectRefManifest,
+    pub rejected_packet_generation_probes: u32,
+    pub rejected_dma_generation_probes: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
     pub note: String,
 }
 

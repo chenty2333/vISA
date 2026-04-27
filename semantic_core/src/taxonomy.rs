@@ -1165,6 +1165,19 @@ impl NetworkDriverCleanupState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkGenerationAuditState {
+    Recorded,
+}
+
+impl NetworkGenerationAuditState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

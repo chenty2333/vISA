@@ -17,18 +17,18 @@ use artifact_manifest::{
     InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkDriverCleanupManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
-    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
-    SmpStressRunManifest, SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
-    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
-    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
-    VirtioNetBackendObjectManifest, WaitRecordManifest,
+    NetworkBackpressureManifest, NetworkDriverCleanupManifest, NetworkGenerationAuditManifest,
+    NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest,
+    NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest, PacketBufferObjectManifest,
+    PacketDescriptorObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
+    SavedContextManifest, SchedulerDecisionManifest, SmpCleanupQuiescenceManifest,
+    SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
+    SmpSnapshotBarrierManifest, SmpStressRunManifest, SocketObjectManifest,
+    SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
+    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
+    TimerInterruptManifest, TrapRecordManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -323,6 +323,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "drop-policy"
         | "network-driver-cleanup"
         | "network-cleanup"
+        | "network-generation-audit"
+        | "generation-audit"
+        | "stale-generation-audit"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -493,7 +496,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -738,6 +741,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "socket-wait" | "socket-wait-token" => "socket-wait",
         "network-backpressure" | "backpressure" | "drop-policy" => "network-backpressure",
         "network-driver-cleanup" | "network-cleanup" => "network-driver-cleanup",
+        "network-generation-audit" | "generation-audit" | "stale-generation-audit" => {
+            "network-generation-audit"
+        }
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3420,6 +3426,76 @@ fn network_driver_cleanup_view_v1(cleanup: &NetworkDriverCleanupManifest) -> ser
     })
 }
 
+fn network_generation_audit_view_v1(audit: &NetworkGenerationAuditManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "network-generation-audit",
+        "id": audit.id,
+        "generation": audit.generation,
+        "state": audit.state,
+        "owner": {
+            "adapter": object_ref_json(
+                "network-stack-adapter",
+                audit.adapter,
+                audit.adapter_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                audit.packet_device,
+                audit.packet_device_generation,
+            ),
+        },
+        "references": {
+            "adapter": object_ref_json(
+                "network-stack-adapter",
+                audit.adapter,
+                audit.adapter_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                audit.packet_device,
+                audit.packet_device_generation,
+            ),
+            "packet_queue": object_ref_json(
+                "packet-queue",
+                audit.packet_queue,
+                audit.packet_queue_generation,
+            ),
+            "packet_descriptor": object_ref_json(
+                "packet-descriptor",
+                audit.packet_descriptor,
+                audit.packet_descriptor_generation,
+            ),
+            "packet_buffer": object_ref_json(
+                "packet-buffer",
+                audit.packet_buffer,
+                audit.packet_buffer_generation,
+            ),
+            "dma_buffer": object_ref_manifest_json(&audit.dma_buffer),
+            "device_capability": object_ref_manifest_json(&audit.device_capability),
+            "event": {
+                "id": audit.recorded_at_event,
+            },
+        },
+        "audit": {
+            "rejected_packet_generation_probes": audit.rejected_packet_generation_probes,
+            "rejected_dma_generation_probes": audit.rejected_dma_generation_probes,
+        },
+        "note": audit.note,
+        "last_transition": {
+            "recorded_at_event": audit.recorded_at_event,
+            "adapter_generation": audit.adapter_generation,
+            "packet_device_generation": audit.packet_device_generation,
+            "packet_queue_generation": audit.packet_queue_generation,
+            "packet_descriptor_generation": audit.packet_descriptor_generation,
+            "packet_buffer_generation": audit.packet_buffer_generation,
+            "dma_buffer_generation": audit.dma_buffer.generation,
+            "device_capability_generation": audit.device_capability.generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -4578,6 +4654,12 @@ fn stable_views_for_kind(
             .network_driver_cleanups
             .iter()
             .map(network_driver_cleanup_view_v1)
+            .collect()),
+        "network-generation-audit" | "generation-audit" | "stale-generation-audit" => Ok(package
+            .semantic
+            .network_generation_audits
+            .iter()
+            .map(network_generation_audit_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -6780,6 +6862,68 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 object_ref_manifest_json(capability),
                 "network-driver-cleanup->revoked-packet-capability",
                 "cleanup-effect",
+                event,
+            ));
+        }
+    }
+    for audit in &package.semantic.network_generation_audits {
+        let from = object_ref_json("network-generation-audit", audit.id, audit.generation);
+        let event = Some(audit.recorded_at_event);
+        for (target, relation) in [
+            (
+                object_ref_json(
+                    "network-stack-adapter",
+                    audit.adapter,
+                    audit.adapter_generation,
+                ),
+                "network-generation-audit->network-stack-adapter",
+            ),
+            (
+                object_ref_json(
+                    "packet-device",
+                    audit.packet_device,
+                    audit.packet_device_generation,
+                ),
+                "network-generation-audit->packet-device",
+            ),
+            (
+                object_ref_json(
+                    "packet-queue",
+                    audit.packet_queue,
+                    audit.packet_queue_generation,
+                ),
+                "network-generation-audit->packet-queue",
+            ),
+            (
+                object_ref_json(
+                    "packet-descriptor",
+                    audit.packet_descriptor,
+                    audit.packet_descriptor_generation,
+                ),
+                "network-generation-audit->packet-descriptor",
+            ),
+            (
+                object_ref_json(
+                    "packet-buffer",
+                    audit.packet_buffer,
+                    audit.packet_buffer_generation,
+                ),
+                "network-generation-audit->packet-buffer",
+            ),
+            (
+                object_ref_manifest_json(&audit.dma_buffer),
+                "network-generation-audit->dma-buffer",
+            ),
+            (
+                object_ref_manifest_json(&audit.device_capability),
+                "network-generation-audit->device-capability",
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                target,
+                relation,
+                "historical",
                 event,
             ));
         }
@@ -9614,6 +9758,9 @@ fn replay_until(
     for cleanup in &package.semantic.roots.network_driver_cleanup_roots {
         println!("replay network-driver-cleanup {cleanup}");
     }
+    for audit in &package.semantic.roots.network_generation_audit_roots {
+        println!("replay network-generation-audit {audit}");
+    }
     Ok(())
 }
 
@@ -9815,6 +9962,10 @@ fn print_replay_json(
     roots.insert(
         "network_driver_cleanups".to_owned(),
         serde_json::json!(package.semantic.roots.network_driver_cleanup_roots.len()),
+    );
+    roots.insert(
+        "network_generation_audits".to_owned(),
+        serde_json::json!(package.semantic.roots.network_generation_audit_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -10131,6 +10282,10 @@ fn print_replay_json(
     roots.insert(
         "network_driver_cleanup_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.network_driver_cleanup_roots),
+    );
+    roots.insert(
+        "network_generation_audit_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.network_generation_audit_roots),
     );
 
     let value = serde_json::json!({
@@ -11340,6 +11495,56 @@ mod tests {
         assert_eq!(view["cleanup"]["reason"], "device-fault");
         assert_eq!(view["cleanup"]["cancelled_socket_wait_count"], 1);
         assert_eq!(view["last_transition"]["completed_at_event"], 89);
+    }
+
+    #[test]
+    fn network_generation_audit_view_v1_exposes_exact_generation_refs() {
+        let view = network_generation_audit_view_v1(&NetworkGenerationAuditManifest {
+            id: 93,
+            adapter: 74,
+            adapter_generation: 5,
+            packet_device: 51,
+            packet_device_generation: 4,
+            packet_queue: 89,
+            packet_queue_generation: 7,
+            packet_descriptor: 90,
+            packet_descriptor_generation: 8,
+            packet_buffer: 91,
+            packet_buffer_generation: 9,
+            dma_buffer: ContractObjectRefManifest {
+                kind: "dma-buffer-object".to_owned(),
+                id: 92,
+                generation: 10,
+            },
+            device_capability: ContractObjectRefManifest {
+                kind: "device-capability".to_owned(),
+                id: 94,
+                generation: 11,
+            },
+            rejected_packet_generation_probes: 2,
+            rejected_dma_generation_probes: 1,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 95,
+            note: "generation audit".to_owned(),
+        });
+        assert_eq!(view["kind"], "network-generation-audit");
+        assert_eq!(view["owner"]["adapter"]["kind"], "network-stack-adapter");
+        assert_eq!(view["owner"]["adapter"]["generation"], 5);
+        assert_eq!(view["references"]["packet_descriptor"]["generation"], 8);
+        assert_eq!(view["references"]["packet_buffer"]["generation"], 9);
+        assert_eq!(
+            view["references"]["dma_buffer"]["kind"],
+            "dma-buffer-object"
+        );
+        assert_eq!(view["references"]["dma_buffer"]["generation"], 10);
+        assert_eq!(
+            view["references"]["device_capability"]["kind"],
+            "device-capability"
+        );
+        assert_eq!(view["audit"]["rejected_packet_generation_probes"], 2);
+        assert_eq!(view["audit"]["rejected_dma_generation_probes"], 1);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 95);
     }
 
     #[test]
@@ -14087,6 +14292,38 @@ mod tests {
                 reason: "device-fault".to_owned(),
                 note: "network driver cleanup graph".to_owned(),
             });
+        package
+            .semantic
+            .network_generation_audits
+            .push(NetworkGenerationAuditManifest {
+                id: 101,
+                adapter: 93,
+                adapter_generation: 1,
+                packet_device: 81,
+                packet_device_generation: 1,
+                packet_queue: 89,
+                packet_queue_generation: 1,
+                packet_descriptor: 88,
+                packet_descriptor_generation: 1,
+                packet_buffer: 87,
+                packet_buffer_generation: 1,
+                dma_buffer: ContractObjectRefManifest {
+                    kind: "dma-buffer-object".to_owned(),
+                    id: 50,
+                    generation: 1,
+                },
+                device_capability: ContractObjectRefManifest {
+                    kind: "device-capability".to_owned(),
+                    id: 42,
+                    generation: 1,
+                },
+                rejected_packet_generation_probes: 2,
+                rejected_dma_generation_probes: 1,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 35,
+                note: "network generation audit graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -14184,6 +14421,11 @@ mod tests {
                 .iter()
                 .any(|edge| edge["from"]["kind"] == "network-driver-cleanup")
         );
+        assert!(
+            !live
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "network-generation-audit")
+        );
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
@@ -14249,6 +14491,21 @@ mod tests {
         assert!(history.iter().any(|edge| edge["mode"] == "cleanup-effect"
             && edge["relation"] == "network-driver-cleanup->revoked-packet-capability"
             && edge["from"]["kind"] == "network-driver-cleanup"
+            && edge["to"]["kind"] == "device-capability"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-generation-audit->packet-descriptor"
+            && edge["from"]["kind"] == "network-generation-audit"
+            && edge["to"]["kind"] == "packet-descriptor"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-generation-audit->dma-buffer"
+            && edge["from"]["kind"] == "network-generation-audit"
+            && edge["to"]["kind"] == "dma-buffer-object"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-generation-audit->device-capability"
+            && edge["from"]["kind"] == "network-generation-audit"
             && edge["to"]["kind"] == "device-capability"
             && edge["to"]["generation"] == 1));
         assert!(history.iter().any(|edge| edge["mode"] == "historical"

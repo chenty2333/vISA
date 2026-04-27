@@ -22,16 +22,16 @@ use artifact_manifest::{
     IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
     MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
     MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkDriverCleanupManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
-    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
-    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    NetworkBackpressureManifest, NetworkDriverCleanupManifest, NetworkGenerationAuditManifest,
+    NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest,
+    NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest, PacketBufferObjectManifest,
+    PacketDescriptorObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
+    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, SocketObjectManifest,
     SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
@@ -84,7 +84,8 @@ use target_abi::{
 };
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
-const SEMANTIC_EVIDENCE_CAPABILITY_SOURCES: &[&str] = &["i7-device-capability"];
+const SEMANTIC_EVIDENCE_CAPABILITY_SOURCES: &[&str] =
+    &["i7-device-capability", "n17-dma-generation-capability"];
 
 #[derive(Clone, Debug, Default)]
 struct TargetExecutorV1Report {
@@ -181,6 +182,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n13_evidence(&mut semantic)?;
     record_network_runtime_n14_evidence(&mut semantic)?;
     record_network_runtime_n15_evidence(&mut semantic)?;
+    record_network_runtime_n17_evidence(&mut semantic)?;
     record_network_runtime_n16_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
@@ -1477,7 +1479,7 @@ fn record_network_runtime_n16_evidence(semantic: &mut SemanticGraph) -> Result<(
     let connected_endpoint = ContractObjectRef::new(ContractObjectKind::EndpointObject, 10_032, 1);
     let commands = [
         CommandEnvelope::new(
-            170,
+            178,
             "target-executor-n16",
             SemanticCommand::CreateWait {
                 wait: 10_049,
@@ -1493,7 +1495,7 @@ fn record_network_runtime_n16_evidence(semantic: &mut SemanticGraph) -> Result<(
             },
         ),
         CommandEnvelope::new(
-            171,
+            179,
             "target-executor-n16",
             SemanticCommand::RecordSocketWait {
                 socket_wait: 10_050,
@@ -1507,7 +1509,7 @@ fn record_network_runtime_n16_evidence(semantic: &mut SemanticGraph) -> Result<(
             },
         ),
         CommandEnvelope::new(
-            172,
+            180,
             "target-executor-n16",
             SemanticCommand::CleanupNetworkDriver {
                 cleanup: 10_051,
@@ -1541,7 +1543,7 @@ fn record_network_runtime_n16_evidence(semantic: &mut SemanticGraph) -> Result<(
     }
 
     let stale_cleanup = semantic.apply_envelope(CommandEnvelope::new(
-        173,
+        181,
         "target-executor-n16",
         SemanticCommand::CleanupNetworkDriver {
             cleanup: 10_053,
@@ -1567,6 +1569,248 @@ fn record_network_runtime_n16_evidence(semantic: &mut SemanticGraph) -> Result<(
             stale_cleanup.command,
             stale_cleanup.status.as_str(),
             stale_cleanup.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+fn record_network_runtime_n17_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let virtio_driver_store = semantic
+        .store_id("driver_virtio_net")
+        .ok_or("driver_virtio_net store is missing for n17 evidence")?;
+    let virtio_driver_store_generation = semantic
+        .store_handle(virtio_driver_store)
+        .map(|handle| handle.generation)
+        .ok_or("driver_virtio_net store handle is missing for n17 evidence")?;
+
+    let dma_resource = semantic.register_resource(
+        ResourceKind::DmaBuffer,
+        None,
+        "dma:virtio-net0-tx-stale-probe",
+    );
+    let dma_resource_generation = semantic
+        .resource_handle(dma_resource)
+        .map(|handle| handle.generation)
+        .ok_or("n17 dma resource handle is missing")?;
+    let dma_ref = ContractObjectRef::new(ContractObjectKind::DmaBufferObject, 10_057, 1);
+    let dma_capability = semantic.grant_capability_with_authority_ref(
+        "driver_virtio_net",
+        "dma.virtio-net0.tx-stale-probe",
+        AuthorityObjectRef::internal(CapabilityClass::DmaBuffer, dma_ref),
+        &["sync-for-device"],
+        "store",
+        "n17-dma-generation-capability",
+        true,
+    );
+    let dma_handle = semantic
+        .capabilities()
+        .record(dma_capability)
+        .and_then(|record| record.store_local_handle(vec!["sync-for-device".to_owned()]))
+        .ok_or("n17 dma capability handle is missing")?;
+
+    let setup_commands = [
+        CommandEnvelope::new(
+            170,
+            "target-executor-n17",
+            SemanticCommand::RecordQueueObject {
+                queue: 10_055,
+                name: "virtio-net0-tx-dma".to_owned(),
+                role: QueueObjectRole::Tx,
+                queue_index: 1,
+                depth: 4,
+                device: 10_001,
+                device_generation: 1,
+                note: "n17-record-dma-queue-fixture".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            171,
+            "target-executor-n17",
+            SemanticCommand::RecordDescriptorObject {
+                descriptor: 10_056,
+                queue: 10_055,
+                queue_generation: 1,
+                slot: 0,
+                access: DescriptorObjectAccess::ReadWrite,
+                length: 2048,
+                note: "n17-record-dma-descriptor-fixture".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            172,
+            "target-executor-n17",
+            SemanticCommand::RecordDmaBufferObject {
+                dma_buffer: 10_057,
+                descriptor: 10_056,
+                descriptor_generation: 1,
+                resource: dma_resource,
+                resource_generation: dma_resource_generation,
+                access: DmaBufferObjectAccess::ReadWrite,
+                length: 2048,
+                note: "n17-record-dma-buffer-fixture".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            173,
+            "target-executor-n17",
+            SemanticCommand::RecordDeviceCapability {
+                device_capability: 10_058,
+                driver_store: virtio_driver_store,
+                driver_store_generation: virtio_driver_store_generation,
+                target: dma_ref,
+                class: CapabilityClass::DmaBuffer,
+                operation: "sync-for-device".to_owned(),
+                handle: dma_handle.clone(),
+                note: "n17-record-dma-capability-fixture".to_owned(),
+            },
+        ),
+    ];
+    for command in setup_commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "network runtime n17 setup command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+
+    let stale_packet_buffer = semantic.apply_envelope(CommandEnvelope::new(
+        174,
+        "target-executor-n17",
+        SemanticCommand::RecordPacketDescriptorObject {
+            packet_descriptor: 10_059,
+            packet_queue: 10_005,
+            packet_queue_generation: 1,
+            packet_buffer: 10_018,
+            packet_buffer_generation: 2,
+            slot: 1,
+            length: 52,
+            note: "n17-reject-stale-packet-buffer-generation".to_owned(),
+        },
+    ));
+    if stale_packet_buffer.status != CommandStatus::Rejected
+        || !stale_packet_buffer
+            .violations
+            .iter()
+            .any(|violation| violation.contains("buffer generation"))
+    {
+        return Err(format!(
+            "network runtime n17 stale packet buffer command {} ({}) was not rejected: status={} violations={:?}",
+            stale_packet_buffer.command_id,
+            stale_packet_buffer.command,
+            stale_packet_buffer.status.as_str(),
+            stale_packet_buffer.violations
+        )
+        .into());
+    }
+
+    let stale_packet_descriptor = semantic.apply_envelope(CommandEnvelope::new(
+        175,
+        "target-executor-n17",
+        SemanticCommand::RecordNetworkTxCapabilityGate {
+            tx_gate: 10_060,
+            driver_store: virtio_driver_store,
+            driver_store_generation: virtio_driver_store_generation,
+            packet_descriptor: 10_019,
+            packet_descriptor_generation: 2,
+            device_capability: 10_020,
+            device_capability_generation: 1,
+            handle: semantic
+                .device_capabilities()
+                .iter()
+                .find(|record| record.id == 10_020)
+                .and_then(|record| semantic.capabilities().record(record.capability))
+                .and_then(|record| record.store_local_handle(vec!["tx".to_owned()]))
+                .ok_or("n17 packet tx capability handle is missing")?,
+            note: "n17-reject-stale-packet-descriptor-generation".to_owned(),
+        },
+    ));
+    if stale_packet_descriptor.status != CommandStatus::Rejected
+        || !stale_packet_descriptor
+            .violations
+            .iter()
+            .any(|violation| violation.contains("descriptor generation"))
+    {
+        return Err(format!(
+            "network runtime n17 stale packet descriptor command {} ({}) was not rejected: status={} violations={:?}",
+            stale_packet_descriptor.command_id,
+            stale_packet_descriptor.command,
+            stale_packet_descriptor.status.as_str(),
+            stale_packet_descriptor.violations
+        )
+        .into());
+    }
+
+    let stale_dma_target = semantic.apply_envelope(CommandEnvelope::new(
+        176,
+        "target-executor-n17",
+        SemanticCommand::RecordDeviceCapability {
+            device_capability: 10_061,
+            driver_store: virtio_driver_store,
+            driver_store_generation: virtio_driver_store_generation,
+            target: ContractObjectRef::new(ContractObjectKind::DmaBufferObject, 10_057, 2),
+            class: CapabilityClass::DmaBuffer,
+            operation: "sync-for-device".to_owned(),
+            handle: dma_handle,
+            note: "n17-reject-stale-dma-buffer-generation".to_owned(),
+        },
+    ));
+    if stale_dma_target.status != CommandStatus::Rejected
+        || !stale_dma_target
+            .violations
+            .iter()
+            .any(|violation| violation.contains("target generation"))
+    {
+        return Err(format!(
+            "network runtime n17 stale dma command {} ({}) was not rejected: status={} violations={:?}",
+            stale_dma_target.command_id,
+            stale_dma_target.command,
+            stale_dma_target.status.as_str(),
+            stale_dma_target.violations
+        )
+        .into());
+    }
+
+    let audit = semantic.apply_envelope(CommandEnvelope::new(
+        177,
+        "target-executor-n17",
+        SemanticCommand::RecordNetworkGenerationAudit {
+            audit: 10_062,
+            adapter: 10_025,
+            adapter_generation: 1,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            packet_queue: 10_005,
+            packet_queue_generation: 1,
+            packet_descriptor: 10_019,
+            packet_descriptor_generation: 1,
+            packet_buffer: 10_018,
+            packet_buffer_generation: 1,
+            dma_buffer: dma_ref,
+            device_capability: ContractObjectRef::new(
+                ContractObjectKind::DeviceCapability,
+                10_058,
+                1,
+            ),
+            rejected_packet_generation_probes: 2,
+            rejected_dma_generation_probes: 1,
+            note: "n17-record-stale-packet-dma-generation-audit".to_owned(),
+        },
+    ));
+    if audit.status != CommandStatus::Applied {
+        return Err(format!(
+            "network runtime n17 audit command {} ({}) failed: status={} violations={:?}",
+            audit.command_id,
+            audit.command,
+            audit.status.as_str(),
+            audit.violations
         )
         .into());
     }
@@ -3960,6 +4204,7 @@ fn demo_migration_package(
             socket_wait_count: semantic.socket_wait_count(),
             network_backpressure_count: semantic.network_backpressure_count(),
             network_driver_cleanup_count: semantic.network_driver_cleanup_count(),
+            network_generation_audit_count: semantic.network_generation_audit_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -4241,6 +4486,11 @@ fn demo_migration_package(
                 .network_driver_cleanups()
                 .iter()
                 .map(network_driver_cleanup_manifest)
+                .collect(),
+            network_generation_audits: semantic
+                .network_generation_audits()
+                .iter()
+                .map(network_generation_audit_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -5418,6 +5668,36 @@ fn semantic_roots(
                     cleanup.generation,
                     cleanup.cancelled_socket_waits.len(),
                     cleanup.revoked_packet_capabilities.len()
+                )
+            })
+            .collect(),
+        network_generation_audit_roots: semantic
+            .network_generation_audits()
+            .iter()
+            .map(|audit| {
+                format!(
+                    "network-generation-audit id={} adapter={}@{} packet_device={}@{} packet_queue={}@{} packet_descriptor={}@{} packet_buffer={}@{} dma_buffer={}:{}@{} device_capability={}:{}@{} rejected_packet_generation_probes={} rejected_dma_generation_probes={} state={} generation={}",
+                    audit.id,
+                    audit.adapter,
+                    audit.adapter_generation,
+                    audit.packet_device,
+                    audit.packet_device_generation,
+                    audit.packet_queue,
+                    audit.packet_queue_generation,
+                    audit.packet_descriptor,
+                    audit.packet_descriptor_generation,
+                    audit.packet_buffer,
+                    audit.packet_buffer_generation,
+                    audit.dma_buffer.kind.as_str(),
+                    audit.dma_buffer.id,
+                    audit.dma_buffer.generation,
+                    audit.device_capability.kind.as_str(),
+                    audit.device_capability.id,
+                    audit.device_capability.generation,
+                    audit.rejected_packet_generation_probes,
+                    audit.rejected_dma_generation_probes,
+                    audit.state.as_str(),
+                    audit.generation
                 )
             })
             .collect(),
@@ -7302,6 +7582,32 @@ fn network_driver_cleanup_manifest(
         completed_at_event: cleanup.completed_at_event,
         reason: cleanup.reason.clone(),
         note: cleanup.note.clone(),
+    }
+}
+
+fn network_generation_audit_manifest(
+    audit: &semantic_core::NetworkGenerationAuditRecord,
+) -> NetworkGenerationAuditManifest {
+    NetworkGenerationAuditManifest {
+        id: audit.id,
+        adapter: audit.adapter,
+        adapter_generation: audit.adapter_generation,
+        packet_device: audit.packet_device,
+        packet_device_generation: audit.packet_device_generation,
+        packet_queue: audit.packet_queue,
+        packet_queue_generation: audit.packet_queue_generation,
+        packet_descriptor: audit.packet_descriptor,
+        packet_descriptor_generation: audit.packet_descriptor_generation,
+        packet_buffer: audit.packet_buffer,
+        packet_buffer_generation: audit.packet_buffer_generation,
+        dma_buffer: contract_object_ref_manifest(audit.dma_buffer),
+        device_capability: contract_object_ref_manifest(audit.device_capability),
+        rejected_packet_generation_probes: audit.rejected_packet_generation_probes,
+        rejected_dma_generation_probes: audit.rejected_dma_generation_probes,
+        generation: audit.generation,
+        state: audit.state.as_str().to_owned(),
+        recorded_at_event: audit.recorded_at_event,
+        note: audit.note.clone(),
     }
 }
 
