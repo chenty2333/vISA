@@ -9,14 +9,15 @@ use artifact_manifest::{
     ActivationCleanupManifest, ActivationContextManifest, ActivationMigrationManifest,
     ActivationRecordManifest, ActivationResumeManifest, ActivationWaitManifest,
     ArtifactBundleManifest, BlockDeviceObjectManifest, BlockRangeObjectManifest,
-    BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
-    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest,
-    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
-    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
-    EndpointObjectManifest, FakeNetBackendObjectManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    BlockRequestObjectManifest, BoundaryValidationReportManifest, CapabilityRecordManifest,
+    CleanupTransactionManifest, CodeObjectManifest, CommandResultManifest,
+    ContractObjectRefManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
+    DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
+    DriverStoreBindingManifest, EndpointObjectManifest, FakeNetBackendObjectManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -342,6 +343,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-range"
         | "block-range-object"
         | "sector-range"
+        | "block-request"
+        | "block-request-object"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -512,7 +515,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -765,6 +768,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "network-recovery-benchmark" | "network-recovery" => "network-recovery-benchmark",
         "block-device" | "block-device-object" | "block" => "block-device",
         "block-range" | "block-range-object" | "sector-range" => "block-range",
+        "block-request" | "block-request-object" => "block-request",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2492,6 +2496,50 @@ fn block_range_object_view_v1(block_range: &BlockRangeObjectManifest) -> serde_j
         "last_transition": {
             "recorded_at_event": block_range.recorded_at_event,
             "block_device_generation": block_range.block_device_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn block_request_object_view_v1(request: &BlockRequestObjectManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "block-request",
+        "id": request.id,
+        "generation": request.generation,
+        "state": request.state,
+        "owner": {
+            "block_device": object_ref_json(
+                "block-device",
+                request.block_device,
+                request.block_device_generation,
+            ),
+        },
+        "references": {
+            "block_device": object_ref_json(
+                "block-device",
+                request.block_device,
+                request.block_device_generation,
+            ),
+            "block_range": object_ref_json(
+                "block-range",
+                request.block_range,
+                request.block_range_generation,
+            ),
+            "event": {
+                "id": request.recorded_at_event,
+            },
+        },
+        "request": {
+            "operation": request.operation,
+            "sequence": request.sequence,
+            "byte_len": request.byte_len,
+        },
+        "note": request.note,
+        "last_transition": {
+            "recorded_at_event": request.recorded_at_event,
+            "block_device_generation": request.block_device_generation,
+            "block_range_generation": request.block_range_generation,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -5093,6 +5141,12 @@ fn stable_views_for_kind(
             .iter()
             .map(block_range_object_view_v1)
             .collect()),
+        "block-request" | "block-request-object" => Ok(package
+            .semantic
+            .block_request_objects
+            .iter()
+            .map(block_request_object_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -6378,6 +6432,33 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "block-range->block-device",
             "live",
             Some(block_range.recorded_at_event),
+        ));
+    }
+    for request in &package.semantic.block_request_objects {
+        if request.state != "submitted" {
+            continue;
+        }
+        edges.push(graph_edge(
+            object_ref_json("block-request", request.id, request.generation),
+            object_ref_json(
+                "block-device",
+                request.block_device,
+                request.block_device_generation,
+            ),
+            "block-request->block-device",
+            "live",
+            Some(request.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            object_ref_json("block-request", request.id, request.generation),
+            object_ref_json(
+                "block-range",
+                request.block_range,
+                request.block_range_generation,
+            ),
+            "block-request->block-range",
+            "live",
+            Some(request.recorded_at_event),
         ));
     }
     for packet_buffer in &package.semantic.packet_buffer_objects {
@@ -10478,6 +10559,9 @@ fn replay_until(
     for block_range in &package.semantic.roots.block_range_object_roots {
         println!("replay block-range {block_range}");
     }
+    for request in &package.semantic.roots.block_request_object_roots {
+        println!("replay block-request {request}");
+    }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
     }
@@ -10769,6 +10853,10 @@ fn print_replay_json(
     roots.insert(
         "block_ranges".to_owned(),
         serde_json::json!(package.semantic.roots.block_range_object_roots.len()),
+    );
+    roots.insert(
+        "block_requests".to_owned(),
+        serde_json::json!(package.semantic.roots.block_request_object_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -11109,6 +11197,10 @@ fn print_replay_json(
     roots.insert(
         "block_range_object_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.block_range_object_roots),
+    );
+    roots.insert(
+        "block_request_object_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.block_request_object_roots),
     );
 
     let value = serde_json::json!({
@@ -12579,6 +12671,32 @@ mod tests {
         assert_eq!(view["byte_range"]["byte_offset"], 32768);
         assert_eq!(view["byte_range"]["byte_len"], 4096);
         assert_eq!(view["last_transition"]["recorded_at_event"], 105);
+    }
+
+    #[test]
+    fn block_request_view_v1_exposes_range_and_operation_contract() {
+        let view = block_request_object_view_v1(&BlockRequestObjectManifest {
+            id: 106,
+            block_device: 104,
+            block_device_generation: 1,
+            block_range: 105,
+            block_range_generation: 1,
+            operation: "read".to_owned(),
+            sequence: 1,
+            byte_len: 4096,
+            generation: 1,
+            state: "submitted".to_owned(),
+            recorded_at_event: 106,
+            note: "block request".to_owned(),
+        });
+        assert_eq!(view["kind"], "block-request");
+        assert_eq!(view["owner"]["block_device"]["kind"], "block-device");
+        assert_eq!(view["references"]["block_range"]["kind"], "block-range");
+        assert_eq!(view["references"]["block_range"]["generation"], 1);
+        assert_eq!(view["request"]["operation"], "read");
+        assert_eq!(view["request"]["sequence"], 1);
+        assert_eq!(view["request"]["byte_len"], 4096);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 106);
     }
 
     #[test]
@@ -15500,6 +15618,23 @@ mod tests {
                 recorded_at_event: 40,
                 note: "block range graph".to_owned(),
             });
+        package
+            .semantic
+            .block_request_objects
+            .push(BlockRequestObjectManifest {
+                id: 107,
+                block_device: 105,
+                block_device_generation: 1,
+                block_range: 106,
+                block_range_generation: 1,
+                operation: "read".to_owned(),
+                sequence: 1,
+                byte_len: 4096,
+                generation: 1,
+                state: "submitted".to_owned(),
+                recorded_at_event: 41,
+                note: "block request graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -15524,6 +15659,10 @@ mod tests {
             && edge["relation"] == "block-range->block-device"
             && edge["from"]["kind"] == "block-range"
             && edge["to"]["kind"] == "block-device"));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "block-request->block-range"
+            && edge["from"]["kind"] == "block-request"
+            && edge["to"]["kind"] == "block-range"));
         assert!(live.iter().any(|edge| edge["mode"] == "live"
             && edge["relation"] == "fake-net-backend->packet-device"
             && edge["from"]["kind"] == "fake-net-backend"

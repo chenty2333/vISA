@@ -736,6 +736,10 @@ impl SemanticGraph {
                 .block_range_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::BlockRequestObject => self
+                .block_request_objects
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

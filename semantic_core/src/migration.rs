@@ -1476,6 +1476,25 @@ pub enum SemanticInvariantError {
     BlockRangeObjectMissingEvent {
         block_range: BlockRangeObjectId,
     },
+    BlockRequestObjectInvalid {
+        block_request: BlockRequestObjectId,
+    },
+    BlockRequestObjectMissingDevice {
+        block_request: BlockRequestObjectId,
+        block_device: BlockDeviceObjectId,
+    },
+    BlockRequestObjectMissingRange {
+        block_request: BlockRequestObjectId,
+        block_range: BlockRangeObjectId,
+    },
+    BlockRequestObjectDuplicateSequence {
+        block_request: BlockRequestObjectId,
+        block_device: BlockDeviceObjectId,
+        sequence: u64,
+    },
+    BlockRequestObjectMissingEvent {
+        block_request: BlockRequestObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

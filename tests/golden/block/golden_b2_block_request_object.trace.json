@@ -1,0 +1,129 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "B2-block-request-object",
+  "name": "golden_b2_block_request_object",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md"
+  ],
+  "no_goals": [
+    "real block IO",
+    "real virtio-blk backend",
+    "request queue scheduling",
+    "DMA-backed block buffer",
+    "block completion object",
+    "filesystem adapters",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "B0 recorded BlockDeviceObject 20002@1",
+      "B1 recorded BlockRangeObject 20005@1 over BlockDeviceObject 20002@1",
+      "B2 records a submitted read request over that range without performing real IO"
+    ],
+    "commands": [
+      {
+        "id": 203,
+        "command": "record-block-request-object",
+        "block_request": "block-request:20009@1",
+        "block_device": "block-device:20002@1",
+        "block_range": "block-range:20005@1",
+        "operation": "read",
+        "sequence": 1,
+        "byte_len": 4096,
+        "expected": "applied"
+      },
+      {
+        "id": 204,
+        "command": "record-block-request-object",
+        "block_request": "block-request:20010@1",
+        "block_range": "block-range:20005@2",
+        "expected": "rejected",
+        "violation": "block request object block range generation is missing or inactive"
+      },
+      {
+        "id": 205,
+        "command": "record-block-request-object",
+        "block_request": "block-request:20011@1",
+        "block_device": "block-device:20003@1",
+        "expected": "rejected",
+        "violation": "block request object block device generation is missing or inactive"
+      },
+      {
+        "id": 206,
+        "command": "record-block-request-object",
+        "block_request": "block-request:20012@1",
+        "sequence": 1,
+        "expected": "rejected",
+        "violation": "block request object sequence already exists for block device generation"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 385,
+      "kind": "BlockRequestObjectRecorded",
+      "block_request": "block-request:20009@1",
+      "block_device": "block-device:20002@1",
+      "block_range": "block-range:20005@1",
+      "operation": "read",
+      "sequence": 1,
+      "byte_len": 4096
+    }
+  ],
+  "expected": {
+    "views": {
+      "block-request": {
+        "count": 1,
+        "block_request": "block-request:20009@1",
+        "block_device": "block-device:20002@1",
+        "block_range": "block-range:20005@1",
+        "operation": "read",
+        "sequence": 1,
+        "byte_len": 4096
+      },
+      "command": {
+        "block_request_applied": "command-result:203:record-block-request-object:applied",
+        "stale_range_rejected": "command-result:204:record-block-request-object:rejected",
+        "missing_device_rejected": "command-result:205:record-block-request-object:rejected",
+        "duplicate_sequence_rejected": "command-result:206:record-block-request-object:rejected"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "live_edges": [
+          "block-request->block-device",
+          "block-request->block-range"
+        ],
+        "historical_edges": []
+      }
+    },
+    "invariants": [
+      "BlockRequestObject references exact BlockDeviceObject generation",
+      "BlockRequestObject references exact BlockRangeObject generation",
+      "BlockRangeObject must belong to the same block device generation",
+      "byte_len is inherited from the referenced block range",
+      "submitted request sequence must be unique for the block device generation",
+      "write requests are rejected when the block device is read-only"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "block_runtime_b2_block_request_records_range_identity",
+      "block_runtime_b2_rejects_stale_duplicate_and_read_only_write",
+      "block_runtime_b2_invariants_reject_block_request_generation_leak",
+      "block_request_view_v1_exposes_range_and_operation_contract",
+      "semantic_roots_reject_block_request_object_root_mismatch",
+      "graph_json_edges_separate_live_history_and_cleanup_modes"
+    ],
+    "osctl_json_view": "block-request list --json",
+    "target_executor_event_cursor": 387
+  }
+}

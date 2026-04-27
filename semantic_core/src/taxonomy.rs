@@ -820,6 +820,38 @@ impl BlockRangeObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockRequestOperation {
+    Read,
+    Write,
+}
+
+impl BlockRequestOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockRequestObjectState {
+    Submitted,
+    Cancelled,
+    Completed,
+}
+
+impl BlockRequestObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Submitted => "submitted",
+            Self::Cancelled => "cancelled",
+            Self::Completed => "completed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PacketBufferDirection {
     Rx,
     Tx,

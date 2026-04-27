@@ -9,21 +9,22 @@ use artifact_manifest::{
     ActivationCleanupManifest, ActivationCleanupStepManifest, ActivationContextManifest,
     ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
-    BlockDeviceObjectManifest, BlockRangeObjectManifest, BoundaryValidationReportManifest,
-    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
-    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
-    ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
-    DriverStoreBindingManifest, EndpointObjectManifest, FakeNetBackendObjectManifest,
-    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
-    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
-    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    BlockDeviceObjectManifest, BlockRangeObjectManifest, BlockRequestObjectManifest,
+    BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
+    CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
+    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
+    CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
+    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
+    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, FakeNetBackendObjectManifest, GuestStateManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
     NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
     PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
@@ -50,15 +51,15 @@ use contract_core::{
 use net_stack_adapter::{SmoltcpAdapterConfig, build_smoltcp_adapter_evidence};
 use runtime::{HostValidationSmokeTrace, RuntimeOnlyExecutor};
 use semantic_core::{
-    ActivationEntry, ArtifactRegistry, ArtifactVerificationState, AuthorityObjectRef, BoundaryKind,
-    BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass,
-    CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
-    CodePublisher, CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot,
-    ContractObjectKind, ContractObjectRef, ContractViolation, DescriptorObjectAccess,
-    DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact,
-    ExternalObjectDeclaration, FrontendKind, HartState, HostcallCategory, HostcallFrame,
-    HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind, IrqLinePolarity,
-    IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
+    ActivationEntry, ArtifactRegistry, ArtifactVerificationState, AuthorityObjectRef,
+    BlockRequestOperation, BoundaryKind, BoundaryStatus, BoundaryValidationReport,
+    BoundaryValidationViolation, CapabilityClass, CapabilityHandleArg, CapabilityLedger,
+    CapabilityRecord, CodeObject, CodePublishState, CodePublisher, CommandEnvelope, CommandResult,
+    CommandStatus, ContractGraphSnapshot, ContractObjectKind, ContractObjectRef, ContractViolation,
+    DescriptorObjectAccess, DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord,
+    ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HartState, HostcallCategory,
+    HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind,
+    IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
     MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
     NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
     PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
@@ -192,6 +193,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n20_evidence(&mut semantic)?;
     record_block_runtime_b0_evidence(&mut semantic)?;
     record_block_runtime_b1_evidence(&mut semantic)?;
+    record_block_runtime_b2_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -2483,6 +2485,125 @@ fn record_block_runtime_b1_evidence(semantic: &mut SemanticGraph) -> Result<(), 
             over_transfer.command,
             over_transfer.status.as_str(),
             over_transfer.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+fn record_block_runtime_b2_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let request = semantic.apply_envelope(CommandEnvelope::new(
+        203,
+        "target-executor-b2",
+        SemanticCommand::RecordBlockRequestObject {
+            block_request: 20_009,
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_range: 20_005,
+            block_range_generation: 1,
+            operation: BlockRequestOperation::Read,
+            sequence: 1,
+            note: "b2-record-read-request-over-sector-range".to_owned(),
+        },
+    ));
+    if request.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b2 request command {} ({}) failed: status={} violations={:?}",
+            request.command_id,
+            request.command,
+            request.status.as_str(),
+            request.violations
+        )
+        .into());
+    }
+
+    let stale_range = semantic.apply_envelope(CommandEnvelope::new(
+        204,
+        "target-executor-b2",
+        SemanticCommand::RecordBlockRequestObject {
+            block_request: 20_010,
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_range: 20_005,
+            block_range_generation: 2,
+            operation: BlockRequestOperation::Read,
+            sequence: 2,
+            note: "b2-reject-stale-range-generation".to_owned(),
+        },
+    ));
+    if stale_range.status != CommandStatus::Rejected
+        || !stale_range
+            .violations
+            .iter()
+            .any(|violation| violation.contains("block range generation"))
+    {
+        return Err(format!(
+            "block runtime b2 stale range command {} ({}) was not rejected: status={} violations={:?}",
+            stale_range.command_id,
+            stale_range.command,
+            stale_range.status.as_str(),
+            stale_range.violations
+        )
+        .into());
+    }
+
+    let mismatched_device = semantic.apply_envelope(CommandEnvelope::new(
+        205,
+        "target-executor-b2",
+        SemanticCommand::RecordBlockRequestObject {
+            block_request: 20_011,
+            block_device: 20_003,
+            block_device_generation: 1,
+            block_range: 20_005,
+            block_range_generation: 1,
+            operation: BlockRequestOperation::Read,
+            sequence: 3,
+            note: "b2-reject-request-device-mismatch".to_owned(),
+        },
+    ));
+    if mismatched_device.status != CommandStatus::Rejected
+        || !mismatched_device
+            .violations
+            .iter()
+            .any(|violation| violation.contains("block device generation"))
+    {
+        return Err(format!(
+            "block runtime b2 mismatched device command {} ({}) was not rejected: status={} violations={:?}",
+            mismatched_device.command_id,
+            mismatched_device.command,
+            mismatched_device.status.as_str(),
+            mismatched_device.violations
+        )
+        .into());
+    }
+
+    let duplicate_sequence = semantic.apply_envelope(CommandEnvelope::new(
+        206,
+        "target-executor-b2",
+        SemanticCommand::RecordBlockRequestObject {
+            block_request: 20_012,
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_range: 20_005,
+            block_range_generation: 1,
+            operation: BlockRequestOperation::Read,
+            sequence: 1,
+            note: "b2-reject-duplicate-request-sequence".to_owned(),
+        },
+    ));
+    if duplicate_sequence.status != CommandStatus::Rejected
+        || !duplicate_sequence
+            .violations
+            .iter()
+            .any(|violation| violation.contains("sequence already exists"))
+    {
+        return Err(format!(
+            "block runtime b2 duplicate sequence command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate_sequence.command_id,
+            duplicate_sequence.command,
+            duplicate_sequence.status.as_str(),
+            duplicate_sequence.violations
         )
         .into());
     }
@@ -4882,6 +5003,7 @@ fn demo_migration_package(
             network_recovery_benchmark_count: semantic.network_recovery_benchmark_count(),
             block_device_object_count: semantic.block_device_object_count(),
             block_range_object_count: semantic.block_range_object_count(),
+            block_request_object_count: semantic.block_request_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -5193,6 +5315,11 @@ fn demo_migration_package(
                 .block_range_objects()
                 .iter()
                 .map(block_range_object_manifest)
+                .collect(),
+            block_request_objects: semantic
+                .block_request_objects()
+                .iter()
+                .map(block_request_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -6544,6 +6671,25 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        block_request_object_roots: semantic
+            .block_request_objects()
+            .iter()
+            .map(|request| {
+                format!(
+                    "block-request-object id={} block_device={}@{} block_range={}@{} operation={} sequence={} byte_len={} state={} generation={}",
+                    request.id,
+                    request.block_device,
+                    request.block_device_generation,
+                    request.block_range,
+                    request.block_range_generation,
+                    request.operation.as_str(),
+                    request.sequence,
+                    request.byte_len,
+                    request.state.as_str(),
+                    request.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -7711,6 +7857,25 @@ fn block_range_object_manifest(
         state: block_range.state.as_str().to_owned(),
         recorded_at_event: block_range.recorded_at_event,
         note: block_range.note.clone(),
+    }
+}
+
+fn block_request_object_manifest(
+    request: &semantic_core::BlockRequestObjectRecord,
+) -> BlockRequestObjectManifest {
+    BlockRequestObjectManifest {
+        id: request.id,
+        block_device: request.block_device,
+        block_device_generation: request.block_device_generation,
+        block_range: request.block_range,
+        block_range_generation: request.block_range_generation,
+        operation: request.operation.as_str().to_owned(),
+        sequence: request.sequence,
+        byte_len: request.byte_len,
+        generation: request.generation,
+        state: request.state.as_str().to_owned(),
+        recorded_at_event: request.recorded_at_event,
+        note: request.note.clone(),
     }
 }
 

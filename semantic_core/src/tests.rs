@@ -10439,6 +10439,211 @@ fn block_runtime_b1_invariants_reject_block_range_generation_leak() {
 }
 
 #[test]
+fn block_runtime_b2_block_request_records_range_identity() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1721,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b2 backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1722,
+        "blk0",
+        1721,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b2 block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1723, 1722, 1, 64, 8, "b2 range",));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b2-test",
+        SemanticCommand::RecordBlockRequestObject {
+            block_request: 1724,
+            block_device: 1722,
+            block_device_generation: 1,
+            block_range: 1723,
+            block_range_generation: 1,
+            operation: BlockRequestOperation::Read,
+            sequence: 1,
+            note: "b2 request".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.block_request_object_count(), 1);
+    let request = &graph.block_request_objects()[0];
+    assert_eq!(
+        request.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BlockRequestObject, 1724, 1)
+    );
+    assert_eq!(request.block_device, 1722);
+    assert_eq!(request.block_device_generation, 1);
+    assert_eq!(request.block_range, 1723);
+    assert_eq!(request.block_range_generation, 1);
+    assert_eq!(request.operation, BlockRequestOperation::Read);
+    assert_eq!(request.sequence, 1);
+    assert_eq!(request.byte_len, 4096);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BlockRequestObjectRecorded block_request=1724 block_device=1722@1 block_range=1723@1 operation=read sequence=1 byte_len=4096 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b2_rejects_stale_duplicate_and_read_only_write() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1725,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b2 backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1726,
+        "blk0",
+        1725,
+        1,
+        512,
+        4096,
+        true,
+        128,
+        "b2 read-only block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1727, 1726, 1, 64, 8, "b2 range",));
+    assert!(graph.record_block_request_object_with_id(
+        1728,
+        1726,
+        1,
+        1727,
+        1,
+        BlockRequestOperation::Read,
+        1,
+        "b2 existing read",
+    ));
+
+    let stale_range = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b2-test",
+        SemanticCommand::RecordBlockRequestObject {
+            block_request: 1729,
+            block_device: 1726,
+            block_device_generation: 1,
+            block_range: 1727,
+            block_range_generation: 2,
+            operation: BlockRequestOperation::Read,
+            sequence: 2,
+            note: "b2 stale range".to_string(),
+        },
+    ));
+    assert_eq!(stale_range.status, CommandStatus::Rejected);
+
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b2-test",
+        SemanticCommand::RecordBlockRequestObject {
+            block_request: 1730,
+            block_device: 1726,
+            block_device_generation: 1,
+            block_range: 1727,
+            block_range_generation: 1,
+            operation: BlockRequestOperation::Read,
+            sequence: 1,
+            note: "b2 duplicate sequence".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+
+    let write_read_only = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b2-test",
+        SemanticCommand::RecordBlockRequestObject {
+            block_request: 1731,
+            block_device: 1726,
+            block_device_generation: 1,
+            block_range: 1727,
+            block_range_generation: 1,
+            operation: BlockRequestOperation::Write,
+            sequence: 3,
+            note: "b2 write read-only".to_string(),
+        },
+    ));
+    assert_eq!(write_read_only.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn block_runtime_b2_invariants_reject_block_request_generation_leak() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1732,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b2 invariant backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1733,
+        "blk0",
+        1732,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b2 invariant block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1734, 1733, 1, 64, 8, "b2 invariant range",));
+    assert!(graph.record_block_request_object_with_id(
+        1735,
+        1733,
+        1,
+        1734,
+        1,
+        BlockRequestOperation::Read,
+        1,
+        "b2 invariant request",
+    ));
+    graph.corrupt_block_request_range_generation_for_test(1735, 2);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::BlockRequestObjectMissingRange {
+            block_request: 1735,
+            block_range: 1734,
+        })
+    );
+}
+
+#[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();
     let hart_generation = register_idle_test_hart(&mut graph);

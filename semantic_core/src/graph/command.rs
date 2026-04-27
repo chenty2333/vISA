@@ -626,6 +626,16 @@ pub enum SemanticCommand {
         sector_count: u64,
         note: String,
     },
+    RecordBlockRequestObject {
+        block_request: BlockRequestObjectId,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        block_range: BlockRangeObjectId,
+        block_range_generation: Generation,
+        operation: BlockRequestOperation,
+        sequence: u64,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -1021,6 +1031,7 @@ impl SemanticCommand {
             Self::RecordNetworkRecoveryBenchmark { .. } => "record-network-recovery-benchmark",
             Self::RecordBlockDeviceObject { .. } => "record-block-device-object",
             Self::RecordBlockRangeObject { .. } => "record-block-range-object",
+            Self::RecordBlockRequestObject { .. } => "record-block-request-object",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -2948,6 +2959,27 @@ impl SemanticGraph {
                     *block_device_generation,
                     *start_sector,
                     *sector_count,
+                )
+                .map(|_| ())
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordBlockRequestObject {
+                block_request,
+                block_device,
+                block_device_generation,
+                block_range,
+                block_range_generation,
+                operation,
+                sequence,
+                ..
+            } => self
+                .validate_block_request_object(
+                    *block_request,
+                    *block_device,
+                    *block_device_generation,
+                    *block_range,
+                    *block_range_generation,
+                    *operation,
+                    *sequence,
                 )
                 .map(|_| ())
                 .map_err(CommandError::precondition),
@@ -4927,6 +4959,25 @@ impl SemanticGraph {
                 block_device_generation,
                 start_sector,
                 sector_count,
+                &note,
+            ),
+            SemanticCommand::RecordBlockRequestObject {
+                block_request,
+                block_device,
+                block_device_generation,
+                block_range,
+                block_range_generation,
+                operation,
+                sequence,
+                note,
+            } => self.record_block_request_object_with_id(
+                block_request,
+                block_device,
+                block_device_generation,
+                block_range,
+                block_range_generation,
+                operation,
+                sequence,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

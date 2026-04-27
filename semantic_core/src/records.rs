@@ -1669,6 +1669,32 @@ impl BlockRangeObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockRequestObjectRecord {
+    pub id: BlockRequestObjectId,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub block_range: BlockRangeObjectId,
+    pub block_range_generation: Generation,
+    pub operation: BlockRequestOperation,
+    pub sequence: u64,
+    pub byte_len: u64,
+    pub generation: Generation,
+    pub state: BlockRequestObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl BlockRequestObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::BlockRequestObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

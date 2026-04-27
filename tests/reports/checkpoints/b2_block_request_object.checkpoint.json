@@ -1,0 +1,184 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "B2-block-request-object",
+  "phase": "Phase 5 Block / Disk Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add BlockRequestObject as a stable semantic object owned by semantic_core",
+    "Bind BlockRequestObject to exact-generation BlockDeviceObject and BlockRangeObject refs",
+    "Derive request byte_len from the referenced BlockRangeObject",
+    "Expose block request roots/counts through semantic package, osctl ViewV1, graph live edges, replay roots, and roots JSON",
+    "Reject stale range generations, missing block devices, duplicate submitted request sequences, and writes to read-only block devices before mutation",
+    "Keep B2 as semantic contract evidence only, without real IO, request queueing, DMA buffers, block completions, or filesystem adapters"
+  ],
+  "no_goals": [
+    "real block IO",
+    "real virtio-blk backend",
+    "request queue scheduling",
+    "DMA-backed block buffer",
+    "block completion object",
+    "filesystem adapters",
+    "target-side cwasm execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/block_request_object.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/block/golden_b2_block_request_object.trace.json",
+    "tests/reports/checkpoints/b2_block_request_object.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/block/golden_b2_block_request_object.trace.json",
+    "tests/reports/checkpoints/b2_block_request_object.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "BlockRequestObject uses exact block device and block range generation refs and a dedicated ObjectKind",
+      "BlockRequestObject validation rejects stale range generations, missing devices, duplicate sequences, and read-only writes before mutation",
+      "byte_len is derived from BlockRangeObject evidence and checked by invariants",
+      "Root/count validation covers block_request_objects so package tampering is rejected",
+      "osctl graph and stable ViewV1 expose block request evidence without dumping internal structs"
+    ],
+    "bad_smells_checked": [
+      "No fatfs, ext4, virtio-blk, request queue backend, or adapter internals were introduced into semantic_core",
+      "No debug label or global object id is used as authority for block request evidence",
+      "The new graph module is domain-scoped and does not expand generic block range code",
+      "Target executor evidence remains a host-side semantic harness and does not run real block IO"
+    ],
+    "residual_notes": [
+      "B3 still needs BlockCompletionObject to close request outcome evidence",
+      "B4/B9/B10 still need wait integration, request queueing, and DMA-backed block buffers"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core block_runtime_b2",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core block_request_object",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl block_request",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl block-request list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 203",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 204",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 205",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 206",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --live --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/block/golden_b2_block_request_object.trace.json",
+    "osctl_views": [
+      "osctl block-request list --json <migration.json>",
+      "osctl command show --json <migration.json> 203",
+      "osctl command show --json <migration.json> 204",
+      "osctl command show --json <migration.json> 205",
+      "osctl command show --json <migration.json> 206",
+      "osctl graph --live --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "block_request_object_roots",
+      "block_range_object_roots",
+      "block_device_object_roots",
+      "command_result_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 387,
+      "block_device_object_count": 1,
+      "block_range_object_count": 1,
+      "block_request_object_count": 1,
+      "block_request": "block-request:20009@1",
+      "block_range": "block-range:20005@1",
+      "block_device": "block-device:20002@1",
+      "recorded_event": 385,
+      "block_request_applied_command": "command-result:203:record-block-request-object:applied",
+      "stale_range_rejected_command": "command-result:204:record-block-request-object:rejected",
+      "missing_device_rejected_command": "command-result:205:record-block-request-object:rejected",
+      "duplicate_sequence_rejected_command": "command-result:206:record-block-request-object:rejected"
+    }
+  },
+  "residual_gaps": [
+    "B3 still needs BlockCompletionObject to close request outcome evidence",
+    "B4/B9/B10 still need wait integration, request queueing, and DMA-backed block buffers"
+  ],
+  "next_checkpoint": "B3-block-completion-object"
+}
