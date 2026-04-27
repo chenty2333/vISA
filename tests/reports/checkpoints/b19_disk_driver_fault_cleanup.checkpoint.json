@@ -1,0 +1,218 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "B19-disk-driver-fault-cleanup",
+  "phase": "Phase 5 Block / Disk Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add BlockDriverCleanup as stable semantic evidence for disk driver fault cleanup",
+    "Record BlockDriverCleanup through SemanticCommand::CleanupBlockDriver",
+    "Bind IoCleanup, Store, Device, DriverStoreBinding, BlockDevice, VirtioBlkBackend, BlockWait, WaitToken, DeviceCapability, and DmaBufferObject with exact generations",
+    "Reject stale BlockDevice generations before mutation",
+    "Cancel pending BlockWait and WaitToken objects with DeviceFault while reusing shared IoCleanup for capability and DMA release",
+    "Retire VirtioBlkBackendObject after completed cleanup",
+    "Expose BlockDriverCleanup roots/counts through semantic package, osctl ViewV1, graph, replay roots, inspect JSON, direct list JSON, and command evidence"
+  ],
+  "no_goals": [
+    "real virtio-blk MMIO/DMA/IRQ execution",
+    "real filesystem adapter cleanup",
+    "pending IO retry/EIO policy",
+    "full block scheduler",
+    "adapter-local disk state as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/block_driver_cleanup.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/graph/virtio_blk_backend_object.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/block/golden_b19_disk_driver_fault_cleanup.trace.json",
+    "tests/reports/checkpoints/b19_disk_driver_fault_cleanup.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/block/golden_b19_disk_driver_fault_cleanup.trace.json",
+    "tests/reports/checkpoints/b19_disk_driver_fault_cleanup.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "BlockDriverCleanup uses exact ObjectRef-style generations for all cleanup owners and effects",
+      "The B19 test harness derives Store generation from the StoreRecord instead of hard-coding Store@1",
+      "CleanupBlockDriver command preflight rejects stale BlockDevice generations before any mutation",
+      "Completed disk driver cleanup cancels pending BlockWait and WaitToken evidence instead of hiding scheduler sleep",
+      "VirtioBlkBackendObject is explicitly retired after cleanup and invariants reject a live backend bound to a released driver binding",
+      "VirtioBlkBackendObject release coverage now requires matching BlockDriverCleanup evidence, not only generic IoCleanup evidence",
+      "osctl exposes BlockDriverCleanup through stable ViewV1, graph evidence, replay roots, inspect JSON, direct list JSON, and command evidence",
+      "Root/count validation covers block_driver_cleanups so package tampering is rejected"
+    ],
+    "residual_notes": [
+      "B19 does not implement real virtio-blk MMIO/DMA/IRQ execution",
+      "B20 still owns pending IO cancel/retry/EIO policy",
+      "B21 still owns stale block request generation audit tests beyond the cleanup-specific stale BlockDevice rejection",
+      "The disk driver cleanup path reuses the existing driver_virtio_net Store as the prototype block driver store until a dedicated virtio-blk service split is introduced"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p semantic_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p contract_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core block_driver_cleanup -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core block_runtime_b19 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl block_driver_cleanup -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl block-driver-cleanup list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect block-driver-cleanup --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 304",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 305",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl replay --until 460 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/block/golden_b19_disk_driver_fault_cleanup.trace.json",
+    "osctl_views": [
+      "osctl block-driver-cleanup list --json <migration.json>",
+      "osctl inspect block-driver-cleanup --json <migration.json>",
+      "osctl command show --json <migration.json> 304",
+      "osctl command show --json <migration.json> 305",
+      "osctl graph --history --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "block_driver_cleanup_roots",
+      "io_cleanup_roots",
+      "block_wait_roots",
+      "wait_roots",
+      "device_capability_roots",
+      "dma_buffer_object_roots",
+      "virtio_blk_backend_object_roots",
+      "command_result_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 460,
+      "block_driver_cleanup_count": 1,
+      "block_driver_cleanup": "block-driver-cleanup:20107@1",
+      "io_cleanup": "io-cleanup:20108@1",
+      "driver_store": "store:7@3",
+      "device": "device-object:20030@1",
+      "driver_binding": "driver-store-binding:20033@1",
+      "block_device": "block-device-object:20031@1",
+      "backend": "virtio-blk-backend-object:20034@1",
+      "cancelled_block_wait": "block-wait:20103@1",
+      "cancelled_wait_token": "wait-token:20102@1",
+      "released_dma_buffer": "dma-buffer-object:20106@1",
+      "revoked_device_capability": "device-capability:20032@1",
+      "started_event": 452,
+      "completed_event": 458,
+      "stale_block_device_generation_rejected_command": "command-result:304:cleanup-block-driver:rejected",
+      "disk_driver_cleanup_applied_command": "command-result:305:cleanup-block-driver:applied",
+      "block_driver_cleanup_history_edges": 10
+    }
+  },
+  "residual_gaps": [
+    "B20 still needs pending IO cancel/retry/EIO policy",
+    "B21 still needs stale block request generation tests",
+    "B22/B23 still need disk benchmark and recovery benchmark evidence"
+  ],
+  "next_checkpoint": "B20-pending-io-cancel-retry-eio-policy"
+}

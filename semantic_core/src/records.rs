@@ -2259,6 +2259,42 @@ impl FsWaitRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockDriverCleanupRecord {
+    pub id: BlockDriverCleanupId,
+    pub io_cleanup: IoCleanupId,
+    pub io_cleanup_generation: Generation,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub driver_binding: DriverStoreBindingId,
+    pub driver_binding_generation: Generation,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub backend: ContractObjectRef,
+    pub cancelled_block_waits: Vec<ContractObjectRef>,
+    pub cancelled_wait_tokens: Vec<ContractObjectRef>,
+    pub revoked_device_capabilities: Vec<ContractObjectRef>,
+    pub released_dma_buffers: Vec<ContractObjectRef>,
+    pub generation: Generation,
+    pub state: BlockDriverCleanupState,
+    pub started_at_event: EventId,
+    pub completed_at_event: Option<EventId>,
+    pub reason: String,
+    pub note: String,
+}
+
+impl BlockDriverCleanupRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::BlockDriverCleanup,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

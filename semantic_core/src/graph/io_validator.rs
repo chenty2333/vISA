@@ -804,6 +804,10 @@ impl SemanticGraph {
                 .fs_waits
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::BlockDriverCleanup => self
+                .block_driver_cleanups
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

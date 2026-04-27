@@ -80,6 +80,7 @@ pub struct SemanticGraph {
     ext4_adapter_objects: Vec<Ext4AdapterObjectRecord>,
     file_handle_capabilities: Vec<FileHandleCapabilityRecord>,
     fs_waits: Vec<FsWaitRecord>,
+    block_driver_cleanups: Vec<BlockDriverCleanupRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -171,6 +172,7 @@ pub struct SemanticGraph {
     next_ext4_adapter_object_id: Ext4AdapterObjectId,
     next_file_handle_capability_id: FileHandleCapabilityId,
     next_fs_wait_id: FsWaitId,
+    next_block_driver_cleanup_id: BlockDriverCleanupId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -191,6 +193,7 @@ mod authority;
 mod block_completion_object;
 mod block_device_object;
 mod block_dma_buffer;
+mod block_driver_cleanup;
 mod block_page_object;
 mod block_range_object;
 mod block_read_path;
@@ -355,6 +358,7 @@ impl SemanticGraph {
             ext4_adapter_objects: Vec::new(),
             file_handle_capabilities: Vec::new(),
             fs_waits: Vec::new(),
+            block_driver_cleanups: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -446,6 +450,7 @@ impl SemanticGraph {
             next_ext4_adapter_object_id: 1,
             next_file_handle_capability_id: 1,
             next_fs_wait_id: 1,
+            next_block_driver_cleanup_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

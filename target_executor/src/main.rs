@@ -10,30 +10,31 @@ use artifact_manifest::{
     ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
     BlockCompletionObjectManifest, BlockDeviceObjectManifest, BlockDmaBufferManifest,
-    BlockPageObjectManifest, BlockRangeObjectManifest, BlockReadPathManifest,
-    BlockRequestObjectManifest, BlockRequestQueueEntryManifest, BlockRequestQueueManifest,
-    BlockWaitManifest, BlockWritePathManifest, BoundaryValidationReportManifest,
-    BoundaryValidationViolationManifest, BufferCacheObjectManifest, CapabilityHandleArgManifest,
-    CapabilityRecordManifest, CleanupEffectManifest, CleanupStepManifest,
-    CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest, CommandResultManifest,
-    ContractObjectRefManifest, ContractViolationManifest, CrossHartSchedulerDecisionManifest,
-    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
-    DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
-    EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
-    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
-    FileObjectManifest, FsWaitManifest, GuestStateManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    BlockDriverCleanupManifest, BlockPageObjectManifest, BlockRangeObjectManifest,
+    BlockReadPathManifest, BlockRequestObjectManifest, BlockRequestQueueEntryManifest,
+    BlockRequestQueueManifest, BlockWaitManifest, BlockWritePathManifest,
+    BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
+    BufferCacheObjectManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
+    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
+    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
+    ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
+    DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
+    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
+    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest, FsWaitManifest,
+    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
+    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
+    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -231,6 +232,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b16_evidence(&mut semantic)?;
     record_block_runtime_b17_evidence(&mut semantic)?;
     record_block_runtime_b18_evidence(&mut semantic)?;
+    record_block_runtime_b19_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -5622,6 +5624,254 @@ fn record_block_runtime_b18_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_block_runtime_b19_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let driver_store = semantic
+        .store_id("driver_virtio_net")
+        .ok_or("block runtime b19 driver store is missing")?;
+    let driver_store_generation = semantic
+        .store_handle(driver_store)
+        .map(|handle| handle.generation)
+        .ok_or("block runtime b19 driver store generation is missing")?;
+
+    let range = semantic.apply_envelope(CommandEnvelope::new(
+        297,
+        "target-executor-b19",
+        SemanticCommand::RecordBlockRangeObject {
+            block_range: 20_100,
+            block_device: 20_031,
+            block_device_generation: 1,
+            start_sector: 8,
+            sector_count: 8,
+            note: "b19-record-cleanup-target-range".to_owned(),
+        },
+    ));
+    if range.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b19 range command {} ({}) failed: status={} violations={:?}",
+            range.command_id,
+            range.command,
+            range.status.as_str(),
+            range.violations
+        )
+        .into());
+    }
+
+    let request = semantic.apply_envelope(CommandEnvelope::new(
+        298,
+        "target-executor-b19",
+        SemanticCommand::RecordBlockRequestObject {
+            block_request: 20_101,
+            block_device: 20_031,
+            block_device_generation: 1,
+            block_range: 20_100,
+            block_range_generation: 1,
+            operation: BlockRequestOperation::Read,
+            sequence: 1,
+            note: "b19-record-pending-cleanup-request".to_owned(),
+        },
+    ));
+    if request.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b19 request command {} ({}) failed: status={} violations={:?}",
+            request.command_id,
+            request.command,
+            request.status.as_str(),
+            request.violations
+        )
+        .into());
+    }
+
+    let request_ref = ContractObjectRef::new(ContractObjectKind::BlockRequestObject, 20_101, 1);
+    let create_wait = semantic.apply_envelope(CommandEnvelope::new(
+        299,
+        "target-executor-b19",
+        SemanticCommand::CreateWait {
+            wait: 20_102,
+            owner_task: None,
+            owner_store: Some(driver_store),
+            owner_store_generation: Some(driver_store_generation),
+            kind: SemanticWaitKind::DriverCompletion,
+            generation: 1,
+            blockers: vec![request_ref],
+            deadline: None,
+            restart_policy: RestartPolicy::InternalOnly,
+            saved_context: Some("b19-block-driver-cleanup-pending-request".to_owned()),
+        },
+    ));
+    if create_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b19 create wait command {} ({}) failed: status={} violations={:?}",
+            create_wait.command_id,
+            create_wait.command,
+            create_wait.status.as_str(),
+            create_wait.violations
+        )
+        .into());
+    }
+
+    let block_wait = semantic.apply_envelope(CommandEnvelope::new(
+        300,
+        "target-executor-b19",
+        SemanticCommand::RecordBlockWait {
+            block_wait: 20_103,
+            wait: 20_102,
+            wait_generation: 1,
+            block_request: 20_101,
+            block_request_generation: 1,
+            note: "b19-record-cleanup-cancellable-block-wait".to_owned(),
+        },
+    ));
+    if block_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b19 block wait command {} ({}) failed: status={} violations={:?}",
+            block_wait.command_id,
+            block_wait.command,
+            block_wait.status.as_str(),
+            block_wait.violations
+        )
+        .into());
+    }
+
+    let dma_resource =
+        semantic.register_resource(ResourceKind::DmaBuffer, None, "dma:virtio-blk0-b19");
+    let dma_resource_generation = semantic
+        .resource_handle(dma_resource)
+        .map(|handle| handle.generation)
+        .ok_or("b19 dma resource handle is missing")?;
+
+    let commands = [
+        CommandEnvelope::new(
+            301,
+            "target-executor-b19",
+            SemanticCommand::RecordQueueObject {
+                queue: 20_104,
+                name: "virtio-blk0-b19-submit".to_owned(),
+                role: QueueObjectRole::Submission,
+                queue_index: 2,
+                depth: 16,
+                device: 20_030,
+                device_generation: 1,
+                note: "b19-record-cleanup-dma-queue".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            302,
+            "target-executor-b19",
+            SemanticCommand::RecordDescriptorObject {
+                descriptor: 20_105,
+                queue: 20_104,
+                queue_generation: 1,
+                slot: 0,
+                access: DescriptorObjectAccess::ReadWrite,
+                length: 4096,
+                note: "b19-record-cleanup-dma-descriptor".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            303,
+            "target-executor-b19",
+            SemanticCommand::RecordDmaBufferObject {
+                dma_buffer: 20_106,
+                descriptor: 20_105,
+                descriptor_generation: 1,
+                resource: dma_resource,
+                resource_generation: dma_resource_generation,
+                access: DmaBufferObjectAccess::ReadWrite,
+                length: 4096,
+                note: "b19-record-cleanup-owned-dma-buffer".to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "block runtime b19 setup command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+
+    let stale_cleanup = semantic.apply_envelope(CommandEnvelope::new(
+        304,
+        "target-executor-b19",
+        SemanticCommand::CleanupBlockDriver {
+            cleanup: 20_109,
+            io_cleanup: 20_110,
+            block_device: 20_031,
+            block_device_generation: 2,
+            backend: ContractObjectRef::new(ContractObjectKind::VirtioBlkBackendObject, 20_034, 1),
+            reason: "virtio-blk-device-fault".to_owned(),
+            note: "b19-reject-stale-block-device-generation".to_owned(),
+        },
+    ));
+    if stale_cleanup.status != CommandStatus::Rejected
+        || !stale_cleanup
+            .violations
+            .iter()
+            .any(|violation| violation.contains("block device generation"))
+    {
+        return Err(format!(
+            "block runtime b19 stale cleanup command {} ({}) was not rejected: status={} violations={:?}",
+            stale_cleanup.command_id,
+            stale_cleanup.command,
+            stale_cleanup.status.as_str(),
+            stale_cleanup.violations
+        )
+        .into());
+    }
+
+    let cleanup = semantic.apply_envelope(CommandEnvelope::new(
+        305,
+        "target-executor-b19",
+        SemanticCommand::CleanupBlockDriver {
+            cleanup: 20_107,
+            io_cleanup: 20_108,
+            block_device: 20_031,
+            block_device_generation: 1,
+            backend: ContractObjectRef::new(ContractObjectKind::VirtioBlkBackendObject, 20_034, 1),
+            reason: "virtio-blk-device-fault".to_owned(),
+            note: "b19-cleanup-disk-driver-fault".to_owned(),
+        },
+    ));
+    if cleanup.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b19 cleanup command {} ({}) failed: status={} violations={:?}",
+            cleanup.command_id,
+            cleanup.command,
+            cleanup.status.as_str(),
+            cleanup.violations
+        )
+        .into());
+    }
+
+    let record = semantic
+        .block_driver_cleanups()
+        .iter()
+        .find(|record| record.id == 20_107 && record.generation == 1)
+        .ok_or("block runtime b19 cleanup record is missing")?;
+    if record.cancelled_block_waits.len() != 1
+        || record.cancelled_wait_tokens.len() != 1
+        || record.released_dma_buffers.len() != 1
+        || record.revoked_device_capabilities.is_empty()
+    {
+        return Err(format!(
+            "block runtime b19 cleanup effects are incomplete: block_waits={} wait_tokens={} dma_buffers={} device_caps={}",
+            record.cancelled_block_waits.len(),
+            record.cancelled_wait_tokens.len(),
+            record.released_dma_buffers.len(),
+            record.revoked_device_capabilities.len()
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -8031,6 +8281,7 @@ fn demo_migration_package(
             ext4_adapter_object_count: semantic.ext4_adapter_object_count(),
             file_handle_capability_count: semantic.file_handle_capability_count(),
             fs_wait_count: semantic.fs_wait_count(),
+            block_driver_cleanup_count: semantic.block_driver_cleanup_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -8424,6 +8675,11 @@ fn demo_migration_package(
                 .map(file_handle_capability_manifest)
                 .collect(),
             fs_waits: semantic.fs_waits().iter().map(fs_wait_manifest).collect(),
+            block_driver_cleanups: semantic
+                .block_driver_cleanups()
+                .iter()
+                .map(block_driver_cleanup_manifest)
+                .collect(),
             activation_resumes: semantic
                 .activation_resumes()
                 .iter()
@@ -10218,6 +10474,34 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        block_driver_cleanup_roots: semantic
+            .block_driver_cleanups()
+            .iter()
+            .map(|cleanup| {
+                format!(
+                    "block-driver-cleanup id={} io_cleanup={}@{} driver_store={}@{} device={}@{} binding={}@{} block_device={}@{} backend={}:{}@{} state={} generation={} cancelled_block_waits={} released_dma_buffers={} revoked_device_capabilities={}",
+                    cleanup.id,
+                    cleanup.io_cleanup,
+                    cleanup.io_cleanup_generation,
+                    cleanup.driver_store,
+                    cleanup.driver_store_generation,
+                    cleanup.device,
+                    cleanup.device_generation,
+                    cleanup.driver_binding,
+                    cleanup.driver_binding_generation,
+                    cleanup.block_device,
+                    cleanup.block_device_generation,
+                    cleanup.backend.kind.as_str(),
+                    cleanup.backend.id,
+                    cleanup.backend.generation,
+                    cleanup.state.as_str(),
+                    cleanup.generation,
+                    cleanup.cancelled_block_waits.len(),
+                    cleanup.released_dma_buffers.len(),
+                    cleanup.revoked_device_capabilities.len()
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -11850,6 +12134,55 @@ fn fs_wait_manifest(wait: &semantic_core::FsWaitRecord) -> FsWaitManifest {
         completed_at_event: wait.completed_at_event,
         cancel_reason: wait.cancel_reason.map(|reason| reason.as_str().to_owned()),
         note: wait.note.clone(),
+    }
+}
+
+fn block_driver_cleanup_manifest(
+    cleanup: &semantic_core::BlockDriverCleanupRecord,
+) -> BlockDriverCleanupManifest {
+    BlockDriverCleanupManifest {
+        id: cleanup.id,
+        io_cleanup: cleanup.io_cleanup,
+        io_cleanup_generation: cleanup.io_cleanup_generation,
+        driver_store: cleanup.driver_store,
+        driver_store_generation: cleanup.driver_store_generation,
+        device: cleanup.device,
+        device_generation: cleanup.device_generation,
+        driver_binding: cleanup.driver_binding,
+        driver_binding_generation: cleanup.driver_binding_generation,
+        block_device: cleanup.block_device,
+        block_device_generation: cleanup.block_device_generation,
+        backend: contract_object_ref_manifest(cleanup.backend),
+        cancelled_block_waits: cleanup
+            .cancelled_block_waits
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        cancelled_wait_tokens: cleanup
+            .cancelled_wait_tokens
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        revoked_device_capabilities: cleanup
+            .revoked_device_capabilities
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        released_dma_buffers: cleanup
+            .released_dma_buffers
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        generation: cleanup.generation,
+        state: cleanup.state.as_str().to_owned(),
+        started_at_event: cleanup.started_at_event,
+        completed_at_event: cleanup.completed_at_event,
+        reason: cleanup.reason.clone(),
+        note: cleanup.note.clone(),
     }
 }
 

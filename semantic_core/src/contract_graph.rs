@@ -1454,6 +1454,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::Ext4AdapterObject
             | ContractObjectKind::FileHandleCapability
             | ContractObjectKind::FsWait
+            | ContractObjectKind::BlockDriverCleanup
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

@@ -14909,6 +14909,220 @@ fn block_runtime_b18_invariants_reject_file_handle_generation_leak() {
     );
 }
 
+fn setup_b19_block_driver_cleanup_graph() -> SemanticGraph {
+    let (mut graph, binding) = setup_b6_virtio_blk_backend_graph();
+    assert_eq!(
+        graph
+            .apply_envelope(CommandEnvelope::new(
+                1,
+                "b19-setup",
+                SemanticCommand::RecordVirtioBlkBackendObject {
+                    virtio_blk_backend: 1880,
+                    name: "virtio-blk0-cleanup-backend".to_string(),
+                    block_device: 1791,
+                    block_device_generation: 1,
+                    driver_binding: binding,
+                    driver_binding_generation: 1,
+                    provider: "substrate_virtio".to_string(),
+                    profile: "virtio-blk-backend-skeleton-v1".to_string(),
+                    model: "virtio-blk".to_string(),
+                    sector_size: 512,
+                    sector_count: 4096,
+                    read_only: false,
+                    max_transfer_sectors: 128,
+                    device_features: 64,
+                    driver_features: 64,
+                    negotiated_features: 64,
+                    request_queue_index: 0,
+                    queue_size: 8,
+                    irq_vector: 6,
+                    note: "b19 cleanup backend".to_string(),
+                },
+            ))
+            .status,
+        CommandStatus::Applied
+    );
+    assert!(graph.record_block_range_object_with_id(1881, 1791, 1, 8, 8, "b19 cleanup range",));
+    assert!(graph.record_block_request_object_with_id(
+        1882,
+        1791,
+        1,
+        1881,
+        1,
+        BlockRequestOperation::Read,
+        1,
+        "b19 pending request",
+    ));
+    let store = graph.store_id("driver.virtio-blk0").unwrap();
+    let store_generation = graph.store_handle(store).unwrap().generation;
+    let blocker = ContractObjectRef::new(ContractObjectKind::BlockRequestObject, 1882, 1);
+    graph.record_wait_created_with_details(
+        1883,
+        None,
+        Some(store),
+        Some(store_generation),
+        SemanticWaitKind::DriverCompletion,
+        1,
+        vec![blocker],
+        None,
+        RestartPolicy::InternalOnly,
+        Some("b19 pending block wait".to_string()),
+    );
+    assert_eq!(graph.check_invariants(), Ok(()));
+    assert!(graph.record_block_wait_with_id(1884, 1883, 1, 1882, 1, "b19 pending block wait",));
+    assert!(graph.record_queue_object_with_id(
+        1885,
+        "virtio-blk0-cleanup-submit",
+        QueueObjectRole::Submission,
+        1,
+        8,
+        1790,
+        1,
+        "b19 cleanup queue",
+    ));
+    assert!(graph.record_descriptor_object_with_id(
+        1886,
+        1885,
+        1,
+        0,
+        DescriptorObjectAccess::ReadWrite,
+        4096,
+        "b19 cleanup descriptor",
+    ));
+    let dma_resource = graph.register_resource(ResourceKind::DmaBuffer, None, "dma:b19-cleanup");
+    let dma_generation = graph.resource_handle(dma_resource).unwrap().generation;
+    assert!(graph.record_dma_buffer_object_with_id(
+        1887,
+        1886,
+        1,
+        dma_resource,
+        dma_generation,
+        DmaBufferObjectAccess::ReadWrite,
+        4096,
+        "b19 cleanup dma buffer",
+    ));
+    graph
+}
+
+#[test]
+fn block_runtime_b19_disk_driver_fault_cleanup_cancels_wait_and_releases_authority() {
+    let mut graph = setup_b19_block_driver_cleanup_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b19-test",
+        SemanticCommand::CleanupBlockDriver {
+            cleanup: 1888,
+            io_cleanup: 1889,
+            block_device: 1791,
+            block_device_generation: 1,
+            backend: ContractObjectRef::new(ContractObjectKind::VirtioBlkBackendObject, 1880, 1),
+            reason: "virtio-blk-device-fault".to_string(),
+            note: "b19 cleanup disk driver".to_string(),
+        },
+    ));
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.block_driver_cleanup_count(), 1);
+    let cleanup = &graph.block_driver_cleanups()[0];
+    assert_eq!(
+        cleanup.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BlockDriverCleanup, 1888, 1)
+    );
+    assert_eq!(cleanup.state, BlockDriverCleanupState::Completed);
+    assert_eq!(cleanup.cancelled_block_waits.len(), 1);
+    assert_eq!(cleanup.cancelled_wait_tokens.len(), 1);
+    assert_eq!(cleanup.released_dma_buffers.len(), 1);
+    assert_eq!(cleanup.revoked_device_capabilities.len(), 1);
+    assert_eq!(graph.block_waits()[0].state, BlockWaitState::Cancelled);
+    assert_eq!(graph.wait_records()[0].state, WaitState::Cancelled);
+    assert_eq!(
+        graph
+            .dma_buffer_objects()
+            .iter()
+            .find(|record| record.id == 1887)
+            .unwrap()
+            .state,
+        DmaBufferObjectState::Released
+    );
+    assert_eq!(
+        graph
+            .driver_store_bindings()
+            .iter()
+            .find(|record| record.id == 1793)
+            .unwrap()
+            .state,
+        DriverStoreBindingState::Released
+    );
+    assert_eq!(
+        graph
+            .virtio_blk_backends()
+            .iter()
+            .find(|record| record.id == 1880)
+            .unwrap()
+            .state,
+        VirtioBlkBackendObjectState::Retired
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BlockDriverCleanupCompleted cleanup=1888 io_cleanup=1889@1 cancelled_block_waits=1 released_dma_buffers=1 revoked_device_capabilities=1 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b19_rejects_stale_cleanup_and_detects_effect_generation_leak() {
+    let mut graph = setup_b19_block_driver_cleanup_graph();
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b19-test",
+        SemanticCommand::CleanupBlockDriver {
+            cleanup: 1890,
+            io_cleanup: 1891,
+            block_device: 1791,
+            block_device_generation: 2,
+            backend: ContractObjectRef::new(ContractObjectKind::VirtioBlkBackendObject, 1880, 1),
+            reason: "virtio-blk-device-fault".to_string(),
+            note: "b19 stale cleanup".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale.violations,
+        vec!["block driver cleanup block device generation is missing or inactive".to_string()]
+    );
+    assert_eq!(
+        graph
+            .apply_envelope(CommandEnvelope::new(
+                4,
+                "b19-test",
+                SemanticCommand::CleanupBlockDriver {
+                    cleanup: 1888,
+                    io_cleanup: 1889,
+                    block_device: 1791,
+                    block_device_generation: 1,
+                    backend: ContractObjectRef::new(
+                        ContractObjectKind::VirtioBlkBackendObject,
+                        1880,
+                        1,
+                    ),
+                    reason: "virtio-blk-device-fault".to_string(),
+                    note: "b19 cleanup disk driver".to_string(),
+                },
+            ))
+            .status,
+        CommandStatus::Applied
+    );
+    graph.corrupt_block_driver_cleanup_wait_generation_for_test(1888, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::BlockDriverCleanupMissingEffectTarget {
+                cleanup: 1888,
+                target: ContractObjectRef::new(ContractObjectKind::BlockWait, 1884, 2),
+            }
+        )
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

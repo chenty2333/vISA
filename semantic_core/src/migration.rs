@@ -1386,6 +1386,32 @@ pub enum SemanticInvariantError {
         fs_wait: FsWaitId,
         event: EventId,
     },
+    BlockDriverCleanupInvalid {
+        cleanup: BlockDriverCleanupId,
+    },
+    BlockDriverCleanupMissingIoCleanup {
+        cleanup: BlockDriverCleanupId,
+        io_cleanup: IoCleanupId,
+    },
+    BlockDriverCleanupMissingBlockDevice {
+        cleanup: BlockDriverCleanupId,
+        block_device: BlockDeviceObjectId,
+    },
+    BlockDriverCleanupMissingBackend {
+        cleanup: BlockDriverCleanupId,
+        backend: ContractObjectRef,
+    },
+    BlockDriverCleanupMissingEffectTarget {
+        cleanup: BlockDriverCleanupId,
+        target: ContractObjectRef,
+    },
+    BlockDriverCleanupLiveLeak {
+        cleanup: BlockDriverCleanupId,
+    },
+    BlockDriverCleanupMissingEvent {
+        cleanup: BlockDriverCleanupId,
+        event: EventId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

@@ -139,6 +139,7 @@ pub enum ObjectKind {
     Ext4AdapterObject,
     FileHandleCapability,
     FsWait,
+    BlockDriverCleanup,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -243,6 +244,7 @@ impl ObjectKind {
             Self::Ext4AdapterObject => "ext4-adapter-object",
             Self::FileHandleCapability => "file-handle-capability",
             Self::FsWait => "fs-wait",
+            Self::BlockDriverCleanup => "block-driver-cleanup",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -530,6 +532,7 @@ typed_ref!(FatAdapterObjectRef, ObjectKind::FatAdapterObject);
 typed_ref!(Ext4AdapterObjectRef, ObjectKind::Ext4AdapterObject);
 typed_ref!(FileHandleCapabilityRef, ObjectKind::FileHandleCapability);
 typed_ref!(FsWaitRef, ObjectKind::FsWait);
+typed_ref!(BlockDriverCleanupRef, ObjectKind::BlockDriverCleanup);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2133,6 +2136,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("fs wait root/count mismatch"));
     }
+    if roots.block_driver_cleanup_roots.len() != package.semantic.block_driver_cleanup_count
+        || package.semantic.block_driver_cleanups.len()
+            != package.semantic.block_driver_cleanup_count
+    {
+        return Err(ContractError::new(
+            "block driver cleanup root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2728,6 +2739,7 @@ mod tests {
                 ext4_adapter_object_count: 0,
                 file_handle_capability_count: 0,
                 fs_wait_count: 0,
+                block_driver_cleanup_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2841,6 +2853,7 @@ mod tests {
                 ext4_adapter_objects: Vec::new(),
                 file_handle_capabilities: Vec::new(),
                 fs_waits: Vec::new(),
+                block_driver_cleanups: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4651,6 +4664,53 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_block_driver_cleanup_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.block_driver_cleanup_count = 1;
+        package.semantic.block_driver_cleanups.push(
+            artifact_manifest::BlockDriverCleanupManifest {
+                id: 70,
+                io_cleanup: 71,
+                io_cleanup_generation: 1,
+                driver_store: 7,
+                driver_store_generation: 1,
+                device: 72,
+                device_generation: 1,
+                driver_binding: 73,
+                driver_binding_generation: 1,
+                block_device: 74,
+                block_device_generation: 1,
+                backend: artifact_manifest::ContractObjectRefManifest {
+                    kind: "virtio-blk-backend-object".to_owned(),
+                    id: 75,
+                    generation: 1,
+                },
+                cancelled_block_waits: vec![artifact_manifest::ContractObjectRefManifest {
+                    kind: "block-wait".to_owned(),
+                    id: 76,
+                    generation: 1,
+                }],
+                cancelled_wait_tokens: vec![artifact_manifest::ContractObjectRefManifest {
+                    kind: "wait-token".to_owned(),
+                    id: 77,
+                    generation: 1,
+                }],
+                revoked_device_capabilities: Vec::new(),
+                released_dma_buffers: Vec::new(),
+                generation: 1,
+                state: "completed".to_owned(),
+                started_at_event: 86,
+                completed_at_event: Some(87),
+                reason: "device-fault".to_owned(),
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "block driver cleanup root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -5949,6 +6009,8 @@ mod tests {
         assert!(FileHandleCapabilityRef::try_from_ref(file_handle_capability).is_ok());
         let fs_wait = ObjectRef::new(ObjectKind::FsWait, 69, 1).unwrap();
         assert!(FsWaitRef::try_from_ref(fs_wait).is_ok());
+        let block_driver_cleanup = ObjectRef::new(ObjectKind::BlockDriverCleanup, 70, 1).unwrap();
+        assert!(BlockDriverCleanupRef::try_from_ref(block_driver_cleanup).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

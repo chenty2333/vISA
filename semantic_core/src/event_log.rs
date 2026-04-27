@@ -1062,6 +1062,29 @@ pub enum EventKind {
         revoked_packet_capabilities: usize,
         generation: Generation,
     },
+    BlockDriverCleanupStarted {
+        cleanup: BlockDriverCleanupId,
+        io_cleanup: IoCleanupId,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        driver_binding: DriverStoreBindingId,
+        driver_binding_generation: Generation,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        backend: ContractObjectRef,
+        generation: Generation,
+    },
+    BlockDriverCleanupCompleted {
+        cleanup: BlockDriverCleanupId,
+        io_cleanup: IoCleanupId,
+        io_cleanup_generation: Generation,
+        cancelled_block_waits: usize,
+        released_dma_buffers: usize,
+        revoked_device_capabilities: usize,
+        generation: Generation,
+    },
     NetworkGenerationAuditRecorded {
         audit: NetworkGenerationAuditId,
         adapter: NetworkStackAdapterId,
@@ -2883,6 +2906,36 @@ impl EventKind {
                 generation,
             } => format!(
                 "NetworkDriverCleanupCompleted cleanup={cleanup} io_cleanup={io_cleanup}@{io_cleanup_generation} cancelled_socket_waits={cancelled_socket_waits} revoked_packet_capabilities={revoked_packet_capabilities} generation={generation}"
+            ),
+            Self::BlockDriverCleanupStarted {
+                cleanup,
+                io_cleanup,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                driver_binding,
+                driver_binding_generation,
+                block_device,
+                block_device_generation,
+                backend,
+                generation,
+            } => format!(
+                "BlockDriverCleanupStarted cleanup={cleanup} io_cleanup={io_cleanup} driver_store={driver_store}@{driver_store_generation} device={device}@{device_generation} driver_binding={driver_binding}@{driver_binding_generation} block_device={block_device}@{block_device_generation} backend={}:{}@{} generation={generation}",
+                backend.kind.as_str(),
+                backend.id,
+                backend.generation
+            ),
+            Self::BlockDriverCleanupCompleted {
+                cleanup,
+                io_cleanup,
+                io_cleanup_generation,
+                cancelled_block_waits,
+                released_dma_buffers,
+                revoked_device_capabilities,
+                generation,
+            } => format!(
+                "BlockDriverCleanupCompleted cleanup={cleanup} io_cleanup={io_cleanup}@{io_cleanup_generation} cancelled_block_waits={cancelled_block_waits} released_dma_buffers={released_dma_buffers} revoked_device_capabilities={revoked_device_capabilities} generation={generation}"
             ),
             Self::NetworkGenerationAuditRecorded {
                 audit,

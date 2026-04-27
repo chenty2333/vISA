@@ -252,6 +252,19 @@ impl SemanticGraph {
                     },
                 );
             };
+            let cleanup_covers_binding = self.io_cleanups.iter().any(|cleanup| {
+                cleanup.driver_binding == record.driver_binding
+                    && cleanup.driver_binding_generation == record.driver_binding_generation
+                    && cleanup.state == IoCleanupState::Completed
+                    && self.block_driver_cleanups.iter().any(|block_cleanup| {
+                        block_cleanup.io_cleanup == cleanup.id
+                            && block_cleanup.io_cleanup_generation == cleanup.generation
+                            && block_cleanup.driver_binding == record.driver_binding
+                            && block_cleanup.driver_binding_generation
+                                == record.driver_binding_generation
+                            && block_cleanup.state != BlockDriverCleanupState::Retired
+                    })
+            });
             if record.id == 0
                 || record.generation == 0
                 || record.name.is_empty()
@@ -269,9 +282,17 @@ impl SemanticGraph {
                 || record.irq_vector == 0
                 || (record.negotiated_features & !record.device_features) != 0
                 || (record.negotiated_features & !record.driver_features) != 0
-                || record.state != VirtioBlkBackendObjectState::SkeletonReady
+                || !matches!(
+                    record.state,
+                    VirtioBlkBackendObjectState::SkeletonReady
+                        | VirtioBlkBackendObjectState::Retired
+                )
                 || block_device_record.state != BlockDeviceObjectState::Registered
-                || binding_record.state != DriverStoreBindingState::Bound
+                || (record.state == VirtioBlkBackendObjectState::SkeletonReady
+                    && binding_record.state != DriverStoreBindingState::Bound
+                    && !cleanup_covers_binding)
+                || (record.state == VirtioBlkBackendObjectState::Retired
+                    && binding_record.state == DriverStoreBindingState::Bound)
                 || binding_record.device != block_device_record.device
                 || binding_record.device_generation != block_device_record.device_generation
                 || record.device != block_device_record.device

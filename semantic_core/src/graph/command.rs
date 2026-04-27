@@ -530,6 +530,15 @@ pub enum SemanticCommand {
         reason: WaitCancelReason,
         note: String,
     },
+    CleanupBlockDriver {
+        cleanup: BlockDriverCleanupId,
+        io_cleanup: IoCleanupId,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        backend: ContractObjectRef,
+        reason: String,
+        note: String,
+    },
     RecordVirtioNetBackendObject {
         virtio_net_backend: VirtioNetBackendObjectId,
         name: String,
@@ -1273,6 +1282,7 @@ impl SemanticCommand {
             Self::RecordFsWait { .. } => "record-fs-wait",
             Self::ResolveFsWait { .. } => "resolve-fs-wait",
             Self::CancelFsWait { .. } => "cancel-fs-wait",
+            Self::CleanupBlockDriver { .. } => "cleanup-block-driver",
             Self::RecordVirtioNetBackendObject { .. } => "record-virtio-net-backend-object",
             Self::RecordNetworkRxInterrupt { .. } => "record-network-rx-interrupt",
             Self::ResolveNetworkRxWait { .. } => "resolve-network-rx-wait",
@@ -3027,6 +3037,24 @@ impl SemanticGraph {
                     ))
                 }
             }
+            SemanticCommand::CleanupBlockDriver {
+                cleanup,
+                io_cleanup,
+                block_device,
+                block_device_generation,
+                backend,
+                reason,
+                ..
+            } => self
+                .validate_block_driver_cleanup(
+                    *cleanup,
+                    *io_cleanup,
+                    *block_device,
+                    *block_device_generation,
+                    *backend,
+                    reason,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::RecordVirtioNetBackendObject {
                 virtio_net_backend,
                 name,
@@ -5605,6 +5633,23 @@ impl SemanticGraph {
                 reason,
                 note,
             } => self.cancel_fs_wait(fs_wait, fs_wait_generation, errno, reason, &note),
+            SemanticCommand::CleanupBlockDriver {
+                cleanup,
+                io_cleanup,
+                block_device,
+                block_device_generation,
+                backend,
+                reason,
+                note,
+            } => self.cleanup_block_driver_with_id(
+                cleanup,
+                io_cleanup,
+                block_device,
+                block_device_generation,
+                backend,
+                &reason,
+                &note,
+            ),
             SemanticCommand::RecordVirtioNetBackendObject {
                 virtio_net_backend,
                 name,
