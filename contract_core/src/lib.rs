@@ -117,6 +117,7 @@ pub enum ObjectKind {
     NetworkBackpressure,
     NetworkDriverCleanup,
     NetworkGenerationAudit,
+    NetworkFaultInjection,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -199,6 +200,7 @@ impl ObjectKind {
             Self::NetworkBackpressure => "network-backpressure",
             Self::NetworkDriverCleanup => "network-driver-cleanup",
             Self::NetworkGenerationAudit => "network-generation-audit",
+            Self::NetworkFaultInjection => "network-fault-injection",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -456,6 +458,7 @@ typed_ref!(
     NetworkGenerationAuditRef,
     ObjectKind::NetworkGenerationAudit
 );
+typed_ref!(NetworkFaultInjectionRef, ObjectKind::NetworkFaultInjection);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1916,6 +1919,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "network generation audit root/count mismatch",
         ));
     }
+    if roots.network_fault_injection_roots.len() != package.semantic.network_fault_injection_count
+        || package.semantic.network_fault_injections.len()
+            != package.semantic.network_fault_injection_count
+    {
+        return Err(ContractError::new(
+            "network fault injection root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2489,6 +2500,7 @@ mod tests {
                 network_backpressure_count: 0,
                 network_driver_cleanup_count: 0,
                 network_generation_audit_count: 0,
+                network_fault_injection_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2580,6 +2592,7 @@ mod tests {
                 network_backpressures: Vec::new(),
                 network_driver_cleanups: Vec::new(),
                 network_generation_audits: Vec::new(),
+                network_fault_injections: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4291,6 +4304,51 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_network_fault_injection_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.network_fault_injection_count = 1;
+        package.semantic.network_fault_injections.push(
+            artifact_manifest::NetworkFaultInjectionManifest {
+                id: 50,
+                adapter: 41,
+                adapter_generation: 1,
+                packet_device: 30,
+                packet_device_generation: 1,
+                packet_queue: 32,
+                packet_queue_generation: 1,
+                packet_descriptor: Some(33),
+                packet_descriptor_generation: Some(1),
+                packet_buffer: Some(34),
+                packet_buffer_generation: Some(1),
+                endpoint: Some(43),
+                endpoint_generation: Some(1),
+                socket: Some(42),
+                socket_generation: Some(1),
+                owner_store: Some(7),
+                owner_store_generation: Some(1),
+                direction: "tx".to_owned(),
+                kind: "packet-loss".to_owned(),
+                effect: "drop-packet".to_owned(),
+                injected_packets: 1,
+                dropped_packets: 1,
+                error_packets: 0,
+                error_code: String::new(),
+                sequence: 1,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 94,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "network fault injection root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -4822,6 +4880,9 @@ mod tests {
         let network_generation_audit =
             ObjectRef::new(ObjectKind::NetworkGenerationAudit, 47, 1).unwrap();
         assert!(NetworkGenerationAuditRef::try_from_ref(network_generation_audit).is_ok());
+        let network_fault_injection =
+            ObjectRef::new(ObjectKind::NetworkFaultInjection, 48, 1).unwrap();
+        assert!(NetworkFaultInjectionRef::try_from_ref(network_fault_injection).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

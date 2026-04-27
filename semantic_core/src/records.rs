@@ -1599,6 +1599,49 @@ impl NetworkGenerationAuditRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkFaultInjectionRecord {
+    pub id: NetworkFaultInjectionId,
+    pub adapter: NetworkStackAdapterId,
+    pub adapter_generation: Generation,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub packet_queue: PacketQueueObjectId,
+    pub packet_queue_generation: Generation,
+    pub packet_descriptor: Option<PacketDescriptorObjectId>,
+    pub packet_descriptor_generation: Option<Generation>,
+    pub packet_buffer: Option<PacketBufferObjectId>,
+    pub packet_buffer_generation: Option<Generation>,
+    pub endpoint: Option<EndpointObjectId>,
+    pub endpoint_generation: Option<Generation>,
+    pub socket: Option<SocketObjectId>,
+    pub socket_generation: Option<Generation>,
+    pub owner_store: Option<StoreId>,
+    pub owner_store_generation: Option<Generation>,
+    pub direction: PacketBufferDirection,
+    pub kind: NetworkFaultInjectionKind,
+    pub effect: NetworkFaultInjectionEffect,
+    pub injected_packets: u32,
+    pub dropped_packets: u32,
+    pub error_packets: u32,
+    pub error_code: String,
+    pub sequence: u64,
+    pub generation: Generation,
+    pub state: NetworkFaultInjectionState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl NetworkFaultInjectionRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::NetworkFaultInjection,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

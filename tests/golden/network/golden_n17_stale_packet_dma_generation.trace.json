@@ -173,6 +173,6 @@
       "graph_json_edges_separate_live_history_and_cleanup_modes"
     ],
     "osctl_json_view": "network-generation-audit list --json",
-    "target_executor_event_cursor": 378
+    "target_executor_event_cursor": 380
   }
 }

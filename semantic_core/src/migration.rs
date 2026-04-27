@@ -1412,6 +1412,22 @@ pub enum SemanticInvariantError {
         audit: NetworkGenerationAuditId,
         event: EventId,
     },
+    NetworkFaultInjectionInvalid {
+        injection: NetworkFaultInjectionId,
+    },
+    NetworkFaultInjectionMissingTarget {
+        injection: NetworkFaultInjectionId,
+        target: ContractObjectRef,
+    },
+    NetworkFaultInjectionDuplicateSequence {
+        injection: NetworkFaultInjectionId,
+        packet_queue: PacketQueueObjectId,
+        sequence: u64,
+    },
+    NetworkFaultInjectionMissingEvent {
+        injection: NetworkFaultInjectionId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

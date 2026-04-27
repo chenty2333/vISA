@@ -22,16 +22,17 @@ use artifact_manifest::{
     IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
     MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
     MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkDriverCleanupManifest, NetworkGenerationAuditManifest,
-    NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest,
-    NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest, PacketBufferObjectManifest,
-    PacketDescriptorObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
-    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    NetworkBackpressureManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
+    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
+    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, SocketObjectManifest,
     SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
@@ -58,11 +59,12 @@ use semantic_core::{
     HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind, IrqLinePolarity,
     IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
     MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
-    NetworkBackpressureReason, PackageReplayValidator, PacketBufferDirection,
-    PacketBufferObjectState, PacketQueueRole, QueueObjectRole, ReplayPackageValidationState,
-    ResourceKind, RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
-    SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
-    StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
+    PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
+    QueueObjectRole, ReplayPackageValidationState, ResourceKind, RestartPolicy, RuntimeMode,
+    SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind,
+    SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState,
+    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
     TombstoneRecord, TrapSurfaceState, VerifiedArtifact, memory_class_policies,
     validate_contract_graph,
@@ -183,6 +185,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n14_evidence(&mut semantic)?;
     record_network_runtime_n15_evidence(&mut semantic)?;
     record_network_runtime_n17_evidence(&mut semantic)?;
+    record_network_runtime_n18_evidence(&mut semantic)?;
     record_network_runtime_n16_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
@@ -1479,7 +1482,7 @@ fn record_network_runtime_n16_evidence(semantic: &mut SemanticGraph) -> Result<(
     let connected_endpoint = ContractObjectRef::new(ContractObjectKind::EndpointObject, 10_032, 1);
     let commands = [
         CommandEnvelope::new(
-            178,
+            186,
             "target-executor-n16",
             SemanticCommand::CreateWait {
                 wait: 10_049,
@@ -1495,7 +1498,7 @@ fn record_network_runtime_n16_evidence(semantic: &mut SemanticGraph) -> Result<(
             },
         ),
         CommandEnvelope::new(
-            179,
+            187,
             "target-executor-n16",
             SemanticCommand::RecordSocketWait {
                 socket_wait: 10_050,
@@ -1509,7 +1512,7 @@ fn record_network_runtime_n16_evidence(semantic: &mut SemanticGraph) -> Result<(
             },
         ),
         CommandEnvelope::new(
-            180,
+            188,
             "target-executor-n16",
             SemanticCommand::CleanupNetworkDriver {
                 cleanup: 10_051,
@@ -1543,7 +1546,7 @@ fn record_network_runtime_n16_evidence(semantic: &mut SemanticGraph) -> Result<(
     }
 
     let stale_cleanup = semantic.apply_envelope(CommandEnvelope::new(
-        181,
+        189,
         "target-executor-n16",
         SemanticCommand::CleanupNetworkDriver {
             cleanup: 10_053,
@@ -1811,6 +1814,176 @@ fn record_network_runtime_n17_evidence(semantic: &mut SemanticGraph) -> Result<(
             audit.command,
             audit.status.as_str(),
             audit.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+fn record_network_runtime_n18_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let packet_loss = semantic.apply_envelope(CommandEnvelope::new(
+        182,
+        "target-executor-n18",
+        SemanticCommand::RecordNetworkFaultInjection {
+            injection: 10_063,
+            adapter: 10_025,
+            adapter_generation: 1,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            packet_queue: 10_005,
+            packet_queue_generation: 1,
+            packet_descriptor: Some(10_019),
+            packet_descriptor_generation: Some(1),
+            packet_buffer: Some(10_018),
+            packet_buffer_generation: Some(1),
+            endpoint: Some(10_032),
+            endpoint_generation: Some(1),
+            direction: PacketBufferDirection::Tx,
+            kind: NetworkFaultInjectionKind::PacketLoss,
+            effect: NetworkFaultInjectionEffect::DropPacket,
+            injected_packets: 1,
+            dropped_packets: 1,
+            error_packets: 0,
+            error_code: String::new(),
+            sequence: 18,
+            note: "n18-inject-tx-packet-loss".to_owned(),
+        },
+    ));
+    if packet_loss.status != CommandStatus::Applied {
+        return Err(format!(
+            "network runtime n18 packet loss command {} ({}) failed: status={} violations={:?}",
+            packet_loss.command_id,
+            packet_loss.command,
+            packet_loss.status.as_str(),
+            packet_loss.violations
+        )
+        .into());
+    }
+
+    let packet_error = semantic.apply_envelope(CommandEnvelope::new(
+        183,
+        "target-executor-n18",
+        SemanticCommand::RecordNetworkFaultInjection {
+            injection: 10_064,
+            adapter: 10_025,
+            adapter_generation: 1,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            packet_queue: 10_005,
+            packet_queue_generation: 1,
+            packet_descriptor: Some(10_019),
+            packet_descriptor_generation: Some(1),
+            packet_buffer: Some(10_018),
+            packet_buffer_generation: Some(1),
+            endpoint: Some(10_032),
+            endpoint_generation: Some(1),
+            direction: PacketBufferDirection::Tx,
+            kind: NetworkFaultInjectionKind::PacketError,
+            effect: NetworkFaultInjectionEffect::ReportError,
+            injected_packets: 1,
+            dropped_packets: 0,
+            error_packets: 1,
+            error_code: "injected-checksum-error".to_owned(),
+            sequence: 19,
+            note: "n18-inject-tx-packet-error".to_owned(),
+        },
+    ));
+    if packet_error.status != CommandStatus::Applied {
+        return Err(format!(
+            "network runtime n18 packet error command {} ({}) failed: status={} violations={:?}",
+            packet_error.command_id,
+            packet_error.command,
+            packet_error.status.as_str(),
+            packet_error.violations
+        )
+        .into());
+    }
+
+    let stale_queue = semantic.apply_envelope(CommandEnvelope::new(
+        184,
+        "target-executor-n18",
+        SemanticCommand::RecordNetworkFaultInjection {
+            injection: 10_065,
+            adapter: 10_025,
+            adapter_generation: 1,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            packet_queue: 10_005,
+            packet_queue_generation: 2,
+            packet_descriptor: Some(10_019),
+            packet_descriptor_generation: Some(1),
+            packet_buffer: Some(10_018),
+            packet_buffer_generation: Some(1),
+            endpoint: Some(10_032),
+            endpoint_generation: Some(1),
+            direction: PacketBufferDirection::Tx,
+            kind: NetworkFaultInjectionKind::PacketLoss,
+            effect: NetworkFaultInjectionEffect::DropPacket,
+            injected_packets: 1,
+            dropped_packets: 1,
+            error_packets: 0,
+            error_code: String::new(),
+            sequence: 20,
+            note: "n18-reject-stale-queue-generation".to_owned(),
+        },
+    ));
+    if stale_queue.status != CommandStatus::Rejected
+        || !stale_queue
+            .violations
+            .iter()
+            .any(|violation| violation.contains("packet queue generation"))
+    {
+        return Err(format!(
+            "network runtime n18 stale queue command {} ({}) was not rejected: status={} violations={:?}",
+            stale_queue.command_id,
+            stale_queue.command,
+            stale_queue.status.as_str(),
+            stale_queue.violations
+        )
+        .into());
+    }
+
+    let malformed_error = semantic.apply_envelope(CommandEnvelope::new(
+        185,
+        "target-executor-n18",
+        SemanticCommand::RecordNetworkFaultInjection {
+            injection: 10_066,
+            adapter: 10_025,
+            adapter_generation: 1,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            packet_queue: 10_005,
+            packet_queue_generation: 1,
+            packet_descriptor: Some(10_019),
+            packet_descriptor_generation: Some(1),
+            packet_buffer: Some(10_018),
+            packet_buffer_generation: Some(1),
+            endpoint: None,
+            endpoint_generation: None,
+            direction: PacketBufferDirection::Tx,
+            kind: NetworkFaultInjectionKind::PacketError,
+            effect: NetworkFaultInjectionEffect::ReportError,
+            injected_packets: 1,
+            dropped_packets: 0,
+            error_packets: 1,
+            error_code: "injected-checksum-error".to_owned(),
+            sequence: 21,
+            note: "n18-reject-malformed-packet-error-injection".to_owned(),
+        },
+    ));
+    if malformed_error.status != CommandStatus::Rejected
+        || !malformed_error
+            .violations
+            .iter()
+            .any(|violation| violation.contains("packet error injection requires endpoint"))
+    {
+        return Err(format!(
+            "network runtime n18 malformed error command {} ({}) was not rejected: status={} violations={:?}",
+            malformed_error.command_id,
+            malformed_error.command,
+            malformed_error.status.as_str(),
+            malformed_error.violations
         )
         .into());
     }
@@ -4205,6 +4378,7 @@ fn demo_migration_package(
             network_backpressure_count: semantic.network_backpressure_count(),
             network_driver_cleanup_count: semantic.network_driver_cleanup_count(),
             network_generation_audit_count: semantic.network_generation_audit_count(),
+            network_fault_injection_count: semantic.network_fault_injection_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -4491,6 +4665,11 @@ fn demo_migration_package(
                 .network_generation_audits()
                 .iter()
                 .map(network_generation_audit_manifest)
+                .collect(),
+            network_fault_injections: semantic
+                .network_fault_injections()
+                .iter()
+                .map(network_fault_injection_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -5698,6 +5877,35 @@ fn semantic_roots(
                     audit.rejected_dma_generation_probes,
                     audit.state.as_str(),
                     audit.generation
+                )
+            })
+            .collect(),
+        network_fault_injection_roots: semantic
+            .network_fault_injections()
+            .iter()
+            .map(|injection| {
+                format!(
+                    "network-fault-injection id={} adapter={}@{} packet_device={}@{} packet_queue={}@{} packet_descriptor={} packet_buffer={} endpoint={} direction={} kind={} effect={} injected_packets={} dropped_packets={} error_packets={} error_code={} sequence={} state={} generation={}",
+                    injection.id,
+                    injection.adapter,
+                    injection.adapter_generation,
+                    injection.packet_device,
+                    injection.packet_device_generation,
+                    injection.packet_queue,
+                    injection.packet_queue_generation,
+                    optional_generation_ref(injection.packet_descriptor, injection.packet_descriptor_generation),
+                    optional_generation_ref(injection.packet_buffer, injection.packet_buffer_generation),
+                    optional_generation_ref(injection.endpoint, injection.endpoint_generation),
+                    injection.direction.as_str(),
+                    injection.kind.as_str(),
+                    injection.effect.as_str(),
+                    injection.injected_packets,
+                    injection.dropped_packets,
+                    injection.error_packets,
+                    injection.error_code,
+                    injection.sequence,
+                    injection.state.as_str(),
+                    injection.generation
                 )
             })
             .collect(),
@@ -7608,6 +7816,42 @@ fn network_generation_audit_manifest(
         state: audit.state.as_str().to_owned(),
         recorded_at_event: audit.recorded_at_event,
         note: audit.note.clone(),
+    }
+}
+
+fn network_fault_injection_manifest(
+    injection: &semantic_core::NetworkFaultInjectionRecord,
+) -> NetworkFaultInjectionManifest {
+    NetworkFaultInjectionManifest {
+        id: injection.id,
+        adapter: injection.adapter,
+        adapter_generation: injection.adapter_generation,
+        packet_device: injection.packet_device,
+        packet_device_generation: injection.packet_device_generation,
+        packet_queue: injection.packet_queue,
+        packet_queue_generation: injection.packet_queue_generation,
+        packet_descriptor: injection.packet_descriptor,
+        packet_descriptor_generation: injection.packet_descriptor_generation,
+        packet_buffer: injection.packet_buffer,
+        packet_buffer_generation: injection.packet_buffer_generation,
+        endpoint: injection.endpoint,
+        endpoint_generation: injection.endpoint_generation,
+        socket: injection.socket,
+        socket_generation: injection.socket_generation,
+        owner_store: injection.owner_store,
+        owner_store_generation: injection.owner_store_generation,
+        direction: injection.direction.as_str().to_owned(),
+        kind: injection.kind.as_str().to_owned(),
+        effect: injection.effect.as_str().to_owned(),
+        injected_packets: injection.injected_packets,
+        dropped_packets: injection.dropped_packets,
+        error_packets: injection.error_packets,
+        error_code: injection.error_code.clone(),
+        sequence: injection.sequence,
+        generation: injection.generation,
+        state: injection.state.as_str().to_owned(),
+        recorded_at_event: injection.recorded_at_event,
+        note: injection.note.clone(),
     }
 }
 

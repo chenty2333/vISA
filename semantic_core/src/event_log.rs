@@ -736,6 +736,34 @@ pub enum EventKind {
         rejected_dma_generation_probes: u32,
         generation: Generation,
     },
+    NetworkFaultInjectionRecorded {
+        injection: NetworkFaultInjectionId,
+        adapter: NetworkStackAdapterId,
+        adapter_generation: Generation,
+        packet_device: PacketDeviceObjectId,
+        packet_device_generation: Generation,
+        packet_queue: PacketQueueObjectId,
+        packet_queue_generation: Generation,
+        packet_descriptor: Option<PacketDescriptorObjectId>,
+        packet_descriptor_generation: Option<Generation>,
+        packet_buffer: Option<PacketBufferObjectId>,
+        packet_buffer_generation: Option<Generation>,
+        endpoint: Option<EndpointObjectId>,
+        endpoint_generation: Option<Generation>,
+        socket: Option<SocketObjectId>,
+        socket_generation: Option<Generation>,
+        owner_store: Option<StoreId>,
+        owner_store_generation: Option<Generation>,
+        direction: PacketBufferDirection,
+        kind: NetworkFaultInjectionKind,
+        effect: NetworkFaultInjectionEffect,
+        injected_packets: u32,
+        dropped_packets: u32,
+        error_packets: u32,
+        error_code: String,
+        sequence: u64,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -2069,6 +2097,61 @@ impl EventKind {
                 device_capability.id,
                 device_capability.generation
             ),
+            Self::NetworkFaultInjectionRecorded {
+                injection,
+                adapter,
+                adapter_generation,
+                packet_device,
+                packet_device_generation,
+                packet_queue,
+                packet_queue_generation,
+                packet_descriptor,
+                packet_descriptor_generation,
+                packet_buffer,
+                packet_buffer_generation,
+                endpoint,
+                endpoint_generation,
+                socket,
+                socket_generation,
+                owner_store,
+                owner_store_generation,
+                direction,
+                kind,
+                effect,
+                injected_packets,
+                dropped_packets,
+                error_packets,
+                error_code,
+                sequence,
+                generation,
+            } => {
+                let descriptor_summary = packet_descriptor.map_or_else(
+                    || "none".to_string(),
+                    |id| format!("{id}@{}", packet_descriptor_generation.unwrap_or(0)),
+                );
+                let buffer_summary = packet_buffer.map_or_else(
+                    || "none".to_string(),
+                    |id| format!("{id}@{}", packet_buffer_generation.unwrap_or(0)),
+                );
+                let endpoint_summary = endpoint.map_or_else(
+                    || "none".to_string(),
+                    |id| format!("{id}@{}", endpoint_generation.unwrap_or(0)),
+                );
+                let socket_summary = socket.map_or_else(
+                    || "none".to_string(),
+                    |id| format!("{id}@{}", socket_generation.unwrap_or(0)),
+                );
+                let owner_store_summary = owner_store.map_or_else(
+                    || "none".to_string(),
+                    |id| format!("{id}@{}", owner_store_generation.unwrap_or(0)),
+                );
+                format!(
+                    "NetworkFaultInjectionRecorded injection={injection} adapter={adapter}@{adapter_generation} packet_device={packet_device}@{packet_device_generation} packet_queue={packet_queue}@{packet_queue_generation} packet_descriptor={descriptor_summary} packet_buffer={buffer_summary} endpoint={endpoint_summary} socket={socket_summary} owner_store={owner_store_summary} direction={} kind={} effect={} injected_packets={injected_packets} dropped_packets={dropped_packets} error_packets={error_packets} error_code={error_code} sequence={sequence} generation={generation}",
+                    direction.as_str(),
+                    kind.as_str(),
+                    effect.as_str()
+                )
+            }
             Self::RuntimeActivationResumed {
                 resume,
                 decision,

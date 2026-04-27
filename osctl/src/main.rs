@@ -17,18 +17,19 @@ use artifact_manifest::{
     InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkDriverCleanupManifest, NetworkGenerationAuditManifest,
-    NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest,
-    NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest, PacketBufferObjectManifest,
-    PacketDescriptorObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
-    SavedContextManifest, SchedulerDecisionManifest, SmpCleanupQuiescenceManifest,
-    SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
-    SmpSnapshotBarrierManifest, SmpStressRunManifest, SocketObjectManifest,
-    SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
-    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
-    TimerInterruptManifest, TrapRecordManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
+    NetworkBackpressureManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
+    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
+    SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
+    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
+    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
+    VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -326,6 +327,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "network-generation-audit"
         | "generation-audit"
         | "stale-generation-audit"
+        | "network-fault-injection"
+        | "packet-loss"
+        | "packet-error"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -496,7 +500,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -744,6 +748,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "network-generation-audit" | "generation-audit" | "stale-generation-audit" => {
             "network-generation-audit"
         }
+        "network-fault-injection" | "packet-loss" | "packet-error" => "network-fault-injection",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3496,6 +3501,116 @@ fn network_generation_audit_view_v1(audit: &NetworkGenerationAuditManifest) -> s
     })
 }
 
+fn network_fault_injection_view_v1(injection: &NetworkFaultInjectionManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "network-fault-injection",
+        "id": injection.id,
+        "generation": injection.generation,
+        "state": injection.state,
+        "owner": {
+            "adapter": object_ref_json(
+                "network-stack-adapter",
+                injection.adapter,
+                injection.adapter_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                injection.packet_device,
+                injection.packet_device_generation,
+            ),
+            "packet_queue": object_ref_json(
+                "packet-queue",
+                injection.packet_queue,
+                injection.packet_queue_generation,
+            ),
+            "endpoint": optional_object_ref_json(
+                "endpoint-object",
+                injection.endpoint,
+                injection.endpoint_generation,
+            ),
+            "socket": optional_object_ref_json(
+                "socket-object",
+                injection.socket,
+                injection.socket_generation,
+            ),
+            "store": optional_object_ref_json(
+                "store",
+                injection.owner_store,
+                injection.owner_store_generation,
+            ),
+        },
+        "references": {
+            "adapter": object_ref_json(
+                "network-stack-adapter",
+                injection.adapter,
+                injection.adapter_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                injection.packet_device,
+                injection.packet_device_generation,
+            ),
+            "packet_queue": object_ref_json(
+                "packet-queue",
+                injection.packet_queue,
+                injection.packet_queue_generation,
+            ),
+            "packet_descriptor": optional_object_ref_json(
+                "packet-descriptor",
+                injection.packet_descriptor,
+                injection.packet_descriptor_generation,
+            ),
+            "packet_buffer": optional_object_ref_json(
+                "packet-buffer",
+                injection.packet_buffer,
+                injection.packet_buffer_generation,
+            ),
+            "endpoint": optional_object_ref_json(
+                "endpoint-object",
+                injection.endpoint,
+                injection.endpoint_generation,
+            ),
+            "socket": optional_object_ref_json(
+                "socket-object",
+                injection.socket,
+                injection.socket_generation,
+            ),
+            "owner_store": optional_object_ref_json(
+                "store",
+                injection.owner_store,
+                injection.owner_store_generation,
+            ),
+            "event": {
+                "id": injection.recorded_at_event,
+            },
+        },
+        "injection": {
+            "direction": injection.direction,
+            "kind": injection.kind,
+            "effect": injection.effect,
+            "injected_packets": injection.injected_packets,
+            "dropped_packets": injection.dropped_packets,
+            "error_packets": injection.error_packets,
+            "error_code": injection.error_code,
+            "sequence": injection.sequence,
+        },
+        "note": injection.note,
+        "last_transition": {
+            "recorded_at_event": injection.recorded_at_event,
+            "adapter_generation": injection.adapter_generation,
+            "packet_device_generation": injection.packet_device_generation,
+            "packet_queue_generation": injection.packet_queue_generation,
+            "packet_descriptor_generation": injection.packet_descriptor_generation,
+            "packet_buffer_generation": injection.packet_buffer_generation,
+            "endpoint_generation": injection.endpoint_generation,
+            "socket_generation": injection.socket_generation,
+            "owner_store_generation": injection.owner_store_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -4660,6 +4775,12 @@ fn stable_views_for_kind(
             .network_generation_audits
             .iter()
             .map(network_generation_audit_view_v1)
+            .collect()),
+        "network-fault-injection" | "packet-loss" | "packet-error" => Ok(package
+            .semantic
+            .network_fault_injections
+            .iter()
+            .map(network_fault_injection_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -6923,6 +7044,108 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 from.clone(),
                 target,
                 relation,
+                "historical",
+                event,
+            ));
+        }
+    }
+    for injection in &package.semantic.network_fault_injections {
+        let from = object_ref_json(
+            "network-fault-injection",
+            injection.id,
+            injection.generation,
+        );
+        let event = Some(injection.recorded_at_event);
+        for (target, relation) in [
+            (
+                object_ref_json(
+                    "network-stack-adapter",
+                    injection.adapter,
+                    injection.adapter_generation,
+                ),
+                "network-fault-injection->network-stack-adapter",
+            ),
+            (
+                object_ref_json(
+                    "packet-device",
+                    injection.packet_device,
+                    injection.packet_device_generation,
+                ),
+                "network-fault-injection->packet-device",
+            ),
+            (
+                object_ref_json(
+                    "packet-queue",
+                    injection.packet_queue,
+                    injection.packet_queue_generation,
+                ),
+                "network-fault-injection->packet-queue",
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                target,
+                relation,
+                "historical",
+                event,
+            ));
+        }
+        if let (Some(packet_descriptor), Some(packet_descriptor_generation)) = (
+            injection.packet_descriptor,
+            injection.packet_descriptor_generation,
+        ) {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(
+                    "packet-descriptor",
+                    packet_descriptor,
+                    packet_descriptor_generation,
+                ),
+                "network-fault-injection->packet-descriptor",
+                "historical",
+                event,
+            ));
+        }
+        if let (Some(packet_buffer), Some(packet_buffer_generation)) =
+            (injection.packet_buffer, injection.packet_buffer_generation)
+        {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("packet-buffer", packet_buffer, packet_buffer_generation),
+                "network-fault-injection->packet-buffer",
+                "historical",
+                event,
+            ));
+        }
+        if let (Some(endpoint), Some(endpoint_generation)) =
+            (injection.endpoint, injection.endpoint_generation)
+        {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("endpoint-object", endpoint, endpoint_generation),
+                "network-fault-injection->endpoint-object",
+                "historical",
+                event,
+            ));
+        }
+        if let (Some(socket), Some(socket_generation)) =
+            (injection.socket, injection.socket_generation)
+        {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("socket-object", socket, socket_generation),
+                "network-fault-injection->socket-object",
+                "historical",
+                event,
+            ));
+        }
+        if let (Some(owner_store), Some(owner_store_generation)) =
+            (injection.owner_store, injection.owner_store_generation)
+        {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("store", owner_store, owner_store_generation),
+                "network-fault-injection->owner-store",
                 "historical",
                 event,
             ));
@@ -9565,7 +9788,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -9615,6 +9838,8 @@ fn replay_until(
         package.semantic.roots.socket_wait_roots.len(),
         package.semantic.roots.network_backpressure_roots.len(),
         package.semantic.roots.network_driver_cleanup_roots.len(),
+        package.semantic.roots.network_generation_audit_roots.len(),
+        package.semantic.roots.network_fault_injection_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -9760,6 +9985,9 @@ fn replay_until(
     }
     for audit in &package.semantic.roots.network_generation_audit_roots {
         println!("replay network-generation-audit {audit}");
+    }
+    for injection in &package.semantic.roots.network_fault_injection_roots {
+        println!("replay network-fault-injection {injection}");
     }
     Ok(())
 }
@@ -9966,6 +10194,10 @@ fn print_replay_json(
     roots.insert(
         "network_generation_audits".to_owned(),
         serde_json::json!(package.semantic.roots.network_generation_audit_roots.len()),
+    );
+    roots.insert(
+        "network_fault_injections".to_owned(),
+        serde_json::json!(package.semantic.roots.network_fault_injection_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -10286,6 +10518,10 @@ fn print_replay_json(
     roots.insert(
         "network_generation_audit_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.network_generation_audit_roots),
+    );
+    roots.insert(
+        "network_fault_injection_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.network_fault_injection_roots),
     );
 
     let value = serde_json::json!({
@@ -11545,6 +11781,51 @@ mod tests {
         assert_eq!(view["audit"]["rejected_packet_generation_probes"], 2);
         assert_eq!(view["audit"]["rejected_dma_generation_probes"], 1);
         assert_eq!(view["last_transition"]["recorded_at_event"], 95);
+    }
+
+    #[test]
+    fn network_fault_injection_view_v1_exposes_packet_loss_and_error_evidence() {
+        let view = network_fault_injection_view_v1(&NetworkFaultInjectionManifest {
+            id: 96,
+            adapter: 74,
+            adapter_generation: 5,
+            packet_device: 51,
+            packet_device_generation: 4,
+            packet_queue: 89,
+            packet_queue_generation: 7,
+            packet_descriptor: Some(90),
+            packet_descriptor_generation: Some(8),
+            packet_buffer: Some(91),
+            packet_buffer_generation: Some(9),
+            endpoint: Some(92),
+            endpoint_generation: Some(10),
+            socket: Some(93),
+            socket_generation: Some(11),
+            owner_store: Some(94),
+            owner_store_generation: Some(12),
+            direction: "tx".to_owned(),
+            kind: "packet-error".to_owned(),
+            effect: "report-error".to_owned(),
+            injected_packets: 1,
+            dropped_packets: 0,
+            error_packets: 1,
+            error_code: "injected-checksum-error".to_owned(),
+            sequence: 18,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 97,
+            note: "packet error injection".to_owned(),
+        });
+        assert_eq!(view["kind"], "network-fault-injection");
+        assert_eq!(view["owner"]["adapter"]["kind"], "network-stack-adapter");
+        assert_eq!(view["references"]["packet_queue"]["generation"], 7);
+        assert_eq!(view["references"]["packet_descriptor"]["generation"], 8);
+        assert_eq!(view["references"]["packet_buffer"]["generation"], 9);
+        assert_eq!(view["references"]["endpoint"]["generation"], 10);
+        assert_eq!(view["injection"]["kind"], "packet-error");
+        assert_eq!(view["injection"]["effect"], "report-error");
+        assert_eq!(view["injection"]["error_code"], "injected-checksum-error");
+        assert_eq!(view["last_transition"]["recorded_at_event"], 97);
     }
 
     #[test]
@@ -14324,6 +14605,40 @@ mod tests {
                 recorded_at_event: 35,
                 note: "network generation audit graph".to_owned(),
             });
+        package
+            .semantic
+            .network_fault_injections
+            .push(NetworkFaultInjectionManifest {
+                id: 102,
+                adapter: 93,
+                adapter_generation: 1,
+                packet_device: 81,
+                packet_device_generation: 1,
+                packet_queue: 89,
+                packet_queue_generation: 1,
+                packet_descriptor: Some(88),
+                packet_descriptor_generation: Some(1),
+                packet_buffer: Some(87),
+                packet_buffer_generation: Some(1),
+                endpoint: Some(95),
+                endpoint_generation: Some(1),
+                socket: Some(94),
+                socket_generation: Some(1),
+                owner_store: Some(7),
+                owner_store_generation: Some(2),
+                direction: "tx".to_owned(),
+                kind: "packet-loss".to_owned(),
+                effect: "drop-packet".to_owned(),
+                injected_packets: 1,
+                dropped_packets: 1,
+                error_packets: 0,
+                error_code: String::new(),
+                sequence: 18,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 36,
+                note: "network fault injection graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -14426,6 +14741,11 @@ mod tests {
                 .iter()
                 .any(|edge| edge["from"]["kind"] == "network-generation-audit")
         );
+        assert!(
+            !live
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "network-fault-injection")
+        );
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
@@ -14508,6 +14828,21 @@ mod tests {
             && edge["from"]["kind"] == "network-generation-audit"
             && edge["to"]["kind"] == "device-capability"
             && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-fault-injection->packet-descriptor"
+            && edge["from"]["kind"] == "network-fault-injection"
+            && edge["to"]["kind"] == "packet-descriptor"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-fault-injection->endpoint-object"
+            && edge["from"]["kind"] == "network-fault-injection"
+            && edge["to"]["kind"] == "endpoint-object"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-fault-injection->owner-store"
+            && edge["from"]["kind"] == "network-fault-injection"
+            && edge["to"]["kind"] == "store"
+            && edge["to"]["generation"] == 2));
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
             && edge["relation"] == "network-rx-interrupt->irq-event"
             && edge["from"]["kind"] == "network-rx-interrupt"

@@ -1178,6 +1178,49 @@ impl NetworkGenerationAuditState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkFaultInjectionState {
+    Recorded,
+}
+
+impl NetworkFaultInjectionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkFaultInjectionKind {
+    PacketLoss,
+    PacketError,
+}
+
+impl NetworkFaultInjectionKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PacketLoss => "packet-loss",
+            Self::PacketError => "packet-error",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkFaultInjectionEffect {
+    DropPacket,
+    ReportError,
+}
+
+impl NetworkFaultInjectionEffect {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DropPacket => "drop-packet",
+            Self::ReportError => "report-error",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

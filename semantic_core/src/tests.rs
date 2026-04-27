@@ -9328,6 +9328,215 @@ fn network_runtime_n17_invariants_reject_packet_descriptor_generation_leak() {
 }
 
 #[test]
+fn network_runtime_n18_records_packet_loss_and_error_injection() {
+    let (mut graph, _, connected_endpoint) = setup_n14_socket_wait_graph();
+
+    for (offset, command) in [
+        SemanticCommand::RecordNetworkFaultInjection {
+            injection: 1609,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            packet_descriptor: Some(1547),
+            packet_descriptor_generation: Some(1),
+            packet_buffer: Some(1543),
+            packet_buffer_generation: Some(1),
+            endpoint: Some(connected_endpoint),
+            endpoint_generation: Some(1),
+            direction: PacketBufferDirection::Tx,
+            kind: NetworkFaultInjectionKind::PacketLoss,
+            effect: NetworkFaultInjectionEffect::DropPacket,
+            injected_packets: 1,
+            dropped_packets: 1,
+            error_packets: 0,
+            error_code: "".to_string(),
+            sequence: 8,
+            note: "n18 injected tx packet loss".to_string(),
+        },
+        SemanticCommand::RecordNetworkFaultInjection {
+            injection: 1610,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            packet_descriptor: Some(1547),
+            packet_descriptor_generation: Some(1),
+            packet_buffer: Some(1543),
+            packet_buffer_generation: Some(1),
+            endpoint: Some(connected_endpoint),
+            endpoint_generation: Some(1),
+            direction: PacketBufferDirection::Tx,
+            kind: NetworkFaultInjectionKind::PacketError,
+            effect: NetworkFaultInjectionEffect::ReportError,
+            injected_packets: 1,
+            dropped_packets: 0,
+            error_packets: 1,
+            error_code: "injected-checksum-error".to_string(),
+            sequence: 9,
+            note: "n18 injected tx checksum error".to_string(),
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let result =
+            graph.apply_envelope(CommandEnvelope::new(1 + offset as u64, "n18-test", command));
+        assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    }
+
+    assert_eq!(graph.network_fault_injection_count(), 2);
+    let loss = graph
+        .network_fault_injections()
+        .iter()
+        .find(|record| record.id == 1609)
+        .unwrap();
+    assert_eq!(
+        loss.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::NetworkFaultInjection, 1609, 1)
+    );
+    assert_eq!(loss.kind, NetworkFaultInjectionKind::PacketLoss);
+    assert_eq!(loss.effect, NetworkFaultInjectionEffect::DropPacket);
+    assert_eq!(loss.dropped_packets, 1);
+    assert_eq!(loss.error_packets, 0);
+    assert_eq!(loss.endpoint, Some(connected_endpoint));
+
+    let error = graph
+        .network_fault_injections()
+        .iter()
+        .find(|record| record.id == 1610)
+        .unwrap();
+    assert_eq!(error.kind, NetworkFaultInjectionKind::PacketError);
+    assert_eq!(error.effect, NetworkFaultInjectionEffect::ReportError);
+    assert_eq!(error.error_code, "injected-checksum-error");
+    assert_eq!(error.packet_descriptor_generation, Some(1));
+    assert_eq!(error.packet_buffer_generation, Some(1));
+    assert!(
+        graph.event_log_tail(1)[0]
+            .kind
+            .summary()
+            .contains("NetworkFaultInjectionRecorded injection=1610")
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn network_runtime_n18_rejects_stale_queue_and_malformed_error_injection() {
+    let (mut graph, _, connected_endpoint) = setup_n14_socket_wait_graph();
+    let stale_queue = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n18-test",
+        SemanticCommand::RecordNetworkFaultInjection {
+            injection: 1609,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1545,
+            packet_queue_generation: 2,
+            packet_descriptor: Some(1547),
+            packet_descriptor_generation: Some(1),
+            packet_buffer: Some(1543),
+            packet_buffer_generation: Some(1),
+            endpoint: Some(connected_endpoint),
+            endpoint_generation: Some(1),
+            direction: PacketBufferDirection::Tx,
+            kind: NetworkFaultInjectionKind::PacketLoss,
+            effect: NetworkFaultInjectionEffect::DropPacket,
+            injected_packets: 1,
+            dropped_packets: 1,
+            error_packets: 0,
+            error_code: "".to_string(),
+            sequence: 8,
+            note: "n18 stale packet queue generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_queue.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_queue.violations,
+        vec!["network fault injection packet queue generation is missing or inactive".to_string()]
+    );
+
+    let missing_endpoint = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n18-test",
+        SemanticCommand::RecordNetworkFaultInjection {
+            injection: 1610,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            packet_descriptor: Some(1547),
+            packet_descriptor_generation: Some(1),
+            packet_buffer: Some(1543),
+            packet_buffer_generation: Some(1),
+            endpoint: None,
+            endpoint_generation: None,
+            direction: PacketBufferDirection::Tx,
+            kind: NetworkFaultInjectionKind::PacketError,
+            effect: NetworkFaultInjectionEffect::ReportError,
+            injected_packets: 1,
+            dropped_packets: 0,
+            error_packets: 1,
+            error_code: "injected-checksum-error".to_string(),
+            sequence: 9,
+            note: "n18 malformed packet error injection".to_string(),
+        },
+    ));
+    assert_eq!(missing_endpoint.status, CommandStatus::Rejected);
+    assert_eq!(
+        missing_endpoint.violations,
+        vec![
+            "network packet error injection requires endpoint, descriptor, buffer, and error code"
+                .to_string()
+        ]
+    );
+}
+
+#[test]
+fn network_runtime_n18_invariants_reject_packet_queue_generation_leak() {
+    let (mut graph, _, connected_endpoint) = setup_n14_socket_wait_graph();
+    assert!(graph.record_network_fault_injection_with_id(
+        1609,
+        1575,
+        1,
+        1541,
+        1,
+        1545,
+        1,
+        Some(1547),
+        Some(1),
+        Some(1543),
+        Some(1),
+        Some(connected_endpoint),
+        Some(1),
+        PacketBufferDirection::Tx,
+        NetworkFaultInjectionKind::PacketLoss,
+        NetworkFaultInjectionEffect::DropPacket,
+        1,
+        1,
+        0,
+        "",
+        8,
+        "n18 packet loss injection",
+    ));
+    graph.corrupt_network_fault_injection_queue_generation_for_test(1609, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::NetworkFaultInjectionMissingTarget {
+            injection: 1609,
+            target: ContractObjectRef::new(ContractObjectKind::PacketQueueObject, 1545, 2),
+        })
+    );
+}
+
+#[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();
     let hart_generation = register_idle_test_hart(&mut graph);

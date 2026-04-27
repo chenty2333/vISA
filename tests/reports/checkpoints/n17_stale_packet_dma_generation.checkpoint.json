@@ -61,7 +61,7 @@
       "Target executor evidence remains a host-side semantic harness and does not run real target cwasm or hardware DMA"
     ],
     "residual_notes": [
-      "N18 will cover packet loss/error injection semantics",
+      "N18 now runs before N16 and covers packet loss/error injection semantics",
       "N19/N20 still need benchmark evidence for throughput, latency, and recovery"
     ]
   },
@@ -131,7 +131,7 @@
       "status": "pass"
     },
     {
-      "command": "target/debug/osctl replay --until 378 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "command": "target/debug/osctl replay --until 380 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
       "status": "pass"
     },
     {
@@ -172,7 +172,7 @@
       "osctl command show --json <migration.json> 176",
       "osctl command show --json <migration.json> 177",
       "osctl graph --history --json <migration.json>",
-      "osctl replay --until 378 --json <migration.json>",
+      "osctl replay --until 380 --json <migration.json>",
       "osctl contract validate --json <migration.json>"
     ],
     "semantic_roots": [
@@ -185,7 +185,7 @@
       "command_result_roots"
     ],
     "target_executor_package": {
-      "event_cursor": 378,
+      "event_cursor": 380,
       "network_generation_audit_count": 1,
       "audit": "network-generation-audit:10062@1",
       "packet_descriptor": "packet-descriptor:10019@1",
@@ -199,9 +199,9 @@
     }
   },
   "residual_gaps": [
-    "N18 still needs packet loss/error injection semantics and osctl evidence",
+    "N18 packet loss/error injection semantics now run before N16 cleanup",
     "N19/N20 still need network throughput, latency, and recovery benchmark evidence",
     "real virtio/smoltcp datapath remains adapter/backend work after semantic contract coverage"
   ],
-  "next_checkpoint": "N18-packet-loss-error-injection"
+  "next_checkpoint": "N19-network-throughput-latency-benchmark"
 }

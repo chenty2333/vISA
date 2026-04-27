@@ -716,6 +716,10 @@ impl SemanticGraph {
                 .network_generation_audits
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::NetworkFaultInjection => self
+                .network_fault_injections
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }
