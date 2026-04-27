@@ -123,6 +123,7 @@ pub enum ObjectKind {
     BlockDeviceObject,
     BlockRangeObject,
     BlockRequestObject,
+    BlockCompletionObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -211,6 +212,7 @@ impl ObjectKind {
             Self::BlockDeviceObject => "block-device-object",
             Self::BlockRangeObject => "block-range-object",
             Self::BlockRequestObject => "block-request-object",
+            Self::BlockCompletionObject => "block-completion-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -477,6 +479,7 @@ typed_ref!(
 typed_ref!(BlockDeviceObjectRef, ObjectKind::BlockDeviceObject);
 typed_ref!(BlockRangeObjectRef, ObjectKind::BlockRangeObject);
 typed_ref!(BlockRequestObjectRef, ObjectKind::BlockRequestObject);
+typed_ref!(BlockCompletionObjectRef, ObjectKind::BlockCompletionObject);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1979,6 +1982,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "block request object root/count mismatch",
         ));
     }
+    if roots.block_completion_object_roots.len() != package.semantic.block_completion_object_count
+        || package.semantic.block_completion_objects.len()
+            != package.semantic.block_completion_object_count
+    {
+        return Err(ContractError::new(
+            "block completion object root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2558,6 +2569,7 @@ mod tests {
                 block_device_object_count: 0,
                 block_range_object_count: 0,
                 block_request_object_count: 0,
+                block_completion_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2655,6 +2667,7 @@ mod tests {
                 block_device_objects: Vec::new(),
                 block_range_objects: Vec::new(),
                 block_request_objects: Vec::new(),
+                block_completion_objects: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4582,6 +4595,36 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_block_completion_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.block_completion_object_count = 1;
+        package.semantic.block_completion_objects.push(
+            artifact_manifest::BlockCompletionObjectManifest {
+                id: 56,
+                block_request: 55,
+                block_request_generation: 1,
+                block_device: 53,
+                block_device_generation: 1,
+                block_range: 54,
+                block_range_generation: 1,
+                sequence: 1,
+                completed_bytes: 4096,
+                status: "success".to_owned(),
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 102,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "block completion object root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -5127,6 +5170,9 @@ mod tests {
         assert!(BlockRangeObjectRef::try_from_ref(block_range_object).is_ok());
         let block_request_object = ObjectRef::new(ObjectKind::BlockRequestObject, 53, 1).unwrap();
         assert!(BlockRequestObjectRef::try_from_ref(block_request_object).is_ok());
+        let block_completion_object =
+            ObjectRef::new(ObjectKind::BlockCompletionObject, 54, 1).unwrap();
+        assert!(BlockCompletionObjectRef::try_from_ref(block_completion_object).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

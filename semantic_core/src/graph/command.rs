@@ -636,6 +636,15 @@ pub enum SemanticCommand {
         sequence: u64,
         note: String,
     },
+    RecordBlockCompletionObject {
+        block_completion: BlockCompletionObjectId,
+        block_request: BlockRequestObjectId,
+        block_request_generation: Generation,
+        sequence: u64,
+        completed_bytes: u64,
+        status: BlockCompletionStatus,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -1032,6 +1041,7 @@ impl SemanticCommand {
             Self::RecordBlockDeviceObject { .. } => "record-block-device-object",
             Self::RecordBlockRangeObject { .. } => "record-block-range-object",
             Self::RecordBlockRequestObject { .. } => "record-block-request-object",
+            Self::RecordBlockCompletionObject { .. } => "record-block-completion-object",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -2980,6 +2990,25 @@ impl SemanticGraph {
                     *block_range_generation,
                     *operation,
                     *sequence,
+                )
+                .map(|_| ())
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordBlockCompletionObject {
+                block_completion,
+                block_request,
+                block_request_generation,
+                sequence,
+                completed_bytes,
+                status,
+                ..
+            } => self
+                .validate_block_completion_object(
+                    *block_completion,
+                    *block_request,
+                    *block_request_generation,
+                    *sequence,
+                    *completed_bytes,
+                    *status,
                 )
                 .map(|_| ())
                 .map_err(CommandError::precondition),
@@ -4978,6 +5007,23 @@ impl SemanticGraph {
                 block_range_generation,
                 operation,
                 sequence,
+                &note,
+            ),
+            SemanticCommand::RecordBlockCompletionObject {
+                block_completion,
+                block_request,
+                block_request_generation,
+                sequence,
+                completed_bytes,
+                status,
+                note,
+            } => self.record_block_completion_object_with_id(
+                block_completion,
+                block_request,
+                block_request_generation,
+                sequence,
+                completed_bytes,
+                status,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

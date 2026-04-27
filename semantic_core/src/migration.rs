@@ -1495,6 +1495,20 @@ pub enum SemanticInvariantError {
     BlockRequestObjectMissingEvent {
         block_request: BlockRequestObjectId,
     },
+    BlockCompletionObjectInvalid {
+        block_completion: BlockCompletionObjectId,
+    },
+    BlockCompletionObjectMissingRequest {
+        block_completion: BlockCompletionObjectId,
+        block_request: BlockRequestObjectId,
+    },
+    BlockCompletionObjectDuplicateRequest {
+        block_completion: BlockCompletionObjectId,
+        block_request: BlockRequestObjectId,
+    },
+    BlockCompletionObjectMissingEvent {
+        block_completion: BlockCompletionObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

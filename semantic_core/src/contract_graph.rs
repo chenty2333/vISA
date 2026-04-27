@@ -1438,6 +1438,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::BlockDeviceObject
             | ContractObjectKind::BlockRangeObject
             | ContractObjectKind::BlockRequestObject
+            | ContractObjectKind::BlockCompletionObject
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

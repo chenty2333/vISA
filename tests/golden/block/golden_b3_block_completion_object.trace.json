@@ -1,0 +1,153 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "B3-block-completion-object",
+  "name": "golden_b3_block_completion_object",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md"
+  ],
+  "no_goals": [
+    "real block IO",
+    "real virtio-blk backend",
+    "request queue scheduling",
+    "DMA-backed block buffer",
+    "filesystem adapters",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "B0 recorded BlockDeviceObject 20002@1",
+      "B1 recorded BlockRangeObject 20005@1 over BlockDeviceObject 20002@1",
+      "B2 recorded BlockRequestObject 20009@1 as a submitted read request",
+      "B3 records a completion object without performing real IO"
+    ],
+    "commands": [
+      {
+        "id": 207,
+        "command": "record-block-completion-object",
+        "block_completion": "block-completion:20013@1",
+        "block_request": "block-request:20009@1",
+        "block_device": "block-device:20002@1",
+        "block_range": "block-range:20005@1",
+        "sequence": 1,
+        "completed_bytes": 4096,
+        "status": "success",
+        "expected": "applied"
+      },
+      {
+        "id": 208,
+        "command": "record-block-completion-object",
+        "block_completion": "block-completion:20014@1",
+        "block_request": "block-request:20009@2",
+        "expected": "rejected",
+        "violation": "block completion object block request generation is missing"
+      },
+      {
+        "id": 209,
+        "command": "record-block-completion-object",
+        "block_completion": "block-completion:20015@1",
+        "block_request": "block-request:20009@1",
+        "expected": "rejected",
+        "violation": "block completion object already exists for block request generation"
+      },
+      {
+        "id": 210,
+        "command": "record-block-request-object",
+        "block_request": "block-request:20017@1",
+        "sequence": 2,
+        "expected": "applied"
+      },
+      {
+        "id": 211,
+        "command": "record-block-completion-object",
+        "block_completion": "block-completion:20016@1",
+        "block_request": "block-request:20017@1",
+        "completed_bytes": 2048,
+        "status": "success",
+        "expected": "rejected",
+        "violation": "block completion object success must complete the full byte range"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 386,
+      "kind": "BlockCompletionObjectRecorded",
+      "block_completion": "block-completion:20013@1",
+      "block_request": "block-request:20009@1",
+      "block_device": "block-device:20002@1",
+      "block_range": "block-range:20005@1",
+      "sequence": 1,
+      "completed_bytes": 4096,
+      "status": "success"
+    },
+    {
+      "id": 387,
+      "kind": "BlockRequestObjectRecorded",
+      "block_request": "block-request:20017@1",
+      "block_device": "block-device:20002@1",
+      "block_range": "block-range:20005@1",
+      "operation": "read",
+      "sequence": 2,
+      "byte_len": 4096
+    }
+  ],
+  "expected": {
+    "views": {
+      "block-completion": {
+        "count": 1,
+        "block_completion": "block-completion:20013@1",
+        "block_request": "block-request:20009@1",
+        "block_device": "block-device:20002@1",
+        "block_range": "block-range:20005@1",
+        "status": "success",
+        "completed_bytes": 4096
+      },
+      "command": {
+        "completion_applied": "command-result:207:record-block-completion-object:applied",
+        "stale_request_rejected": "command-result:208:record-block-completion-object:rejected",
+        "duplicate_completion_rejected": "command-result:209:record-block-completion-object:rejected",
+        "byte_count_rejected": "command-result:211:record-block-completion-object:rejected"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "live_edges": [
+          "block-request->block-device",
+          "block-request->block-range"
+        ],
+        "historical_edges": [
+          "block-completion->block-request",
+          "block-completion->block-device",
+          "block-completion->block-range"
+        ]
+      }
+    },
+    "invariants": [
+      "BlockCompletionObject references exact BlockRequestObject generation",
+      "BlockCompletionObject snapshots BlockDeviceObject and BlockRangeObject generations from the request",
+      "success completion must cover the full request byte range",
+      "completion turns the request state from submitted to completed",
+      "duplicate completions for a completed request are rejected"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "block_runtime_b3_block_completion_records_request_outcome",
+      "block_runtime_b3_rejects_stale_duplicate_and_bad_byte_count",
+      "block_runtime_b3_invariants_reject_completion_generation_leak",
+      "block_completion_view_v1_exposes_request_and_result_contract",
+      "semantic_roots_reject_block_completion_object_root_mismatch",
+      "graph_json_edges_separate_live_history_and_cleanup_modes"
+    ],
+    "osctl_json_view": "block-completion list --json",
+    "target_executor_event_cursor": 389
+  }
+}

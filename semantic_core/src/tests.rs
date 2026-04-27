@@ -10644,6 +10644,254 @@ fn block_runtime_b2_invariants_reject_block_request_generation_leak() {
 }
 
 #[test]
+fn block_runtime_b3_block_completion_records_request_outcome() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1736,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b3 backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1737,
+        "blk0",
+        1736,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b3 block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1738, 1737, 1, 64, 8, "b3 range",));
+    assert!(graph.record_block_request_object_with_id(
+        1739,
+        1737,
+        1,
+        1738,
+        1,
+        BlockRequestOperation::Read,
+        1,
+        "b3 request",
+    ));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b3-test",
+        SemanticCommand::RecordBlockCompletionObject {
+            block_completion: 1740,
+            block_request: 1739,
+            block_request_generation: 1,
+            sequence: 1,
+            completed_bytes: 4096,
+            status: BlockCompletionStatus::Success,
+            note: "b3 completion".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.block_completion_object_count(), 1);
+    let completion = &graph.block_completion_objects()[0];
+    assert_eq!(
+        completion.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BlockCompletionObject, 1740, 1)
+    );
+    assert_eq!(completion.block_request, 1739);
+    assert_eq!(completion.block_request_generation, 1);
+    assert_eq!(completion.block_device, 1737);
+    assert_eq!(completion.block_range, 1738);
+    assert_eq!(completion.sequence, 1);
+    assert_eq!(completion.completed_bytes, 4096);
+    assert_eq!(completion.status, BlockCompletionStatus::Success);
+    assert_eq!(
+        graph.block_request_objects()[0].state,
+        BlockRequestObjectState::Completed
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BlockCompletionObjectRecorded block_completion=1740 block_request=1739@1 block_device=1737@1 block_range=1738@1 sequence=1 completed_bytes=4096 status=success generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b3_rejects_stale_duplicate_and_bad_byte_count() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1741,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b3 backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1742,
+        "blk0",
+        1741,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b3 block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1743, 1742, 1, 64, 8, "b3 range",));
+    assert!(graph.record_block_request_object_with_id(
+        1744,
+        1742,
+        1,
+        1743,
+        1,
+        BlockRequestOperation::Read,
+        1,
+        "b3 existing request",
+    ));
+
+    let stale_request = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b3-test",
+        SemanticCommand::RecordBlockCompletionObject {
+            block_completion: 1745,
+            block_request: 1744,
+            block_request_generation: 2,
+            sequence: 1,
+            completed_bytes: 4096,
+            status: BlockCompletionStatus::Success,
+            note: "b3 stale request".to_string(),
+        },
+    ));
+    assert_eq!(stale_request.status, CommandStatus::Rejected);
+
+    let completion = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b3-test",
+        SemanticCommand::RecordBlockCompletionObject {
+            block_completion: 1746,
+            block_request: 1744,
+            block_request_generation: 1,
+            sequence: 1,
+            completed_bytes: 4096,
+            status: BlockCompletionStatus::Success,
+            note: "b3 completion".to_string(),
+        },
+    ));
+    assert_eq!(completion.status, CommandStatus::Applied);
+
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b3-test",
+        SemanticCommand::RecordBlockCompletionObject {
+            block_completion: 1747,
+            block_request: 1744,
+            block_request_generation: 1,
+            sequence: 1,
+            completed_bytes: 4096,
+            status: BlockCompletionStatus::Success,
+            note: "b3 duplicate completion".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+
+    assert!(graph.record_block_request_object_with_id(
+        1748,
+        1742,
+        1,
+        1743,
+        1,
+        BlockRequestOperation::Read,
+        2,
+        "b3 second request",
+    ));
+    let partial_success = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b3-test",
+        SemanticCommand::RecordBlockCompletionObject {
+            block_completion: 1749,
+            block_request: 1748,
+            block_request_generation: 1,
+            sequence: 2,
+            completed_bytes: 2048,
+            status: BlockCompletionStatus::Success,
+            note: "b3 partial success".to_string(),
+        },
+    ));
+    assert_eq!(partial_success.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn block_runtime_b3_invariants_reject_completion_generation_leak() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1750,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b3 invariant backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1751,
+        "blk0",
+        1750,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b3 invariant block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1752, 1751, 1, 64, 8, "b3 invariant range",));
+    assert!(graph.record_block_request_object_with_id(
+        1753,
+        1751,
+        1,
+        1752,
+        1,
+        BlockRequestOperation::Read,
+        1,
+        "b3 invariant request",
+    ));
+    assert!(graph.record_block_completion_object_with_id(
+        1754,
+        1753,
+        1,
+        1,
+        4096,
+        BlockCompletionStatus::Success,
+        "b3 invariant completion",
+    ));
+    graph.corrupt_block_completion_request_generation_for_test(1754, 2);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::BlockRequestObjectInvalid {
+            block_request: 1753,
+        })
+    );
+}
+
+#[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();
     let hart_generation = register_idle_test_hart(&mut graph);

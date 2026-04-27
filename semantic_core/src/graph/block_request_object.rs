@@ -145,6 +145,11 @@ impl SemanticGraph {
                     block_range: record.block_range,
                 });
             };
+            let has_completion = self.block_completion_objects.iter().any(|completion| {
+                completion.block_request == record.id
+                    && completion.block_request_generation == record.generation
+                    && completion.state == BlockCompletionObjectState::Recorded
+            });
             if record.id == 0
                 || record.generation == 0
                 || record.block_device_generation == 0
@@ -153,7 +158,9 @@ impl SemanticGraph {
                 || record.byte_len == 0
                 || block_device_record.state != BlockDeviceObjectState::Registered
                 || block_range_record.state != BlockRangeObjectState::Registered
-                || record.state != BlockRequestObjectState::Submitted
+                || matches!(record.state, BlockRequestObjectState::Cancelled)
+                || (record.state == BlockRequestObjectState::Completed && !has_completion)
+                || (record.state == BlockRequestObjectState::Submitted && has_completion)
                 || block_range_record.block_device != record.block_device
                 || block_range_record.block_device_generation != record.block_device_generation
                 || record.byte_len != block_range_record.byte_len

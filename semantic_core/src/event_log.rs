@@ -470,6 +470,19 @@ pub enum EventKind {
         byte_len: u64,
         generation: Generation,
     },
+    BlockCompletionObjectRecorded {
+        block_completion: BlockCompletionObjectId,
+        block_request: BlockRequestObjectId,
+        block_request_generation: Generation,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        block_range: BlockRangeObjectId,
+        block_range_generation: Generation,
+        sequence: u64,
+        completed_bytes: u64,
+        status: BlockCompletionStatus,
+        generation: Generation,
+    },
     PacketBufferObjectRecorded {
         packet_buffer: PacketBufferObjectId,
         packet_device: PacketDeviceObjectId,
@@ -1814,6 +1827,22 @@ impl EventKind {
             } => format!(
                 "BlockRequestObjectRecorded block_request={block_request} block_device={block_device}@{block_device_generation} block_range={block_range}@{block_range_generation} operation={} sequence={sequence} byte_len={byte_len} generation={generation}",
                 operation.as_str()
+            ),
+            Self::BlockCompletionObjectRecorded {
+                block_completion,
+                block_request,
+                block_request_generation,
+                block_device,
+                block_device_generation,
+                block_range,
+                block_range_generation,
+                sequence,
+                completed_bytes,
+                status,
+                generation,
+            } => format!(
+                "BlockCompletionObjectRecorded block_completion={block_completion} block_request={block_request}@{block_request_generation} block_device={block_device}@{block_device_generation} block_range={block_range}@{block_range_generation} sequence={sequence} completed_bytes={completed_bytes} status={} generation={generation}",
+                status.as_str()
             ),
             Self::PacketBufferObjectRecorded {
                 packet_buffer,

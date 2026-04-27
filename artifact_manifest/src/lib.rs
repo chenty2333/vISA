@@ -339,6 +339,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_request_object_count: usize,
     #[serde(default)]
+    pub block_completion_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -529,6 +531,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_request_objects: Vec<BlockRequestObjectManifest>,
     #[serde(default)]
+    pub block_completion_objects: Vec<BlockCompletionObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -698,6 +702,8 @@ pub struct SemanticRootSetManifest {
     pub block_range_object_roots: Vec<String>,
     #[serde(default)]
     pub block_request_object_roots: Vec<String>,
+    #[serde(default)]
+    pub block_completion_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2156,6 +2162,24 @@ pub struct BlockRequestObjectManifest {
     pub operation: String,
     pub sequence: u64,
     pub byte_len: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct BlockCompletionObjectManifest {
+    pub id: u64,
+    pub block_request: u64,
+    pub block_request_generation: u64,
+    pub block_device: u64,
+    pub block_device_generation: u64,
+    pub block_range: u64,
+    pub block_range_generation: u64,
+    pub sequence: u64,
+    pub completed_bytes: u64,
+    pub status: String,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
