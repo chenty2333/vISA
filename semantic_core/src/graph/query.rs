@@ -126,6 +126,7 @@ impl SemanticGraph {
         self.check_block_range_object_invariants()?;
         self.check_block_request_object_invariants()?;
         self.check_block_completion_object_invariants()?;
+        self.check_block_wait_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;

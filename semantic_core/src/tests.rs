@@ -10892,6 +10892,378 @@ fn block_runtime_b3_invariants_reject_completion_generation_leak() {
 }
 
 #[test]
+fn block_runtime_b4_block_wait_bridges_wait_token_to_completion() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1755,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b4 backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1756,
+        "blk0",
+        1755,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b4 block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1757, 1756, 1, 64, 8, "b4 range",));
+    assert!(graph.record_block_request_object_with_id(
+        1758,
+        1756,
+        1,
+        1757,
+        1,
+        BlockRequestOperation::Read,
+        1,
+        "b4 request",
+    ));
+    let driver_store = graph.register_store(
+        "driver.fake-block0",
+        "driver.fake-block0.fake-aot",
+        "driver",
+        "restartable",
+    );
+    graph.set_store_state(driver_store, StoreState::Running);
+    let driver_store_generation = graph.store_handle(driver_store).unwrap().generation;
+    let blocker = ContractObjectRef::new(ContractObjectKind::BlockRequestObject, 1758, 1);
+    let create_wait = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b4-test",
+        SemanticCommand::CreateWait {
+            wait: 1759,
+            owner_task: None,
+            owner_store: Some(driver_store),
+            owner_store_generation: Some(driver_store_generation),
+            kind: SemanticWaitKind::DriverCompletion,
+            generation: 1,
+            blockers: vec![blocker],
+            deadline: None,
+            restart_policy: RestartPolicy::InternalOnly,
+            saved_context: Some("b4-block-wait".to_string()),
+        },
+    ));
+    assert_eq!(create_wait.status, CommandStatus::Applied);
+
+    let record_wait = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b4-test",
+        SemanticCommand::RecordBlockWait {
+            block_wait: 1760,
+            wait: 1759,
+            wait_generation: 1,
+            block_request: 1758,
+            block_request_generation: 1,
+            note: "b4 block wait".to_string(),
+        },
+    ));
+    assert_eq!(record_wait.status, CommandStatus::Applied);
+    assert_eq!(graph.block_wait_count(), 1);
+    assert_eq!(
+        graph.block_waits()[0].object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BlockWait, 1760, 1)
+    );
+    assert_eq!(graph.block_waits()[0].wait, 1759);
+    assert_eq!(graph.block_waits()[0].block_request, 1758);
+    assert_eq!(graph.block_waits()[0].state, BlockWaitState::Pending);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BlockWaitCreated block_wait=1760 wait=1759@1 block_request=1758@1 block_device=1756@1 block_range=1757@1 operation=read sequence=1 byte_len=4096 generation=1"
+    );
+
+    let completion = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b4-test",
+        SemanticCommand::RecordBlockCompletionObject {
+            block_completion: 1761,
+            block_request: 1758,
+            block_request_generation: 1,
+            sequence: 1,
+            completed_bytes: 4096,
+            status: BlockCompletionStatus::Success,
+            note: "b4 completion".to_string(),
+        },
+    ));
+    assert_eq!(completion.status, CommandStatus::Applied);
+    let resolve_wait = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b4-test",
+        SemanticCommand::ResolveBlockWait {
+            block_wait: 1760,
+            block_wait_generation: 1,
+            block_completion: 1761,
+            block_completion_generation: 1,
+            note: "b4 resolve block wait".to_string(),
+        },
+    ));
+    assert_eq!(resolve_wait.status, CommandStatus::Applied);
+    assert_eq!(graph.block_waits()[0].state, BlockWaitState::Resolved);
+    assert_eq!(graph.block_waits()[0].completion, Some(1761));
+    assert_eq!(graph.wait_records()[0].state, WaitState::Resolved);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BlockWaitResolved block_wait=1760 wait=1759@1 block_completion=1761@1 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b4_rejects_stale_duplicate_and_bad_completion_waits() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1762,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b4 reject backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1763,
+        "blk0",
+        1762,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b4 reject block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1764, 1763, 1, 64, 8, "b4 reject range",));
+    assert!(graph.record_block_request_object_with_id(
+        1765,
+        1763,
+        1,
+        1764,
+        1,
+        BlockRequestOperation::Read,
+        1,
+        "b4 reject request",
+    ));
+    let driver_store = graph.register_store(
+        "driver.fake-block1",
+        "driver.fake-block1.fake-aot",
+        "driver",
+        "restartable",
+    );
+    graph.set_store_state(driver_store, StoreState::Running);
+    let driver_store_generation = graph.store_handle(driver_store).unwrap().generation;
+    let blocker = ContractObjectRef::new(ContractObjectKind::BlockRequestObject, 1765, 1);
+    assert!(matches!(
+        graph
+            .apply_envelope(CommandEnvelope::new(
+                1,
+                "b4-test",
+                SemanticCommand::CreateWait {
+                    wait: 1766,
+                    owner_task: None,
+                    owner_store: Some(driver_store),
+                    owner_store_generation: Some(driver_store_generation),
+                    kind: SemanticWaitKind::DriverCompletion,
+                    generation: 1,
+                    blockers: vec![blocker],
+                    deadline: None,
+                    restart_policy: RestartPolicy::InternalOnly,
+                    saved_context: None,
+                },
+            ))
+            .status,
+        CommandStatus::Applied
+    ));
+    assert!(graph.record_block_wait_with_id(1767, 1766, 1, 1765, 1, "b4 existing wait"));
+
+    let stale_request = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b4-test",
+        SemanticCommand::RecordBlockWait {
+            block_wait: 1768,
+            wait: 1766,
+            wait_generation: 1,
+            block_request: 1765,
+            block_request_generation: 2,
+            note: "b4 stale request".to_string(),
+        },
+    ));
+    assert_eq!(stale_request.status, CommandStatus::Rejected);
+
+    let duplicate_wait = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b4-test",
+        SemanticCommand::RecordBlockWait {
+            block_wait: 1769,
+            wait: 1766,
+            wait_generation: 1,
+            block_request: 1765,
+            block_request_generation: 1,
+            note: "b4 duplicate wait".to_string(),
+        },
+    ));
+    assert_eq!(duplicate_wait.status, CommandStatus::Rejected);
+
+    assert!(graph.record_block_request_object_with_id(
+        1770,
+        1763,
+        1,
+        1764,
+        1,
+        BlockRequestOperation::Read,
+        2,
+        "b4 other request",
+    ));
+    assert!(graph.record_block_completion_object_with_id(
+        1771,
+        1770,
+        1,
+        2,
+        4096,
+        BlockCompletionStatus::Success,
+        "b4 other completion",
+    ));
+    let wrong_completion = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b4-test",
+        SemanticCommand::ResolveBlockWait {
+            block_wait: 1767,
+            block_wait_generation: 1,
+            block_completion: 1771,
+            block_completion_generation: 1,
+            note: "b4 wrong completion".to_string(),
+        },
+    ));
+    assert_eq!(wrong_completion.status, CommandStatus::Rejected);
+
+    graph.record_wait_resolved(1766, "b4-direct-wait-resolution");
+    let stale_wait_state = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "b4-test",
+        SemanticCommand::CancelBlockWait {
+            block_wait: 1767,
+            block_wait_generation: 1,
+            errno: 5,
+            reason: WaitCancelReason::DeviceFault,
+            note: "b4 stale wait state".to_string(),
+        },
+    ));
+    assert_eq!(stale_wait_state.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn block_runtime_b4_cancelled_wait_records_reason_and_invariant_generation() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1772,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b4 cancel backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1773,
+        "blk0",
+        1772,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b4 cancel block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1774, 1773, 1, 64, 8, "b4 cancel range",));
+    assert!(graph.record_block_request_object_with_id(
+        1775,
+        1773,
+        1,
+        1774,
+        1,
+        BlockRequestOperation::Read,
+        1,
+        "b4 cancel request",
+    ));
+    let driver_store = graph.register_store(
+        "driver.fake-block2",
+        "driver.fake-block2.fake-aot",
+        "driver",
+        "restartable",
+    );
+    graph.set_store_state(driver_store, StoreState::Running);
+    let driver_store_generation = graph.store_handle(driver_store).unwrap().generation;
+    graph.record_wait_created_with_details(
+        1776,
+        None,
+        Some(driver_store),
+        Some(driver_store_generation),
+        SemanticWaitKind::DriverCompletion,
+        1,
+        vec![ContractObjectRef::new(
+            ContractObjectKind::BlockRequestObject,
+            1775,
+            1,
+        )],
+        None,
+        RestartPolicy::InternalOnly,
+        None,
+    );
+    assert!(graph.record_block_wait_with_id(1777, 1776, 1, 1775, 1, "b4 cancel wait"));
+    let cancel = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b4-test",
+        SemanticCommand::CancelBlockWait {
+            block_wait: 1777,
+            block_wait_generation: 1,
+            errno: 5,
+            reason: WaitCancelReason::DeviceFault,
+            note: "b4 cancel block wait".to_string(),
+        },
+    ));
+    assert_eq!(cancel.status, CommandStatus::Applied);
+    assert_eq!(graph.block_waits()[0].state, BlockWaitState::Cancelled);
+    assert_eq!(
+        graph.block_waits()[0].cancel_reason,
+        Some(WaitCancelReason::DeviceFault)
+    );
+    assert_eq!(graph.wait_records()[0].state, WaitState::Cancelled);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BlockWaitCancelled block_wait=1777 wait=1776@1 reason=device-fault generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+
+    graph.corrupt_block_wait_request_generation_for_test(1777, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::BlockWaitMissingRequest {
+            block_wait: 1777,
+            block_request: 1775,
+        })
+    );
+}
+
+#[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();
     let hart_generation = register_idle_test_hart(&mut graph);

@@ -645,6 +645,28 @@ pub enum SemanticCommand {
         status: BlockCompletionStatus,
         note: String,
     },
+    RecordBlockWait {
+        block_wait: BlockWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        block_request: BlockRequestObjectId,
+        block_request_generation: Generation,
+        note: String,
+    },
+    ResolveBlockWait {
+        block_wait: BlockWaitId,
+        block_wait_generation: Generation,
+        block_completion: BlockCompletionObjectId,
+        block_completion_generation: Generation,
+        note: String,
+    },
+    CancelBlockWait {
+        block_wait: BlockWaitId,
+        block_wait_generation: Generation,
+        errno: i32,
+        reason: WaitCancelReason,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -1042,6 +1064,9 @@ impl SemanticCommand {
             Self::RecordBlockRangeObject { .. } => "record-block-range-object",
             Self::RecordBlockRequestObject { .. } => "record-block-request-object",
             Self::RecordBlockCompletionObject { .. } => "record-block-completion-object",
+            Self::RecordBlockWait { .. } => "record-block-wait",
+            Self::ResolveBlockWait { .. } => "resolve-block-wait",
+            Self::CancelBlockWait { .. } => "cancel-block-wait",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -3012,6 +3037,104 @@ impl SemanticGraph {
                 )
                 .map(|_| ())
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordBlockWait {
+                block_wait,
+                wait,
+                wait_generation,
+                block_request,
+                block_request_generation,
+                ..
+            } => self
+                .validate_block_wait(
+                    *block_wait,
+                    *wait,
+                    *wait_generation,
+                    *block_request,
+                    *block_request_generation,
+                )
+                .map(|_| ())
+                .map_err(CommandError::precondition),
+            SemanticCommand::ResolveBlockWait {
+                block_wait,
+                block_wait_generation,
+                block_completion,
+                block_completion_generation,
+                ..
+            } => {
+                let Some(record) = self.block_waits.iter().find(|record| {
+                    record.id == *block_wait
+                        && record.generation == *block_wait_generation
+                        && record.state == BlockWaitState::Pending
+                }) else {
+                    return Err(CommandError::precondition(
+                        "block wait generation is missing or not pending",
+                    ));
+                };
+                let Some(completion) = self.block_completion_objects.iter().find(|completion| {
+                    completion.id == *block_completion
+                        && completion.generation == *block_completion_generation
+                        && completion.state == BlockCompletionObjectState::Recorded
+                }) else {
+                    return Err(CommandError::precondition(
+                        "block wait completion generation is missing",
+                    ));
+                };
+                if completion.block_request == record.block_request
+                    && completion.block_request_generation == record.block_request_generation
+                    && completion.block_device == record.block_device
+                    && completion.block_device_generation == record.block_device_generation
+                    && completion.block_range == record.block_range
+                    && completion.block_range_generation == record.block_range_generation
+                    && completion.sequence == record.sequence
+                    && completion.status == BlockCompletionStatus::Success
+                    && completion.completed_bytes == record.byte_len
+                    && self.waits.iter().any(|wait| {
+                        wait.id == record.wait
+                            && wait.generation == record.wait_generation
+                            && wait.state == WaitState::Pending
+                    })
+                {
+                    Ok(())
+                } else {
+                    Err(CommandError::precondition(
+                        "block wait completion attribution mismatch",
+                    ))
+                }
+            }
+            SemanticCommand::CancelBlockWait {
+                block_wait,
+                block_wait_generation,
+                reason,
+                ..
+            } => {
+                if !matches!(
+                    reason,
+                    WaitCancelReason::DeviceFault
+                        | WaitCancelReason::CapabilityRevoked
+                        | WaitCancelReason::ResourceDropped
+                        | WaitCancelReason::GenerationMismatch
+                ) {
+                    return Err(CommandError::precondition(
+                        "block wait cancellation reason is not a block io reason",
+                    ));
+                }
+                if self.block_waits.iter().any(|record| {
+                    record.id == *block_wait
+                        && record.generation == *block_wait_generation
+                        && record.state == BlockWaitState::Pending
+                        && self.waits.iter().any(|wait| {
+                            wait.id == record.wait
+                                && wait.generation == record.wait_generation
+                                && wait.state == WaitState::Pending
+                        })
+                }) {
+                    Ok(())
+                } else {
+                    Err(CommandError::precondition(
+                        "block wait generation is missing or not pending",
+                    ))
+                }
+            }
             SemanticCommand::RecordQueueObject {
                 queue,
                 name,
@@ -5026,6 +5149,41 @@ impl SemanticGraph {
                 status,
                 &note,
             ),
+            SemanticCommand::RecordBlockWait {
+                block_wait,
+                wait,
+                wait_generation,
+                block_request,
+                block_request_generation,
+                note,
+            } => self.record_block_wait_with_id(
+                block_wait,
+                wait,
+                wait_generation,
+                block_request,
+                block_request_generation,
+                &note,
+            ),
+            SemanticCommand::ResolveBlockWait {
+                block_wait,
+                block_wait_generation,
+                block_completion,
+                block_completion_generation,
+                note,
+            } => self.resolve_block_wait_with_completion(
+                block_wait,
+                block_wait_generation,
+                block_completion,
+                block_completion_generation,
+                &note,
+            ),
+            SemanticCommand::CancelBlockWait {
+                block_wait,
+                block_wait_generation,
+                errno,
+                reason,
+                note,
+            } => self.cancel_block_wait(block_wait, block_wait_generation, errno, reason, &note),
             SemanticCommand::RecordQueueObject {
                 queue,
                 name,

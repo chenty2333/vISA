@@ -65,6 +65,7 @@ pub struct SemanticGraph {
     block_range_objects: Vec<BlockRangeObjectRecord>,
     block_request_objects: Vec<BlockRequestObjectRecord>,
     block_completion_objects: Vec<BlockCompletionObjectRecord>,
+    block_waits: Vec<BlockWaitRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -141,6 +142,7 @@ pub struct SemanticGraph {
     next_block_range_object_id: BlockRangeObjectId,
     next_block_request_object_id: BlockRequestObjectId,
     next_block_completion_object_id: BlockCompletionObjectId,
+    next_block_wait_id: BlockWaitId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -162,6 +164,7 @@ mod block_completion_object;
 mod block_device_object;
 mod block_range_object;
 mod block_request_object;
+mod block_wait;
 mod boundary;
 mod capability;
 mod cleanup;
@@ -295,6 +298,7 @@ impl SemanticGraph {
             block_range_objects: Vec::new(),
             block_request_objects: Vec::new(),
             block_completion_objects: Vec::new(),
+            block_waits: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -371,6 +375,7 @@ impl SemanticGraph {
             next_block_range_object_id: 1,
             next_block_request_object_id: 1,
             next_block_completion_object_id: 1,
+            next_block_wait_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

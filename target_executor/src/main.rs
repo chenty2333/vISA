@@ -10,7 +10,7 @@ use artifact_manifest::{
     ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
     BlockCompletionObjectManifest, BlockDeviceObjectManifest, BlockRangeObjectManifest,
-    BlockRequestObjectManifest, BoundaryValidationReportManifest,
+    BlockRequestObjectManifest, BlockWaitManifest, BoundaryValidationReportManifest,
     BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
     CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
@@ -68,7 +68,7 @@ use semantic_core::{
     SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
     StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
-    TombstoneRecord, TrapSurfaceState, VerifiedArtifact, memory_class_policies,
+    TombstoneRecord, TrapSurfaceState, VerifiedArtifact, WaitCancelReason, memory_class_policies,
     validate_contract_graph,
 };
 use service_core::fake_net::{
@@ -195,6 +195,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b1_evidence(&mut semantic)?;
     record_block_runtime_b2_evidence(&mut semantic)?;
     record_block_runtime_b3_evidence(&mut semantic)?;
+    record_block_runtime_b4_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -2751,6 +2752,270 @@ fn record_block_runtime_b3_evidence(semantic: &mut SemanticGraph) -> Result<(), 
     Ok(())
 }
 
+fn record_block_runtime_b4_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let block_driver_store = semantic.register_store(
+        "b4.block.driver",
+        "b4-block-driver.fake-aot",
+        "driver",
+        "restartable",
+    );
+    semantic.set_store_state(block_driver_store, StoreState::Running);
+    let block_driver_store_generation = semantic
+        .store_handle(block_driver_store)
+        .map(|handle| handle.generation)
+        .ok_or("b4 block driver store handle is missing")?;
+    let pending_request_ref =
+        ContractObjectRef::new(ContractObjectKind::BlockRequestObject, 20_017, 1);
+    let create_wait = semantic.apply_envelope(CommandEnvelope::new(
+        212,
+        "target-executor-b4",
+        SemanticCommand::CreateWait {
+            wait: 20_018,
+            owner_task: None,
+            owner_store: Some(block_driver_store),
+            owner_store_generation: Some(block_driver_store_generation),
+            kind: SemanticWaitKind::DriverCompletion,
+            generation: 1,
+            blockers: vec![pending_request_ref],
+            deadline: None,
+            restart_policy: RestartPolicy::InternalOnly,
+            saved_context: Some("b4-block-request-pending-completion".to_owned()),
+        },
+    ));
+    if create_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b4 create wait command {} ({}) failed: status={} violations={:?}",
+            create_wait.command_id,
+            create_wait.command,
+            create_wait.status.as_str(),
+            create_wait.violations
+        )
+        .into());
+    }
+
+    let record_wait = semantic.apply_envelope(CommandEnvelope::new(
+        213,
+        "target-executor-b4",
+        SemanticCommand::RecordBlockWait {
+            block_wait: 20_019,
+            wait: 20_018,
+            wait_generation: 1,
+            block_request: 20_017,
+            block_request_generation: 1,
+            note: "b4-record-block-wait-for-request".to_owned(),
+        },
+    ));
+    if record_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b4 block wait command {} ({}) failed: status={} violations={:?}",
+            record_wait.command_id,
+            record_wait.command,
+            record_wait.status.as_str(),
+            record_wait.violations
+        )
+        .into());
+    }
+
+    let duplicate_wait = semantic.apply_envelope(CommandEnvelope::new(
+        214,
+        "target-executor-b4",
+        SemanticCommand::RecordBlockWait {
+            block_wait: 20_020,
+            wait: 20_018,
+            wait_generation: 1,
+            block_request: 20_017,
+            block_request_generation: 1,
+            note: "b4-reject-duplicate-block-wait".to_owned(),
+        },
+    ));
+    if duplicate_wait.status != CommandStatus::Rejected
+        || !duplicate_wait
+            .violations
+            .iter()
+            .any(|violation| violation.contains("pending block wait"))
+    {
+        return Err(format!(
+            "block runtime b4 duplicate wait command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate_wait.command_id,
+            duplicate_wait.command,
+            duplicate_wait.status.as_str(),
+            duplicate_wait.violations
+        )
+        .into());
+    }
+
+    let stale_request = semantic.apply_envelope(CommandEnvelope::new(
+        215,
+        "target-executor-b4",
+        SemanticCommand::RecordBlockWait {
+            block_wait: 20_021,
+            wait: 20_018,
+            wait_generation: 1,
+            block_request: 20_017,
+            block_request_generation: 2,
+            note: "b4-reject-stale-block-request-generation".to_owned(),
+        },
+    ));
+    if stale_request.status != CommandStatus::Rejected
+        || !stale_request.violations.iter().any(|violation| {
+            violation.contains("block request") || violation.contains("block wait token")
+        })
+    {
+        return Err(format!(
+            "block runtime b4 stale request command {} ({}) was not rejected: status={} violations={:?}",
+            stale_request.command_id,
+            stale_request.command,
+            stale_request.status.as_str(),
+            stale_request.violations
+        )
+        .into());
+    }
+
+    let completion = semantic.apply_envelope(CommandEnvelope::new(
+        216,
+        "target-executor-b4",
+        SemanticCommand::RecordBlockCompletionObject {
+            block_completion: 20_022,
+            block_request: 20_017,
+            block_request_generation: 1,
+            sequence: 2,
+            completed_bytes: 4096,
+            status: BlockCompletionStatus::Success,
+            note: "b4-record-completion-for-waited-request".to_owned(),
+        },
+    ));
+    if completion.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b4 completion command {} ({}) failed: status={} violations={:?}",
+            completion.command_id,
+            completion.command,
+            completion.status.as_str(),
+            completion.violations
+        )
+        .into());
+    }
+
+    let resolve_wait = semantic.apply_envelope(CommandEnvelope::new(
+        217,
+        "target-executor-b4",
+        SemanticCommand::ResolveBlockWait {
+            block_wait: 20_019,
+            block_wait_generation: 1,
+            block_completion: 20_022,
+            block_completion_generation: 1,
+            note: "b4-resolve-block-wait-through-completion".to_owned(),
+        },
+    ));
+    if resolve_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b4 resolve wait command {} ({}) failed: status={} violations={:?}",
+            resolve_wait.command_id,
+            resolve_wait.command,
+            resolve_wait.status.as_str(),
+            resolve_wait.violations
+        )
+        .into());
+    }
+
+    let cancel_request = semantic.apply_envelope(CommandEnvelope::new(
+        218,
+        "target-executor-b4",
+        SemanticCommand::RecordBlockRequestObject {
+            block_request: 20_023,
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_range: 20_005,
+            block_range_generation: 1,
+            operation: BlockRequestOperation::Read,
+            sequence: 3,
+            note: "b4-record-cancellable-block-request".to_owned(),
+        },
+    ));
+    if cancel_request.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b4 cancel request command {} ({}) failed: status={} violations={:?}",
+            cancel_request.command_id,
+            cancel_request.command,
+            cancel_request.status.as_str(),
+            cancel_request.violations
+        )
+        .into());
+    }
+    let cancel_request_ref =
+        ContractObjectRef::new(ContractObjectKind::BlockRequestObject, 20_023, 1);
+    let create_cancel_wait = semantic.apply_envelope(CommandEnvelope::new(
+        219,
+        "target-executor-b4",
+        SemanticCommand::CreateWait {
+            wait: 20_024,
+            owner_task: None,
+            owner_store: Some(block_driver_store),
+            owner_store_generation: Some(block_driver_store_generation),
+            kind: SemanticWaitKind::DriverCompletion,
+            generation: 1,
+            blockers: vec![cancel_request_ref],
+            deadline: None,
+            restart_policy: RestartPolicy::InternalOnly,
+            saved_context: Some("b4-block-request-device-fault".to_owned()),
+        },
+    ));
+    if create_cancel_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b4 create cancel wait command {} ({}) failed: status={} violations={:?}",
+            create_cancel_wait.command_id,
+            create_cancel_wait.command,
+            create_cancel_wait.status.as_str(),
+            create_cancel_wait.violations
+        )
+        .into());
+    }
+    let record_cancel_wait = semantic.apply_envelope(CommandEnvelope::new(
+        220,
+        "target-executor-b4",
+        SemanticCommand::RecordBlockWait {
+            block_wait: 20_025,
+            wait: 20_024,
+            wait_generation: 1,
+            block_request: 20_023,
+            block_request_generation: 1,
+            note: "b4-record-cancellable-block-wait".to_owned(),
+        },
+    ));
+    if record_cancel_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b4 record cancel wait command {} ({}) failed: status={} violations={:?}",
+            record_cancel_wait.command_id,
+            record_cancel_wait.command,
+            record_cancel_wait.status.as_str(),
+            record_cancel_wait.violations
+        )
+        .into());
+    }
+    let cancel_wait = semantic.apply_envelope(CommandEnvelope::new(
+        221,
+        "target-executor-b4",
+        SemanticCommand::CancelBlockWait {
+            block_wait: 20_025,
+            block_wait_generation: 1,
+            errno: 5,
+            reason: WaitCancelReason::DeviceFault,
+            note: "b4-cancel-block-wait-on-device-fault".to_owned(),
+        },
+    ));
+    if cancel_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b4 cancel wait command {} ({}) failed: status={} violations={:?}",
+            cancel_wait.command_id,
+            cancel_wait.command,
+            cancel_wait.status.as_str(),
+            cancel_wait.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -5145,6 +5410,7 @@ fn demo_migration_package(
             block_range_object_count: semantic.block_range_object_count(),
             block_request_object_count: semantic.block_request_object_count(),
             block_completion_object_count: semantic.block_completion_object_count(),
+            block_wait_count: semantic.block_wait_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -5466,6 +5732,11 @@ fn demo_migration_package(
                 .block_completion_objects()
                 .iter()
                 .map(block_completion_object_manifest)
+                .collect(),
+            block_waits: semantic
+                .block_waits()
+                .iter()
+                .map(block_wait_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -6857,6 +7128,29 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        block_wait_roots: semantic
+            .block_waits()
+            .iter()
+            .map(|wait| {
+                format!(
+                    "block-wait id={} wait={}@{} block_request={}@{} block_device={}@{} block_range={}@{} operation={} sequence={} byte_len={} state={} generation={}",
+                    wait.id,
+                    wait.wait,
+                    wait.wait_generation,
+                    wait.block_request,
+                    wait.block_request_generation,
+                    wait.block_device,
+                    wait.block_device_generation,
+                    wait.block_range,
+                    wait.block_range_generation,
+                    wait.operation.as_str(),
+                    wait.sequence,
+                    wait.byte_len,
+                    wait.state.as_str(),
+                    wait.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -8064,6 +8358,31 @@ fn block_completion_object_manifest(
         state: completion.state.as_str().to_owned(),
         recorded_at_event: completion.recorded_at_event,
         note: completion.note.clone(),
+    }
+}
+
+fn block_wait_manifest(wait: &semantic_core::BlockWaitRecord) -> BlockWaitManifest {
+    BlockWaitManifest {
+        id: wait.id,
+        wait: wait.wait,
+        wait_generation: wait.wait_generation,
+        block_request: wait.block_request,
+        block_request_generation: wait.block_request_generation,
+        block_device: wait.block_device,
+        block_device_generation: wait.block_device_generation,
+        block_range: wait.block_range,
+        block_range_generation: wait.block_range_generation,
+        operation: wait.operation.as_str().to_owned(),
+        sequence: wait.sequence,
+        byte_len: wait.byte_len,
+        generation: wait.generation,
+        state: wait.state.as_str().to_owned(),
+        created_at_event: wait.created_at_event,
+        completed_at_event: wait.completed_at_event,
+        completion: wait.completion,
+        completion_generation: wait.completion_generation,
+        cancel_reason: wait.cancel_reason.map(|reason| reason.as_str().to_owned()),
+        note: wait.note.clone(),
     }
 }
 

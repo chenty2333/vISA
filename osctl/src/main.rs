@@ -9,15 +9,15 @@ use artifact_manifest::{
     ActivationCleanupManifest, ActivationContextManifest, ActivationMigrationManifest,
     ActivationRecordManifest, ActivationResumeManifest, ActivationWaitManifest,
     ArtifactBundleManifest, BlockCompletionObjectManifest, BlockDeviceObjectManifest,
-    BlockRangeObjectManifest, BlockRequestObjectManifest, BoundaryValidationReportManifest,
-    CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandResultManifest, ContractObjectRefManifest, CrossHartSchedulerDecisionManifest,
-    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    FakeNetBackendObjectManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    BlockRangeObjectManifest, BlockRequestObjectManifest, BlockWaitManifest,
+    BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
+    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest,
+    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
+    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, FakeNetBackendObjectManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -347,6 +347,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-request-object"
         | "block-completion"
         | "block-completion-object"
+        | "block-wait"
+        | "block-wait-token"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -517,7 +519,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -772,6 +774,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "block-range" | "block-range-object" | "sector-range" => "block-range",
         "block-request" | "block-request-object" => "block-request",
         "block-completion" | "block-completion-object" => "block-completion",
+        "block-wait" | "block-wait-token" => "block-wait",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2597,6 +2600,67 @@ fn block_completion_object_view_v1(
             "block_range_generation": completion.block_range_generation,
         },
         "last_error": serde_json::Value::Null,
+    })
+}
+
+fn block_wait_view_v1(wait: &BlockWaitManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "block-wait",
+        "id": wait.id,
+        "generation": wait.generation,
+        "state": wait.state,
+        "owner": {
+            "wait": object_ref_json("wait-token", wait.wait, wait.wait_generation),
+            "block_request": object_ref_json(
+                "block-request",
+                wait.block_request,
+                wait.block_request_generation,
+            ),
+        },
+        "references": {
+            "wait": object_ref_json("wait-token", wait.wait, wait.wait_generation),
+            "block_request": object_ref_json(
+                "block-request",
+                wait.block_request,
+                wait.block_request_generation,
+            ),
+            "block_device": object_ref_json(
+                "block-device",
+                wait.block_device,
+                wait.block_device_generation,
+            ),
+            "block_range": object_ref_json(
+                "block-range",
+                wait.block_range,
+                wait.block_range_generation,
+            ),
+            "completion": optional_object_ref_json(
+                "block-completion",
+                wait.completion,
+                wait.completion_generation,
+            ),
+            "created_event": {
+                "id": wait.created_at_event,
+            },
+            "completed_event": wait.completed_at_event.map(|event| serde_json::json!({ "id": event })),
+        },
+        "wait": {
+            "operation": wait.operation,
+            "sequence": wait.sequence,
+            "byte_len": wait.byte_len,
+            "cancel_reason": wait.cancel_reason,
+        },
+        "note": wait.note,
+        "last_transition": {
+            "created_at_event": wait.created_at_event,
+            "completed_at_event": wait.completed_at_event,
+            "wait_generation": wait.wait_generation,
+            "block_request_generation": wait.block_request_generation,
+            "block_device_generation": wait.block_device_generation,
+            "block_range_generation": wait.block_range_generation,
+        },
+        "last_error": wait.cancel_reason,
     })
 }
 
@@ -5208,6 +5272,12 @@ fn stable_views_for_kind(
             .iter()
             .map(block_completion_object_view_v1)
             .collect()),
+        "block-wait" | "block-wait-token" => Ok(package
+            .semantic
+            .block_waits
+            .iter()
+            .map(block_wait_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -6522,6 +6592,41 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             Some(request.recorded_at_event),
         ));
     }
+    for block_wait in &package.semantic.block_waits {
+        if block_wait.state != "pending" {
+            continue;
+        }
+        let from = object_ref_json("block-wait", block_wait.id, block_wait.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("wait-token", block_wait.wait, block_wait.wait_generation),
+            "block-wait->wait-token",
+            "live",
+            Some(block_wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-request",
+                block_wait.block_request,
+                block_wait.block_request_generation,
+            ),
+            "block-wait->block-request",
+            "live",
+            Some(block_wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "block-device",
+                block_wait.block_device,
+                block_wait.block_device_generation,
+            ),
+            "block-wait->block-device",
+            "live",
+            Some(block_wait.created_at_event),
+        ));
+    }
     for packet_buffer in &package.semantic.packet_buffer_objects {
         if packet_buffer.state != "allocated" && packet_buffer.state != "filled" {
             continue;
@@ -7246,6 +7351,44 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "historical",
             Some(completion.recorded_at_event),
         ));
+    }
+    for block_wait in &package.semantic.block_waits {
+        if block_wait.state == "pending" {
+            continue;
+        }
+        let event = block_wait
+            .completed_at_event
+            .or(Some(block_wait.created_at_event));
+        let from = object_ref_json("block-wait", block_wait.id, block_wait.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("wait-token", block_wait.wait, block_wait.wait_generation),
+            "block-wait->wait-token",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-request",
+                block_wait.block_request,
+                block_wait.block_request_generation,
+            ),
+            "block-wait->block-request",
+            "historical",
+            event,
+        ));
+        if let (Some(completion), Some(generation)) =
+            (block_wait.completion, block_wait.completion_generation)
+        {
+            edges.push(graph_edge(
+                from,
+                object_ref_json("block-completion", completion, generation),
+                "block-wait->block-completion",
+                "historical",
+                event,
+            ));
+        }
     }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
@@ -10665,6 +10808,9 @@ fn replay_until(
     for completion in &package.semantic.roots.block_completion_object_roots {
         println!("replay block-completion {completion}");
     }
+    for block_wait in &package.semantic.roots.block_wait_roots {
+        println!("replay block-wait {block_wait}");
+    }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
     }
@@ -10964,6 +11110,10 @@ fn print_replay_json(
     roots.insert(
         "block_completions".to_owned(),
         serde_json::json!(package.semantic.roots.block_completion_object_roots.len()),
+    );
+    roots.insert(
+        "block_waits".to_owned(),
+        serde_json::json!(package.semantic.roots.block_wait_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -11312,6 +11462,10 @@ fn print_replay_json(
     roots.insert(
         "block_completion_object_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.block_completion_object_roots),
+    );
+    roots.insert(
+        "block_wait_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.block_wait_roots),
     );
 
     let value = serde_json::json!({
@@ -12836,6 +12990,40 @@ mod tests {
         assert_eq!(view["completion"]["completed_bytes"], 4096);
         assert_eq!(view["completion"]["status"], "success");
         assert_eq!(view["last_transition"]["recorded_at_event"], 107);
+    }
+
+    #[test]
+    fn block_wait_view_v1_exposes_wait_token_and_completion_contract() {
+        let view = block_wait_view_v1(&BlockWaitManifest {
+            id: 108,
+            wait: 109,
+            wait_generation: 1,
+            block_request: 106,
+            block_request_generation: 1,
+            block_device: 104,
+            block_device_generation: 1,
+            block_range: 105,
+            block_range_generation: 1,
+            operation: "read".to_owned(),
+            sequence: 1,
+            byte_len: 4096,
+            generation: 1,
+            state: "resolved".to_owned(),
+            created_at_event: 108,
+            completed_at_event: Some(110),
+            completion: Some(107),
+            completion_generation: Some(1),
+            cancel_reason: None,
+            note: "block wait".to_owned(),
+        });
+        assert_eq!(view["kind"], "block-wait");
+        assert_eq!(view["owner"]["wait"]["kind"], "wait-token");
+        assert_eq!(view["references"]["block_request"]["generation"], 1);
+        assert_eq!(view["references"]["completion"]["kind"], "block-completion");
+        assert_eq!(view["wait"]["operation"], "read");
+        assert_eq!(view["wait"]["sequence"], 1);
+        assert_eq!(view["wait"]["byte_len"], 4096);
+        assert_eq!(view["last_transition"]["completed_at_event"], 110);
     }
 
     #[test]
@@ -15793,6 +15981,28 @@ mod tests {
                 recorded_at_event: 42,
                 note: "block completion graph".to_owned(),
             });
+        package.semantic.block_waits.push(BlockWaitManifest {
+            id: 109,
+            wait: 110,
+            wait_generation: 1,
+            block_request: 107,
+            block_request_generation: 1,
+            block_device: 105,
+            block_device_generation: 1,
+            block_range: 106,
+            block_range_generation: 1,
+            operation: "read".to_owned(),
+            sequence: 1,
+            byte_len: 4096,
+            generation: 1,
+            state: "resolved".to_owned(),
+            created_at_event: 43,
+            completed_at_event: Some(44),
+            completion: Some(108),
+            completion_generation: Some(1),
+            cancel_reason: None,
+            note: "block wait graph".to_owned(),
+        });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -15826,6 +16036,10 @@ mod tests {
             && edge["relation"] == "block-completion->block-request"
             && edge["from"]["kind"] == "block-completion"
             && edge["to"]["kind"] == "block-request"));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "block-wait->block-completion"
+            && edge["from"]["kind"] == "block-wait"
+            && edge["to"]["kind"] == "block-completion"));
         assert!(live.iter().any(|edge| edge["mode"] == "live"
             && edge["relation"] == "fake-net-backend->packet-device"
             && edge["from"]["kind"] == "fake-net-backend"

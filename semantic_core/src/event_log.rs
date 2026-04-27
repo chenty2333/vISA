@@ -483,6 +483,36 @@ pub enum EventKind {
         status: BlockCompletionStatus,
         generation: Generation,
     },
+    BlockWaitCreated {
+        block_wait: BlockWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        block_request: BlockRequestObjectId,
+        block_request_generation: Generation,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        block_range: BlockRangeObjectId,
+        block_range_generation: Generation,
+        operation: BlockRequestOperation,
+        sequence: u64,
+        byte_len: u64,
+        generation: Generation,
+    },
+    BlockWaitResolved {
+        block_wait: BlockWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        block_completion: BlockCompletionObjectId,
+        block_completion_generation: Generation,
+        generation: Generation,
+    },
+    BlockWaitCancelled {
+        block_wait: BlockWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        reason: WaitCancelReason,
+        generation: Generation,
+    },
     PacketBufferObjectRecorded {
         packet_buffer: PacketBufferObjectId,
         packet_device: PacketDeviceObjectId,
@@ -1843,6 +1873,44 @@ impl EventKind {
             } => format!(
                 "BlockCompletionObjectRecorded block_completion={block_completion} block_request={block_request}@{block_request_generation} block_device={block_device}@{block_device_generation} block_range={block_range}@{block_range_generation} sequence={sequence} completed_bytes={completed_bytes} status={} generation={generation}",
                 status.as_str()
+            ),
+            Self::BlockWaitCreated {
+                block_wait,
+                wait,
+                wait_generation,
+                block_request,
+                block_request_generation,
+                block_device,
+                block_device_generation,
+                block_range,
+                block_range_generation,
+                operation,
+                sequence,
+                byte_len,
+                generation,
+            } => format!(
+                "BlockWaitCreated block_wait={block_wait} wait={wait}@{wait_generation} block_request={block_request}@{block_request_generation} block_device={block_device}@{block_device_generation} block_range={block_range}@{block_range_generation} operation={} sequence={sequence} byte_len={byte_len} generation={generation}",
+                operation.as_str()
+            ),
+            Self::BlockWaitResolved {
+                block_wait,
+                wait,
+                wait_generation,
+                block_completion,
+                block_completion_generation,
+                generation,
+            } => format!(
+                "BlockWaitResolved block_wait={block_wait} wait={wait}@{wait_generation} block_completion={block_completion}@{block_completion_generation} generation={generation}"
+            ),
+            Self::BlockWaitCancelled {
+                block_wait,
+                wait,
+                wait_generation,
+                reason,
+                generation,
+            } => format!(
+                "BlockWaitCancelled block_wait={block_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
+                reason.as_str()
             ),
             Self::PacketBufferObjectRecorded {
                 packet_buffer,

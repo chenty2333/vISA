@@ -1723,6 +1723,36 @@ impl BlockCompletionObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockWaitRecord {
+    pub id: BlockWaitId,
+    pub wait: WaitId,
+    pub wait_generation: Generation,
+    pub block_request: BlockRequestObjectId,
+    pub block_request_generation: Generation,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub block_range: BlockRangeObjectId,
+    pub block_range_generation: Generation,
+    pub operation: BlockRequestOperation,
+    pub sequence: u64,
+    pub byte_len: u64,
+    pub generation: Generation,
+    pub state: BlockWaitState,
+    pub created_at_event: EventId,
+    pub completed_at_event: Option<EventId>,
+    pub completion: Option<BlockCompletionObjectId>,
+    pub completion_generation: Option<Generation>,
+    pub cancel_reason: Option<WaitCancelReason>,
+    pub note: String,
+}
+
+impl BlockWaitRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::BlockWait, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

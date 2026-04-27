@@ -882,6 +882,23 @@ impl BlockCompletionObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockWaitState {
+    Pending,
+    Resolved,
+    Cancelled,
+}
+
+impl BlockWaitState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Resolved => "resolved",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PacketBufferDirection {
     Rx,
     Tx,

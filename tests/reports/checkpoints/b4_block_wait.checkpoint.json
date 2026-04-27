@@ -1,0 +1,211 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "B4-block-wait",
+  "phase": "Phase 5 Block / Disk Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add BlockWait as a stable semantic object owned by semantic_core",
+    "Bridge BlockWait to the existing WaitRecord / WaitToken model with exact-generation BlockRequestObject blockers",
+    "Resolve BlockWait only through an exact successful BlockCompletionObject",
+    "Cancel BlockWait with an explicit WaitCancelReason and propagate cancellation to the underlying WaitToken",
+    "Expose block wait roots/counts through semantic package, osctl ViewV1, graph historical edges, replay roots, and roots JSON",
+    "Reject stale request generations, duplicate pending waits, and mismatched completions before mutation"
+  ],
+  "no_goals": [
+    "real block IO",
+    "real virtio-blk backend",
+    "request queue scheduling",
+    "DMA-backed block buffer",
+    "filesystem adapters",
+    "target-side cwasm execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/block_wait.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/block/golden_b4_block_wait.trace.json",
+    "tests/reports/checkpoints/b4_block_wait.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/block/golden_b4_block_wait.trace.json",
+    "tests/reports/checkpoints/b4_block_wait.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "BlockWait uses exact WaitToken, BlockRequestObject, BlockDeviceObject, and BlockRangeObject generation refs",
+      "BlockWait resolution is tied to a successful BlockCompletionObject with matching request sequence and byte length",
+      "BlockWait cancellation records WaitCancelReason and updates the canonical WaitRecord state",
+      "ResolveBlockWait and CancelBlockWait preflight now mirror mutation preconditions so stale WaitToken state is rejected rather than hidden as a noop",
+      "BlockWait invariants reject duplicate pending BlockWait records for the same BlockRequestObject generation",
+      "Resolved and cancelled block waits are represented as historical graph evidence, not live ownership",
+      "Root/count validation covers block_waits so package tampering is rejected"
+    ],
+    "bad_smells_checked": [
+      "No fatfs, ext4, virtio-blk, request queue backend, or adapter internals were introduced into semantic_core",
+      "No debug label or global object id is used as authority for block wait evidence",
+      "The new graph module is domain-scoped and does not expand block request/completion code beyond lifecycle invariants",
+      "Target executor evidence remains a host-side semantic harness and does not run real block IO"
+    ],
+    "residual_notes": [
+      "B5 still needs FakeBlockBackend as an adapter/backend boundary",
+      "B6 still needs VirtIOBlkBackend skeleton without making virtio-drivers semantic truth",
+      "B9/B10 still need request queueing and DMA-backed block buffers"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core block_runtime_b4",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core block_wait",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl block_wait",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl graph_json_edges_separate_live_history_and_cleanup_modes",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl block-wait list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl block-wait show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 20025",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 212",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 214",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 217",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 221",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl replay --until 406 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/block/golden_b4_block_wait.trace.json",
+    "osctl_views": [
+      "osctl block-wait list --json <migration.json>",
+      "osctl block-wait show --json <migration.json> 20025",
+      "osctl command show --json <migration.json> 212",
+      "osctl command show --json <migration.json> 214",
+      "osctl command show --json <migration.json> 217",
+      "osctl command show --json <migration.json> 221",
+      "osctl graph --history --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "block_wait_roots",
+      "block_completion_object_roots",
+      "block_request_object_roots",
+      "wait_record_roots",
+      "command_result_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 406,
+      "block_wait_count": 2,
+      "block_completion_object_count": 2,
+      "block_request_object_count": 3,
+      "resolved_block_wait": "block-wait:20019@1",
+      "cancelled_block_wait": "block-wait:20025@1",
+      "resolved_wait": "wait-token:20018@1",
+      "cancelled_wait": "wait-token:20024@1",
+      "completion": "block-completion:20022@1",
+      "resolved_event": 398,
+      "cancelled_event": 404,
+      "create_wait_applied_command": "command-result:212:create-wait:applied",
+      "record_wait_applied_command": "command-result:213:record-block-wait:applied",
+      "duplicate_wait_rejected_command": "command-result:214:record-block-wait:rejected",
+      "stale_request_rejected_command": "command-result:215:record-block-wait:rejected",
+      "completion_applied_command": "command-result:216:record-block-completion-object:applied",
+      "resolve_wait_applied_command": "command-result:217:resolve-block-wait:applied",
+      "cancel_wait_applied_command": "command-result:221:cancel-block-wait:applied"
+    }
+  },
+  "residual_gaps": [
+    "B5 still needs FakeBlockBackend as an adapter/backend boundary",
+    "B6 still needs VirtIOBlkBackend skeleton without making virtio-drivers semantic truth",
+    "B9/B10 still need request queueing and DMA-backed block buffers"
+  ],
+  "next_checkpoint": "B5-fake-block-backend"
+}
