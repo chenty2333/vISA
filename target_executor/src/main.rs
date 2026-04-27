@@ -33,11 +33,12 @@ use artifact_manifest::{
     SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, SocketObjectManifest,
-    StopTheWorldRendezvousManifest, StopTheWorldRendezvousParticipantManifest, StoreRecordManifest,
-    SubstrateBoundaryManifest, SubstrateEventManifest, TargetAddressMapEntryManifest,
-    TargetArtifactImageManifest, TargetCapabilitySpecManifest, TargetMemoryPlanManifest,
-    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
-    TrapRecordManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
+    SocketOperationManifest, StopTheWorldRendezvousManifest,
+    StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
+    SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
+    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
+    TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
+    VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -175,6 +176,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n10_evidence(&mut semantic)?;
     record_network_runtime_n11_evidence(&mut semantic)?;
     record_network_runtime_n12_evidence(&mut semantic)?;
+    record_network_runtime_n13_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -1019,6 +1021,167 @@ fn record_network_runtime_n12_evidence(semantic: &mut SemanticGraph) -> Result<(
         )
         .into());
     }
+    Ok(())
+}
+
+fn record_network_runtime_n13_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let linux_socket_store = semantic
+        .store_id("linux_socket_service")
+        .ok_or("linux_socket_service store is missing for n13 evidence")?;
+    let linux_socket_store_generation = semantic
+        .store_handle(linux_socket_store)
+        .map(|handle| handle.generation)
+        .ok_or("linux_socket_service store handle is missing for n13 evidence")?;
+
+    let commands = [
+        CommandEnvelope::new(
+            150,
+            "target-executor-n13",
+            SemanticCommand::RecordSocketObject {
+                socket: 10_031,
+                adapter: 10_025,
+                adapter_generation: 1,
+                owner_store: linux_socket_store,
+                owner_store_generation: linux_socket_store_generation,
+                domain: 2,
+                socket_type: 1,
+                protocol: 0,
+                note: "n13-record-connected-inet-stream-socket-object".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            151,
+            "target-executor-n13",
+            SemanticCommand::RecordEndpointObject {
+                endpoint: 10_032,
+                socket: 10_031,
+                socket_generation: 1,
+                local_addr: [0, 0, 0, 0],
+                local_port: 0,
+                remote_addr: [0, 0, 0, 0],
+                remote_port: 0,
+                note: "n13-record-connected-endpoint-object".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            152,
+            "target-executor-n13",
+            SemanticCommand::BindSocketEndpoint {
+                operation_id: 10_033,
+                endpoint: 10_029,
+                endpoint_generation: 1,
+                local_addr: [10, 0, 2, 15],
+                local_port: 8080,
+                sequence: 1,
+                note: "n13-bind-listening-endpoint".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            153,
+            "target-executor-n13",
+            SemanticCommand::ListenSocketEndpoint {
+                operation_id: 10_034,
+                endpoint: 10_029,
+                endpoint_generation: 1,
+                backlog: 16,
+                sequence: 2,
+                note: "n13-listen-endpoint".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            154,
+            "target-executor-n13",
+            SemanticCommand::BindSocketEndpoint {
+                operation_id: 10_035,
+                endpoint: 10_032,
+                endpoint_generation: 1,
+                local_addr: [10, 0, 2, 15],
+                local_port: 40000,
+                sequence: 1,
+                note: "n13-bind-connected-endpoint".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            155,
+            "target-executor-n13",
+            SemanticCommand::ConnectSocketEndpoint {
+                operation_id: 10_036,
+                endpoint: 10_032,
+                endpoint_generation: 1,
+                remote_addr: [10, 0, 2, 2],
+                remote_port: 80,
+                sequence: 2,
+                note: "n13-connect-endpoint".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            156,
+            "target-executor-n13",
+            SemanticCommand::SendSocket {
+                operation_id: 10_037,
+                endpoint: 10_032,
+                endpoint_generation: 1,
+                byte_len: 18,
+                sequence: 3,
+                note: "n13-send-socket".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            157,
+            "target-executor-n13",
+            SemanticCommand::RecvSocket {
+                operation_id: 10_038,
+                endpoint: 10_032,
+                endpoint_generation: 1,
+                byte_len: 19,
+                sequence: 4,
+                note: "n13-recv-socket".to_owned(),
+            },
+        ),
+    ];
+
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "network runtime n13 evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+
+    let invalid_send = semantic.apply_envelope(CommandEnvelope::new(
+        158,
+        "target-executor-n13",
+        SemanticCommand::SendSocket {
+            operation_id: 10_039,
+            endpoint: 10_029,
+            endpoint_generation: 1,
+            byte_len: 1,
+            sequence: 3,
+            note: "n13-reject-send-on-listening-endpoint".to_owned(),
+        },
+    ));
+    if invalid_send.status != CommandStatus::Rejected
+        || !invalid_send
+            .violations
+            .iter()
+            .any(|violation| violation.contains("connected endpoint"))
+    {
+        return Err(format!(
+            "network runtime n13 invalid send command {} ({}) was not rejected: status={} violations={:?}",
+            invalid_send.command_id,
+            invalid_send.command,
+            invalid_send.status.as_str(),
+            invalid_send.violations
+        )
+        .into());
+    }
+
     Ok(())
 }
 
@@ -3404,6 +3567,7 @@ fn demo_migration_package(
             network_stack_adapter_count: semantic.network_stack_adapter_count(),
             socket_object_count: semantic.socket_object_count(),
             endpoint_object_count: semantic.endpoint_object_count(),
+            socket_operation_count: semantic.socket_operation_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -3665,6 +3829,11 @@ fn demo_migration_package(
                 .endpoint_objects()
                 .iter()
                 .map(endpoint_object_manifest)
+                .collect(),
+            socket_operations: semantic
+                .socket_operations()
+                .iter()
+                .map(socket_operation_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -4716,6 +4885,40 @@ fn semantic_roots(
                     endpoint.remote_port,
                     endpoint.state.as_str(),
                     endpoint.generation
+                )
+            })
+            .collect(),
+        socket_operation_roots: semantic
+            .socket_operations()
+            .iter()
+            .map(|operation| {
+                format!(
+                    "socket-operation id={} operation={} endpoint={}@{} socket={}@{} adapter={}@{} owner_store={}@{} local={}.{}.{}.{}:{} remote={}.{}.{}.{}:{} backlog={} byte_len={} sequence={} state={} generation={}",
+                    operation.id,
+                    operation.operation.as_str(),
+                    operation.endpoint,
+                    operation.endpoint_generation,
+                    operation.socket,
+                    operation.socket_generation,
+                    operation.adapter,
+                    operation.adapter_generation,
+                    operation.owner_store,
+                    operation.owner_store_generation,
+                    operation.local_addr[0],
+                    operation.local_addr[1],
+                    operation.local_addr[2],
+                    operation.local_addr[3],
+                    operation.local_port,
+                    operation.remote_addr[0],
+                    operation.remote_addr[1],
+                    operation.remote_addr[2],
+                    operation.remote_addr[3],
+                    operation.remote_port,
+                    operation.backlog,
+                    operation.byte_len,
+                    operation.sequence,
+                    operation.state.as_str(),
+                    operation.generation
                 )
             })
             .collect(),
@@ -6469,6 +6672,34 @@ fn endpoint_object_manifest(
         state: endpoint.state.as_str().to_owned(),
         created_at_event: endpoint.created_at_event,
         note: endpoint.note.clone(),
+    }
+}
+
+fn socket_operation_manifest(
+    operation: &semantic_core::SocketOperationRecord,
+) -> SocketOperationManifest {
+    SocketOperationManifest {
+        id: operation.id,
+        endpoint: operation.endpoint,
+        endpoint_generation: operation.endpoint_generation,
+        socket: operation.socket,
+        socket_generation: operation.socket_generation,
+        adapter: operation.adapter,
+        adapter_generation: operation.adapter_generation,
+        owner_store: operation.owner_store,
+        owner_store_generation: operation.owner_store_generation,
+        operation: operation.operation.as_str().to_owned(),
+        local_addr: operation.local_addr,
+        local_port: operation.local_port,
+        remote_addr: operation.remote_addr,
+        remote_port: operation.remote_port,
+        backlog: operation.backlog,
+        byte_len: operation.byte_len,
+        sequence: operation.sequence,
+        generation: operation.generation,
+        state: operation.state.as_str().to_owned(),
+        recorded_at_event: operation.recorded_at_event,
+        note: operation.note.clone(),
     }
 }
 

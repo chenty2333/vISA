@@ -1272,6 +1272,34 @@ pub enum SemanticInvariantError {
     EndpointObjectMissingEvent {
         endpoint: EndpointObjectId,
     },
+    SocketOperationInvalid {
+        operation: SocketOperationId,
+    },
+    SocketOperationMissingEndpoint {
+        operation: SocketOperationId,
+        endpoint: EndpointObjectId,
+    },
+    SocketOperationMissingSocket {
+        operation: SocketOperationId,
+        socket: SocketObjectId,
+    },
+    SocketOperationMissingAdapter {
+        operation: SocketOperationId,
+        adapter: NetworkStackAdapterId,
+    },
+    SocketOperationMissingOwnerStore {
+        operation: SocketOperationId,
+        store: StoreId,
+    },
+    SocketOperationDuplicate {
+        operation: SocketOperationId,
+    },
+    SocketOperationOrderingInvalid {
+        operation: SocketOperationId,
+    },
+    SocketOperationMissingEvent {
+        operation: SocketOperationId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

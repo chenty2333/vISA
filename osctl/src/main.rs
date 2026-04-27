@@ -25,9 +25,9 @@ use artifact_manifest::{
     SavedContextManifest, SchedulerDecisionManifest, SmpCleanupQuiescenceManifest,
     SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
     SmpSnapshotBarrierManifest, SmpStressRunManifest, SocketObjectManifest,
-    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
-    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
-    VirtioNetBackendObjectManifest, WaitRecordManifest,
+    SocketOperationManifest, StopTheWorldRendezvousManifest, StoreRecordManifest,
+    SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
+    TimerInterruptManifest, TrapRecordManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -313,6 +313,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "socket"
         | "endpoint-object"
         | "endpoint"
+        | "socket-operation"
+        | "socket-op"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -483,7 +485,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -724,6 +726,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "network-stack-adapter" | "smoltcp-adapter" => "network-stack-adapter",
         "socket-object" | "socket" => "socket-object",
         "endpoint-object" | "endpoint" => "endpoint-object",
+        "socket-operation" | "socket-op" => "socket-operation",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3063,6 +3066,78 @@ fn endpoint_object_view_v1(endpoint: &EndpointObjectManifest) -> serde_json::Val
     })
 }
 
+fn socket_operation_view_v1(operation: &SocketOperationManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "socket-operation",
+        "id": operation.id,
+        "generation": operation.generation,
+        "state": operation.state,
+        "owner": {
+            "store": object_ref_json(
+                "store",
+                operation.owner_store,
+                operation.owner_store_generation,
+            ),
+            "endpoint": object_ref_json(
+                "endpoint-object",
+                operation.endpoint,
+                operation.endpoint_generation,
+            ),
+            "socket": object_ref_json(
+                "socket-object",
+                operation.socket,
+                operation.socket_generation,
+            ),
+        },
+        "references": {
+            "endpoint": object_ref_json(
+                "endpoint-object",
+                operation.endpoint,
+                operation.endpoint_generation,
+            ),
+            "socket": object_ref_json(
+                "socket-object",
+                operation.socket,
+                operation.socket_generation,
+            ),
+            "adapter": object_ref_json(
+                "network-stack-adapter",
+                operation.adapter,
+                operation.adapter_generation,
+            ),
+            "owner_store": object_ref_json(
+                "store",
+                operation.owner_store,
+                operation.owner_store_generation,
+            ),
+            "event": {
+                "id": operation.recorded_at_event,
+            },
+        },
+        "operation": {
+            "name": operation.operation,
+            "sequence": operation.sequence,
+            "local_addr": operation.local_addr,
+            "local_port": operation.local_port,
+            "remote_addr": operation.remote_addr,
+            "remote_port": operation.remote_port,
+            "backlog": operation.backlog,
+            "byte_len": operation.byte_len,
+        },
+        "note": operation.note,
+        "last_transition": {
+            "recorded_at_event": operation.recorded_at_event,
+            "endpoint_generation": operation.endpoint_generation,
+            "socket_generation": operation.socket_generation,
+            "adapter_generation": operation.adapter_generation,
+            "owner_store_generation": operation.owner_store_generation,
+            "sequence": operation.sequence,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -4198,6 +4273,12 @@ fn stable_views_for_kind(
             .iter()
             .map(endpoint_object_view_v1)
             .collect()),
+        "socket-operation" | "socket-op" => Ok(package
+            .semantic
+            .socket_operations
+            .iter()
+            .map(socket_operation_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -5227,6 +5308,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.endpoint_object_roots,
     );
     print_roots(
+        "socket-operation",
+        &package.semantic.roots.socket_operation_roots,
+    );
+    print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
     );
@@ -6059,6 +6144,56 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
 
 fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value> {
     let mut edges = Vec::new();
+    for operation in &package.semantic.socket_operations {
+        if operation.state != "applied" {
+            continue;
+        }
+        let from = object_ref_json("socket-operation", operation.id, operation.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "endpoint-object",
+                operation.endpoint,
+                operation.endpoint_generation,
+            ),
+            "socket-operation->endpoint-object",
+            "historical",
+            Some(operation.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "socket-object",
+                operation.socket,
+                operation.socket_generation,
+            ),
+            "socket-operation->socket-object",
+            "historical",
+            Some(operation.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "network-stack-adapter",
+                operation.adapter,
+                operation.adapter_generation,
+            ),
+            "socket-operation->network-stack-adapter",
+            "historical",
+            Some(operation.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "store",
+                operation.owner_store,
+                operation.owner_store_generation,
+            ),
+            "socket-operation->owner-store",
+            "historical",
+            Some(operation.recorded_at_event),
+        ));
+    }
     for rx in &package.semantic.network_rx_interrupts {
         edges.push(graph_edge(
             object_ref_json("network-rx-interrupt", rx.id, rx.generation),
@@ -8685,7 +8820,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -8731,6 +8866,7 @@ fn replay_until(
         package.semantic.roots.network_stack_adapter_roots.len(),
         package.semantic.roots.socket_object_roots.len(),
         package.semantic.roots.endpoint_object_roots.len(),
+        package.semantic.roots.socket_operation_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -8861,6 +8997,9 @@ fn replay_until(
     }
     for endpoint in &package.semantic.roots.endpoint_object_roots {
         println!("replay endpoint-object {endpoint}");
+    }
+    for operation in &package.semantic.roots.socket_operation_roots {
+        println!("replay socket-operation {operation}");
     }
     Ok(())
 }
@@ -9047,6 +9186,10 @@ fn print_replay_json(
     roots.insert(
         "endpoint_objects".to_owned(),
         serde_json::json!(package.semantic.roots.endpoint_object_roots.len()),
+    );
+    roots.insert(
+        "socket_operations".to_owned(),
+        serde_json::json!(package.semantic.roots.socket_operation_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -9347,6 +9490,10 @@ fn print_replay_json(
     roots.insert(
         "interface_event_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.interface_event_roots),
+    );
+    roots.insert(
+        "socket_operation_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.socket_operation_roots),
     );
 
     let value = serde_json::json!({
@@ -10354,6 +10501,45 @@ mod tests {
         assert_eq!(view["endpoint"]["local_port"], 0);
         assert_eq!(view["endpoint"]["remote_port"], 0);
         assert_eq!(view["last_transition"]["created_at_event"], 79);
+    }
+
+    #[test]
+    fn socket_operation_view_v1_exposes_endpoint_operation_and_generations() {
+        let view = socket_operation_view_v1(&SocketOperationManifest {
+            id: 80,
+            endpoint: 78,
+            endpoint_generation: 1,
+            socket: 76,
+            socket_generation: 2,
+            adapter: 74,
+            adapter_generation: 3,
+            owner_store: 7,
+            owner_store_generation: 4,
+            operation: "connect".to_owned(),
+            local_addr: [10, 0, 2, 15],
+            local_port: 40000,
+            remote_addr: [10, 0, 2, 2],
+            remote_port: 80,
+            backlog: 0,
+            byte_len: 0,
+            sequence: 2,
+            generation: 1,
+            state: "applied".to_owned(),
+            recorded_at_event: 81,
+            note: "socket operation".to_owned(),
+        });
+        assert_eq!(view["kind"], "socket-operation");
+        assert_eq!(view["owner"]["endpoint"]["kind"], "endpoint-object");
+        assert_eq!(view["owner"]["endpoint"]["generation"], 1);
+        assert_eq!(view["references"]["socket"]["kind"], "socket-object");
+        assert_eq!(view["references"]["socket"]["generation"], 2);
+        assert_eq!(view["references"]["adapter"]["generation"], 3);
+        assert_eq!(view["references"]["owner_store"]["generation"], 4);
+        assert_eq!(view["operation"]["name"], "connect");
+        assert_eq!(view["operation"]["sequence"], 2);
+        assert_eq!(view["operation"]["local_port"], 40000);
+        assert_eq!(view["operation"]["remote_port"], 80);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 81);
     }
 
     #[test]
@@ -12947,6 +13133,32 @@ mod tests {
                 created_at_event: 27,
                 note: "endpoint object graph".to_owned(),
             });
+        package
+            .semantic
+            .socket_operations
+            .push(SocketOperationManifest {
+                id: 96,
+                endpoint: 95,
+                endpoint_generation: 1,
+                socket: 94,
+                socket_generation: 1,
+                adapter: 93,
+                adapter_generation: 1,
+                owner_store: 1,
+                owner_store_generation: 2,
+                operation: "bind".to_owned(),
+                local_addr: [10, 0, 2, 15],
+                local_port: 8080,
+                remote_addr: [0, 0, 0, 0],
+                remote_port: 0,
+                backlog: 0,
+                byte_len: 0,
+                sequence: 1,
+                generation: 1,
+                state: "applied".to_owned(),
+                recorded_at_event: 28,
+                note: "socket operation graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -13025,6 +13237,24 @@ mod tests {
             && edge["to"]["generation"] == 2));
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "socket-operation->endpoint-object"
+            && edge["from"]["kind"] == "socket-operation"
+            && edge["to"]["kind"] == "endpoint-object"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "socket-operation->socket-object"
+            && edge["from"]["kind"] == "socket-operation"
+            && edge["to"]["kind"] == "socket-object"));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "socket-operation->network-stack-adapter"
+            && edge["from"]["kind"] == "socket-operation"
+            && edge["to"]["kind"] == "network-stack-adapter"));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "socket-operation->owner-store"
+            && edge["from"]["kind"] == "socket-operation"
+            && edge["to"]["kind"] == "store"
+            && edge["to"]["generation"] == 2));
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
             && edge["relation"] == "network-rx-interrupt->irq-event"
             && edge["from"]["kind"] == "network-rx-interrupt"

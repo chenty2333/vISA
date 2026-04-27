@@ -1042,6 +1042,42 @@ impl EndpointObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SocketOperationKind {
+    Bind,
+    Listen,
+    Connect,
+    Send,
+    Recv,
+}
+
+impl SocketOperationKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bind => "bind",
+            Self::Listen => "listen",
+            Self::Connect => "connect",
+            Self::Send => "send",
+            Self::Recv => "recv",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SocketOperationState {
+    Applied,
+    Retired,
+}
+
+impl SocketOperationState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

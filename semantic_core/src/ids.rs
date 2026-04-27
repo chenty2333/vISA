@@ -44,6 +44,7 @@ pub type NetworkTxCompletionId = u64;
 pub type NetworkStackAdapterId = u64;
 pub type SocketObjectId = u64;
 pub type EndpointObjectId = u64;
+pub type SocketOperationId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;
