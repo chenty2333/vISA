@@ -1,0 +1,162 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "N7-rx-wait-resolve",
+  "phase": "Phase 4 Network Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add NetworkRxWaitResolution as semantic evidence for RX wait resolution",
+    "Allow IoWait blocker validation to accept PacketQueueObject when it belongs to the same PacketDevice-backed DeviceObject generation",
+    "Resolve pending IoWait/WaitToken only through exact NetworkRxInterrupt and Rx PacketQueue generations",
+    "Record target_executor host-validation N7 evidence using the N6 interrupt path",
+    "Expose network rx wait resolution roots/counts through semantic package, osctl ViewV1, graph, and replay roots"
+  ],
+  "no_goals": [
+    "Real virtio MMIO/DMA/IRQ execution",
+    "Scheduler wakeup policy",
+    "TX capability gate",
+    "TX completion path",
+    "smoltcp integration",
+    "Socket object model"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/io_wait.rs",
+    "semantic_core/src/graph/network_rx_wait.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/network/golden_n7_network_rx_wait_resolution.trace.json",
+    "tests/reports/checkpoints/n7_rx_wait_resolve.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/network/golden_n7_network_rx_wait_resolution.trace.json",
+    "tests/reports/checkpoints/n7_rx_wait_resolve.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "N7 consumes N6 NetworkRxInterrupt evidence rather than resolving waits directly from a raw IRQ label",
+      "IoWait PacketQueueObject blockers are generation-checked against the backing PacketDevice and DeviceObject",
+      "NetworkRxWaitResolution records historical edges to IoWait, NetworkRxInterrupt, and Rx PacketQueue",
+      "Wrong queue blocker and stale interrupt generation paths are negative-tested",
+      "osctl exposes NetworkRxWaitResolution through stable ViewV1 and graph history edges"
+    ],
+    "residual_notes": [
+      "Scheduler wakeup/runnable enqueue policy remains out of scope for N7",
+      "N8-N9 will add TX capability and completion paths",
+      "Real virtio MMIO/DMA/IRQ execution remains out of scope for this checkpoint"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p semantic_core -p contract_core -p target_executor -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core network_runtime_n7",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core network_rx_wait",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl network_rx_wait_resolution",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl graph_json_edges_separate_live_history_and_cleanup_modes",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- network-rx-wait-resolution list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- replay --until 328 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/network/golden_n7_network_rx_wait_resolution.trace.json",
+    "osctl_views": [
+      "osctl network-rx-wait-resolution list --json <migration.json>",
+      "osctl io-wait list --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "network_rx_wait_resolution_roots",
+      "network_rx_interrupt_roots",
+      "io_wait_roots",
+      "wait_roots",
+      "packet_queue_object_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 328,
+      "network_rx_wait_resolution_count": 1,
+      "network_rx_wait_resolution": "network-rx-wait-resolution:10017@1",
+      "io_wait": "io-wait:10016@1",
+      "wait": "wait-token:10015@1",
+      "network_rx_interrupt": "network-rx-interrupt:10014@1",
+      "rx_queue": "packet-queue:10004@1",
+      "ready_descriptors": 1
+    }
+  },
+  "residual_gaps": [
+    "Scheduler wakeup policy, TX gate/completion, backpressure, smoltcp adapter, sockets, and real virtio datapath are later Phase 4 checkpoints"
+  ],
+  "next_checkpoint": "N8-tx-capability-gate"
+}

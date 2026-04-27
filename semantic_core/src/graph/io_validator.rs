@@ -672,6 +672,10 @@ impl SemanticGraph {
                 .network_rx_interrupts
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::NetworkRxWaitResolution => self
+                .network_rx_wait_resolutions
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

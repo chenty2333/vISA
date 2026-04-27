@@ -1145,6 +1145,28 @@ pub enum SemanticInvariantError {
     NetworkRxInterruptMissingEvent {
         rx_interrupt: NetworkRxInterruptId,
     },
+    NetworkRxWaitResolutionInvalid {
+        resolution: NetworkRxWaitResolutionId,
+    },
+    NetworkRxWaitResolutionMissingIoWait {
+        resolution: NetworkRxWaitResolutionId,
+        io_wait: IoWaitId,
+    },
+    NetworkRxWaitResolutionMissingInterrupt {
+        resolution: NetworkRxWaitResolutionId,
+        rx_interrupt: NetworkRxInterruptId,
+    },
+    NetworkRxWaitResolutionMissingRxQueue {
+        resolution: NetworkRxWaitResolutionId,
+        rx_queue: PacketQueueObjectId,
+    },
+    NetworkRxWaitResolutionDuplicateIoWait {
+        resolution: NetworkRxWaitResolutionId,
+        io_wait: IoWaitId,
+    },
+    NetworkRxWaitResolutionMissingEvent {
+        resolution: NetworkRxWaitResolutionId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

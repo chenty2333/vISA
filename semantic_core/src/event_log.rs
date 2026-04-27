@@ -510,6 +510,19 @@ pub enum EventKind {
         sequence: u64,
         generation: Generation,
     },
+    NetworkRxWaitResolved {
+        resolution: NetworkRxWaitResolutionId,
+        io_wait: IoWaitId,
+        io_wait_generation: Generation,
+        wait: WaitId,
+        wait_generation: Generation,
+        rx_interrupt: NetworkRxInterruptId,
+        rx_interrupt_generation: Generation,
+        rx_queue: PacketQueueObjectId,
+        rx_queue_generation: Generation,
+        ready_descriptors: u16,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1527,6 +1540,21 @@ impl EventKind {
                 generation,
             } => format!(
                 "NetworkRxInterruptRecorded rx_interrupt={rx_interrupt} virtio_net_backend={virtio_net_backend}@{virtio_net_backend_generation} irq_event={irq_event}@{irq_event_generation} packet_device={packet_device}@{packet_device_generation} rx_queue={rx_queue}@{rx_queue_generation} ready_descriptors={ready_descriptors} sequence={sequence} generation={generation}"
+            ),
+            Self::NetworkRxWaitResolved {
+                resolution,
+                io_wait,
+                io_wait_generation,
+                wait,
+                wait_generation,
+                rx_interrupt,
+                rx_interrupt_generation,
+                rx_queue,
+                rx_queue_generation,
+                ready_descriptors,
+                generation,
+            } => format!(
+                "NetworkRxWaitResolved resolution={resolution} io_wait={io_wait}@{io_wait_generation} wait={wait}@{wait_generation} rx_interrupt={rx_interrupt}@{rx_interrupt_generation} rx_queue={rx_queue}@{rx_queue_generation} ready_descriptors={ready_descriptors} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,

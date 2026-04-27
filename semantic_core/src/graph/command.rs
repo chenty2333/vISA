@@ -350,6 +350,14 @@ pub enum SemanticCommand {
         sequence: u64,
         note: String,
     },
+    ResolveNetworkRxWait {
+        resolution: NetworkRxWaitResolutionId,
+        io_wait: IoWaitId,
+        io_wait_generation: Generation,
+        rx_interrupt: NetworkRxInterruptId,
+        rx_interrupt_generation: Generation,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -723,6 +731,7 @@ impl SemanticCommand {
             Self::RecordFakeNetBackendObject { .. } => "record-fake-net-backend-object",
             Self::RecordVirtioNetBackendObject { .. } => "record-virtio-net-backend-object",
             Self::RecordNetworkRxInterrupt { .. } => "record-network-rx-interrupt",
+            Self::ResolveNetworkRxWait { .. } => "resolve-network-rx-wait",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -2051,6 +2060,22 @@ impl SemanticGraph {
                     *rx_queue_generation,
                     *ready_descriptors,
                     *sequence,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::ResolveNetworkRxWait {
+                resolution,
+                io_wait,
+                io_wait_generation,
+                rx_interrupt,
+                rx_interrupt_generation,
+                ..
+            } => self
+                .validate_network_rx_wait_resolution(
+                    *resolution,
+                    *io_wait,
+                    *io_wait_generation,
+                    *rx_interrupt,
+                    *rx_interrupt_generation,
                 )
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
@@ -3477,6 +3502,21 @@ impl SemanticGraph {
                 rx_queue_generation,
                 ready_descriptors,
                 sequence,
+                &note,
+            ),
+            SemanticCommand::ResolveNetworkRxWait {
+                resolution,
+                io_wait,
+                io_wait_generation,
+                rx_interrupt,
+                rx_interrupt_generation,
+                note,
+            } => self.resolve_network_rx_wait_with_id(
+                resolution,
+                io_wait,
+                io_wait_generation,
+                rx_interrupt,
+                rx_interrupt_generation,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

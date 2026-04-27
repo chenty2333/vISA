@@ -47,6 +47,7 @@ pub struct SemanticGraph {
     fake_net_backends: Vec<FakeNetBackendObjectRecord>,
     virtio_net_backends: Vec<VirtioNetBackendObjectRecord>,
     network_rx_interrupts: Vec<NetworkRxInterruptRecord>,
+    network_rx_wait_resolutions: Vec<NetworkRxWaitResolutionRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -105,6 +106,7 @@ pub struct SemanticGraph {
     next_fake_net_backend_object_id: FakeNetBackendObjectId,
     next_virtio_net_backend_object_id: VirtioNetBackendObjectId,
     next_network_rx_interrupt_id: NetworkRxInterruptId,
+    next_network_rx_wait_resolution_id: NetworkRxWaitResolutionId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -148,6 +150,7 @@ mod latency;
 mod mmio_region_object;
 mod network;
 mod network_rx_interrupt;
+mod network_rx_wait;
 mod packet_buffer_object;
 mod packet_descriptor_object;
 mod packet_device_object;
@@ -223,6 +226,7 @@ impl SemanticGraph {
             fake_net_backends: Vec::new(),
             virtio_net_backends: Vec::new(),
             network_rx_interrupts: Vec::new(),
+            network_rx_wait_resolutions: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -281,6 +285,7 @@ impl SemanticGraph {
             next_fake_net_backend_object_id: 1,
             next_virtio_net_backend_object_id: 1,
             next_network_rx_interrupt_id: 1,
+            next_network_rx_wait_resolution_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

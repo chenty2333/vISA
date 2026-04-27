@@ -38,6 +38,7 @@ pub type PacketDescriptorObjectId = u64;
 pub type FakeNetBackendObjectId = u64;
 pub type VirtioNetBackendObjectId = u64;
 pub type NetworkRxInterruptId = u64;
+pub type NetworkRxWaitResolutionId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

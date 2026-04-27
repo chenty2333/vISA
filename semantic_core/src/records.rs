@@ -1227,6 +1227,39 @@ impl NetworkRxInterruptRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkRxWaitResolutionRecord {
+    pub id: NetworkRxWaitResolutionId,
+    pub io_wait: IoWaitId,
+    pub io_wait_generation: Generation,
+    pub wait: WaitId,
+    pub wait_generation: Generation,
+    pub rx_interrupt: NetworkRxInterruptId,
+    pub rx_interrupt_generation: Generation,
+    pub irq_event: IrqEventId,
+    pub irq_event_generation: Generation,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub rx_queue: PacketQueueObjectId,
+    pub rx_queue_generation: Generation,
+    pub ready_descriptors: u16,
+    pub sequence: u64,
+    pub generation: Generation,
+    pub state: NetworkRxWaitResolutionState,
+    pub resolved_at_event: EventId,
+    pub note: String,
+}
+
+impl NetworkRxWaitResolutionRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::NetworkRxWaitResolution,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

@@ -22,9 +22,9 @@ use artifact_manifest::{
     IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
     MigrationTargetManifest, MmioRegionObjectManifest, NetworkRxInterruptManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    NetworkRxWaitResolutionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -167,6 +167,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     record_network_runtime_n5_evidence(&mut semantic)?;
     record_network_runtime_n6_evidence(&mut semantic)?;
+    record_network_runtime_n7_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -527,6 +528,78 @@ fn record_network_runtime_n6_evidence(semantic: &mut SemanticGraph) -> Result<()
         if result.status != CommandStatus::Applied {
             return Err(format!(
                 "network runtime n6 evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn record_network_runtime_n7_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let virtio_driver_store = semantic
+        .store_id("driver_virtio_net")
+        .ok_or("driver_virtio_net store is missing for n7 evidence")?;
+    let virtio_driver_store_generation = semantic
+        .store_handle(virtio_driver_store)
+        .map(|handle| handle.generation)
+        .ok_or("driver_virtio_net store handle is missing for n7 evidence")?;
+    let rx_queue_ref = ContractObjectRef::new(ContractObjectKind::PacketQueueObject, 10_004, 1);
+    let commands = [
+        CommandEnvelope::new(
+            134,
+            "target-executor-n7",
+            SemanticCommand::CreateWait {
+                wait: 10_015,
+                owner_task: None,
+                owner_store: Some(virtio_driver_store),
+                owner_store_generation: Some(virtio_driver_store_generation),
+                kind: semantic_core::SemanticWaitKind::DeviceIrq,
+                generation: 1,
+                blockers: vec![rx_queue_ref],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: Some("driver_virtio_net:rx-queue-wait".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            135,
+            "target-executor-n7",
+            SemanticCommand::RecordIoWait {
+                io_wait: 10_016,
+                wait: 10_015,
+                wait_generation: 1,
+                driver_store: virtio_driver_store,
+                driver_store_generation: virtio_driver_store_generation,
+                device: 10_001,
+                device_generation: 1,
+                driver_binding: 10_009,
+                driver_binding_generation: 1,
+                blocker: rx_queue_ref,
+                note: "n7-record-rx-queue-io-wait-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            136,
+            "target-executor-n7",
+            SemanticCommand::ResolveNetworkRxWait {
+                resolution: 10_017,
+                io_wait: 10_016,
+                io_wait_generation: 1,
+                rx_interrupt: 10_014,
+                rx_interrupt_generation: 1,
+                note: "n7-resolve-rx-wait-from-network-interrupt-harness".to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "network runtime n7 evidence command {} ({}) failed: status={} violations={:?}",
                 result.command_id,
                 result.command,
                 result.status.as_str(),
@@ -2914,6 +2987,7 @@ fn demo_migration_package(
             fake_net_backend_object_count: semantic.fake_net_backend_object_count(),
             virtio_net_backend_object_count: semantic.virtio_net_backend_object_count(),
             network_rx_interrupt_count: semantic.network_rx_interrupt_count(),
+            network_rx_wait_resolution_count: semantic.network_rx_wait_resolution_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -3145,6 +3219,11 @@ fn demo_migration_package(
                 .network_rx_interrupts()
                 .iter()
                 .map(network_rx_interrupt_manifest)
+                .collect(),
+            network_rx_wait_resolutions: semantic
+                .network_rx_wait_resolutions()
+                .iter()
+                .map(network_rx_wait_resolution_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -4031,6 +4110,29 @@ fn semantic_roots(
                     rx_interrupt.sequence,
                     rx_interrupt.state.as_str(),
                     rx_interrupt.generation
+                )
+            })
+            .collect(),
+        network_rx_wait_resolution_roots: semantic
+            .network_rx_wait_resolutions()
+            .iter()
+            .map(|resolution| {
+                format!(
+                    "network-rx-wait-resolution id={} io_wait={}@{} wait={}@{} rx_interrupt={}@{} irq_event={}@{} rx_queue={}@{} ready_descriptors={} state={} generation={}",
+                    resolution.id,
+                    resolution.io_wait,
+                    resolution.io_wait_generation,
+                    resolution.wait,
+                    resolution.wait_generation,
+                    resolution.rx_interrupt,
+                    resolution.rx_interrupt_generation,
+                    resolution.irq_event,
+                    resolution.irq_event_generation,
+                    resolution.rx_queue,
+                    resolution.rx_queue_generation,
+                    resolution.ready_descriptors,
+                    resolution.state.as_str(),
+                    resolution.generation
                 )
             })
             .collect(),
@@ -5619,6 +5721,32 @@ fn network_rx_interrupt_manifest(
         state: rx_interrupt.state.as_str().to_owned(),
         recorded_at_event: rx_interrupt.recorded_at_event,
         note: rx_interrupt.note.clone(),
+    }
+}
+
+fn network_rx_wait_resolution_manifest(
+    resolution: &semantic_core::NetworkRxWaitResolutionRecord,
+) -> NetworkRxWaitResolutionManifest {
+    NetworkRxWaitResolutionManifest {
+        id: resolution.id,
+        io_wait: resolution.io_wait,
+        io_wait_generation: resolution.io_wait_generation,
+        wait: resolution.wait,
+        wait_generation: resolution.wait_generation,
+        rx_interrupt: resolution.rx_interrupt,
+        rx_interrupt_generation: resolution.rx_interrupt_generation,
+        irq_event: resolution.irq_event,
+        irq_event_generation: resolution.irq_event_generation,
+        packet_device: resolution.packet_device,
+        packet_device_generation: resolution.packet_device_generation,
+        rx_queue: resolution.rx_queue,
+        rx_queue_generation: resolution.rx_queue_generation,
+        ready_descriptors: resolution.ready_descriptors,
+        sequence: resolution.sequence,
+        generation: resolution.generation,
+        state: resolution.state.as_str().to_owned(),
+        resolved_at_event: resolution.resolved_at_event,
+        note: resolution.note.clone(),
     }
 }
 

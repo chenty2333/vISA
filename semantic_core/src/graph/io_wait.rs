@@ -532,6 +532,23 @@ impl SemanticGraph {
                     && record.device_generation == device_generation
                     && record.state == MmioRegionObjectState::Registered
             }),
+            ContractObjectKind::PacketQueueObject => {
+                self.packet_queue_objects.iter().any(|record| {
+                    if record.id != blocker.id
+                        || record.generation != blocker.generation
+                        || record.state != PacketQueueObjectState::Registered
+                    {
+                        return false;
+                    }
+                    self.packet_device_objects.iter().any(|packet_device| {
+                        packet_device.id == record.packet_device
+                            && packet_device.generation == record.packet_device_generation
+                            && packet_device.device == device
+                            && packet_device.device_generation == device_generation
+                            && packet_device.state == PacketDeviceObjectState::Registered
+                    })
+                })
+            }
             _ => false,
         }
     }
@@ -573,6 +590,19 @@ impl SemanticGraph {
                     && record.device == device
                     && record.device_generation == device_generation
             }),
+            ContractObjectKind::PacketQueueObject => {
+                self.packet_queue_objects.iter().any(|record| {
+                    if record.id != blocker.id || record.generation != blocker.generation {
+                        return false;
+                    }
+                    self.packet_device_objects.iter().any(|packet_device| {
+                        packet_device.id == record.packet_device
+                            && packet_device.generation == record.packet_device_generation
+                            && packet_device.device == device
+                            && packet_device.device_generation == device_generation
+                    })
+                })
+            }
             _ => false,
         }
     }

@@ -6080,6 +6080,193 @@ fn network_runtime_n6_invariants_reject_rx_queue_generation_leak() {
     ));
 }
 
+fn setup_n7_network_rx_wait_graph() -> SemanticGraph {
+    let mut graph = setup_n6_network_rx_interrupt_graph();
+    assert!(graph.record_network_rx_interrupt_with_id(
+        1556,
+        1553,
+        1,
+        1555,
+        1,
+        1541,
+        1,
+        1544,
+        1,
+        1,
+        1,
+        "n7 rx interrupt",
+    ));
+    let binding_record = graph
+        .driver_store_bindings()
+        .iter()
+        .find(|record| record.id == 1552)
+        .cloned()
+        .unwrap();
+    let rx_queue_ref = ContractObjectRef::new(ContractObjectKind::PacketQueueObject, 1544, 1);
+    assert!(
+        graph
+            .apply(SemanticCommand::CreateWait {
+                wait: 1561,
+                owner_task: None,
+                owner_store: Some(binding_record.driver_store),
+                owner_store_generation: Some(binding_record.driver_store_generation),
+                kind: SemanticWaitKind::DeviceIrq,
+                generation: 1,
+                blockers: vec![rx_queue_ref],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: Some("driver.virtio-net2:rx-queue".to_string()),
+            })
+            .is_ok()
+    );
+    assert!(graph.record_io_wait_with_id(
+        1562,
+        1561,
+        1,
+        binding_record.driver_store,
+        binding_record.driver_store_generation,
+        1540,
+        1,
+        1552,
+        1,
+        rx_queue_ref,
+        "n7 pending rx queue io wait",
+    ));
+    graph
+}
+
+#[test]
+fn network_runtime_n7_rx_interrupt_resolves_rx_queue_wait() {
+    let mut graph = setup_n7_network_rx_wait_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n7-test",
+        SemanticCommand::ResolveNetworkRxWait {
+            resolution: 1563,
+            io_wait: 1562,
+            io_wait_generation: 1,
+            rx_interrupt: 1556,
+            rx_interrupt_generation: 1,
+            note: "n7 rx wait resolves from interrupt".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.network_rx_wait_resolution_count(), 1);
+    assert_eq!(graph.io_waits()[0].state, IoWaitState::Resolved);
+    assert_eq!(graph.io_waits()[0].completion_irq_event, Some(1555));
+    let wait = graph
+        .wait_records()
+        .iter()
+        .find(|record| record.id == 1561)
+        .unwrap();
+    assert_eq!(wait.state, WaitState::Resolved);
+    let resolution = &graph.network_rx_wait_resolutions()[0];
+    assert_eq!(
+        resolution.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::NetworkRxWaitResolution, 1563, 1)
+    );
+    assert_eq!(resolution.rx_interrupt, 1556);
+    assert_eq!(resolution.rx_queue, 1544);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "NetworkRxWaitResolved resolution=1563 io_wait=1562@1 wait=1561@1 rx_interrupt=1556@1 rx_queue=1544@1 ready_descriptors=1 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn network_runtime_n7_rejects_stale_interrupt_and_wrong_wait_blocker() {
+    let mut graph = setup_n7_network_rx_wait_graph();
+    let stale_interrupt = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n7-test",
+        SemanticCommand::ResolveNetworkRxWait {
+            resolution: 1563,
+            io_wait: 1562,
+            io_wait_generation: 1,
+            rx_interrupt: 1556,
+            rx_interrupt_generation: 2,
+            note: "n7 stale interrupt".to_string(),
+        },
+    ));
+    assert_eq!(stale_interrupt.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_interrupt.violations,
+        vec!["network rx wait interrupt generation is missing or inactive".to_string()]
+    );
+
+    let binding_record = graph
+        .driver_store_bindings()
+        .iter()
+        .find(|record| record.id == 1552)
+        .cloned()
+        .unwrap();
+    let tx_queue_ref = ContractObjectRef::new(ContractObjectKind::PacketQueueObject, 1545, 1);
+    assert!(
+        graph
+            .apply(SemanticCommand::CreateWait {
+                wait: 1564,
+                owner_task: None,
+                owner_store: Some(binding_record.driver_store),
+                owner_store_generation: Some(binding_record.driver_store_generation),
+                kind: SemanticWaitKind::DeviceIrq,
+                generation: 1,
+                blockers: vec![tx_queue_ref],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: Some("driver.virtio-net2:tx-queue".to_string()),
+            })
+            .is_ok()
+    );
+    assert!(graph.record_io_wait_with_id(
+        1565,
+        1564,
+        1,
+        binding_record.driver_store,
+        binding_record.driver_store_generation,
+        1540,
+        1,
+        1552,
+        1,
+        tx_queue_ref,
+        "n7 wrong tx queue io wait",
+    ));
+    let wrong_blocker = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n7-test",
+        SemanticCommand::ResolveNetworkRxWait {
+            resolution: 1563,
+            io_wait: 1565,
+            io_wait_generation: 1,
+            rx_interrupt: 1556,
+            rx_interrupt_generation: 1,
+            note: "n7 tx queue must not resolve rx wait".to_string(),
+        },
+    ));
+    assert_eq!(wrong_blocker.status, CommandStatus::Rejected);
+    assert_eq!(
+        wrong_blocker.violations,
+        vec!["network rx wait blocker must be the rx packet queue".to_string()]
+    );
+}
+
+#[test]
+fn network_runtime_n7_invariants_reject_resolution_queue_generation_leak() {
+    let mut graph = setup_n7_network_rx_wait_graph();
+    assert!(graph.resolve_network_rx_wait_with_id(1563, 1562, 1, 1556, 1, "n7 resolved rx wait",));
+    graph.corrupt_network_rx_wait_resolution_queue_generation_for_test(1563, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::NetworkRxWaitResolutionMissingRxQueue {
+                resolution: 1563,
+                rx_queue: 1544,
+            }
+        )
+    );
+}
+
 #[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();

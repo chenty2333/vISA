@@ -1,0 +1,126 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "N7-rx-wait-resolve",
+  "name": "golden_n7_network_rx_wait_resolution",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/05-wait-token-event-bridge.md"
+  ],
+  "no_goals": [
+    "real virtio MMIO/DMA/IRQ execution",
+    "scheduler wakeup policy",
+    "TX capability gate",
+    "TX completion path",
+    "smoltcp integration",
+    "socket object model"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "create-wait",
+        "wait": "wait-token:10015@1",
+        "owner_store": "driver_virtio_net",
+        "blocker": "packet-queue:10004@1",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "record-io-wait",
+        "io_wait": "io-wait:10016@1",
+        "wait": "wait-token:10015@1",
+        "blocker": "packet-queue:10004@1",
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "resolve-network-rx-wait",
+        "resolution": "network-rx-wait-resolution:10017@1",
+        "io_wait": "io-wait:10016@1",
+        "rx_interrupt": "network-rx-interrupt:10014@1",
+        "expected": "applied"
+      },
+      {
+        "id": 4,
+        "command": "resolve-network-rx-wait",
+        "scenario": "stale rx interrupt generation",
+        "expected": "rejected"
+      },
+      {
+        "id": 5,
+        "command": "resolve-network-rx-wait",
+        "scenario": "io wait blocker is not rx queue",
+        "expected": "rejected"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "WaitCreated",
+      "wait": "wait-token:10015@1",
+      "blocker": "packet-queue:10004@1"
+    },
+    {
+      "kind": "IoWaitCreated",
+      "io_wait": "io-wait:10016@1",
+      "wait": "wait-token:10015@1"
+    },
+    {
+      "kind": "IoWaitResolved",
+      "io_wait": "io-wait:10016@1",
+      "irq_event": "irq-event:10013@1"
+    },
+    {
+      "kind": "NetworkRxWaitResolved",
+      "resolution": "network-rx-wait-resolution:10017@1",
+      "rx_interrupt": "network-rx-interrupt:10014@1",
+      "rx_queue": "packet-queue:10004@1"
+    }
+  ],
+  "expected": {
+    "views": {
+      "network-rx-wait-resolution": {
+        "count": 1,
+        "resolution": "network-rx-wait-resolution:10017@1",
+        "io_wait": "io-wait:10016@1",
+        "wait": "wait-token:10015@1",
+        "rx_interrupt": "network-rx-interrupt:10014@1",
+        "rx_queue": "packet-queue:10004@1",
+        "ready_descriptors": 1,
+        "sequence": 1
+      },
+      "io-wait": {
+        "io_wait": "io-wait:10016@1",
+        "state": "resolved",
+        "completion_irq_event": "irq-event:10013@1"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "NetworkRxWaitResolution references exact IoWait generation",
+      "NetworkRxWaitResolution references exact NetworkRxInterrupt generation",
+      "IoWait blocker must be the exact Rx PacketQueueObject generation",
+      "Resolving the network rx wait resolves the underlying WaitToken and IoWait",
+      "Historical graph edges preserve the resolved wait and interrupt attribution",
+      "N7 resolves RX waits but does not implement scheduler wakeup policy"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "network_runtime_n7_rx_interrupt_resolves_rx_queue_wait",
+      "network_runtime_n7_rejects_stale_interrupt_and_wrong_wait_blocker",
+      "network_runtime_n7_invariants_reject_resolution_queue_generation_leak",
+      "network_rx_wait_resolution_view_v1_exposes_wait_and_interrupt_generations",
+      "semantic_roots_reject_network_rx_wait_resolution_root_mismatch"
+    ],
+    "osctl_json_view": "network-rx-wait-resolution list --json"
+  }
+}

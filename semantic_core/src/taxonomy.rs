@@ -912,6 +912,21 @@ impl NetworkRxInterruptState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkRxWaitResolutionState {
+    Resolved,
+    Retired,
+}
+
+impl NetworkRxWaitResolutionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Resolved => "resolved",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,
