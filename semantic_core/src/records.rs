@@ -1260,6 +1260,45 @@ impl NetworkRxWaitResolutionRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkTxCapabilityGateRecord {
+    pub id: NetworkTxCapabilityGateId,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub tx_queue: PacketQueueObjectId,
+    pub tx_queue_generation: Generation,
+    pub packet_descriptor: PacketDescriptorObjectId,
+    pub packet_descriptor_generation: Generation,
+    pub packet_buffer: PacketBufferObjectId,
+    pub packet_buffer_generation: Generation,
+    pub device_capability: DeviceCapabilityId,
+    pub device_capability_generation: Generation,
+    pub capability: CapabilityId,
+    pub capability_generation: Generation,
+    pub handle_slot: u32,
+    pub handle_generation: u32,
+    pub handle_tag: u64,
+    pub operation: String,
+    pub byte_len: u32,
+    pub sequence: u64,
+    pub generation: Generation,
+    pub state: NetworkTxCapabilityGateState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl NetworkTxCapabilityGateRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::NetworkTxCapabilityGate,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

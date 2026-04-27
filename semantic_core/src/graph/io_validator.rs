@@ -676,6 +676,10 @@ impl SemanticGraph {
                 .network_rx_wait_resolutions
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::NetworkTxCapabilityGate => self
+                .network_tx_capability_gates
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

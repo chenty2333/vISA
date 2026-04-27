@@ -1167,6 +1167,24 @@ pub enum SemanticInvariantError {
     NetworkRxWaitResolutionMissingEvent {
         resolution: NetworkRxWaitResolutionId,
     },
+    NetworkTxCapabilityGateInvalid {
+        tx_gate: NetworkTxCapabilityGateId,
+    },
+    NetworkTxCapabilityGateMissingDescriptor {
+        tx_gate: NetworkTxCapabilityGateId,
+        packet_descriptor: PacketDescriptorObjectId,
+    },
+    NetworkTxCapabilityGateMissingCapability {
+        tx_gate: NetworkTxCapabilityGateId,
+        device_capability: DeviceCapabilityId,
+    },
+    NetworkTxCapabilityGateDuplicateDescriptor {
+        tx_gate: NetworkTxCapabilityGateId,
+        packet_descriptor: PacketDescriptorObjectId,
+    },
+    NetworkTxCapabilityGateMissingEvent {
+        tx_gate: NetworkTxCapabilityGateId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

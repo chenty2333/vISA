@@ -307,6 +307,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub network_rx_wait_resolution_count: usize,
     #[serde(default)]
+    pub network_tx_capability_gate_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -465,6 +467,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub network_rx_wait_resolutions: Vec<NetworkRxWaitResolutionManifest>,
     #[serde(default)]
+    pub network_tx_capability_gates: Vec<NetworkTxCapabilityGateManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -602,6 +606,8 @@ pub struct SemanticRootSetManifest {
     pub network_rx_interrupt_roots: Vec<String>,
     #[serde(default)]
     pub network_rx_wait_resolution_roots: Vec<String>,
+    #[serde(default)]
+    pub network_tx_capability_gate_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1653,6 +1659,35 @@ pub struct NetworkRxWaitResolutionManifest {
     pub generation: u64,
     pub state: String,
     pub resolved_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct NetworkTxCapabilityGateManifest {
+    pub id: u64,
+    pub driver_store: u64,
+    pub driver_store_generation: u64,
+    pub packet_device: u64,
+    pub packet_device_generation: u64,
+    pub tx_queue: u64,
+    pub tx_queue_generation: u64,
+    pub packet_descriptor: u64,
+    pub packet_descriptor_generation: u64,
+    pub packet_buffer: u64,
+    pub packet_buffer_generation: u64,
+    pub device_capability: u64,
+    pub device_capability_generation: u64,
+    pub capability: u64,
+    pub capability_generation: u64,
+    pub handle_slot: u32,
+    pub handle_generation: u32,
+    pub handle_tag: u64,
+    pub operation: String,
+    pub byte_len: u32,
+    pub sequence: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
     pub note: String,
 }
 

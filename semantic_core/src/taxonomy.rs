@@ -961,6 +961,21 @@ impl SchedulerDecisionState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkTxCapabilityGateState {
+    Allowed,
+    Retired,
+}
+
+impl NetworkTxCapabilityGateState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allowed => "allowed",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

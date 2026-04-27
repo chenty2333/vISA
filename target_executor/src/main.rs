@@ -22,14 +22,14 @@ use artifact_manifest::{
     IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
     MigrationTargetManifest, MmioRegionObjectManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
-    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
-    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    NetworkRxWaitResolutionManifest, NetworkTxCapabilityGateManifest, PacketBufferObjectManifest,
+    PacketDescriptorObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
+    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -168,6 +168,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n5_evidence(&mut semantic)?;
     record_network_runtime_n6_evidence(&mut semantic)?;
     record_network_runtime_n7_evidence(&mut semantic)?;
+    record_network_runtime_n8_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -607,6 +608,139 @@ fn record_network_runtime_n7_evidence(semantic: &mut SemanticGraph) -> Result<()
             )
             .into());
         }
+    }
+    Ok(())
+}
+
+fn record_network_runtime_n8_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let virtio_driver_store = semantic
+        .store_id("driver_virtio_net")
+        .ok_or("driver_virtio_net store is missing for n8 evidence")?;
+    let virtio_driver_store_generation = semantic
+        .store_handle(virtio_driver_store)
+        .map(|handle| handle.generation)
+        .ok_or("driver_virtio_net store handle is missing for n8 evidence")?;
+    let packet_device_ref =
+        ContractObjectRef::new(ContractObjectKind::PacketDeviceObject, 10_002, 1);
+    let packet_tx_capability = semantic.grant_capability_with_authority_ref(
+        "driver_virtio_net",
+        "packet-device.net0",
+        AuthorityObjectRef::internal(CapabilityClass::PacketDevice, packet_device_ref),
+        &["tx"],
+        "store",
+        "n8-packet-device-tx-capability",
+        true,
+    );
+    let packet_tx_handle = semantic
+        .capabilities()
+        .record(packet_tx_capability)
+        .and_then(|record| record.store_local_handle(vec!["tx".to_owned()]))
+        .ok_or("n8 packet tx capability handle is missing")?;
+    let mut forged_tx_handle = packet_tx_handle.clone();
+    forged_tx_handle.generation = forged_tx_handle.generation.saturating_add(1);
+    let commands = [
+        CommandEnvelope::new(
+            137,
+            "target-executor-n8",
+            SemanticCommand::RecordPacketBufferObject {
+                packet_buffer: 10_018,
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                direction: PacketBufferDirection::Tx,
+                frame_format_version: PACKET_FRAME_FORMAT_VERSION,
+                capacity: PACKET_MAX_PAYLOAD_LEN,
+                payload_len: 52,
+                sequence: 2,
+                state: PacketBufferObjectState::Filled,
+                note: "n8-record-tx-packet-buffer-object-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            138,
+            "target-executor-n8",
+            SemanticCommand::RecordPacketDescriptorObject {
+                packet_descriptor: 10_019,
+                packet_queue: 10_005,
+                packet_queue_generation: 1,
+                packet_buffer: 10_018,
+                packet_buffer_generation: 1,
+                slot: 0,
+                length: 52,
+                note: "n8-record-tx-packet-descriptor-object-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            139,
+            "target-executor-n8",
+            SemanticCommand::RecordDeviceCapability {
+                device_capability: 10_020,
+                driver_store: virtio_driver_store,
+                driver_store_generation: virtio_driver_store_generation,
+                target: packet_device_ref,
+                class: CapabilityClass::PacketDevice,
+                operation: "tx".to_owned(),
+                handle: packet_tx_handle.clone(),
+                note: "n8-record-packet-device-tx-capability-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            140,
+            "target-executor-n8",
+            SemanticCommand::RecordNetworkTxCapabilityGate {
+                tx_gate: 10_021,
+                driver_store: virtio_driver_store,
+                driver_store_generation: virtio_driver_store_generation,
+                packet_descriptor: 10_019,
+                packet_descriptor_generation: 1,
+                device_capability: 10_020,
+                device_capability_generation: 1,
+                handle: packet_tx_handle,
+                note: "n8-allow-tx-descriptor-through-packet-device-capability".to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "network runtime n8 evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+    let denied = semantic.apply_envelope(CommandEnvelope::new(
+        141,
+        "target-executor-n8",
+        SemanticCommand::RecordNetworkTxCapabilityGate {
+            tx_gate: 10_022,
+            driver_store: virtio_driver_store,
+            driver_store_generation: virtio_driver_store_generation,
+            packet_descriptor: 10_019,
+            packet_descriptor_generation: 1,
+            device_capability: 10_020,
+            device_capability_generation: 1,
+            handle: forged_tx_handle,
+            note: "n8-deny-forged-packet-device-tx-capability-handle".to_owned(),
+        },
+    ));
+    if denied.status != CommandStatus::Rejected
+        || !denied
+            .violations
+            .iter()
+            .any(|violation| violation.contains("handle"))
+    {
+        return Err(format!(
+            "network runtime n8 forged tx capability command {} ({}) was not rejected: status={} violations={:?}",
+            denied.command_id,
+            denied.command,
+            denied.status.as_str(),
+            denied.violations
+        )
+        .into());
     }
     Ok(())
 }
@@ -2988,6 +3122,7 @@ fn demo_migration_package(
             virtio_net_backend_object_count: semantic.virtio_net_backend_object_count(),
             network_rx_interrupt_count: semantic.network_rx_interrupt_count(),
             network_rx_wait_resolution_count: semantic.network_rx_wait_resolution_count(),
+            network_tx_capability_gate_count: semantic.network_tx_capability_gate_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -3224,6 +3359,11 @@ fn demo_migration_package(
                 .network_rx_wait_resolutions()
                 .iter()
                 .map(network_rx_wait_resolution_manifest)
+                .collect(),
+            network_tx_capability_gates: semantic
+                .network_tx_capability_gates()
+                .iter()
+                .map(network_tx_capability_gate_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -4133,6 +4273,35 @@ fn semantic_roots(
                     resolution.ready_descriptors,
                     resolution.state.as_str(),
                     resolution.generation
+                )
+            })
+            .collect(),
+        network_tx_capability_gate_roots: semantic
+            .network_tx_capability_gates()
+            .iter()
+            .map(|gate| {
+                format!(
+                    "network-tx-capability-gate id={} driver_store={}@{} packet_device={}@{} tx_queue={}@{} packet_descriptor={}@{} packet_buffer={}@{} device_capability={}@{} capability={}@{} operation={} byte_len={} sequence={} state={} generation={}",
+                    gate.id,
+                    gate.driver_store,
+                    gate.driver_store_generation,
+                    gate.packet_device,
+                    gate.packet_device_generation,
+                    gate.tx_queue,
+                    gate.tx_queue_generation,
+                    gate.packet_descriptor,
+                    gate.packet_descriptor_generation,
+                    gate.packet_buffer,
+                    gate.packet_buffer_generation,
+                    gate.device_capability,
+                    gate.device_capability_generation,
+                    gate.capability,
+                    gate.capability_generation,
+                    gate.operation,
+                    gate.byte_len,
+                    gate.sequence,
+                    gate.state.as_str(),
+                    gate.generation
                 )
             })
             .collect(),
@@ -5747,6 +5916,38 @@ fn network_rx_wait_resolution_manifest(
         state: resolution.state.as_str().to_owned(),
         resolved_at_event: resolution.resolved_at_event,
         note: resolution.note.clone(),
+    }
+}
+
+fn network_tx_capability_gate_manifest(
+    gate: &semantic_core::NetworkTxCapabilityGateRecord,
+) -> NetworkTxCapabilityGateManifest {
+    NetworkTxCapabilityGateManifest {
+        id: gate.id,
+        driver_store: gate.driver_store,
+        driver_store_generation: gate.driver_store_generation,
+        packet_device: gate.packet_device,
+        packet_device_generation: gate.packet_device_generation,
+        tx_queue: gate.tx_queue,
+        tx_queue_generation: gate.tx_queue_generation,
+        packet_descriptor: gate.packet_descriptor,
+        packet_descriptor_generation: gate.packet_descriptor_generation,
+        packet_buffer: gate.packet_buffer,
+        packet_buffer_generation: gate.packet_buffer_generation,
+        device_capability: gate.device_capability,
+        device_capability_generation: gate.device_capability_generation,
+        capability: gate.capability,
+        capability_generation: gate.capability_generation,
+        handle_slot: gate.handle_slot,
+        handle_generation: gate.handle_generation,
+        handle_tag: gate.handle_tag,
+        operation: gate.operation.clone(),
+        byte_len: gate.byte_len,
+        sequence: gate.sequence,
+        generation: gate.generation,
+        state: gate.state.as_str().to_owned(),
+        recorded_at_event: gate.recorded_at_event,
+        note: gate.note.clone(),
     }
 }
 

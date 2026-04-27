@@ -270,6 +270,12 @@ impl SemanticGraph {
                     record.object_ref() == target && record.state == IrqLineObjectState::Registered
                 })
             }
+            (CapabilityClass::PacketDevice, ContractObjectKind::PacketDeviceObject) => {
+                self.packet_device_objects.iter().any(|record| {
+                    record.object_ref() == target
+                        && record.state == PacketDeviceObjectState::Registered
+                })
+            }
             _ => false,
         }
     }
@@ -294,6 +300,10 @@ impl SemanticGraph {
                 .any(|record| record.object_ref() == target),
             (CapabilityClass::IrqLine, ContractObjectKind::IrqLineObject) => self
                 .irq_line_objects
+                .iter()
+                .any(|record| record.object_ref() == target),
+            (CapabilityClass::PacketDevice, ContractObjectKind::PacketDeviceObject) => self
+                .packet_device_objects
                 .iter()
                 .any(|record| record.object_ref() == target),
             _ => false,

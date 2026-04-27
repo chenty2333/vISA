@@ -358,6 +358,17 @@ pub enum SemanticCommand {
         rx_interrupt_generation: Generation,
         note: String,
     },
+    RecordNetworkTxCapabilityGate {
+        tx_gate: NetworkTxCapabilityGateId,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        packet_descriptor: PacketDescriptorObjectId,
+        packet_descriptor_generation: Generation,
+        device_capability: DeviceCapabilityId,
+        device_capability_generation: Generation,
+        handle: CapabilityHandle,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -732,6 +743,7 @@ impl SemanticCommand {
             Self::RecordVirtioNetBackendObject { .. } => "record-virtio-net-backend-object",
             Self::RecordNetworkRxInterrupt { .. } => "record-network-rx-interrupt",
             Self::ResolveNetworkRxWait { .. } => "resolve-network-rx-wait",
+            Self::RecordNetworkTxCapabilityGate { .. } => "record-network-tx-capability-gate",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -2077,6 +2089,29 @@ impl SemanticGraph {
                     *rx_interrupt,
                     *rx_interrupt_generation,
                 )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordNetworkTxCapabilityGate {
+                tx_gate,
+                driver_store,
+                driver_store_generation,
+                packet_descriptor,
+                packet_descriptor_generation,
+                device_capability,
+                device_capability_generation,
+                handle,
+                ..
+            } => self
+                .validate_network_tx_capability_gate(
+                    *tx_gate,
+                    *driver_store,
+                    *driver_store_generation,
+                    *packet_descriptor,
+                    *packet_descriptor_generation,
+                    *device_capability,
+                    *device_capability_generation,
+                    handle,
+                )
+                .map(|_| ())
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
                 queue,
@@ -3517,6 +3552,27 @@ impl SemanticGraph {
                 io_wait_generation,
                 rx_interrupt,
                 rx_interrupt_generation,
+                &note,
+            ),
+            SemanticCommand::RecordNetworkTxCapabilityGate {
+                tx_gate,
+                driver_store,
+                driver_store_generation,
+                packet_descriptor,
+                packet_descriptor_generation,
+                device_capability,
+                device_capability_generation,
+                handle,
+                note,
+            } => self.record_network_tx_capability_gate_with_id(
+                tx_gate,
+                driver_store,
+                driver_store_generation,
+                packet_descriptor,
+                packet_descriptor_generation,
+                device_capability,
+                device_capability_generation,
+                handle,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

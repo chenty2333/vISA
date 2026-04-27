@@ -16,15 +16,16 @@ use artifact_manifest::{
     HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
     IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
     IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
-    NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest, PacketBufferObjectManifest,
-    PacketDescriptorObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
-    SavedContextManifest, SchedulerDecisionManifest, SmpCleanupQuiescenceManifest,
-    SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
-    SmpSnapshotBarrierManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
-    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
-    TimerInterruptManifest, TrapRecordManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
+    NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest, NetworkTxCapabilityGateManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
+    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
+    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
+    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
+    VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -300,6 +301,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "rx-interrupt"
         | "network-rx-wait-resolution"
         | "rx-wait-resolution"
+        | "network-tx-capability-gate"
+        | "tx-capability-gate"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -470,7 +473,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -706,6 +709,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "virtio-net-backend" | "virtio-net-backend-object" => "virtio-net-backend",
         "network-rx-interrupt" | "rx-interrupt" => "network-rx-interrupt",
         "network-rx-wait-resolution" | "rx-wait-resolution" => "network-rx-wait-resolution",
+        "network-tx-capability-gate" | "tx-capability-gate" => "network-tx-capability-gate",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2739,6 +2743,76 @@ fn network_rx_wait_resolution_view_v1(
     })
 }
 
+fn network_tx_capability_gate_view_v1(gate: &NetworkTxCapabilityGateManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "network-tx-capability-gate",
+        "id": gate.id,
+        "generation": gate.generation,
+        "state": gate.state,
+        "owner": {
+            "driver_store": object_ref_json(
+                "store",
+                gate.driver_store,
+                gate.driver_store_generation,
+            ),
+        },
+        "references": {
+            "packet_device": object_ref_json(
+                "packet-device",
+                gate.packet_device,
+                gate.packet_device_generation,
+            ),
+            "tx_queue": object_ref_json(
+                "packet-queue",
+                gate.tx_queue,
+                gate.tx_queue_generation,
+            ),
+            "packet_descriptor": object_ref_json(
+                "packet-descriptor",
+                gate.packet_descriptor,
+                gate.packet_descriptor_generation,
+            ),
+            "packet_buffer": object_ref_json(
+                "packet-buffer",
+                gate.packet_buffer,
+                gate.packet_buffer_generation,
+            ),
+            "device_capability": object_ref_json(
+                "device-capability",
+                gate.device_capability,
+                gate.device_capability_generation,
+            ),
+            "capability": object_ref_json(
+                "capability",
+                gate.capability,
+                gate.capability_generation,
+            ),
+            "event": {
+                "id": gate.recorded_at_event,
+            },
+        },
+        "authority": {
+            "class": "packet-device",
+            "operation": gate.operation,
+            "handle_slot": gate.handle_slot,
+            "handle_generation": gate.handle_generation,
+            "handle_tag": gate.handle_tag,
+        },
+        "tx": {
+            "byte_len": gate.byte_len,
+            "sequence": gate.sequence,
+        },
+        "note": gate.note,
+        "last_transition": {
+            "recorded_at_event": gate.recorded_at_event,
+            "packet_descriptor_generation": gate.packet_descriptor_generation,
+            "capability_generation": gate.capability_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -3844,6 +3918,12 @@ fn stable_views_for_kind(
             .iter()
             .map(network_rx_wait_resolution_view_v1)
             .collect()),
+        "network-tx-capability-gate" | "tx-capability-gate" => Ok(package
+            .semantic
+            .network_tx_capability_gates
+            .iter()
+            .map(network_tx_capability_gate_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -4856,6 +4936,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.network_rx_wait_resolution_roots,
     );
     print_roots(
+        "network-tx-capability-gate",
+        &package.semantic.roots.network_tx_capability_gate_roots,
+    );
+    print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
     );
@@ -5629,6 +5713,49 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "network-rx-wait-resolution->rx-queue",
             "historical",
             Some(resolution.resolved_at_event),
+        ));
+    }
+    for gate in &package.semantic.network_tx_capability_gates {
+        let from = object_ref_json("network-tx-capability-gate", gate.id, gate.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "packet-descriptor",
+                gate.packet_descriptor,
+                gate.packet_descriptor_generation,
+            ),
+            "network-tx-capability-gate->packet-descriptor",
+            "historical",
+            Some(gate.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "packet-device",
+                gate.packet_device,
+                gate.packet_device_generation,
+            ),
+            "network-tx-capability-gate->packet-device",
+            "historical",
+            Some(gate.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "device-capability",
+                gate.device_capability,
+                gate.device_capability_generation,
+            ),
+            "network-tx-capability-gate->device-capability",
+            "historical",
+            Some(gate.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json("capability", gate.capability, gate.capability_generation),
+            "network-tx-capability-gate->capability",
+            "historical",
+            Some(gate.recorded_at_event),
         ));
     }
     for interrupt in &package.semantic.timer_interrupts {
@@ -8250,6 +8377,9 @@ fn replay_until(
     for resolution in &package.semantic.roots.network_rx_wait_resolution_roots {
         println!("replay network-rx-wait-resolution {resolution}");
     }
+    for gate in &package.semantic.roots.network_tx_capability_gate_roots {
+        println!("replay network-tx-capability-gate {gate}");
+    }
     Ok(())
 }
 
@@ -8407,6 +8537,16 @@ fn print_replay_json(
                 .semantic
                 .roots
                 .network_rx_wait_resolution_roots
+                .len()
+        ),
+    );
+    roots.insert(
+        "network_tx_capability_gates".to_owned(),
+        serde_json::json!(
+            package
+                .semantic
+                .roots
+                .network_tx_capability_gate_roots
                 .len()
         ),
     );
@@ -9509,6 +9649,54 @@ mod tests {
         assert_eq!(view["references"]["rx_queue"]["generation"], 3);
         assert_eq!(view["readiness"]["sequence"], 9);
         assert_eq!(view["last_transition"]["resolved_at_event"], 67);
+    }
+
+    #[test]
+    fn network_tx_capability_gate_view_v1_exposes_capability_and_descriptor_generations() {
+        let view = network_tx_capability_gate_view_v1(&NetworkTxCapabilityGateManifest {
+            id: 68,
+            driver_store: 7,
+            driver_store_generation: 2,
+            packet_device: 51,
+            packet_device_generation: 4,
+            tx_queue: 53,
+            tx_queue_generation: 3,
+            packet_descriptor: 54,
+            packet_descriptor_generation: 2,
+            packet_buffer: 52,
+            packet_buffer_generation: 3,
+            device_capability: 69,
+            device_capability_generation: 1,
+            capability: 70,
+            capability_generation: 5,
+            handle_slot: 4,
+            handle_generation: 5,
+            handle_tag: 99,
+            operation: "tx".to_owned(),
+            byte_len: 64,
+            sequence: 9,
+            generation: 1,
+            state: "allowed".to_owned(),
+            recorded_at_event: 68,
+            note: "tx gate".to_owned(),
+        });
+        assert_eq!(view["kind"], "network-tx-capability-gate");
+        assert_eq!(view["owner"]["driver_store"]["kind"], "store");
+        assert_eq!(view["owner"]["driver_store"]["generation"], 2);
+        assert_eq!(
+            view["references"]["packet_descriptor"]["kind"],
+            "packet-descriptor"
+        );
+        assert_eq!(view["references"]["packet_descriptor"]["generation"], 2);
+        assert_eq!(
+            view["references"]["device_capability"]["kind"],
+            "device-capability"
+        );
+        assert_eq!(view["references"]["capability"]["generation"], 5);
+        assert_eq!(view["authority"]["operation"], "tx");
+        assert_eq!(view["authority"]["handle_slot"], 4);
+        assert_eq!(view["tx"]["byte_len"], 64);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 68);
     }
 
     #[test]
@@ -11925,6 +12113,85 @@ mod tests {
                 resolved_at_event: 19,
                 note: "network rx wait resolution graph".to_owned(),
             });
+        package
+            .semantic
+            .packet_buffer_objects
+            .push(PacketBufferObjectManifest {
+                id: 88,
+                packet_device: 81,
+                packet_device_generation: 1,
+                direction: "tx".to_owned(),
+                frame_format_version: 2,
+                capacity: 512,
+                payload_len: 64,
+                sequence: 2,
+                generation: 1,
+                state: "filled".to_owned(),
+                recorded_at_event: 20,
+                note: "tx packet buffer graph".to_owned(),
+            });
+        package
+            .semantic
+            .packet_queue_objects
+            .push(PacketQueueObjectManifest {
+                id: 89,
+                name: "net0-tx0".to_owned(),
+                packet_device: 81,
+                packet_device_generation: 1,
+                role: "tx".to_owned(),
+                queue_index: 1,
+                depth: 4,
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 21,
+                note: "tx packet queue graph".to_owned(),
+            });
+        package
+            .semantic
+            .packet_descriptors
+            .push(PacketDescriptorObjectManifest {
+                id: 90,
+                packet_queue: 89,
+                packet_queue_generation: 1,
+                packet_buffer: 88,
+                packet_buffer_generation: 1,
+                slot: 0,
+                length: 64,
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 22,
+                note: "tx packet descriptor graph".to_owned(),
+            });
+        package
+            .semantic
+            .network_tx_capability_gates
+            .push(NetworkTxCapabilityGateManifest {
+                id: 91,
+                driver_store: 1,
+                driver_store_generation: 2,
+                packet_device: 81,
+                packet_device_generation: 1,
+                tx_queue: 89,
+                tx_queue_generation: 1,
+                packet_descriptor: 90,
+                packet_descriptor_generation: 1,
+                packet_buffer: 88,
+                packet_buffer_generation: 1,
+                device_capability: 42,
+                device_capability_generation: 1,
+                capability: 1,
+                capability_generation: 1,
+                handle_slot: 1,
+                handle_generation: 1,
+                handle_tag: 9,
+                operation: "tx".to_owned(),
+                byte_len: 64,
+                sequence: 2,
+                generation: 1,
+                state: "allowed".to_owned(),
+                recorded_at_event: 23,
+                note: "network tx capability gate graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -11975,6 +12242,14 @@ mod tests {
             && edge["relation"] == "network-rx-wait-resolution->rx-queue"
             && edge["from"]["kind"] == "network-rx-wait-resolution"
             && edge["to"]["kind"] == "packet-queue"));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-tx-capability-gate->packet-descriptor"
+            && edge["from"]["kind"] == "network-tx-capability-gate"
+            && edge["to"]["kind"] == "packet-descriptor"));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-tx-capability-gate->capability"
+            && edge["from"]["kind"] == "network-tx-capability-gate"
+            && edge["to"]["kind"] == "capability"));
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
             && edge["from"]["kind"] == "hostcall"
             && edge["to"]["kind"] == "activation"));
