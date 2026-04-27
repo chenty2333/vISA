@@ -720,6 +720,10 @@ impl SemanticGraph {
                 .network_fault_injections
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::NetworkBenchmark => self
+                .network_benchmarks
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

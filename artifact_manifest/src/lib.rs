@@ -329,6 +329,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub network_fault_injection_count: usize,
     #[serde(default)]
+    pub network_benchmark_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -509,6 +511,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub network_fault_injections: Vec<NetworkFaultInjectionManifest>,
     #[serde(default)]
+    pub network_benchmarks: Vec<NetworkBenchmarkManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -668,6 +672,8 @@ pub struct SemanticRootSetManifest {
     pub network_generation_audit_roots: Vec<String>,
     #[serde(default)]
     pub network_fault_injection_roots: Vec<String>,
+    #[serde(default)]
+    pub network_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2008,6 +2014,46 @@ pub struct NetworkFaultInjectionManifest {
     pub error_packets: u32,
     pub error_code: String,
     pub sequence: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct NetworkBenchmarkManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub adapter: u64,
+    pub adapter_generation: u64,
+    pub packet_device: u64,
+    pub packet_device_generation: u64,
+    pub tx_queue: u64,
+    pub tx_queue_generation: u64,
+    pub rx_queue: u64,
+    pub rx_queue_generation: u64,
+    pub tx_completion: u64,
+    pub tx_completion_generation: u64,
+    pub rx_wait_resolution: u64,
+    pub rx_wait_resolution_generation: u64,
+    pub endpoint: u64,
+    pub endpoint_generation: u64,
+    pub socket: u64,
+    pub socket_generation: u64,
+    pub owner_store: u64,
+    pub owner_store_generation: u64,
+    pub backpressure: Option<u64>,
+    pub backpressure_generation: Option<u64>,
+    pub sample_packets: u32,
+    pub sample_bytes: u64,
+    pub tx_completed_packets: u32,
+    pub rx_resolved_packets: u32,
+    pub dropped_packets: u32,
+    pub measured_nanos: u64,
+    pub budget_nanos: u64,
+    pub throughput_bytes_per_sec: u64,
+    pub p50_latency_nanos: u64,
+    pub p99_latency_nanos: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

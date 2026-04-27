@@ -22,12 +22,12 @@ use artifact_manifest::{
     IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
     MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
     MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -187,6 +187,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n17_evidence(&mut semantic)?;
     record_network_runtime_n18_evidence(&mut semantic)?;
     record_network_runtime_n16_evidence(&mut semantic)?;
+    record_network_runtime_n19_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -1572,6 +1573,155 @@ fn record_network_runtime_n16_evidence(semantic: &mut SemanticGraph) -> Result<(
             stale_cleanup.command,
             stale_cleanup.status.as_str(),
             stale_cleanup.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+fn record_network_runtime_n19_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let benchmark = semantic.apply_envelope(CommandEnvelope::new(
+        190,
+        "target-executor-n19",
+        SemanticCommand::RecordNetworkBenchmark {
+            benchmark: 10_067,
+            scenario: "host-validation-network-throughput-latency".to_owned(),
+            adapter: 10_025,
+            adapter_generation: 1,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            tx_queue: 10_005,
+            tx_queue_generation: 1,
+            rx_queue: 10_004,
+            rx_queue_generation: 1,
+            tx_completion: 10_023,
+            tx_completion_generation: 1,
+            rx_wait_resolution: 10_017,
+            rx_wait_resolution_generation: 1,
+            endpoint: 10_032,
+            endpoint_generation: 1,
+            backpressure: Some(10_047),
+            backpressure_generation: Some(1),
+            sample_packets: 3,
+            sample_bytes: 6000,
+            tx_completed_packets: 1,
+            rx_resolved_packets: 1,
+            dropped_packets: 1,
+            measured_nanos: 120_000,
+            budget_nanos: 250_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 48_000,
+            note: "n19-record-host-validation-network-throughput-latency-benchmark".to_owned(),
+        },
+    ));
+    if benchmark.status != CommandStatus::Applied {
+        return Err(format!(
+            "network runtime n19 benchmark command {} ({}) failed: status={} violations={:?}",
+            benchmark.command_id,
+            benchmark.command,
+            benchmark.status.as_str(),
+            benchmark.violations
+        )
+        .into());
+    }
+
+    let stale_adapter = semantic.apply_envelope(CommandEnvelope::new(
+        191,
+        "target-executor-n19",
+        SemanticCommand::RecordNetworkBenchmark {
+            benchmark: 10_068,
+            scenario: "host-validation-network-throughput-latency".to_owned(),
+            adapter: 10_025,
+            adapter_generation: 2,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            tx_queue: 10_005,
+            tx_queue_generation: 1,
+            rx_queue: 10_004,
+            rx_queue_generation: 1,
+            tx_completion: 10_023,
+            tx_completion_generation: 1,
+            rx_wait_resolution: 10_017,
+            rx_wait_resolution_generation: 1,
+            endpoint: 10_032,
+            endpoint_generation: 1,
+            backpressure: Some(10_047),
+            backpressure_generation: Some(1),
+            sample_packets: 3,
+            sample_bytes: 6000,
+            tx_completed_packets: 1,
+            rx_resolved_packets: 1,
+            dropped_packets: 1,
+            measured_nanos: 120_000,
+            budget_nanos: 250_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 48_000,
+            note: "n19-reject-stale-adapter-generation".to_owned(),
+        },
+    ));
+    if stale_adapter.status != CommandStatus::Rejected
+        || !stale_adapter
+            .violations
+            .iter()
+            .any(|violation| violation.contains("adapter generation"))
+    {
+        return Err(format!(
+            "network runtime n19 stale adapter command {} ({}) was not rejected: status={} violations={:?}",
+            stale_adapter.command_id,
+            stale_adapter.command,
+            stale_adapter.status.as_str(),
+            stale_adapter.violations
+        )
+        .into());
+    }
+
+    let budget_overrun = semantic.apply_envelope(CommandEnvelope::new(
+        192,
+        "target-executor-n19",
+        SemanticCommand::RecordNetworkBenchmark {
+            benchmark: 10_069,
+            scenario: "host-validation-network-throughput-latency".to_owned(),
+            adapter: 10_025,
+            adapter_generation: 1,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            tx_queue: 10_005,
+            tx_queue_generation: 1,
+            rx_queue: 10_004,
+            rx_queue_generation: 1,
+            tx_completion: 10_023,
+            tx_completion_generation: 1,
+            rx_wait_resolution: 10_017,
+            rx_wait_resolution_generation: 1,
+            endpoint: 10_032,
+            endpoint_generation: 1,
+            backpressure: Some(10_047),
+            backpressure_generation: Some(1),
+            sample_packets: 3,
+            sample_bytes: 6000,
+            tx_completed_packets: 1,
+            rx_resolved_packets: 1,
+            dropped_packets: 1,
+            measured_nanos: 260_000,
+            budget_nanos: 250_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 48_000,
+            note: "n19-reject-network-benchmark-over-budget".to_owned(),
+        },
+    ));
+    if budget_overrun.status != CommandStatus::Rejected
+        || !budget_overrun
+            .violations
+            .iter()
+            .any(|violation| violation.contains("exceeds latency budget"))
+    {
+        return Err(format!(
+            "network runtime n19 budget command {} ({}) was not rejected: status={} violations={:?}",
+            budget_overrun.command_id,
+            budget_overrun.command,
+            budget_overrun.status.as_str(),
+            budget_overrun.violations
         )
         .into());
     }
@@ -4379,6 +4529,7 @@ fn demo_migration_package(
             network_driver_cleanup_count: semantic.network_driver_cleanup_count(),
             network_generation_audit_count: semantic.network_generation_audit_count(),
             network_fault_injection_count: semantic.network_fault_injection_count(),
+            network_benchmark_count: semantic.network_benchmark_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -4670,6 +4821,11 @@ fn demo_migration_package(
                 .network_fault_injections()
                 .iter()
                 .map(network_fault_injection_manifest)
+                .collect(),
+            network_benchmarks: semantic
+                .network_benchmarks()
+                .iter()
+                .map(network_benchmark_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -5906,6 +6062,48 @@ fn semantic_roots(
                     injection.sequence,
                     injection.state.as_str(),
                     injection.generation
+                )
+            })
+            .collect(),
+        network_benchmark_roots: semantic
+            .network_benchmarks()
+            .iter()
+            .map(|benchmark| {
+                format!(
+                    "network-benchmark id={} scenario={} adapter={}@{} packet_device={}@{} tx_queue={}@{} rx_queue={}@{} tx_completion={}@{} rx_wait_resolution={}@{} endpoint={}@{} socket={}@{} owner_store={}@{} backpressure={} sample_packets={} sample_bytes={} tx_completed_packets={} rx_resolved_packets={} dropped_packets={} measured_nanos={} budget_nanos={} throughput_bytes_per_sec={} p50_latency_nanos={} p99_latency_nanos={} state={} generation={}",
+                    benchmark.id,
+                    benchmark.scenario,
+                    benchmark.adapter,
+                    benchmark.adapter_generation,
+                    benchmark.packet_device,
+                    benchmark.packet_device_generation,
+                    benchmark.tx_queue,
+                    benchmark.tx_queue_generation,
+                    benchmark.rx_queue,
+                    benchmark.rx_queue_generation,
+                    benchmark.tx_completion,
+                    benchmark.tx_completion_generation,
+                    benchmark.rx_wait_resolution,
+                    benchmark.rx_wait_resolution_generation,
+                    benchmark.endpoint,
+                    benchmark.endpoint_generation,
+                    benchmark.socket,
+                    benchmark.socket_generation,
+                    benchmark.owner_store,
+                    benchmark.owner_store_generation,
+                    optional_generation_ref(benchmark.backpressure, benchmark.backpressure_generation),
+                    benchmark.sample_packets,
+                    benchmark.sample_bytes,
+                    benchmark.tx_completed_packets,
+                    benchmark.rx_resolved_packets,
+                    benchmark.dropped_packets,
+                    benchmark.measured_nanos,
+                    benchmark.budget_nanos,
+                    benchmark.throughput_bytes_per_sec,
+                    benchmark.p50_latency_nanos,
+                    benchmark.p99_latency_nanos,
+                    benchmark.state.as_str(),
+                    benchmark.generation
                 )
             })
             .collect(),
@@ -7852,6 +8050,49 @@ fn network_fault_injection_manifest(
         state: injection.state.as_str().to_owned(),
         recorded_at_event: injection.recorded_at_event,
         note: injection.note.clone(),
+    }
+}
+
+fn network_benchmark_manifest(
+    benchmark: &semantic_core::NetworkBenchmarkRecord,
+) -> NetworkBenchmarkManifest {
+    NetworkBenchmarkManifest {
+        id: benchmark.id,
+        scenario: benchmark.scenario.clone(),
+        adapter: benchmark.adapter,
+        adapter_generation: benchmark.adapter_generation,
+        packet_device: benchmark.packet_device,
+        packet_device_generation: benchmark.packet_device_generation,
+        tx_queue: benchmark.tx_queue,
+        tx_queue_generation: benchmark.tx_queue_generation,
+        rx_queue: benchmark.rx_queue,
+        rx_queue_generation: benchmark.rx_queue_generation,
+        tx_completion: benchmark.tx_completion,
+        tx_completion_generation: benchmark.tx_completion_generation,
+        rx_wait_resolution: benchmark.rx_wait_resolution,
+        rx_wait_resolution_generation: benchmark.rx_wait_resolution_generation,
+        endpoint: benchmark.endpoint,
+        endpoint_generation: benchmark.endpoint_generation,
+        socket: benchmark.socket,
+        socket_generation: benchmark.socket_generation,
+        owner_store: benchmark.owner_store,
+        owner_store_generation: benchmark.owner_store_generation,
+        backpressure: benchmark.backpressure,
+        backpressure_generation: benchmark.backpressure_generation,
+        sample_packets: benchmark.sample_packets,
+        sample_bytes: benchmark.sample_bytes,
+        tx_completed_packets: benchmark.tx_completed_packets,
+        rx_resolved_packets: benchmark.rx_resolved_packets,
+        dropped_packets: benchmark.dropped_packets,
+        measured_nanos: benchmark.measured_nanos,
+        budget_nanos: benchmark.budget_nanos,
+        throughput_bytes_per_sec: benchmark.throughput_bytes_per_sec,
+        p50_latency_nanos: benchmark.p50_latency_nanos,
+        p99_latency_nanos: benchmark.p99_latency_nanos,
+        generation: benchmark.generation,
+        state: benchmark.state.as_str().to_owned(),
+        recorded_at_event: benchmark.recorded_at_event,
+        note: benchmark.note.clone(),
     }
 }
 

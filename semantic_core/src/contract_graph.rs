@@ -1433,6 +1433,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::NetworkDriverCleanup
             | ContractObjectKind::NetworkGenerationAudit
             | ContractObjectKind::NetworkFaultInjection
+            | ContractObjectKind::NetworkBenchmark
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

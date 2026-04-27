@@ -9536,6 +9536,325 @@ fn network_runtime_n18_invariants_reject_packet_queue_generation_leak() {
     );
 }
 
+fn setup_n19_network_benchmark_graph() -> (SemanticGraph, EndpointObjectId) {
+    let (mut graph, _, connected_endpoint) = setup_n14_socket_wait_graph();
+    assert!(graph.record_network_tx_completion_with_id(
+        1572,
+        1571,
+        1,
+        ContractObjectRef::new(ContractObjectKind::VirtioNetBackendObject, 1553, 1),
+        1,
+        "n19 tx completion evidence",
+    ));
+    assert!(graph.record_network_rx_interrupt_with_id(
+        1556,
+        1553,
+        1,
+        1555,
+        1,
+        1541,
+        1,
+        1544,
+        1,
+        1,
+        1,
+        "n19 rx interrupt evidence",
+    ));
+    let binding_record = graph
+        .driver_store_bindings()
+        .iter()
+        .find(|record| record.id == 1552)
+        .cloned()
+        .unwrap();
+    let rx_queue_ref = ContractObjectRef::new(ContractObjectKind::PacketQueueObject, 1544, 1);
+    assert_eq!(
+        graph
+            .apply_envelope(CommandEnvelope::new(
+                1,
+                "n19-setup",
+                SemanticCommand::CreateWait {
+                    wait: 1611,
+                    owner_task: None,
+                    owner_store: Some(binding_record.driver_store),
+                    owner_store_generation: Some(binding_record.driver_store_generation),
+                    kind: SemanticWaitKind::DeviceIrq,
+                    generation: 1,
+                    blockers: vec![rx_queue_ref],
+                    deadline: None,
+                    restart_policy: RestartPolicy::InternalOnly,
+                    saved_context: Some("n19 rx wait benchmark setup".to_string()),
+                },
+            ))
+            .status,
+        CommandStatus::Applied
+    );
+    assert!(graph.record_io_wait_with_id(
+        1612,
+        1611,
+        1,
+        binding_record.driver_store,
+        binding_record.driver_store_generation,
+        1540,
+        1,
+        1552,
+        1,
+        rx_queue_ref,
+        "n19 rx io wait evidence",
+    ));
+    assert!(graph.resolve_network_rx_wait_with_id(
+        1613,
+        1612,
+        1,
+        1556,
+        1,
+        "n19 rx wait resolution evidence",
+    ));
+    assert!(graph.record_network_backpressure_with_id(
+        1596,
+        1575,
+        1,
+        1541,
+        1,
+        1544,
+        1,
+        None,
+        None,
+        PacketBufferDirection::Rx,
+        NetworkBackpressureReason::QueueFull,
+        NetworkBackpressureAction::DropNewest,
+        5,
+        4,
+        1,
+        1514,
+        3,
+        "n19 rx drop newest evidence",
+    ));
+    (graph, connected_endpoint)
+}
+
+#[test]
+fn network_runtime_n19_benchmark_records_throughput_latency_evidence() {
+    let (mut graph, connected_endpoint) = setup_n19_network_benchmark_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n19-test",
+        SemanticCommand::RecordNetworkBenchmark {
+            benchmark: 1614,
+            scenario: "host-validation-network-throughput-latency".to_string(),
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            tx_queue: 1545,
+            tx_queue_generation: 1,
+            rx_queue: 1544,
+            rx_queue_generation: 1,
+            tx_completion: 1572,
+            tx_completion_generation: 1,
+            rx_wait_resolution: 1613,
+            rx_wait_resolution_generation: 1,
+            endpoint: connected_endpoint,
+            endpoint_generation: 1,
+            backpressure: Some(1596),
+            backpressure_generation: Some(1),
+            sample_packets: 3,
+            sample_bytes: 6000,
+            tx_completed_packets: 1,
+            rx_resolved_packets: 1,
+            dropped_packets: 1,
+            measured_nanos: 120_000,
+            budget_nanos: 250_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 48_000,
+            note: "n19 throughput latency benchmark".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    assert_eq!(graph.network_benchmark_count(), 1);
+    let benchmark = &graph.network_benchmarks()[0];
+    assert_eq!(
+        benchmark.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::NetworkBenchmark, 1614, 1)
+    );
+    assert_eq!(benchmark.endpoint, connected_endpoint);
+    assert_eq!(benchmark.socket, 1580);
+    assert_eq!(benchmark.backpressure, Some(1596));
+    assert_eq!(benchmark.throughput_bytes_per_sec, 50_000_000);
+    assert_eq!(benchmark.p99_latency_nanos, 48_000);
+    assert!(
+        graph.event_log_tail(1)[0]
+            .kind
+            .summary()
+            .contains("NetworkBenchmarkRecorded benchmark=1614")
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn network_runtime_n19_rejects_stale_adapter_and_budget_overrun() {
+    let (mut graph, connected_endpoint) = setup_n19_network_benchmark_graph();
+    let stale_adapter = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n19-test",
+        SemanticCommand::RecordNetworkBenchmark {
+            benchmark: 1614,
+            scenario: "host-validation-network-throughput-latency".to_string(),
+            adapter: 1575,
+            adapter_generation: 2,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            tx_queue: 1545,
+            tx_queue_generation: 1,
+            rx_queue: 1544,
+            rx_queue_generation: 1,
+            tx_completion: 1572,
+            tx_completion_generation: 1,
+            rx_wait_resolution: 1613,
+            rx_wait_resolution_generation: 1,
+            endpoint: connected_endpoint,
+            endpoint_generation: 1,
+            backpressure: Some(1596),
+            backpressure_generation: Some(1),
+            sample_packets: 3,
+            sample_bytes: 6000,
+            tx_completed_packets: 1,
+            rx_resolved_packets: 1,
+            dropped_packets: 1,
+            measured_nanos: 120_000,
+            budget_nanos: 250_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 48_000,
+            note: "n19 stale adapter".to_string(),
+        },
+    ));
+    assert_eq!(stale_adapter.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_adapter.violations,
+        vec!["network benchmark adapter generation is missing or inactive".to_string()]
+    );
+
+    let budget_overrun = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "n19-test",
+        SemanticCommand::RecordNetworkBenchmark {
+            benchmark: 1614,
+            scenario: "host-validation-network-throughput-latency".to_string(),
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            tx_queue: 1545,
+            tx_queue_generation: 1,
+            rx_queue: 1544,
+            rx_queue_generation: 1,
+            tx_completion: 1572,
+            tx_completion_generation: 1,
+            rx_wait_resolution: 1613,
+            rx_wait_resolution_generation: 1,
+            endpoint: connected_endpoint,
+            endpoint_generation: 1,
+            backpressure: Some(1596),
+            backpressure_generation: Some(1),
+            sample_packets: 3,
+            sample_bytes: 6000,
+            tx_completed_packets: 1,
+            rx_resolved_packets: 1,
+            dropped_packets: 1,
+            measured_nanos: 260_000,
+            budget_nanos: 250_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 48_000,
+            note: "n19 budget overrun".to_string(),
+        },
+    ));
+    assert_eq!(budget_overrun.status, CommandStatus::Rejected);
+    assert_eq!(
+        budget_overrun.violations,
+        vec!["network benchmark exceeds latency budget".to_string()]
+    );
+
+    let packet_accounting_overflow = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "n19-test",
+        SemanticCommand::RecordNetworkBenchmark {
+            benchmark: 1614,
+            scenario: "host-validation-network-throughput-latency".to_string(),
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            tx_queue: 1545,
+            tx_queue_generation: 1,
+            rx_queue: 1544,
+            rx_queue_generation: 1,
+            tx_completion: 1572,
+            tx_completion_generation: 1,
+            rx_wait_resolution: 1613,
+            rx_wait_resolution_generation: 1,
+            endpoint: connected_endpoint,
+            endpoint_generation: 1,
+            backpressure: Some(1596),
+            backpressure_generation: Some(1),
+            sample_packets: 1,
+            sample_bytes: 6000,
+            tx_completed_packets: u32::MAX,
+            rx_resolved_packets: 1,
+            dropped_packets: 1,
+            measured_nanos: 120_000,
+            budget_nanos: 250_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 48_000,
+            note: "n19 packet accounting overflow".to_string(),
+        },
+    ));
+    assert_eq!(packet_accounting_overflow.status, CommandStatus::Rejected);
+    assert_eq!(
+        packet_accounting_overflow.violations,
+        vec!["network benchmark packet accounting overflow".to_string()]
+    );
+}
+
+#[test]
+fn network_runtime_n19_invariants_reject_throughput_metric_drift() {
+    let (mut graph, connected_endpoint) = setup_n19_network_benchmark_graph();
+    assert!(graph.record_network_benchmark_with_id(
+        1614,
+        "host-validation-network-throughput-latency",
+        1575,
+        1,
+        1541,
+        1,
+        1545,
+        1,
+        1544,
+        1,
+        1572,
+        1,
+        1613,
+        1,
+        connected_endpoint,
+        1,
+        Some(1596),
+        Some(1),
+        3,
+        6000,
+        1,
+        1,
+        1,
+        120_000,
+        250_000,
+        18_000,
+        48_000,
+        "n19 benchmark",
+    ));
+    graph.corrupt_network_benchmark_throughput_for_test(1614, 49_999_999);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::NetworkBenchmarkInvalid { benchmark: 1614 })
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

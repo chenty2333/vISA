@@ -1,0 +1,152 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "N19-network-throughput-latency-benchmark",
+  "name": "golden_n19_network_throughput_latency_benchmark",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md"
+  ],
+  "no_goals": [
+    "real virtio datapath",
+    "real smoltcp throughput measurement",
+    "real DMA/IOMMU/MMIO/IRQ hardware access",
+    "calibrated network performance number",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "N7 has resolved network-rx-wait-resolution:10017@1 from rx queue packet-queue:10004@1",
+      "N9 has recorded network-tx-completion:10023@1 for tx queue packet-queue:10005@1",
+      "N10 has recorded network-stack-adapter:10025@1 bound to packet-device:10002@1",
+      "N15 has recorded network-backpressure:10047@1 with one dropped rx packet",
+      "N16 cleanup is already complete and N19 remains historical benchmark evidence only"
+    ],
+    "commands": [
+      {
+        "id": 190,
+        "command": "record-network-benchmark",
+        "benchmark": "network-benchmark:10067@1",
+        "scenario": "host-validation-network-throughput-latency",
+        "adapter": "network-stack-adapter:10025@1",
+        "packet_device": "packet-device:10002@1",
+        "tx_queue": "packet-queue:10005@1",
+        "rx_queue": "packet-queue:10004@1",
+        "tx_completion": "network-tx-completion:10023@1",
+        "rx_wait_resolution": "network-rx-wait-resolution:10017@1",
+        "endpoint": "endpoint-object:10032@1",
+        "socket": "socket-object:10031@1",
+        "owner_store": "store:9@3",
+        "backpressure": "network-backpressure:10047@1",
+        "expected": "applied"
+      },
+      {
+        "id": 191,
+        "command": "record-network-benchmark",
+        "scenario": "stale adapter generation cannot record benchmark evidence",
+        "adapter": "network-stack-adapter:10025@2",
+        "expected": "rejected",
+        "violation": "network benchmark adapter generation is missing or inactive"
+      },
+      {
+        "id": 192,
+        "command": "record-network-benchmark",
+        "scenario": "measured latency over budget cannot record benchmark evidence",
+        "expected": "rejected",
+        "violation": "network benchmark exceeds latency budget"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 379,
+      "kind": "NetworkBenchmarkRecorded",
+      "benchmark": "network-benchmark:10067@1",
+      "adapter": "network-stack-adapter:10025@1",
+      "packet_device": "packet-device:10002@1",
+      "tx_completion": "network-tx-completion:10023@1",
+      "rx_wait_resolution": "network-rx-wait-resolution:10017@1",
+      "endpoint": "endpoint-object:10032@1",
+      "socket": "socket-object:10031@1",
+      "owner_store": "store:9@3",
+      "sample_packets": 3,
+      "sample_bytes": 6000,
+      "measured_nanos": 120000,
+      "budget_nanos": 250000,
+      "throughput_bytes_per_sec": 50000000,
+      "p50_latency_nanos": 18000,
+      "p99_latency_nanos": 48000
+    }
+  ],
+  "expected": {
+    "views": {
+      "network-benchmark": {
+        "count": 1,
+        "benchmark": "network-benchmark:10067@1",
+        "adapter": "network-stack-adapter:10025@1",
+        "packet_device": "packet-device:10002@1",
+        "tx_queue": "packet-queue:10005@1",
+        "rx_queue": "packet-queue:10004@1",
+        "tx_completion": "network-tx-completion:10023@1",
+        "rx_wait_resolution": "network-rx-wait-resolution:10017@1",
+        "endpoint": "endpoint-object:10032@1",
+        "socket": "socket-object:10031@1",
+        "owner_store": "store:9@3",
+        "backpressure": "network-backpressure:10047@1",
+        "sample_packets": 3,
+        "sample_bytes": 6000,
+        "throughput_bytes_per_sec": 50000000,
+        "p99_latency_nanos": 48000
+      },
+      "command": {
+        "benchmark_applied": "command-result:190:record-network-benchmark:applied",
+        "stale_adapter_rejected": "command-result:191:record-network-benchmark:rejected",
+        "budget_overrun_rejected": "command-result:192:record-network-benchmark:rejected"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "historical_edges": [
+          "network-benchmark->network-stack-adapter",
+          "network-benchmark->packet-device",
+          "network-benchmark->tx-queue",
+          "network-benchmark->rx-queue",
+          "network-benchmark->tx-completion",
+          "network-benchmark->rx-wait-resolution",
+          "network-benchmark->endpoint-object",
+          "network-benchmark->socket-object",
+          "network-benchmark->owner-store",
+          "network-benchmark->network-backpressure"
+        ],
+        "live_edges": []
+      }
+    },
+    "invariants": [
+      "NetworkBenchmark carries exact generation refs for adapter, packet device, queues, tx completion, rx wait resolution, endpoint, socket, owner store, and backpressure",
+      "packet accounting closes over tx_completed_packets + rx_resolved_packets + dropped_packets",
+      "throughput_bytes_per_sec is derived from sample_bytes and measured_nanos",
+      "p99 latency must be greater than or equal to p50 and within measured_nanos",
+      "stale adapter generation rejects before mutation",
+      "latency budget overrun rejects before mutation",
+      "NetworkBenchmark is historical evidence only and creates no live ownership edge"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "network_runtime_n19_benchmark_records_throughput_latency_evidence",
+      "network_runtime_n19_rejects_stale_adapter_and_budget_overrun",
+      "network_runtime_n19_invariants_reject_throughput_metric_drift",
+      "network_benchmark_view_v1_exposes_throughput_latency_metrics",
+      "semantic_roots_reject_network_benchmark_root_mismatch",
+      "graph_json_edges_separate_live_history_and_cleanup_modes"
+    ],
+    "osctl_json_view": "network-benchmark list --json",
+    "target_executor_event_cursor": 381
+  }
+}

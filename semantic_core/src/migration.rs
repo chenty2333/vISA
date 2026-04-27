@@ -1428,6 +1428,20 @@ pub enum SemanticInvariantError {
         injection: NetworkFaultInjectionId,
         event: EventId,
     },
+    NetworkBenchmarkInvalid {
+        benchmark: NetworkBenchmarkId,
+    },
+    NetworkBenchmarkMissingTarget {
+        benchmark: NetworkBenchmarkId,
+        target: ContractObjectRef,
+    },
+    NetworkBenchmarkMetricMismatch {
+        benchmark: NetworkBenchmarkId,
+    },
+    NetworkBenchmarkMissingEvent {
+        benchmark: NetworkBenchmarkId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

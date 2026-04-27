@@ -1,0 +1,57 @@
+{
+  "schema": "vmos-benchmark-report",
+  "schema_version": 1,
+  "name": "n19_network_throughput_latency_host_validation",
+  "checkpoint": "N19-network-throughput-latency-benchmark",
+  "environment": {
+    "mode": "host-validation-semantic-harness",
+    "hardware_dependency": "none",
+    "measurement_source": "recorded NetworkBenchmark semantic object",
+    "no_goal": "not a calibrated virtio or smoltcp throughput number"
+  },
+  "metrics": {
+    "benchmark_count": {
+      "value": 1,
+      "unit": "samples"
+    },
+    "sample_packets": {
+      "value": 3,
+      "unit": "packets"
+    },
+    "sample_bytes": {
+      "value": 6000,
+      "unit": "bytes"
+    },
+    "throughput_bytes_per_sec": {
+      "value": 50000000,
+      "unit": "bytes/sec"
+    },
+    "measured_nanos": {
+      "value": 120000,
+      "unit": "semantic-ns"
+    },
+    "budget_nanos": {
+      "value": 250000,
+      "unit": "semantic-ns"
+    },
+    "p50_latency_nanos": {
+      "value": 18000,
+      "unit": "semantic-ns"
+    },
+    "p99_latency_nanos": {
+      "value": 48000,
+      "unit": "semantic-ns"
+    },
+    "within_budget": {
+      "value": 1,
+      "unit": "boolean"
+    }
+  },
+  "validation": {
+    "ok": true,
+    "notes": [
+      "N19 records deterministic host-validation network throughput/latency evidence in the semantic graph.",
+      "Real calibrated network performance remains a later adapter/backend benchmark after the semantic contract is closed."
+    ]
+  }
+}

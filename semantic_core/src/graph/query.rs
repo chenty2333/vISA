@@ -117,6 +117,7 @@ impl SemanticGraph {
         self.check_socket_operation_invariants()?;
         self.check_socket_wait_invariants()?;
         self.check_network_backpressure_invariants()?;
+        self.check_network_benchmark_invariants()?;
         self.check_network_driver_cleanup_invariants()?;
         self.check_network_generation_audit_invariants()?;
         self.check_network_fault_injection_invariants()?;

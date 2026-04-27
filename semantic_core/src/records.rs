@@ -1529,6 +1529,56 @@ impl NetworkBackpressureRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkBenchmarkRecord {
+    pub id: NetworkBenchmarkId,
+    pub scenario: String,
+    pub adapter: NetworkStackAdapterId,
+    pub adapter_generation: Generation,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub tx_queue: PacketQueueObjectId,
+    pub tx_queue_generation: Generation,
+    pub rx_queue: PacketQueueObjectId,
+    pub rx_queue_generation: Generation,
+    pub tx_completion: NetworkTxCompletionId,
+    pub tx_completion_generation: Generation,
+    pub rx_wait_resolution: NetworkRxWaitResolutionId,
+    pub rx_wait_resolution_generation: Generation,
+    pub endpoint: EndpointObjectId,
+    pub endpoint_generation: Generation,
+    pub socket: SocketObjectId,
+    pub socket_generation: Generation,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub backpressure: Option<NetworkBackpressureId>,
+    pub backpressure_generation: Option<Generation>,
+    pub sample_packets: u32,
+    pub sample_bytes: u64,
+    pub tx_completed_packets: u32,
+    pub rx_resolved_packets: u32,
+    pub dropped_packets: u32,
+    pub measured_nanos: u64,
+    pub budget_nanos: u64,
+    pub throughput_bytes_per_sec: u64,
+    pub p50_latency_nanos: u64,
+    pub p99_latency_nanos: u64,
+    pub generation: Generation,
+    pub state: NetworkBenchmarkState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl NetworkBenchmarkRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::NetworkBenchmark,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

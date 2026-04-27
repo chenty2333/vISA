@@ -17,16 +17,16 @@ use artifact_manifest::{
     InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
-    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
-    SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
+    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
+    SmpStressRunManifest, SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
     StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
     TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
     VirtioNetBackendObjectManifest, WaitRecordManifest,
@@ -330,6 +330,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "network-fault-injection"
         | "packet-loss"
         | "packet-error"
+        | "network-benchmark"
+        | "network-throughput"
+        | "network-latency"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -500,7 +503,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -749,6 +752,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
             "network-generation-audit"
         }
         "network-fault-injection" | "packet-loss" | "packet-error" => "network-fault-injection",
+        "network-benchmark" | "network-throughput" | "network-latency" => "network-benchmark",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3611,6 +3615,116 @@ fn network_fault_injection_view_v1(injection: &NetworkFaultInjectionManifest) ->
     })
 }
 
+fn network_benchmark_view_v1(benchmark: &NetworkBenchmarkManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "network-benchmark",
+        "id": benchmark.id,
+        "generation": benchmark.generation,
+        "state": benchmark.state,
+        "owner": {
+            "adapter": object_ref_json(
+                "network-stack-adapter",
+                benchmark.adapter,
+                benchmark.adapter_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                benchmark.packet_device,
+                benchmark.packet_device_generation,
+            ),
+            "store": object_ref_json(
+                "store",
+                benchmark.owner_store,
+                benchmark.owner_store_generation,
+            ),
+        },
+        "references": {
+            "adapter": object_ref_json(
+                "network-stack-adapter",
+                benchmark.adapter,
+                benchmark.adapter_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                benchmark.packet_device,
+                benchmark.packet_device_generation,
+            ),
+            "tx_queue": object_ref_json(
+                "packet-queue",
+                benchmark.tx_queue,
+                benchmark.tx_queue_generation,
+            ),
+            "rx_queue": object_ref_json(
+                "packet-queue",
+                benchmark.rx_queue,
+                benchmark.rx_queue_generation,
+            ),
+            "tx_completion": object_ref_json(
+                "network-tx-completion",
+                benchmark.tx_completion,
+                benchmark.tx_completion_generation,
+            ),
+            "rx_wait_resolution": object_ref_json(
+                "network-rx-wait-resolution",
+                benchmark.rx_wait_resolution,
+                benchmark.rx_wait_resolution_generation,
+            ),
+            "endpoint": object_ref_json(
+                "endpoint-object",
+                benchmark.endpoint,
+                benchmark.endpoint_generation,
+            ),
+            "socket": object_ref_json(
+                "socket-object",
+                benchmark.socket,
+                benchmark.socket_generation,
+            ),
+            "owner_store": object_ref_json(
+                "store",
+                benchmark.owner_store,
+                benchmark.owner_store_generation,
+            ),
+            "backpressure": optional_object_ref_json(
+                "network-backpressure",
+                benchmark.backpressure,
+                benchmark.backpressure_generation,
+            ),
+            "event": {
+                "id": benchmark.recorded_at_event,
+            },
+        },
+        "benchmark": {
+            "scenario": benchmark.scenario,
+            "sample_packets": benchmark.sample_packets,
+            "sample_bytes": benchmark.sample_bytes,
+            "tx_completed_packets": benchmark.tx_completed_packets,
+            "rx_resolved_packets": benchmark.rx_resolved_packets,
+            "dropped_packets": benchmark.dropped_packets,
+            "measured_nanos": benchmark.measured_nanos,
+            "budget_nanos": benchmark.budget_nanos,
+            "throughput_bytes_per_sec": benchmark.throughput_bytes_per_sec,
+            "p50_latency_nanos": benchmark.p50_latency_nanos,
+            "p99_latency_nanos": benchmark.p99_latency_nanos,
+        },
+        "note": benchmark.note,
+        "last_transition": {
+            "recorded_at_event": benchmark.recorded_at_event,
+            "adapter_generation": benchmark.adapter_generation,
+            "packet_device_generation": benchmark.packet_device_generation,
+            "tx_queue_generation": benchmark.tx_queue_generation,
+            "rx_queue_generation": benchmark.rx_queue_generation,
+            "tx_completion_generation": benchmark.tx_completion_generation,
+            "rx_wait_resolution_generation": benchmark.rx_wait_resolution_generation,
+            "endpoint_generation": benchmark.endpoint_generation,
+            "socket_generation": benchmark.socket_generation,
+            "owner_store_generation": benchmark.owner_store_generation,
+            "backpressure_generation": benchmark.backpressure_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -4781,6 +4895,12 @@ fn stable_views_for_kind(
             .network_fault_injections
             .iter()
             .map(network_fault_injection_view_v1)
+            .collect()),
+        "network-benchmark" | "network-throughput" | "network-latency" => Ok(package
+            .semantic
+            .network_benchmarks
+            .iter()
+            .map(network_benchmark_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -7146,6 +7266,107 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 from.clone(),
                 object_ref_json("store", owner_store, owner_store_generation),
                 "network-fault-injection->owner-store",
+                "historical",
+                event,
+            ));
+        }
+    }
+    for benchmark in &package.semantic.network_benchmarks {
+        let from = object_ref_json("network-benchmark", benchmark.id, benchmark.generation);
+        let event = Some(benchmark.recorded_at_event);
+        for (target, relation) in [
+            (
+                object_ref_json(
+                    "network-stack-adapter",
+                    benchmark.adapter,
+                    benchmark.adapter_generation,
+                ),
+                "network-benchmark->network-stack-adapter",
+            ),
+            (
+                object_ref_json(
+                    "packet-device",
+                    benchmark.packet_device,
+                    benchmark.packet_device_generation,
+                ),
+                "network-benchmark->packet-device",
+            ),
+            (
+                object_ref_json(
+                    "packet-queue",
+                    benchmark.tx_queue,
+                    benchmark.tx_queue_generation,
+                ),
+                "network-benchmark->tx-queue",
+            ),
+            (
+                object_ref_json(
+                    "packet-queue",
+                    benchmark.rx_queue,
+                    benchmark.rx_queue_generation,
+                ),
+                "network-benchmark->rx-queue",
+            ),
+            (
+                object_ref_json(
+                    "network-tx-completion",
+                    benchmark.tx_completion,
+                    benchmark.tx_completion_generation,
+                ),
+                "network-benchmark->tx-completion",
+            ),
+            (
+                object_ref_json(
+                    "network-rx-wait-resolution",
+                    benchmark.rx_wait_resolution,
+                    benchmark.rx_wait_resolution_generation,
+                ),
+                "network-benchmark->rx-wait-resolution",
+            ),
+            (
+                object_ref_json(
+                    "endpoint-object",
+                    benchmark.endpoint,
+                    benchmark.endpoint_generation,
+                ),
+                "network-benchmark->endpoint-object",
+            ),
+            (
+                object_ref_json(
+                    "socket-object",
+                    benchmark.socket,
+                    benchmark.socket_generation,
+                ),
+                "network-benchmark->socket-object",
+            ),
+            (
+                object_ref_json(
+                    "store",
+                    benchmark.owner_store,
+                    benchmark.owner_store_generation,
+                ),
+                "network-benchmark->owner-store",
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                target,
+                relation,
+                "historical",
+                event,
+            ));
+        }
+        if let (Some(backpressure), Some(backpressure_generation)) =
+            (benchmark.backpressure, benchmark.backpressure_generation)
+        {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(
+                    "network-backpressure",
+                    backpressure,
+                    backpressure_generation,
+                ),
+                "network-benchmark->network-backpressure",
                 "historical",
                 event,
             ));
@@ -9788,7 +10009,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -9840,6 +10061,7 @@ fn replay_until(
         package.semantic.roots.network_driver_cleanup_roots.len(),
         package.semantic.roots.network_generation_audit_roots.len(),
         package.semantic.roots.network_fault_injection_roots.len(),
+        package.semantic.roots.network_benchmark_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -9988,6 +10210,9 @@ fn replay_until(
     }
     for injection in &package.semantic.roots.network_fault_injection_roots {
         println!("replay network-fault-injection {injection}");
+    }
+    for benchmark in &package.semantic.roots.network_benchmark_roots {
+        println!("replay network-benchmark {benchmark}");
     }
     Ok(())
 }
@@ -10198,6 +10423,10 @@ fn print_replay_json(
     roots.insert(
         "network_fault_injections".to_owned(),
         serde_json::json!(package.semantic.roots.network_fault_injection_roots.len()),
+    );
+    roots.insert(
+        "network_benchmarks".to_owned(),
+        serde_json::json!(package.semantic.roots.network_benchmark_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -10523,6 +10752,10 @@ fn print_replay_json(
         "network_fault_injection_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.network_fault_injection_roots),
     );
+    roots.insert(
+        "network_benchmark_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.network_benchmark_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -10567,7 +10800,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -10623,6 +10856,9 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.socket_wait_count,
         package.semantic.network_backpressure_count,
         package.semantic.network_driver_cleanup_count,
+        package.semantic.network_generation_audit_count,
+        package.semantic.network_fault_injection_count,
+        package.semantic.network_benchmark_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -11826,6 +12062,63 @@ mod tests {
         assert_eq!(view["injection"]["effect"], "report-error");
         assert_eq!(view["injection"]["error_code"], "injected-checksum-error");
         assert_eq!(view["last_transition"]["recorded_at_event"], 97);
+    }
+
+    #[test]
+    fn network_benchmark_view_v1_exposes_throughput_latency_metrics() {
+        let view = network_benchmark_view_v1(&NetworkBenchmarkManifest {
+            id: 98,
+            scenario: "host-validation-network-throughput-latency".to_owned(),
+            adapter: 74,
+            adapter_generation: 5,
+            packet_device: 51,
+            packet_device_generation: 4,
+            tx_queue: 89,
+            tx_queue_generation: 7,
+            rx_queue: 88,
+            rx_queue_generation: 6,
+            tx_completion: 99,
+            tx_completion_generation: 1,
+            rx_wait_resolution: 100,
+            rx_wait_resolution_generation: 1,
+            endpoint: 92,
+            endpoint_generation: 10,
+            socket: 93,
+            socket_generation: 11,
+            owner_store: 94,
+            owner_store_generation: 12,
+            backpressure: Some(96),
+            backpressure_generation: Some(1),
+            sample_packets: 3,
+            sample_bytes: 6000,
+            tx_completed_packets: 1,
+            rx_resolved_packets: 1,
+            dropped_packets: 1,
+            measured_nanos: 120_000,
+            budget_nanos: 250_000,
+            throughput_bytes_per_sec: 50_000_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 48_000,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 101,
+            note: "network benchmark".to_owned(),
+        });
+        assert_eq!(view["kind"], "network-benchmark");
+        assert_eq!(view["owner"]["adapter"]["generation"], 5);
+        assert_eq!(
+            view["references"]["tx_completion"]["kind"],
+            "network-tx-completion"
+        );
+        assert_eq!(
+            view["references"]["rx_wait_resolution"]["kind"],
+            "network-rx-wait-resolution"
+        );
+        assert_eq!(view["references"]["backpressure"]["generation"], 1);
+        assert_eq!(view["benchmark"]["sample_packets"], 3);
+        assert_eq!(view["benchmark"]["throughput_bytes_per_sec"], 50_000_000);
+        assert_eq!(view["benchmark"]["p99_latency_nanos"], 48_000);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 101);
     }
 
     #[test]
@@ -14639,6 +14932,47 @@ mod tests {
                 recorded_at_event: 36,
                 note: "network fault injection graph".to_owned(),
             });
+        package
+            .semantic
+            .network_benchmarks
+            .push(NetworkBenchmarkManifest {
+                id: 103,
+                scenario: "host-validation-network-throughput-latency".to_owned(),
+                adapter: 93,
+                adapter_generation: 1,
+                packet_device: 81,
+                packet_device_generation: 1,
+                tx_queue: 89,
+                tx_queue_generation: 1,
+                rx_queue: 82,
+                rx_queue_generation: 1,
+                tx_completion: 92,
+                tx_completion_generation: 1,
+                rx_wait_resolution: 87,
+                rx_wait_resolution_generation: 1,
+                endpoint: 95,
+                endpoint_generation: 1,
+                socket: 94,
+                socket_generation: 1,
+                owner_store: 7,
+                owner_store_generation: 2,
+                backpressure: Some(99),
+                backpressure_generation: Some(1),
+                sample_packets: 3,
+                sample_bytes: 6000,
+                tx_completed_packets: 1,
+                rx_resolved_packets: 1,
+                dropped_packets: 1,
+                measured_nanos: 120_000,
+                budget_nanos: 250_000,
+                throughput_bytes_per_sec: 50_000_000,
+                p50_latency_nanos: 18_000,
+                p99_latency_nanos: 48_000,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 37,
+                note: "network benchmark graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -14746,6 +15080,11 @@ mod tests {
                 .iter()
                 .any(|edge| edge["from"]["kind"] == "network-fault-injection")
         );
+        assert!(
+            !live
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "network-benchmark")
+        );
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
@@ -14843,6 +15182,21 @@ mod tests {
             && edge["from"]["kind"] == "network-fault-injection"
             && edge["to"]["kind"] == "store"
             && edge["to"]["generation"] == 2));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-benchmark->tx-completion"
+            && edge["from"]["kind"] == "network-benchmark"
+            && edge["to"]["kind"] == "network-tx-completion"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-benchmark->rx-wait-resolution"
+            && edge["from"]["kind"] == "network-benchmark"
+            && edge["to"]["kind"] == "network-rx-wait-resolution"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-benchmark->network-backpressure"
+            && edge["from"]["kind"] == "network-benchmark"
+            && edge["to"]["kind"] == "network-backpressure"
+            && edge["to"]["generation"] == 1));
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
             && edge["relation"] == "network-rx-interrupt->irq-event"
             && edge["from"]["kind"] == "network-rx-interrupt"
