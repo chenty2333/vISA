@@ -73,6 +73,7 @@ pub struct SemanticGraph {
     block_request_queues: Vec<BlockRequestQueueRecord>,
     block_dma_buffers: Vec<BlockDmaBufferRecord>,
     block_page_objects: Vec<BlockPageObjectRecord>,
+    buffer_cache_objects: Vec<BufferCacheObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -157,6 +158,7 @@ pub struct SemanticGraph {
     next_block_request_queue_id: BlockRequestQueueId,
     next_block_dma_buffer_id: BlockDmaBufferId,
     next_block_page_object_id: BlockPageObjectId,
+    next_buffer_cache_object_id: BufferCacheObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -185,6 +187,7 @@ mod block_request_queue;
 mod block_wait;
 mod block_write_path;
 mod boundary;
+mod buffer_cache_object;
 mod capability;
 mod cleanup;
 mod command;
@@ -327,6 +330,7 @@ impl SemanticGraph {
             block_request_queues: Vec::new(),
             block_dma_buffers: Vec::new(),
             block_page_objects: Vec::new(),
+            buffer_cache_objects: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -411,6 +415,7 @@ impl SemanticGraph {
             next_block_request_queue_id: 1,
             next_block_dma_buffer_id: 1,
             next_block_page_object_id: 1,
+            next_buffer_cache_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

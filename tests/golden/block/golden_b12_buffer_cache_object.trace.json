@@ -1,0 +1,157 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "B12-buffer-cache-object",
+  "name": "golden_b12_buffer_cache_object",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/12-guest-memory-object-model.md"
+  ],
+  "no_goals": [
+    "real page cache eviction",
+    "writeback worker",
+    "filesystem adapter",
+    "FAT/ext4 integration",
+    "raw page-table or DMW pointer mapping",
+    "adapter-local cache state as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "B11 already recorded BlockPageObject 20065@1 integrating BlockDmaBuffer 20061@1 into PageObject 30003@1",
+      "BufferCacheObject 20069@1 records a semantic cache entry for BlockRangeObject 20005@1 and PageObject 30003@1",
+      "The cache entry stores exact ObjectRef-style generations, byte ranges, cache state, and coherency epoch without storing raw mappings"
+    ],
+    "commands": [
+      {
+        "id": 264,
+        "command": "record-buffer-cache-object",
+        "buffer_cache_object": "buffer-cache-object:20069@1",
+        "block_page_object": "block-page-object:20065@1",
+        "block_dma_buffer": "block-dma-buffer:20061@1",
+        "block_device": "block-device:20002@1",
+        "block_range": "block-range:20005@1",
+        "aspace": "guest-address-space:30001@1",
+        "vma_region": "vma-region:30002@1",
+        "page": "page-object:30003@1",
+        "page_dirty_generation": 1,
+        "page_offset": 0,
+        "block_offset": 0,
+        "byte_len": 4096,
+        "operation": "write",
+        "cache_state": "dirty",
+        "coherency_epoch": 1,
+        "expected": "applied"
+      },
+      {
+        "id": 265,
+        "command": "record-buffer-cache-object",
+        "scenario": "stale block page object generation",
+        "expected": "rejected",
+        "violation": "buffer cache object page integration generation is missing"
+      },
+      {
+        "id": 266,
+        "command": "record-buffer-cache-object",
+        "scenario": "page ref mismatch",
+        "expected": "rejected",
+        "violation": "buffer cache object page ref does not match integration"
+      },
+      {
+        "id": 267,
+        "command": "record-buffer-cache-object",
+        "scenario": "duplicate block cache key",
+        "expected": "rejected",
+        "violation": "buffer cache object block range already cached"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 426,
+      "kind": "BufferCacheObjectRecorded",
+      "buffer_cache_object": "buffer-cache-object:20069@1",
+      "block_page_object": "block-page-object:20065@1",
+      "block_dma_buffer": "block-dma-buffer:20061@1",
+      "block_device": "block-device:20002@1",
+      "block_range": "block-range:20005@1",
+      "aspace": "guest-address-space:30001@1",
+      "vma_region": "vma-region:30002@1",
+      "page": "page-object:30003@1",
+      "page_dirty_generation": 1,
+      "page_offset": 0,
+      "block_offset": 0,
+      "byte_len": 4096,
+      "operation": "write",
+      "cache_state": "dirty",
+      "coherency_epoch": 1
+    }
+  ],
+  "expected": {
+    "views": {
+      "buffer-cache-object": {
+        "count": 1,
+        "buffer_cache_object": "buffer-cache-object:20069@1",
+        "block_page_object": "block-page-object:20065@1",
+        "block_dma_buffer": "block-dma-buffer:20061@1",
+        "block_device": "block-device:20002@1",
+        "block_range": "block-range:20005@1",
+        "aspace": "guest-address-space:30001@1",
+        "vma_region": "vma-region:30002@1",
+        "page": "page-object:30003@1",
+        "page_dirty_generation": 1,
+        "page_offset": 0,
+        "block_offset": 0,
+        "byte_len": 4096,
+        "operation": "write",
+        "cache_state": "dirty",
+        "coherency_epoch": 1,
+        "recorded_event": 426
+      },
+      "command": {
+        "cache_recorded": "command-result:264:record-buffer-cache-object:applied",
+        "stale_page_generation_rejected": "command-result:265:record-buffer-cache-object:rejected",
+        "page_ref_mismatch_rejected": "command-result:266:record-buffer-cache-object:rejected",
+        "duplicate_cache_key_rejected": "command-result:267:record-buffer-cache-object:rejected"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "historical_edges": [
+          "buffer-cache-object->block-page-object",
+          "buffer-cache-object->block-dma-buffer",
+          "buffer-cache-object->block-device",
+          "buffer-cache-object->block-range",
+          "buffer-cache-object->guest-address-space",
+          "buffer-cache-object->vma-region",
+          "buffer-cache-object->page-object"
+        ]
+      }
+    },
+    "invariants": [
+      "BufferCacheObject records exact BlockPageObject, BlockDmaBuffer, BlockDeviceObject, BlockRangeObject, GuestAddressSpace, VmaRegion, and PageObject generations",
+      "The source BlockPageObject must remain integrated and must match the page ref and dirty generation",
+      "The cached byte range must stay within both the integrated PageObject range and the BlockRangeObject byte range",
+      "Only one live BufferCacheObject can own the same block cache key or page byte range",
+      "Stale page integration generation, mismatched page refs, oversized ranges, and duplicate cache keys are rejected before mutation",
+      "The semantic object stores cache state and coherency epoch only; raw mappings, DMW pointer leases, writeback threads, and filesystem adapter state remain outside semantic_core"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "block_runtime_b12_buffer_cache_records_page_and_block_range_contract",
+      "block_runtime_b12_rejects_stale_wrong_duplicate_and_oversized_cache",
+      "block_runtime_b12_invariants_reject_cache_page_generation_leak",
+      "buffer_cache_object_view_v1_exposes_page_and_block_range_contract",
+      "semantic_roots_reject_buffer_cache_object_root_mismatch"
+    ],
+    "osctl_json_view": "buffer-cache-object list --json",
+    "target_executor_event_cursor": 428
+  }
+}

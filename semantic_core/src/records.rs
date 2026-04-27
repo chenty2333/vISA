@@ -2022,6 +2022,43 @@ impl BlockPageObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BufferCacheObjectRecord {
+    pub id: BufferCacheObjectId,
+    pub block_page_object: BlockPageObjectId,
+    pub block_page_object_generation: Generation,
+    pub block_dma_buffer: BlockDmaBufferId,
+    pub block_dma_buffer_generation: Generation,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub block_range: BlockRangeObjectId,
+    pub block_range_generation: Generation,
+    pub aspace: ContractObjectRef,
+    pub vma_region: ContractObjectRef,
+    pub page: ContractObjectRef,
+    pub page_dirty_generation: Generation,
+    pub page_offset: u64,
+    pub block_offset: u64,
+    pub byte_len: u64,
+    pub operation: BlockRequestOperation,
+    pub cache_state: BufferCacheObjectState,
+    pub coherency_epoch: u64,
+    pub generation: Generation,
+    pub state: BufferCacheObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl BufferCacheObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::BufferCacheObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

@@ -13,25 +13,26 @@ use artifact_manifest::{
     BlockPageObjectManifest, BlockRangeObjectManifest, BlockReadPathManifest,
     BlockRequestObjectManifest, BlockRequestQueueEntryManifest, BlockRequestQueueManifest,
     BlockWaitManifest, BlockWritePathManifest, BoundaryValidationReportManifest,
-    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
-    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
-    ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
-    DriverStoreBindingManifest, EndpointObjectManifest, FakeBlockBackendObjectManifest,
-    FakeNetBackendObjectManifest, GuestStateManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    BoundaryValidationViolationManifest, BufferCacheObjectManifest, CapabilityHandleArgManifest,
+    CapabilityRecordManifest, CleanupEffectManifest, CleanupStepManifest,
+    CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest, CommandResultManifest,
+    ContractObjectRefManifest, ContractViolationManifest, CrossHartSchedulerDecisionManifest,
+    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
+    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
+    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, GuestStateManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -55,14 +56,14 @@ use runtime::{HostValidationSmokeTrace, RuntimeOnlyExecutor};
 use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, AuthorityObjectRef,
     BlockCompletionStatus, BlockRequestOperation, BlockRequestQueueEntryRef, BoundaryKind,
-    BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass,
-    CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
-    CodePublisher, CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot,
-    ContractObjectKind, ContractObjectRef, ContractViolation, CowState, DescriptorObjectAccess,
-    DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact,
-    ExternalObjectDeclaration, FrontendKind, HartState, HostcallCategory, HostcallFrame,
-    HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind, IrqLinePolarity,
-    IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
+    BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, BufferCacheObjectState,
+    CapabilityClass, CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject,
+    CodePublishState, CodePublisher, CommandEnvelope, CommandResult, CommandStatus,
+    ContractGraphSnapshot, ContractObjectKind, ContractObjectRef, ContractViolation, CowState,
+    DescriptorObjectAccess, DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord,
+    ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HartState, HostcallCategory,
+    HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind,
+    IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
     MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
     NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
     PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
@@ -216,6 +217,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b9_evidence(&mut semantic)?;
     record_block_runtime_b10_evidence(&mut semantic)?;
     record_block_runtime_b11_evidence(&mut semantic)?;
+    record_block_runtime_b12_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -4423,6 +4425,135 @@ fn record_block_runtime_b11_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_block_runtime_b12_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let page = ContractObjectRef::new(ContractObjectKind::PageObject, 30_003, 1);
+
+    let cached = semantic.apply_envelope(CommandEnvelope::new(
+        264,
+        "target-executor-b12",
+        SemanticCommand::RecordBufferCacheObject {
+            buffer_cache_object: 20_069,
+            block_page_object: 20_065,
+            block_page_object_generation: 1,
+            page,
+            page_dirty_generation: 1,
+            block_offset: 0,
+            byte_len: 4096,
+            cache_state: BufferCacheObjectState::Dirty,
+            coherency_epoch: 1,
+            note: "b12-cache-block-page-object-as-dirty-buffer".to_owned(),
+        },
+    ));
+    if cached.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b12 buffer cache command {} ({}) failed: status={} violations={:?}",
+            cached.command_id,
+            cached.command,
+            cached.status.as_str(),
+            cached.violations
+        )
+        .into());
+    }
+
+    let stale_page = semantic.apply_envelope(CommandEnvelope::new(
+        265,
+        "target-executor-b12",
+        SemanticCommand::RecordBufferCacheObject {
+            buffer_cache_object: 20_070,
+            block_page_object: 20_065,
+            block_page_object_generation: 2,
+            page: ContractObjectRef::new(ContractObjectKind::PageObject, 30_004, 1),
+            page_dirty_generation: 1,
+            block_offset: 0,
+            byte_len: 4096,
+            cache_state: BufferCacheObjectState::Dirty,
+            coherency_epoch: 2,
+            note: "b12-reject-stale-block-page-generation".to_owned(),
+        },
+    ));
+    if stale_page.status != CommandStatus::Rejected
+        || !stale_page
+            .violations
+            .iter()
+            .any(|violation| violation.contains("page integration generation"))
+    {
+        return Err(format!(
+            "block runtime b12 stale page command {} ({}) was not rejected: status={} violations={:?}",
+            stale_page.command_id,
+            stale_page.command,
+            stale_page.status.as_str(),
+            stale_page.violations
+        )
+        .into());
+    }
+
+    let wrong_page = semantic.apply_envelope(CommandEnvelope::new(
+        266,
+        "target-executor-b12",
+        SemanticCommand::RecordBufferCacheObject {
+            buffer_cache_object: 20_071,
+            block_page_object: 20_065,
+            block_page_object_generation: 1,
+            page: ContractObjectRef::new(ContractObjectKind::PageObject, 30_005, 1),
+            page_dirty_generation: 1,
+            block_offset: 0,
+            byte_len: 4096,
+            cache_state: BufferCacheObjectState::Dirty,
+            coherency_epoch: 3,
+            note: "b12-reject-page-ref-mismatch".to_owned(),
+        },
+    ));
+    if wrong_page.status != CommandStatus::Rejected
+        || !wrong_page
+            .violations
+            .iter()
+            .any(|violation| violation.contains("page ref does not match"))
+    {
+        return Err(format!(
+            "block runtime b12 wrong page command {} ({}) was not rejected: status={} violations={:?}",
+            wrong_page.command_id,
+            wrong_page.command,
+            wrong_page.status.as_str(),
+            wrong_page.violations
+        )
+        .into());
+    }
+
+    let duplicate = semantic.apply_envelope(CommandEnvelope::new(
+        267,
+        "target-executor-b12",
+        SemanticCommand::RecordBufferCacheObject {
+            buffer_cache_object: 20_072,
+            block_page_object: 20_065,
+            block_page_object_generation: 1,
+            page,
+            page_dirty_generation: 1,
+            block_offset: 0,
+            byte_len: 4096,
+            cache_state: BufferCacheObjectState::WritebackPending,
+            coherency_epoch: 4,
+            note: "b12-reject-duplicate-cache-key".to_owned(),
+        },
+    ));
+    if duplicate.status != CommandStatus::Rejected
+        || !duplicate
+            .violations
+            .iter()
+            .any(|violation| violation.contains("block range already cached"))
+    {
+        return Err(format!(
+            "block runtime b12 duplicate command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate.command_id,
+            duplicate.command,
+            duplicate.status.as_str(),
+            duplicate.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -6825,6 +6956,7 @@ fn demo_migration_package(
             block_request_queue_count: semantic.block_request_queue_count(),
             block_dma_buffer_count: semantic.block_dma_buffer_count(),
             block_page_object_count: semantic.block_page_object_count(),
+            buffer_cache_object_count: semantic.buffer_cache_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -7186,6 +7318,11 @@ fn demo_migration_package(
                 .block_page_objects()
                 .iter()
                 .map(block_page_object_manifest)
+                .collect(),
+            buffer_cache_objects: semantic
+                .buffer_cache_objects()
+                .iter()
+                .map(buffer_cache_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -8787,6 +8924,36 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        buffer_cache_object_roots: semantic
+            .buffer_cache_objects()
+            .iter()
+            .map(|cache| {
+                format!(
+                    "buffer-cache-object id={} block_page_object={}@{} block_dma_buffer={}@{} block_device={}@{} block_range={}@{} aspace={} vma_region={} page={} page_dirty_generation={} page_offset={} block_offset={} byte_len={} operation={} cache_state={} coherency_epoch={} state={} generation={}",
+                    cache.id,
+                    cache.block_page_object,
+                    cache.block_page_object_generation,
+                    cache.block_dma_buffer,
+                    cache.block_dma_buffer_generation,
+                    cache.block_device,
+                    cache.block_device_generation,
+                    cache.block_range,
+                    cache.block_range_generation,
+                    cache.aspace.summary(),
+                    cache.vma_region.summary(),
+                    cache.page.summary(),
+                    cache.page_dirty_generation,
+                    cache.page_offset,
+                    cache.block_offset,
+                    cache.byte_len,
+                    cache.operation.as_str(),
+                    cache.cache_state.as_str(),
+                    cache.coherency_epoch,
+                    cache.state.as_str(),
+                    cache.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -10227,6 +10394,36 @@ fn block_page_object_manifest(
         state: page.state.as_str().to_owned(),
         recorded_at_event: page.recorded_at_event,
         note: page.note.clone(),
+    }
+}
+
+fn buffer_cache_object_manifest(
+    cache: &semantic_core::BufferCacheObjectRecord,
+) -> BufferCacheObjectManifest {
+    BufferCacheObjectManifest {
+        id: cache.id,
+        block_page_object: cache.block_page_object,
+        block_page_object_generation: cache.block_page_object_generation,
+        block_dma_buffer: cache.block_dma_buffer,
+        block_dma_buffer_generation: cache.block_dma_buffer_generation,
+        block_device: cache.block_device,
+        block_device_generation: cache.block_device_generation,
+        block_range: cache.block_range,
+        block_range_generation: cache.block_range_generation,
+        aspace: contract_object_ref_manifest(cache.aspace),
+        vma_region: contract_object_ref_manifest(cache.vma_region),
+        page: contract_object_ref_manifest(cache.page),
+        page_dirty_generation: cache.page_dirty_generation,
+        page_offset: cache.page_offset,
+        block_offset: cache.block_offset,
+        byte_len: cache.byte_len,
+        operation: cache.operation.as_str().to_owned(),
+        cache_state: cache.cache_state.as_str().to_owned(),
+        coherency_epoch: cache.coherency_epoch,
+        generation: cache.generation,
+        state: cache.state.as_str().to_owned(),
+        recorded_at_event: cache.recorded_at_event,
+        note: cache.note.clone(),
     }
 }
 

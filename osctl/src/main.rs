@@ -12,14 +12,15 @@ use artifact_manifest::{
     BlockDmaBufferManifest, BlockPageObjectManifest, BlockRangeObjectManifest,
     BlockReadPathManifest, BlockRequestObjectManifest, BlockRequestQueueManifest,
     BlockWaitManifest, BlockWritePathManifest, BoundaryValidationReportManifest,
-    CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandResultManifest, ContractObjectRefManifest, CrossHartSchedulerDecisionManifest,
-    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    BufferCacheObjectManifest, CapabilityRecordManifest, CleanupTransactionManifest,
+    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest,
+    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
+    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -365,6 +366,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-buffer"
         | "block-page-object"
         | "block-page"
+        | "buffer-cache-object"
+        | "buffer-cache"
+        | "fs-cache"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -535,7 +539,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -798,6 +802,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "block-request-queue" | "block-queue" => "block-request-queue",
         "block-dma-buffer" | "block-buffer" => "block-dma-buffer",
         "block-page-object" | "block-page" => "block-page-object",
+        "buffer-cache-object" | "buffer-cache" | "fs-cache" => "buffer-cache-object",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3142,6 +3147,70 @@ fn block_page_object_view_v1(page: &BlockPageObjectManifest) -> serde_json::Valu
             "block_dma_buffer_generation": page.block_dma_buffer_generation,
             "page_generation": page.page.generation,
             "page_dirty_generation": page.page_dirty_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn buffer_cache_object_view_v1(cache: &BufferCacheObjectManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "buffer-cache-object",
+        "id": cache.id,
+        "generation": cache.generation,
+        "state": cache.state,
+        "owner": {
+            "page": object_ref_manifest_json(&cache.page),
+            "block_range": object_ref_json(
+                "block-range",
+                cache.block_range,
+                cache.block_range_generation,
+            ),
+        },
+        "references": {
+            "block_page_object": object_ref_json(
+                "block-page-object",
+                cache.block_page_object,
+                cache.block_page_object_generation,
+            ),
+            "block_dma_buffer": object_ref_json(
+                "block-dma-buffer",
+                cache.block_dma_buffer,
+                cache.block_dma_buffer_generation,
+            ),
+            "block_device": object_ref_json(
+                "block-device",
+                cache.block_device,
+                cache.block_device_generation,
+            ),
+            "block_range": object_ref_json(
+                "block-range",
+                cache.block_range,
+                cache.block_range_generation,
+            ),
+            "aspace": object_ref_manifest_json(&cache.aspace),
+            "vma_region": object_ref_manifest_json(&cache.vma_region),
+            "page": object_ref_manifest_json(&cache.page),
+            "event": {
+                "id": cache.recorded_at_event,
+            },
+        },
+        "cache": {
+            "page_dirty_generation": cache.page_dirty_generation,
+            "page_offset": cache.page_offset,
+            "block_offset": cache.block_offset,
+            "byte_len": cache.byte_len,
+            "operation": cache.operation,
+            "cache_state": cache.cache_state,
+            "coherency_epoch": cache.coherency_epoch,
+        },
+        "note": cache.note,
+        "last_transition": {
+            "recorded_at_event": cache.recorded_at_event,
+            "block_page_object_generation": cache.block_page_object_generation,
+            "page_generation": cache.page.generation,
+            "page_dirty_generation": cache.page_dirty_generation,
+            "coherency_epoch": cache.coherency_epoch,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -5803,6 +5872,12 @@ fn stable_views_for_kind(
             .iter()
             .map(block_page_object_view_v1)
             .collect()),
+        "buffer-cache-object" | "buffer-cache" | "fs-cache" => Ok(package
+            .semantic
+            .buffer_cache_objects
+            .iter()
+            .map(buffer_cache_object_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -6904,6 +6979,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.block_page_object_roots,
     );
     print_roots(
+        "buffer-cache-object",
+        &package.semantic.roots.buffer_cache_object_roots,
+    );
+    print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
     );
@@ -7531,6 +7610,77 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "block-page-object->page-object",
             "historical",
             Some(page.recorded_at_event),
+        ));
+    }
+    for cache in &package.semantic.buffer_cache_objects {
+        if cache.state == "invalidated" {
+            continue;
+        }
+        let from = object_ref_json("buffer-cache-object", cache.id, cache.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-page-object",
+                cache.block_page_object,
+                cache.block_page_object_generation,
+            ),
+            "buffer-cache-object->block-page-object",
+            "historical",
+            Some(cache.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-dma-buffer",
+                cache.block_dma_buffer,
+                cache.block_dma_buffer_generation,
+            ),
+            "buffer-cache-object->block-dma-buffer",
+            "historical",
+            Some(cache.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-device",
+                cache.block_device,
+                cache.block_device_generation,
+            ),
+            "buffer-cache-object->block-device",
+            "historical",
+            Some(cache.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-range",
+                cache.block_range,
+                cache.block_range_generation,
+            ),
+            "buffer-cache-object->block-range",
+            "historical",
+            Some(cache.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_manifest_json(&cache.aspace),
+            "buffer-cache-object->guest-address-space",
+            "historical",
+            Some(cache.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_manifest_json(&cache.vma_region),
+            "buffer-cache-object->vma-region",
+            "historical",
+            Some(cache.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_manifest_json(&cache.page),
+            "buffer-cache-object->page-object",
+            "historical",
+            Some(cache.recorded_at_event),
         ));
     }
     for packet_buffer in &package.semantic.packet_buffer_objects {
@@ -11550,7 +11700,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -11620,6 +11770,7 @@ fn replay_until(
         package.semantic.roots.block_request_queue_roots.len(),
         package.semantic.roots.block_dma_buffer_roots.len(),
         package.semantic.roots.block_page_object_roots.len(),
+        package.semantic.roots.buffer_cache_object_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -11750,6 +11901,9 @@ fn replay_until(
     }
     for page in &package.semantic.roots.block_page_object_roots {
         println!("replay block-page-object {page}");
+    }
+    for cache in &package.semantic.roots.buffer_cache_object_roots {
+        println!("replay buffer-cache-object {cache}");
     }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
@@ -12082,6 +12236,10 @@ fn print_replay_json(
     roots.insert(
         "block_page_objects".to_owned(),
         serde_json::json!(package.semantic.roots.block_page_object_roots.len()),
+    );
+    roots.insert(
+        "buffer_cache_objects".to_owned(),
+        serde_json::json!(package.semantic.roots.buffer_cache_object_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -12463,6 +12621,10 @@ fn print_replay_json(
         "block_page_object_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.block_page_object_roots),
     );
+    roots.insert(
+        "buffer_cache_object_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.buffer_cache_object_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -12507,7 +12669,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -12579,6 +12741,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.block_request_queue_count,
         package.semantic.block_dma_buffer_count,
         package.semantic.block_page_object_count,
+        package.semantic.buffer_cache_object_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -14340,6 +14503,60 @@ mod tests {
         assert_eq!(view["page"]["backing"], "file-backed");
         assert_eq!(view["page"]["byte_len"], 4096);
         assert_eq!(view["last_transition"]["recorded_at_event"], 117);
+    }
+
+    #[test]
+    fn buffer_cache_object_view_v1_exposes_page_and_block_range_contract() {
+        let view = buffer_cache_object_view_v1(&BufferCacheObjectManifest {
+            id: 118,
+            block_page_object: 117,
+            block_page_object_generation: 1,
+            block_dma_buffer: 116,
+            block_dma_buffer_generation: 1,
+            block_device: 104,
+            block_device_generation: 1,
+            block_range: 105,
+            block_range_generation: 1,
+            aspace: ContractObjectRefManifest {
+                kind: "guest-address-space".to_owned(),
+                id: 301,
+                generation: 1,
+            },
+            vma_region: ContractObjectRefManifest {
+                kind: "vma-region".to_owned(),
+                id: 302,
+                generation: 1,
+            },
+            page: ContractObjectRefManifest {
+                kind: "page-object".to_owned(),
+                id: 303,
+                generation: 1,
+            },
+            page_dirty_generation: 2,
+            page_offset: 0,
+            block_offset: 0,
+            byte_len: 4096,
+            operation: "write".to_owned(),
+            cache_state: "dirty".to_owned(),
+            coherency_epoch: 7,
+            generation: 1,
+            state: "dirty".to_owned(),
+            recorded_at_event: 118,
+            note: "buffer cache object".to_owned(),
+        });
+        assert_eq!(view["kind"], "buffer-cache-object");
+        assert_eq!(view["owner"]["page"]["kind"], "page-object");
+        assert_eq!(view["owner"]["block_range"]["kind"], "block-range");
+        assert_eq!(
+            view["references"]["block_page_object"]["kind"],
+            "block-page-object"
+        );
+        assert_eq!(view["references"]["block_dma_buffer"]["generation"], 1);
+        assert_eq!(view["references"]["aspace"]["id"], 301);
+        assert_eq!(view["cache"]["page_dirty_generation"], 2);
+        assert_eq!(view["cache"]["cache_state"], "dirty");
+        assert_eq!(view["cache"]["coherency_epoch"], 7);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 118);
     }
 
     #[test]

@@ -1251,6 +1251,24 @@ pub enum SemanticInvariantError {
     BlockPageObjectMissingEvent {
         block_page_object: BlockPageObjectId,
     },
+    BufferCacheObjectInvalid {
+        buffer_cache_object: BufferCacheObjectId,
+    },
+    BufferCacheObjectMissingBlockPageObject {
+        buffer_cache_object: BufferCacheObjectId,
+        block_page_object: BlockPageObjectId,
+    },
+    BufferCacheObjectDuplicateBlockRange {
+        buffer_cache_object: BufferCacheObjectId,
+        block_range: BlockRangeObjectId,
+    },
+    BufferCacheObjectDuplicatePageRange {
+        buffer_cache_object: BufferCacheObjectId,
+        page: ContractObjectRef,
+    },
+    BufferCacheObjectMissingEvent {
+        buffer_cache_object: BufferCacheObjectId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

@@ -13242,6 +13242,202 @@ fn block_runtime_b11_invariants_reject_page_generation_leak() {
     );
 }
 
+fn setup_b12_buffer_cache_graph() -> SemanticGraph {
+    let mut graph = setup_b11_block_page_object_graph();
+    assert!(graph.record_block_page_object_with_id(
+        1835,
+        1834,
+        1,
+        1830,
+        1,
+        b11_aspace(),
+        b11_vma_region(),
+        b11_page(1903),
+        1,
+        PageBacking::FileBacked,
+        CowState::None,
+        PageObjectState::Live,
+        0,
+        4096,
+        "b12 existing page integration",
+    ));
+    graph
+}
+
+#[test]
+fn block_runtime_b12_buffer_cache_records_page_and_block_range_contract() {
+    let mut graph = setup_b12_buffer_cache_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b12-test",
+        SemanticCommand::RecordBufferCacheObject {
+            buffer_cache_object: 1840,
+            block_page_object: 1835,
+            block_page_object_generation: 1,
+            page: b11_page(1903),
+            page_dirty_generation: 1,
+            block_offset: 0,
+            byte_len: 4096,
+            cache_state: BufferCacheObjectState::Dirty,
+            coherency_epoch: 1,
+            note: "b12 record dirty buffer cache entry".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.buffer_cache_object_count(), 1);
+    let cache = &graph.buffer_cache_objects()[0];
+    assert_eq!(
+        cache.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BufferCacheObject, 1840, 1)
+    );
+    assert_eq!(cache.block_page_object, 1835);
+    assert_eq!(cache.block_dma_buffer, 1834);
+    assert_eq!(cache.block_device, 1824);
+    assert_eq!(cache.block_range, 1825);
+    assert_eq!(cache.page, b11_page(1903));
+    assert_eq!(cache.page_dirty_generation, 1);
+    assert_eq!(cache.cache_state, BufferCacheObjectState::Dirty);
+    assert_eq!(cache.state, BufferCacheObjectState::Dirty);
+    assert_eq!(cache.coherency_epoch, 1);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BufferCacheObjectRecorded buffer_cache_object=1840 block_page_object=1835@1 block_dma_buffer=1834@1 block_device=1824@1 block_range=1825@1 aspace=guest-address-space:1901@1 vma_region=vma-region:1902@1 page=page-object:1903@1 page_dirty_generation=1 page_offset=0 block_offset=0 byte_len=4096 operation=write cache_state=dirty coherency_epoch=1 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b12_rejects_stale_wrong_duplicate_and_oversized_cache() {
+    let mut graph = setup_b12_buffer_cache_graph();
+
+    let stale_page = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b12-test",
+        SemanticCommand::RecordBufferCacheObject {
+            buffer_cache_object: 1841,
+            block_page_object: 1835,
+            block_page_object_generation: 2,
+            page: b11_page(1904),
+            page_dirty_generation: 1,
+            block_offset: 0,
+            byte_len: 4096,
+            cache_state: BufferCacheObjectState::Dirty,
+            coherency_epoch: 2,
+            note: "stale page integration".to_string(),
+        },
+    ));
+    assert_eq!(stale_page.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_page.violations,
+        vec!["buffer cache object page integration generation is missing".to_string()]
+    );
+
+    let wrong_page = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b12-test",
+        SemanticCommand::RecordBufferCacheObject {
+            buffer_cache_object: 1842,
+            block_page_object: 1835,
+            block_page_object_generation: 1,
+            page: b11_page(1904),
+            page_dirty_generation: 1,
+            block_offset: 0,
+            byte_len: 4096,
+            cache_state: BufferCacheObjectState::Dirty,
+            coherency_epoch: 3,
+            note: "wrong page".to_string(),
+        },
+    ));
+    assert_eq!(wrong_page.status, CommandStatus::Rejected);
+    assert_eq!(
+        wrong_page.violations,
+        vec!["buffer cache object page ref does not match integration".to_string()]
+    );
+
+    let oversized = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b12-test",
+        SemanticCommand::RecordBufferCacheObject {
+            buffer_cache_object: 1843,
+            block_page_object: 1835,
+            block_page_object_generation: 1,
+            page: b11_page(1903),
+            page_dirty_generation: 1,
+            block_offset: 0,
+            byte_len: 4097,
+            cache_state: BufferCacheObjectState::Dirty,
+            coherency_epoch: 4,
+            note: "oversized cache range".to_string(),
+        },
+    ));
+    assert_eq!(oversized.status, CommandStatus::Rejected);
+    assert_eq!(
+        oversized.violations,
+        vec!["buffer cache object byte range exceeds integrated page".to_string()]
+    );
+
+    assert!(graph.record_buffer_cache_object_with_id(
+        1840,
+        1835,
+        1,
+        b11_page(1903),
+        1,
+        0,
+        4096,
+        BufferCacheObjectState::Dirty,
+        1,
+        "b12 existing cache entry",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "b12-test",
+        SemanticCommand::RecordBufferCacheObject {
+            buffer_cache_object: 1844,
+            block_page_object: 1835,
+            block_page_object_generation: 1,
+            page: b11_page(1903),
+            page_dirty_generation: 1,
+            block_offset: 0,
+            byte_len: 4096,
+            cache_state: BufferCacheObjectState::WritebackPending,
+            coherency_epoch: 5,
+            note: "duplicate cache key".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["buffer cache object block range already cached".to_string()]
+    );
+}
+
+#[test]
+fn block_runtime_b12_invariants_reject_cache_page_generation_leak() {
+    let mut graph = setup_b12_buffer_cache_graph();
+    assert!(graph.record_buffer_cache_object_with_id(
+        1840,
+        1835,
+        1,
+        b11_page(1903),
+        1,
+        0,
+        4096,
+        BufferCacheObjectState::Dirty,
+        1,
+        "b12 invariant cache entry",
+    ));
+    graph.corrupt_buffer_cache_object_page_generation_for_test(1840, 0);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::BufferCacheObjectInvalid {
+            buffer_cache_object: 1840,
+        })
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

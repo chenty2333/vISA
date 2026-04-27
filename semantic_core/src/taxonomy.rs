@@ -994,6 +994,25 @@ impl BlockPageObjectState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BufferCacheObjectState {
+    Clean,
+    Dirty,
+    WritebackPending,
+    Invalidated,
+}
+
+impl BufferCacheObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Clean => "clean",
+            Self::Dirty => "dirty",
+            Self::WritebackPending => "writeback-pending",
+            Self::Invalidated => "invalidated",
+        }
+    }
+}
+
 impl BlockRequestQueueEntryState {
     pub const fn as_str(self) -> &'static str {
         match self {
