@@ -897,6 +897,21 @@ impl VirtioNetBackendObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkRxInterruptState {
+    Recorded,
+    Retired,
+}
+
+impl NetworkRxInterruptState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreemptionState {
     Applied,
     Superseded,

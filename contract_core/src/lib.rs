@@ -105,6 +105,7 @@ pub enum ObjectKind {
     PacketDescriptorObject,
     FakeNetBackendObject,
     VirtioNetBackendObject,
+    NetworkRxInterrupt,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -175,6 +176,7 @@ impl ObjectKind {
             Self::PacketDescriptorObject => "packet-descriptor-object",
             Self::FakeNetBackendObject => "fake-net-backend-object",
             Self::VirtioNetBackendObject => "virtio-net-backend-object",
+            Self::NetworkRxInterrupt => "network-rx-interrupt",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -411,6 +413,7 @@ typed_ref!(
     VirtioNetBackendObjectRef,
     ObjectKind::VirtioNetBackendObject
 );
+typed_ref!(NetworkRxInterruptRef, ObjectKind::NetworkRxInterrupt);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1785,6 +1788,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "virtio net backend object root/count mismatch",
         ));
     }
+    if roots.network_rx_interrupt_roots.len() != package.semantic.network_rx_interrupt_count
+        || package.semantic.network_rx_interrupts.len()
+            != package.semantic.network_rx_interrupt_count
+    {
+        return Err(ContractError::new(
+            "network rx interrupt root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2346,6 +2357,7 @@ mod tests {
                 packet_descriptor_object_count: 0,
                 fake_net_backend_object_count: 0,
                 virtio_net_backend_object_count: 0,
+                network_rx_interrupt_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2425,6 +2437,7 @@ mod tests {
                 packet_descriptors: Vec::new(),
                 fake_net_backends: Vec::new(),
                 virtio_net_backends: Vec::new(),
+                network_rx_interrupts: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3699,6 +3712,34 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.network_rx_interrupt_count = 1;
+        package.semantic.network_rx_interrupts.push(
+            artifact_manifest::NetworkRxInterruptManifest {
+                id: 37,
+                virtio_net_backend: 36,
+                virtio_net_backend_generation: 1,
+                irq_event: 23,
+                irq_event_generation: 1,
+                packet_device: 31,
+                packet_device_generation: 1,
+                rx_queue: 32,
+                rx_queue_generation: 1,
+                ready_descriptors: 1,
+                sequence: 1,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 73,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "network rx interrupt root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -4202,6 +4243,8 @@ mod tests {
         let virtio_net_backend_object =
             ObjectRef::new(ObjectKind::VirtioNetBackendObject, 35, 1).unwrap();
         assert!(VirtioNetBackendObjectRef::try_from_ref(virtio_net_backend_object).is_ok());
+        let network_rx_interrupt = ObjectRef::new(ObjectKind::NetworkRxInterrupt, 36, 1).unwrap();
+        assert!(NetworkRxInterruptRef::try_from_ref(network_rx_interrupt).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

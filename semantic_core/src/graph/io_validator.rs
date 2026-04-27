@@ -668,6 +668,10 @@ impl SemanticGraph {
                 .virtio_net_backends
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::NetworkRxInterrupt => self
+                .network_rx_interrupts
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

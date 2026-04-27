@@ -16,15 +16,15 @@ use artifact_manifest::{
     HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
     IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
     IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
-    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
-    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
-    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
-    VirtioNetBackendObjectManifest, WaitRecordManifest,
+    NetworkRxInterruptManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
+    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
+    SmpStressRunManifest, StopTheWorldRendezvousManifest, StoreRecordManifest,
+    SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
+    TimerInterruptManifest, TrapRecordManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -296,6 +296,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "fake-net-backend-object"
         | "virtio-net-backend"
         | "virtio-net-backend-object"
+        | "network-rx-interrupt"
+        | "rx-interrupt"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -466,7 +468,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -700,6 +702,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "packet-descriptor" | "packet-descriptor-object" => "packet-descriptor",
         "fake-net-backend" | "fake-net-backend-object" => "fake-net-backend",
         "virtio-net-backend" | "virtio-net-backend-object" => "virtio-net-backend",
+        "network-rx-interrupt" | "rx-interrupt" => "network-rx-interrupt",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2605,6 +2608,64 @@ fn virtio_net_backend_object_view_v1(
     })
 }
 
+fn network_rx_interrupt_view_v1(rx: &NetworkRxInterruptManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "network-rx-interrupt",
+        "id": rx.id,
+        "generation": rx.generation,
+        "state": rx.state,
+        "owner": {
+            "virtio_net_backend": object_ref_json(
+                "virtio-net-backend",
+                rx.virtio_net_backend,
+                rx.virtio_net_backend_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                rx.packet_device,
+                rx.packet_device_generation,
+            ),
+        },
+        "references": {
+            "virtio_net_backend": object_ref_json(
+                "virtio-net-backend",
+                rx.virtio_net_backend,
+                rx.virtio_net_backend_generation,
+            ),
+            "irq_event": object_ref_json(
+                "irq-event",
+                rx.irq_event,
+                rx.irq_event_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                rx.packet_device,
+                rx.packet_device_generation,
+            ),
+            "rx_queue": object_ref_json(
+                "packet-queue",
+                rx.rx_queue,
+                rx.rx_queue_generation,
+            ),
+            "event": {
+                "id": rx.recorded_at_event,
+            },
+        },
+        "readiness": {
+            "ready_descriptors": rx.ready_descriptors,
+            "sequence": rx.sequence,
+        },
+        "note": rx.note,
+        "last_transition": {
+            "recorded_at_event": rx.recorded_at_event,
+            "irq_event_generation": rx.irq_event_generation,
+            "rx_queue_generation": rx.rx_queue_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -3698,6 +3759,12 @@ fn stable_views_for_kind(
             .iter()
             .map(virtio_net_backend_object_view_v1)
             .collect()),
+        "network-rx-interrupt" | "rx-interrupt" => Ok(package
+            .semantic
+            .network_rx_interrupts
+            .iter()
+            .map(network_rx_interrupt_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -4702,6 +4769,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.virtio_net_backend_object_roots,
     );
     print_roots(
+        "network-rx-interrupt",
+        &package.semantic.roots.network_rx_interrupt_roots,
+    );
+    print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
     );
@@ -5012,6 +5083,29 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "virtio-net-backend->driver-binding",
             "live",
             Some(backend.recorded_at_event),
+        ));
+    }
+    for rx in &package.semantic.network_rx_interrupts {
+        if rx.state != "recorded" {
+            continue;
+        }
+        edges.push(graph_edge(
+            object_ref_json("network-rx-interrupt", rx.id, rx.generation),
+            object_ref_json(
+                "virtio-net-backend",
+                rx.virtio_net_backend,
+                rx.virtio_net_backend_generation,
+            ),
+            "network-rx-interrupt->virtio-net-backend",
+            "live",
+            Some(rx.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            object_ref_json("network-rx-interrupt", rx.id, rx.generation),
+            object_ref_json("packet-queue", rx.rx_queue, rx.rx_queue_generation),
+            "network-rx-interrupt->rx-queue",
+            "live",
+            Some(rx.recorded_at_event),
         ));
     }
     for activation in &package.semantic.activation_records {
@@ -5402,6 +5496,15 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
 
 fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value> {
     let mut edges = Vec::new();
+    for rx in &package.semantic.network_rx_interrupts {
+        edges.push(graph_edge(
+            object_ref_json("network-rx-interrupt", rx.id, rx.generation),
+            object_ref_json("irq-event", rx.irq_event, rx.irq_event_generation),
+            "network-rx-interrupt->irq-event",
+            "historical",
+            Some(rx.recorded_at_event),
+        ));
+    }
     for interrupt in &package.semantic.timer_interrupts {
         let from = object_ref_json("timer-interrupt", interrupt.id, interrupt.generation);
         if let Some(hart_generation) = interrupt.hart_generation {
@@ -8015,6 +8118,9 @@ fn replay_until(
     for backend in &package.semantic.roots.virtio_net_backend_object_roots {
         println!("replay virtio-net-backend {backend}");
     }
+    for rx in &package.semantic.roots.network_rx_interrupt_roots {
+        println!("replay network-rx-interrupt {rx}");
+    }
     Ok(())
 }
 
@@ -8160,6 +8266,10 @@ fn print_replay_json(
     roots.insert(
         "virtio_net_backends".to_owned(),
         serde_json::json!(package.semantic.roots.virtio_net_backend_object_roots.len()),
+    );
+    roots.insert(
+        "network_rx_interrupts".to_owned(),
+        serde_json::json!(package.semantic.roots.network_rx_interrupt_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -9190,6 +9300,39 @@ mod tests {
         assert_eq!(view["contract"]["negotiated_features"], 32);
         assert_eq!(view["contract"]["queue_size"], 4);
         assert_eq!(view["last_transition"]["recorded_at_event"], 65);
+    }
+
+    #[test]
+    fn network_rx_interrupt_view_v1_exposes_irq_and_rx_queue_generations() {
+        let view = network_rx_interrupt_view_v1(&NetworkRxInterruptManifest {
+            id: 58,
+            virtio_net_backend: 56,
+            virtio_net_backend_generation: 1,
+            irq_event: 59,
+            irq_event_generation: 2,
+            packet_device: 51,
+            packet_device_generation: 4,
+            rx_queue: 53,
+            rx_queue_generation: 3,
+            ready_descriptors: 1,
+            sequence: 9,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 66,
+            note: "rx interrupt".to_owned(),
+        });
+        assert_eq!(view["kind"], "network-rx-interrupt");
+        assert_eq!(
+            view["owner"]["virtio_net_backend"]["kind"],
+            "virtio-net-backend"
+        );
+        assert_eq!(view["owner"]["packet_device"]["generation"], 4);
+        assert_eq!(view["references"]["irq_event"]["kind"], "irq-event");
+        assert_eq!(view["references"]["irq_event"]["generation"], 2);
+        assert_eq!(view["references"]["rx_queue"]["generation"], 3);
+        assert_eq!(view["readiness"]["ready_descriptors"], 1);
+        assert_eq!(view["readiness"]["sequence"], 9);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 66);
     }
 
     #[test]
@@ -11562,6 +11705,26 @@ mod tests {
                 recorded_at_event: 17,
                 note: "virtio net backend graph".to_owned(),
             });
+        package
+            .semantic
+            .network_rx_interrupts
+            .push(NetworkRxInterruptManifest {
+                id: 86,
+                virtio_net_backend: 85,
+                virtio_net_backend_generation: 1,
+                irq_event: 41,
+                irq_event_generation: 1,
+                packet_device: 81,
+                packet_device_generation: 1,
+                rx_queue: 82,
+                rx_queue_generation: 1,
+                ready_descriptors: 1,
+                sequence: 1,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 18,
+                note: "network rx interrupt graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -11590,8 +11753,20 @@ mod tests {
             && edge["relation"] == "virtio-net-backend->driver-binding"
             && edge["from"]["kind"] == "virtio-net-backend"
             && edge["to"]["kind"] == "driver-store-binding"));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "network-rx-interrupt->virtio-net-backend"
+            && edge["from"]["kind"] == "network-rx-interrupt"
+            && edge["to"]["kind"] == "virtio-net-backend"));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "network-rx-interrupt->rx-queue"
+            && edge["from"]["kind"] == "network-rx-interrupt"
+            && edge["to"]["kind"] == "packet-queue"));
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-rx-interrupt->irq-event"
+            && edge["from"]["kind"] == "network-rx-interrupt"
+            && edge["to"]["kind"] == "irq-event"));
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
             && edge["from"]["kind"] == "hostcall"
             && edge["to"]["kind"] == "activation"));

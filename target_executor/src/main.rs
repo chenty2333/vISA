@@ -21,14 +21,15 @@ use artifact_manifest::{
     IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, PacketBufferObjectManifest,
-    PacketDescriptorObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
-    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkRxInterruptManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
+    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
+    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -165,6 +166,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
     record_network_runtime_n5_evidence(&mut semantic)?;
+    record_network_runtime_n6_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -416,6 +418,115 @@ fn record_network_runtime_n5_evidence(semantic: &mut SemanticGraph) -> Result<()
         if result.status != CommandStatus::Applied {
             return Err(format!(
                 "network runtime n5 evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn record_network_runtime_n6_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let virtio_driver_store = semantic
+        .store_id("driver_virtio_net")
+        .ok_or("driver_virtio_net store is missing for n6 evidence")?;
+    let virtio_driver_store_generation = semantic
+        .store_handle(virtio_driver_store)
+        .map(|handle| handle.generation)
+        .ok_or("driver_virtio_net store handle is missing for n6 evidence")?;
+    let irq_line_resource =
+        semantic.register_resource(ResourceKind::IrqLine, None, "irq:virtio-net0-rx");
+    let irq_line_resource_generation = semantic
+        .resource_handle(irq_line_resource)
+        .map(|handle| handle.generation)
+        .ok_or("n6 virtio net irq line resource handle is missing")?;
+    let irq_ref = ContractObjectRef::new(ContractObjectKind::IrqLineObject, 10_011, 1);
+    let irq_capability = semantic.grant_capability_with_authority_ref(
+        "driver_virtio_net",
+        "irq.net0",
+        AuthorityObjectRef::internal(CapabilityClass::IrqLine, irq_ref),
+        &["ack"],
+        "store",
+        "n6-virtio-net-rx-irq-capability",
+        true,
+    );
+    let irq_handle = semantic
+        .capabilities()
+        .record(irq_capability)
+        .and_then(|record| record.store_local_handle(vec!["ack".to_owned()]))
+        .ok_or("n6 virtio net irq capability handle is missing")?;
+    let commands = [
+        CommandEnvelope::new(
+            130,
+            "target-executor-n6",
+            SemanticCommand::RecordIrqLineObject {
+                irq_line: 10_011,
+                device: 10_001,
+                device_generation: 1,
+                resource: irq_line_resource,
+                resource_generation: irq_line_resource_generation,
+                irq_number: 5,
+                trigger: IrqLineTrigger::Level,
+                polarity: IrqLinePolarity::ActiveHigh,
+                note: "n6-record-virtio-net-rx-irq-line-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            131,
+            "target-executor-n6",
+            SemanticCommand::RecordDeviceCapability {
+                device_capability: 10_012,
+                driver_store: virtio_driver_store,
+                driver_store_generation: virtio_driver_store_generation,
+                target: irq_ref,
+                class: CapabilityClass::IrqLine,
+                operation: "ack".to_owned(),
+                handle: irq_handle,
+                note: "n6-record-virtio-net-rx-irq-capability-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            132,
+            "target-executor-n6",
+            SemanticCommand::RecordIrqEvent {
+                irq_event: 10_013,
+                irq_line: 10_011,
+                irq_line_generation: 1,
+                device: 10_001,
+                device_generation: 1,
+                driver_store: virtio_driver_store,
+                driver_store_generation: virtio_driver_store_generation,
+                sequence: 1,
+                note: "n6-record-virtio-net-rx-irq-event-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            133,
+            "target-executor-n6",
+            SemanticCommand::RecordNetworkRxInterrupt {
+                rx_interrupt: 10_014,
+                virtio_net_backend: 10_010,
+                virtio_net_backend_generation: 1,
+                irq_event: 10_013,
+                irq_event_generation: 1,
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                rx_queue: 10_004,
+                rx_queue_generation: 1,
+                ready_descriptors: 1,
+                sequence: 1,
+                note: "n6-record-network-rx-interrupt-path-harness".to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "network runtime n6 evidence command {} ({}) failed: status={} violations={:?}",
                 result.command_id,
                 result.command,
                 result.status.as_str(),
@@ -2802,6 +2913,7 @@ fn demo_migration_package(
             packet_descriptor_object_count: semantic.packet_descriptor_object_count(),
             fake_net_backend_object_count: semantic.fake_net_backend_object_count(),
             virtio_net_backend_object_count: semantic.virtio_net_backend_object_count(),
+            network_rx_interrupt_count: semantic.network_rx_interrupt_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -3028,6 +3140,11 @@ fn demo_migration_package(
                 .virtio_net_backends()
                 .iter()
                 .map(virtio_net_backend_object_manifest)
+                .collect(),
+            network_rx_interrupts: semantic
+                .network_rx_interrupts()
+                .iter()
+                .map(network_rx_interrupt_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -3892,6 +4009,28 @@ fn semantic_roots(
                     backend.irq_vector,
                     backend.state.as_str(),
                     backend.generation
+                )
+            })
+            .collect(),
+        network_rx_interrupt_roots: semantic
+            .network_rx_interrupts()
+            .iter()
+            .map(|rx_interrupt| {
+                format!(
+                    "network-rx-interrupt id={} virtio_net_backend={}@{} irq_event={}@{} packet_device={}@{} rx_queue={}@{} ready_descriptors={} sequence={} state={} generation={}",
+                    rx_interrupt.id,
+                    rx_interrupt.virtio_net_backend,
+                    rx_interrupt.virtio_net_backend_generation,
+                    rx_interrupt.irq_event,
+                    rx_interrupt.irq_event_generation,
+                    rx_interrupt.packet_device,
+                    rx_interrupt.packet_device_generation,
+                    rx_interrupt.rx_queue,
+                    rx_interrupt.rx_queue_generation,
+                    rx_interrupt.ready_descriptors,
+                    rx_interrupt.sequence,
+                    rx_interrupt.state.as_str(),
+                    rx_interrupt.generation
                 )
             })
             .collect(),
@@ -5458,6 +5597,28 @@ fn virtio_net_backend_object_manifest(
         state: backend.state.as_str().to_owned(),
         recorded_at_event: backend.recorded_at_event,
         note: backend.note.clone(),
+    }
+}
+
+fn network_rx_interrupt_manifest(
+    rx_interrupt: &semantic_core::NetworkRxInterruptRecord,
+) -> NetworkRxInterruptManifest {
+    NetworkRxInterruptManifest {
+        id: rx_interrupt.id,
+        virtio_net_backend: rx_interrupt.virtio_net_backend,
+        virtio_net_backend_generation: rx_interrupt.virtio_net_backend_generation,
+        irq_event: rx_interrupt.irq_event,
+        irq_event_generation: rx_interrupt.irq_event_generation,
+        packet_device: rx_interrupt.packet_device,
+        packet_device_generation: rx_interrupt.packet_device_generation,
+        rx_queue: rx_interrupt.rx_queue,
+        rx_queue_generation: rx_interrupt.rx_queue_generation,
+        ready_descriptors: rx_interrupt.ready_descriptors,
+        sequence: rx_interrupt.sequence,
+        generation: rx_interrupt.generation,
+        state: rx_interrupt.state.as_str().to_owned(),
+        recorded_at_event: rx_interrupt.recorded_at_event,
+        note: rx_interrupt.note.clone(),
     }
 }
 

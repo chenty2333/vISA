@@ -1115,6 +1115,36 @@ pub enum SemanticInvariantError {
     VirtioNetBackendObjectMissingEvent {
         virtio_net_backend: VirtioNetBackendObjectId,
     },
+    NetworkRxInterruptInvalid {
+        rx_interrupt: NetworkRxInterruptId,
+    },
+    NetworkRxInterruptMissingBackend {
+        rx_interrupt: NetworkRxInterruptId,
+        virtio_net_backend: VirtioNetBackendObjectId,
+    },
+    NetworkRxInterruptMissingIrqEvent {
+        rx_interrupt: NetworkRxInterruptId,
+        irq_event: IrqEventId,
+    },
+    NetworkRxInterruptMissingPacketDevice {
+        rx_interrupt: NetworkRxInterruptId,
+        packet_device: PacketDeviceObjectId,
+    },
+    NetworkRxInterruptMissingRxQueue {
+        rx_interrupt: NetworkRxInterruptId,
+        rx_queue: PacketQueueObjectId,
+    },
+    NetworkRxInterruptMissingIrqCapability {
+        rx_interrupt: NetworkRxInterruptId,
+        irq_line: IrqLineObjectId,
+    },
+    NetworkRxInterruptDuplicateIrqEvent {
+        rx_interrupt: NetworkRxInterruptId,
+        irq_event: IrqEventId,
+    },
+    NetworkRxInterruptMissingEvent {
+        rx_interrupt: NetworkRxInterruptId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

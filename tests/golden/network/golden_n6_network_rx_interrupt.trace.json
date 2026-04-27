@@ -1,0 +1,153 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "N6-rx-interrupt-path",
+  "name": "golden_n6_network_rx_interrupt",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md"
+  ],
+  "no_goals": [
+    "real virtio MMIO/DMA/IRQ execution",
+    "RX wait resolution",
+    "TX capability gate",
+    "TX completion path",
+    "smoltcp integration",
+    "socket object model"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "record-irq-line-object",
+        "irq_line": "irq-line:10011@1",
+        "device": "device:10001@1",
+        "expected": "applied"
+      },
+      {
+        "id": 2,
+        "command": "record-device-capability",
+        "device_capability": "device-capability:10012@1",
+        "target": "irq-line:10011@1",
+        "class": "irq-line",
+        "operation": "ack",
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "record-irq-event",
+        "irq_event": "irq-event:10013@1",
+        "irq_line": "irq-line:10011@1",
+        "driver_store": "driver_virtio_net",
+        "expected": "applied"
+      },
+      {
+        "id": 4,
+        "command": "record-network-rx-interrupt",
+        "rx_interrupt": "network-rx-interrupt:10014@1",
+        "virtio_net_backend": "virtio-net-backend:10010@1",
+        "irq_event": "irq-event:10013@1",
+        "packet_device": "packet-device:10002@1",
+        "rx_queue": "packet-queue:10004@1",
+        "ready_descriptors": 1,
+        "expected": "applied"
+      },
+      {
+        "id": 5,
+        "command": "record-network-rx-interrupt",
+        "scenario": "stale irq event generation",
+        "expected": "rejected"
+      },
+      {
+        "id": 6,
+        "command": "record-network-rx-interrupt",
+        "scenario": "tx queue used as rx queue",
+        "expected": "rejected"
+      },
+      {
+        "id": 7,
+        "command": "record-network-rx-interrupt",
+        "scenario": "ready descriptors exceed rx queue depth",
+        "expected": "rejected"
+      },
+      {
+        "id": 8,
+        "command": "record-network-rx-interrupt",
+        "scenario": "missing irq ack capability",
+        "expected": "rejected"
+      },
+      {
+        "id": 9,
+        "command": "record-network-rx-interrupt",
+        "scenario": "duplicate rx interrupt for same irq event generation",
+        "expected": "rejected"
+      }
+    ],
+    "adapter": {
+      "crate": "substrate_virtio",
+      "module": "net",
+      "profile": "virtio-net-backend-skeleton-v1",
+      "note": "interrupt path evidence only; no real IRQ dispatch is executed"
+    }
+  },
+  "events": [
+    {
+      "kind": "IrqEventRecorded",
+      "irq_event": "irq-event:10013@1",
+      "irq_line": "irq-line:10011@1",
+      "device": "device:10001@1"
+    },
+    {
+      "kind": "NetworkRxInterruptRecorded",
+      "rx_interrupt": "network-rx-interrupt:10014@1",
+      "virtio_net_backend": "virtio-net-backend:10010@1",
+      "irq_event": "irq-event:10013@1",
+      "packet_device": "packet-device:10002@1",
+      "rx_queue": "packet-queue:10004@1"
+    }
+  ],
+  "expected": {
+    "views": {
+      "network-rx-interrupt": {
+        "count": 1,
+        "rx_interrupt": "network-rx-interrupt:10014@1",
+        "virtio_net_backend": "virtio-net-backend:10010@1",
+        "irq_event": "irq-event:10013@1",
+        "packet_device": "packet-device:10002@1",
+        "rx_queue": "packet-queue:10004@1",
+        "ready_descriptors": 1,
+        "sequence": 1
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "NetworkRxInterrupt references exact VirtioNetBackendObject generation",
+      "NetworkRxInterrupt references exact IrqEvent generation",
+      "NetworkRxInterrupt references exact PacketDeviceObject and Rx PacketQueue generations",
+      "NetworkRxInterrupt requires active IrqLine ack DeviceCapability for the backend driver store generation",
+      "IrqEvent device and driver store must match the backend DriverStoreBinding",
+      "Rx queue must be role=rx and belong to the same PacketDeviceObject generation",
+      "Ready descriptor count cannot exceed rx queue depth",
+      "One irq event generation can produce at most one NetworkRxInterrupt evidence record",
+      "N6 records interrupt readiness but does not resolve waits; N7 owns wait resolution"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "network_runtime_n6_rx_interrupt_records_irq_to_rx_queue_path",
+      "network_runtime_n6_rejects_stale_wrong_queue_overdepth_and_duplicate_irq",
+      "network_runtime_n6_rejects_missing_irq_ack_capability",
+      "network_runtime_n6_invariants_reject_rx_queue_generation_leak",
+      "network_rx_interrupt_view_v1_exposes_irq_and_rx_queue_generations",
+      "semantic_roots_reject_network_rx_interrupt_root_mismatch"
+    ],
+    "osctl_json_view": "network-rx-interrupt list --json"
+  }
+}

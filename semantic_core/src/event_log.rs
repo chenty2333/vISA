@@ -496,6 +496,20 @@ pub enum EventKind {
         negotiated_features: u64,
         generation: Generation,
     },
+    NetworkRxInterruptRecorded {
+        rx_interrupt: NetworkRxInterruptId,
+        virtio_net_backend: VirtioNetBackendObjectId,
+        virtio_net_backend_generation: Generation,
+        irq_event: IrqEventId,
+        irq_event_generation: Generation,
+        packet_device: PacketDeviceObjectId,
+        packet_device_generation: Generation,
+        rx_queue: PacketQueueObjectId,
+        rx_queue_generation: Generation,
+        ready_descriptors: u16,
+        sequence: u64,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1497,6 +1511,22 @@ impl EventKind {
                 generation,
             } => format!(
                 "VirtioNetBackendSkeletonBound virtio_net_backend={virtio_net_backend} packet_device={packet_device}@{packet_device_generation} driver_binding={driver_binding}@{driver_binding_generation} device={device}@{device_generation} queue_size={queue_size} rx_queue_index={rx_queue_index} tx_queue_index={tx_queue_index} negotiated_features={negotiated_features} generation={generation}"
+            ),
+            Self::NetworkRxInterruptRecorded {
+                rx_interrupt,
+                virtio_net_backend,
+                virtio_net_backend_generation,
+                irq_event,
+                irq_event_generation,
+                packet_device,
+                packet_device_generation,
+                rx_queue,
+                rx_queue_generation,
+                ready_descriptors,
+                sequence,
+                generation,
+            } => format!(
+                "NetworkRxInterruptRecorded rx_interrupt={rx_interrupt} virtio_net_backend={virtio_net_backend}@{virtio_net_backend_generation} irq_event={irq_event}@{irq_event_generation} packet_device={packet_device}@{packet_device_generation} rx_queue={rx_queue}@{rx_queue_generation} ready_descriptors={ready_descriptors} sequence={sequence} generation={generation}"
             ),
             Self::RuntimeActivationResumed {
                 resume,
