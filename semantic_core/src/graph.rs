@@ -52,6 +52,7 @@ pub struct SemanticGraph {
     network_tx_completions: Vec<NetworkTxCompletionRecord>,
     network_stack_adapters: Vec<NetworkStackAdapterRecord>,
     socket_objects: Vec<SocketObjectRecord>,
+    endpoint_objects: Vec<EndpointObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -115,6 +116,7 @@ pub struct SemanticGraph {
     next_network_tx_completion_id: NetworkTxCompletionId,
     next_network_stack_adapter_id: NetworkStackAdapterId,
     next_socket_object_id: SocketObjectId,
+    next_endpoint_object_id: EndpointObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -143,6 +145,7 @@ mod device_capability;
 mod device_object;
 mod dma_buffer_object;
 mod driver_store_binding;
+mod endpoint_object;
 mod fake_net_backend_object;
 mod hart;
 mod hart_event;
@@ -243,6 +246,7 @@ impl SemanticGraph {
             network_tx_completions: Vec::new(),
             network_stack_adapters: Vec::new(),
             socket_objects: Vec::new(),
+            endpoint_objects: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -306,6 +310,7 @@ impl SemanticGraph {
             next_network_tx_completion_id: 1,
             next_network_stack_adapter_id: 1,
             next_socket_object_id: 1,
+            next_endpoint_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

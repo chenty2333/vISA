@@ -1,0 +1,159 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "N12-endpoint-object",
+  "phase": "Phase 4 Network Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add EndpointObject as a stable semantic object owned by SocketObject",
+    "Record EndpointObject creation with exact SocketObject, NetworkStackAdapter, and owner Store generations",
+    "Reject stale socket generations, duplicate live endpoints for one socket generation, and pre-N13 bound endpoint addresses",
+    "Expose endpoint object roots/counts through semantic package, osctl ViewV1, graph, and replay roots",
+    "Record target_executor N12 evidence with one applied EndpointObject and one rejected stale-socket command"
+  ],
+  "no_goals": [
+    "bind/listen/connect/send/recv semantic commands",
+    "socket WaitToken integration",
+    "real smoltcp socket state as semantic truth",
+    "real packet transmission",
+    "backpressure or drop policy",
+    "Network driver fault cleanup"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/endpoint_object.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/network/golden_n12_endpoint_object.trace.json",
+    "tests/reports/checkpoints/n12_endpoint_object.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/network/golden_n12_endpoint_object.trace.json",
+    "tests/reports/checkpoints/n12_endpoint_object.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "EndpointObject does not serialize smoltcp internal endpoint state",
+      "Endpoint identity is based on SocketObject, NetworkStackAdapter, and Store generation refs, not debug labels",
+      "EndpointObject cannot carry local or remote bound addresses before N13",
+      "EndpointObject invariant rejects duplicate object identities even if command preflight was bypassed",
+      "Duplicate live EndpointObject records for one SocketObject generation are rejected",
+      "EndpointObject live graph edges point to exact socket, adapter, and owner store generations",
+      "N12 keeps socket operation commands and WaitToken integration out of scope"
+    ],
+    "residual_notes": [
+      "bind/listen/connect/send/recv commands are N13",
+      "socket WaitToken integration is N14",
+      "backpressure/drop policy is N15",
+      "network driver fault cleanup is N16",
+      "Real smoltcp socket internals remain adapter/service implementation details"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo check -p semantic_core -p contract_core -p artifact_manifest -p target_executor -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core network_runtime_n12",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core endpoint_object",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl endpoint_object",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl graph_json_edges_separate_live_history_and_cleanup_modes",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- endpoint-object list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- command list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl replay --until 337 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/network/golden_n12_endpoint_object.trace.json",
+    "osctl_views": [
+      "osctl endpoint-object list --json <migration.json>",
+      "osctl command list --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "endpoint_object_roots",
+      "socket_object_roots",
+      "network_stack_adapter_roots",
+      "store_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 337,
+      "endpoint_object_count": 1,
+      "endpoint_object": "endpoint-object:10029@1",
+      "socket_object": "socket-object:10027@1",
+      "adapter": "network-stack-adapter:10025@1",
+      "owner_store": "store:9@3",
+      "family": "inet",
+      "transport": "tcp",
+      "local": "0.0.0.0:0",
+      "remote": "0.0.0.0:0",
+      "rejected_command": "command-result:149:record-endpoint-object:rejected"
+    }
+  },
+  "residual_gaps": [
+    "bind/listen/connect/send/recv commands, socket waits, backpressure/drop policy, network driver fault cleanup, and real virtio datapath are later Phase 4 checkpoints"
+  ],
+  "next_checkpoint": "N13-socket-operation-commands"
+}

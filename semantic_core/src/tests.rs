@@ -7090,6 +7090,184 @@ fn network_runtime_n11_invariants_reject_socket_adapter_generation_leak() {
     );
 }
 
+fn setup_n12_endpoint_object_graph() -> SemanticGraph {
+    let (mut graph, owner_store, owner_store_generation) = setup_n11_socket_object_graph();
+    assert!(graph.record_socket_object_with_id(
+        1576,
+        1575,
+        1,
+        owner_store,
+        owner_store_generation,
+        2,
+        1,
+        0,
+        "n11 socket object",
+    ));
+    graph
+}
+
+#[test]
+fn network_runtime_n12_endpoint_object_records_socket_adapter_and_store_identity() {
+    let mut graph = setup_n12_endpoint_object_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n12-test",
+        SemanticCommand::RecordEndpointObject {
+            endpoint: 1577,
+            socket: 1576,
+            socket_generation: 1,
+            local_addr: [0, 0, 0, 0],
+            local_port: 0,
+            remote_addr: [0, 0, 0, 0],
+            remote_port: 0,
+            note: "n12 endpoint object".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.endpoint_object_count(), 1);
+    let endpoint = &graph.endpoint_objects()[0];
+    assert_eq!(
+        endpoint.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::EndpointObject, 1577, 1)
+    );
+    assert_eq!(endpoint.socket, 1576);
+    assert_eq!(endpoint.socket_generation, 1);
+    assert_eq!(endpoint.adapter, 1575);
+    assert_eq!(endpoint.adapter_generation, 1);
+    assert_eq!(endpoint.family, "inet");
+    assert_eq!(endpoint.transport, "tcp");
+    assert_eq!(endpoint.local_addr, [0, 0, 0, 0]);
+    assert_eq!(endpoint.local_port, 0);
+    assert_eq!(endpoint.remote_addr, [0, 0, 0, 0]);
+    assert_eq!(endpoint.remote_port, 0);
+    assert_eq!(endpoint.state, EndpointObjectState::Allocated);
+    assert!(
+        graph.event_log_tail(1)[0]
+            .kind
+            .summary()
+            .contains("EndpointObjectCreated endpoint=1577 socket=1576@1")
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn network_runtime_n12_rejects_stale_duplicate_and_pre_n13_bound_endpoint() {
+    let mut graph = setup_n12_endpoint_object_graph();
+    let stale_socket = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n12-test",
+        SemanticCommand::RecordEndpointObject {
+            endpoint: 1577,
+            socket: 1576,
+            socket_generation: 2,
+            local_addr: [0, 0, 0, 0],
+            local_port: 0,
+            remote_addr: [0, 0, 0, 0],
+            remote_port: 0,
+            note: "n12 stale socket".to_string(),
+        },
+    ));
+    assert_eq!(stale_socket.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_socket.violations,
+        vec!["endpoint object socket generation is missing or inactive".to_string()]
+    );
+
+    let pre_bound = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n12-test",
+        SemanticCommand::RecordEndpointObject {
+            endpoint: 1577,
+            socket: 1576,
+            socket_generation: 1,
+            local_addr: [10, 0, 2, 15],
+            local_port: 8080,
+            remote_addr: [0, 0, 0, 0],
+            remote_port: 0,
+            note: "n12 pre-bound endpoint".to_string(),
+        },
+    ));
+    assert_eq!(pre_bound.status, CommandStatus::Rejected);
+    assert_eq!(
+        pre_bound.violations,
+        vec!["endpoint object must remain unbound before N13".to_string()]
+    );
+
+    assert!(graph.record_endpoint_object_with_id(
+        1577,
+        1576,
+        1,
+        [0, 0, 0, 0],
+        0,
+        [0, 0, 0, 0],
+        0,
+        "n12 endpoint object",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "n12-test",
+        SemanticCommand::RecordEndpointObject {
+            endpoint: 1578,
+            socket: 1576,
+            socket_generation: 1,
+            local_addr: [0, 0, 0, 0],
+            local_port: 0,
+            remote_addr: [0, 0, 0, 0],
+            remote_port: 0,
+            note: "n12 duplicate endpoint".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["endpoint object socket generation already has endpoint".to_string()]
+    );
+}
+
+#[test]
+fn network_runtime_n12_invariants_reject_endpoint_socket_generation_leak() {
+    let mut graph = setup_n12_endpoint_object_graph();
+    assert!(graph.record_endpoint_object_with_id(
+        1577,
+        1576,
+        1,
+        [0, 0, 0, 0],
+        0,
+        [0, 0, 0, 0],
+        0,
+        "n12 endpoint object",
+    ));
+    graph.corrupt_endpoint_object_socket_generation_for_test(1577, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::EndpointObjectMissingSocket {
+            endpoint: 1577,
+            socket: 1576,
+        })
+    );
+}
+
+#[test]
+fn network_runtime_n12_invariants_reject_duplicate_endpoint_identity() {
+    let mut graph = setup_n12_endpoint_object_graph();
+    assert!(graph.record_endpoint_object_with_id(
+        1577,
+        1576,
+        1,
+        [0, 0, 0, 0],
+        0,
+        [0, 0, 0, 0],
+        0,
+        "n12 endpoint object",
+    ));
+    graph.duplicate_endpoint_object_id_for_test(1577, 1);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::EndpointObjectDuplicate { endpoint: 1577 })
+    );
+}
+
 #[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();

@@ -1397,6 +1397,33 @@ impl SocketObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EndpointObjectRecord {
+    pub id: EndpointObjectId,
+    pub socket: SocketObjectId,
+    pub socket_generation: Generation,
+    pub adapter: NetworkStackAdapterId,
+    pub adapter_generation: Generation,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub family: String,
+    pub transport: String,
+    pub local_addr: [u8; 4],
+    pub local_port: u16,
+    pub remote_addr: [u8; 4],
+    pub remote_port: u16,
+    pub generation: Generation,
+    pub state: EndpointObjectState,
+    pub created_at_event: EventId,
+    pub note: String,
+}
+
+impl EndpointObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::EndpointObject, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

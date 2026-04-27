@@ -1021,6 +1021,27 @@ impl SocketObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndpointObjectState {
+    Allocated,
+    Bound,
+    Listening,
+    Connected,
+    Closed,
+}
+
+impl EndpointObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allocated => "allocated",
+            Self::Bound => "bound",
+            Self::Listening => "listening",
+            Self::Connected => "connected",
+            Self::Closed => "closed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

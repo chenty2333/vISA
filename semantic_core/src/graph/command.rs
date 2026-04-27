@@ -411,6 +411,16 @@ pub enum SemanticCommand {
         protocol: u32,
         note: String,
     },
+    RecordEndpointObject {
+        endpoint: EndpointObjectId,
+        socket: SocketObjectId,
+        socket_generation: Generation,
+        local_addr: [u8; 4],
+        local_port: u16,
+        remote_addr: [u8; 4],
+        remote_port: u16,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -789,6 +799,7 @@ impl SemanticCommand {
             Self::RecordNetworkTxCompletion { .. } => "record-network-tx-completion",
             Self::RecordNetworkStackAdapter { .. } => "record-network-stack-adapter",
             Self::RecordSocketObject { .. } => "record-socket-object",
+            Self::RecordEndpointObject { .. } => "record-endpoint-object",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -2240,6 +2251,26 @@ impl SemanticGraph {
                     *domain,
                     *socket_type,
                     *protocol,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordEndpointObject {
+                endpoint,
+                socket,
+                socket_generation,
+                local_addr,
+                local_port,
+                remote_addr,
+                remote_port,
+                ..
+            } => self
+                .validate_endpoint_object(
+                    *endpoint,
+                    *socket,
+                    *socket_generation,
+                    *local_addr,
+                    *local_port,
+                    *remote_addr,
+                    *remote_port,
                 )
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
@@ -3783,6 +3814,25 @@ impl SemanticGraph {
                 domain,
                 socket_type,
                 protocol,
+                &note,
+            ),
+            SemanticCommand::RecordEndpointObject {
+                endpoint,
+                socket,
+                socket_generation,
+                local_addr,
+                local_port,
+                remote_addr,
+                remote_port,
+                note,
+            } => self.record_endpoint_object_with_id(
+                endpoint,
+                socket,
+                socket_generation,
+                local_addr,
+                local_port,
+                remote_addr,
+                remote_port,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

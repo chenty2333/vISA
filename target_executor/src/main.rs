@@ -15,22 +15,22 @@ use artifact_manifest::{
     CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
     CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
     DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
-    FakeNetBackendObjectManifest, GuestStateManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
-    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
-    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    EndpointObjectManifest, FakeNetBackendObjectManifest, GuestStateManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest,
+    NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest, PacketBufferObjectManifest,
+    PacketDescriptorObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
+    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, SocketObjectManifest,
     StopTheWorldRendezvousManifest, StopTheWorldRendezvousParticipantManifest, StoreRecordManifest,
@@ -174,6 +174,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n9_evidence(&mut semantic)?;
     record_network_runtime_n10_evidence(&mut semantic)?;
     record_network_runtime_n11_evidence(&mut semantic)?;
+    record_network_runtime_n12_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -956,6 +957,65 @@ fn record_network_runtime_n11_evidence(semantic: &mut SemanticGraph) -> Result<(
             stale_adapter.command,
             stale_adapter.status.as_str(),
             stale_adapter.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn record_network_runtime_n12_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let command = CommandEnvelope::new(
+        148,
+        "target-executor-n12",
+        SemanticCommand::RecordEndpointObject {
+            endpoint: 10_029,
+            socket: 10_027,
+            socket_generation: 1,
+            local_addr: [0, 0, 0, 0],
+            local_port: 0,
+            remote_addr: [0, 0, 0, 0],
+            remote_port: 0,
+            note: "n12-record-unbound-inet-tcp-endpoint-object".to_owned(),
+        },
+    );
+    let result = semantic.apply_envelope(command);
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "network runtime n12 evidence command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+
+    let stale_socket = semantic.apply_envelope(CommandEnvelope::new(
+        149,
+        "target-executor-n12",
+        SemanticCommand::RecordEndpointObject {
+            endpoint: 10_030,
+            socket: 10_027,
+            socket_generation: 2,
+            local_addr: [0, 0, 0, 0],
+            local_port: 0,
+            remote_addr: [0, 0, 0, 0],
+            remote_port: 0,
+            note: "n12-reject-stale-endpoint-socket-generation".to_owned(),
+        },
+    ));
+    if stale_socket.status != CommandStatus::Rejected
+        || !stale_socket
+            .violations
+            .iter()
+            .any(|violation| violation.contains("socket generation"))
+    {
+        return Err(format!(
+            "network runtime n12 stale socket command {} ({}) was not rejected: status={} violations={:?}",
+            stale_socket.command_id,
+            stale_socket.command,
+            stale_socket.status.as_str(),
+            stale_socket.violations
         )
         .into());
     }
@@ -3343,6 +3403,7 @@ fn demo_migration_package(
             network_tx_completion_count: semantic.network_tx_completion_count(),
             network_stack_adapter_count: semantic.network_stack_adapter_count(),
             socket_object_count: semantic.socket_object_count(),
+            endpoint_object_count: semantic.endpoint_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -3599,6 +3660,11 @@ fn demo_migration_package(
                 .socket_objects()
                 .iter()
                 .map(socket_object_manifest)
+                .collect(),
+            endpoint_objects: semantic
+                .endpoint_objects()
+                .iter()
+                .map(endpoint_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -4620,6 +4686,36 @@ fn semantic_roots(
                     socket.transport,
                     socket.state.as_str(),
                     socket.generation
+                )
+            })
+            .collect(),
+        endpoint_object_roots: semantic
+            .endpoint_objects()
+            .iter()
+            .map(|endpoint| {
+                format!(
+                    "endpoint-object id={} socket={}@{} adapter={}@{} owner_store={}@{} family={} transport={} local={}.{}.{}.{}:{} remote={}.{}.{}.{}:{} state={} generation={}",
+                    endpoint.id,
+                    endpoint.socket,
+                    endpoint.socket_generation,
+                    endpoint.adapter,
+                    endpoint.adapter_generation,
+                    endpoint.owner_store,
+                    endpoint.owner_store_generation,
+                    endpoint.family,
+                    endpoint.transport,
+                    endpoint.local_addr[0],
+                    endpoint.local_addr[1],
+                    endpoint.local_addr[2],
+                    endpoint.local_addr[3],
+                    endpoint.local_port,
+                    endpoint.remote_addr[0],
+                    endpoint.remote_addr[1],
+                    endpoint.remote_addr[2],
+                    endpoint.remote_addr[3],
+                    endpoint.remote_port,
+                    endpoint.state.as_str(),
+                    endpoint.generation
                 )
             })
             .collect(),
@@ -6349,6 +6445,30 @@ fn socket_object_manifest(socket: &semantic_core::SocketObjectRecord) -> SocketO
         state: socket.state.as_str().to_owned(),
         created_at_event: socket.created_at_event,
         note: socket.note.clone(),
+    }
+}
+
+fn endpoint_object_manifest(
+    endpoint: &semantic_core::EndpointObjectRecord,
+) -> EndpointObjectManifest {
+    EndpointObjectManifest {
+        id: endpoint.id,
+        socket: endpoint.socket,
+        socket_generation: endpoint.socket_generation,
+        adapter: endpoint.adapter,
+        adapter_generation: endpoint.adapter_generation,
+        owner_store: endpoint.owner_store,
+        owner_store_generation: endpoint.owner_store_generation,
+        family: endpoint.family.clone(),
+        transport: endpoint.transport.clone(),
+        local_addr: endpoint.local_addr,
+        local_port: endpoint.local_port,
+        remote_addr: endpoint.remote_addr,
+        remote_port: endpoint.remote_port,
+        generation: endpoint.generation,
+        state: endpoint.state.as_str().to_owned(),
+        created_at_event: endpoint.created_at_event,
+        note: endpoint.note.clone(),
     }
 }
 
