@@ -979,6 +979,21 @@ pub enum BlockRequestQueueEntryState {
     Completed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockPageObjectState {
+    Integrated,
+    Invalidated,
+}
+
+impl BlockPageObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Integrated => "integrated",
+            Self::Invalidated => "invalidated",
+        }
+    }
+}
+
 impl BlockRequestQueueEntryState {
     pub const fn as_str(self) -> &'static str {
         match self {

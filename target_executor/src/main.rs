@@ -10,28 +10,28 @@ use artifact_manifest::{
     ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
     BlockCompletionObjectManifest, BlockDeviceObjectManifest, BlockDmaBufferManifest,
-    BlockRangeObjectManifest, BlockReadPathManifest, BlockRequestObjectManifest,
-    BlockRequestQueueEntryManifest, BlockRequestQueueManifest, BlockWaitManifest,
-    BlockWritePathManifest, BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
-    CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
-    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
-    CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
-    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
-    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
-    EndpointObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
-    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
-    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    BlockPageObjectManifest, BlockRangeObjectManifest, BlockReadPathManifest,
+    BlockRequestObjectManifest, BlockRequestQueueEntryManifest, BlockRequestQueueManifest,
+    BlockWaitManifest, BlockWritePathManifest, BoundaryValidationReportManifest,
+    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
+    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
+    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
+    ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
+    DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
+    DriverStoreBindingManifest, EndpointObjectManifest, FakeBlockBackendObjectManifest,
+    FakeNetBackendObjectManifest, GuestStateManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -58,7 +58,7 @@ use semantic_core::{
     BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass,
     CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
     CodePublisher, CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot,
-    ContractObjectKind, ContractObjectRef, ContractViolation, DescriptorObjectAccess,
+    ContractObjectKind, ContractObjectRef, ContractViolation, CowState, DescriptorObjectAccess,
     DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact,
     ExternalObjectDeclaration, FrontendKind, HartState, HostcallCategory, HostcallFrame,
     HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind, IrqLinePolarity,
@@ -66,10 +66,10 @@ use semantic_core::{
     MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
     NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
     PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
-    QueueObjectRole, ReplayPackageValidationState, ResourceKind, RestartPolicy, RuntimeMode,
-    SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind,
-    SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState,
-    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    PageBacking, PageObjectState, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
+    RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
+    SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
+    StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
     TombstoneRecord, TrapSurfaceState, VerifiedArtifact, WaitCancelReason, memory_class_policies,
     validate_contract_graph,
@@ -215,6 +215,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b8_evidence(&mut semantic)?;
     record_block_runtime_b9_evidence(&mut semantic)?;
     record_block_runtime_b10_evidence(&mut semantic)?;
+    record_block_runtime_b11_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -4271,6 +4272,157 @@ fn record_block_runtime_b10_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_block_runtime_b11_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let aspace = ContractObjectRef::new(ContractObjectKind::GuestAddressSpace, 30_001, 1);
+    let vma_region = ContractObjectRef::new(ContractObjectKind::VmaRegion, 30_002, 1);
+    let page = ContractObjectRef::new(ContractObjectKind::PageObject, 30_003, 1);
+
+    let integrated = semantic.apply_envelope(CommandEnvelope::new(
+        260,
+        "target-executor-b11",
+        SemanticCommand::RecordBlockPageObject {
+            block_page_object: 20_065,
+            block_dma_buffer: 20_061,
+            block_dma_buffer_generation: 1,
+            block_completion: 20_047,
+            block_completion_generation: 1,
+            aspace,
+            vma_region,
+            page,
+            page_dirty_generation: 1,
+            page_backing: PageBacking::FileBacked,
+            cow_state: CowState::None,
+            page_state: PageObjectState::Live,
+            page_offset: 0,
+            byte_len: 4096,
+            note: "b11-integrate-block-dma-buffer-with-page-object".to_owned(),
+        },
+    ));
+    if integrated.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b11 page object command {} ({}) failed: status={} violations={:?}",
+            integrated.command_id,
+            integrated.command,
+            integrated.status.as_str(),
+            integrated.violations
+        )
+        .into());
+    }
+
+    let stale_dma = semantic.apply_envelope(CommandEnvelope::new(
+        261,
+        "target-executor-b11",
+        SemanticCommand::RecordBlockPageObject {
+            block_page_object: 20_066,
+            block_dma_buffer: 20_061,
+            block_dma_buffer_generation: 2,
+            block_completion: 20_047,
+            block_completion_generation: 1,
+            aspace,
+            vma_region,
+            page: ContractObjectRef::new(ContractObjectKind::PageObject, 30_004, 1),
+            page_dirty_generation: 1,
+            page_backing: PageBacking::FileBacked,
+            cow_state: CowState::None,
+            page_state: PageObjectState::Live,
+            page_offset: 0,
+            byte_len: 4096,
+            note: "b11-reject-stale-block-dma-generation".to_owned(),
+        },
+    ));
+    if stale_dma.status != CommandStatus::Rejected
+        || !stale_dma
+            .violations
+            .iter()
+            .any(|violation| violation.contains("dma buffer generation"))
+    {
+        return Err(format!(
+            "block runtime b11 stale dma command {} ({}) was not rejected: status={} violations={:?}",
+            stale_dma.command_id,
+            stale_dma.command,
+            stale_dma.status.as_str(),
+            stale_dma.violations
+        )
+        .into());
+    }
+
+    let dead_page = semantic.apply_envelope(CommandEnvelope::new(
+        262,
+        "target-executor-b11",
+        SemanticCommand::RecordBlockPageObject {
+            block_page_object: 20_067,
+            block_dma_buffer: 20_061,
+            block_dma_buffer_generation: 1,
+            block_completion: 20_047,
+            block_completion_generation: 1,
+            aspace,
+            vma_region,
+            page: ContractObjectRef::new(ContractObjectKind::PageObject, 30_005, 1),
+            page_dirty_generation: 1,
+            page_backing: PageBacking::FileBacked,
+            cow_state: CowState::None,
+            page_state: PageObjectState::Dead,
+            page_offset: 0,
+            byte_len: 4096,
+            note: "b11-reject-dead-page-object".to_owned(),
+        },
+    ));
+    if dead_page.status != CommandStatus::Rejected
+        || !dead_page
+            .violations
+            .iter()
+            .any(|violation| violation.contains("page must be live"))
+    {
+        return Err(format!(
+            "block runtime b11 dead page command {} ({}) was not rejected: status={} violations={:?}",
+            dead_page.command_id,
+            dead_page.command,
+            dead_page.status.as_str(),
+            dead_page.violations
+        )
+        .into());
+    }
+
+    let over_page = semantic.apply_envelope(CommandEnvelope::new(
+        263,
+        "target-executor-b11",
+        SemanticCommand::RecordBlockPageObject {
+            block_page_object: 20_068,
+            block_dma_buffer: 20_061,
+            block_dma_buffer_generation: 1,
+            block_completion: 20_047,
+            block_completion_generation: 1,
+            aspace,
+            vma_region,
+            page: ContractObjectRef::new(ContractObjectKind::PageObject, 30_006, 1),
+            page_dirty_generation: 1,
+            page_backing: PageBacking::FileBacked,
+            cow_state: CowState::None,
+            page_state: PageObjectState::Live,
+            page_offset: 1,
+            byte_len: 4096,
+            note: "b11-reject-page-byte-range-overflow".to_owned(),
+        },
+    ));
+    if over_page.status != CommandStatus::Rejected
+        || !over_page
+            .violations
+            .iter()
+            .any(|violation| violation.contains("byte range exceeds page"))
+    {
+        return Err(format!(
+            "block runtime b11 over-page command {} ({}) was not rejected: status={} violations={:?}",
+            over_page.command_id,
+            over_page.command,
+            over_page.status.as_str(),
+            over_page.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -6672,6 +6824,7 @@ fn demo_migration_package(
             block_write_path_count: semantic.block_write_path_count(),
             block_request_queue_count: semantic.block_request_queue_count(),
             block_dma_buffer_count: semantic.block_dma_buffer_count(),
+            block_page_object_count: semantic.block_page_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -7028,6 +7181,11 @@ fn demo_migration_package(
                 .block_dma_buffers()
                 .iter()
                 .map(block_dma_buffer_manifest)
+                .collect(),
+            block_page_objects: semantic
+                .block_page_objects()
+                .iter()
+                .map(block_page_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -8595,6 +8753,40 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        block_page_object_roots: semantic
+            .block_page_objects()
+            .iter()
+            .map(|page| {
+                format!(
+                    "block-page-object id={} block_dma_buffer={}@{} block_request={}@{} block_completion={}@{} dma_buffer={}@{} block_device={}@{} block_range={}@{} aspace={} vma_region={} page={} page_dirty_generation={} page_backing={} cow_state={} page_state={} page_offset={} byte_len={} operation={} state={} generation={}",
+                    page.id,
+                    page.block_dma_buffer,
+                    page.block_dma_buffer_generation,
+                    page.block_request,
+                    page.block_request_generation,
+                    page.block_completion,
+                    page.block_completion_generation,
+                    page.dma_buffer,
+                    page.dma_buffer_generation,
+                    page.block_device,
+                    page.block_device_generation,
+                    page.block_range,
+                    page.block_range_generation,
+                    page.aspace.summary(),
+                    page.vma_region.summary(),
+                    page.page.summary(),
+                    page.page_dirty_generation,
+                    page.page_backing.as_str(),
+                    page.cow_state.as_str(),
+                    page.page_state.as_str(),
+                    page.page_offset,
+                    page.byte_len,
+                    page.operation.as_str(),
+                    page.state.as_str(),
+                    page.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -10001,6 +10193,40 @@ fn block_dma_buffer_manifest(
         state: buffer.state.as_str().to_owned(),
         recorded_at_event: buffer.recorded_at_event,
         note: buffer.note.clone(),
+    }
+}
+
+fn block_page_object_manifest(
+    page: &semantic_core::BlockPageObjectRecord,
+) -> BlockPageObjectManifest {
+    BlockPageObjectManifest {
+        id: page.id,
+        block_dma_buffer: page.block_dma_buffer,
+        block_dma_buffer_generation: page.block_dma_buffer_generation,
+        block_request: page.block_request,
+        block_request_generation: page.block_request_generation,
+        block_completion: page.block_completion,
+        block_completion_generation: page.block_completion_generation,
+        dma_buffer: page.dma_buffer,
+        dma_buffer_generation: page.dma_buffer_generation,
+        block_device: page.block_device,
+        block_device_generation: page.block_device_generation,
+        block_range: page.block_range,
+        block_range_generation: page.block_range_generation,
+        aspace: contract_object_ref_manifest(page.aspace),
+        vma_region: contract_object_ref_manifest(page.vma_region),
+        page: contract_object_ref_manifest(page.page),
+        page_dirty_generation: page.page_dirty_generation,
+        page_backing: page.page_backing.as_str().to_owned(),
+        cow_state: page.cow_state.as_str().to_owned(),
+        page_state: page.page_state.as_str().to_owned(),
+        page_offset: page.page_offset,
+        byte_len: page.byte_len,
+        operation: page.operation.as_str().to_owned(),
+        generation: page.generation,
+        state: page.state.as_str().to_owned(),
+        recorded_at_event: page.recorded_at_event,
+        note: page.note.clone(),
     }
 }
 

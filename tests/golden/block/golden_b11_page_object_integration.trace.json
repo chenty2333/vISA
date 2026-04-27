@@ -1,0 +1,165 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "B11-page-object-integration",
+  "name": "golden_b11_page_object_integration",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md",
+    "references/specs/semantic-contract-v0.1/12-guest-memory-object-model.md"
+  ],
+  "no_goals": [
+    "real page-table mutation",
+    "raw guest pointer or substrate mapping exposure",
+    "DMW pointer-mode",
+    "page cache object",
+    "filesystem adapter",
+    "FAT/ext4 integration",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "B10 already recorded BlockDmaBuffer 20061@1 for write request 20046@1, successful completion 20047@1, DMA buffer 20060@1, BlockDeviceObject 20002@1, and BlockRangeObject 20005@1",
+      "The page integration command receives typed guest memory refs GuestAddressSpace 30001@1, VmaRegion 30002@1, and PageObject 30003@1",
+      "BlockPageObject 20065@1 records a semantic copy boundary from a DMA-backed block buffer into a live page generation without using a raw address"
+    ],
+    "commands": [
+      {
+        "id": 260,
+        "command": "record-block-page-object",
+        "block_page_object": "block-page-object:20065@1",
+        "block_dma_buffer": "block-dma-buffer:20061@1",
+        "block_request": "block-request:20046@1",
+        "block_completion": "block-completion:20047@1",
+        "dma_buffer": "dma-buffer:20060@1",
+        "block_device": "block-device:20002@1",
+        "block_range": "block-range:20005@1",
+        "aspace": "guest-address-space:30001@1",
+        "vma_region": "vma-region:30002@1",
+        "page": "page-object:30003@1",
+        "page_dirty_generation": 1,
+        "page_backing": "file-backed",
+        "cow_state": "none",
+        "page_state": "live",
+        "page_offset": 0,
+        "byte_len": 4096,
+        "operation": "write",
+        "expected": "applied"
+      },
+      {
+        "id": 261,
+        "command": "record-block-page-object",
+        "scenario": "stale block DMA buffer generation",
+        "expected": "rejected",
+        "violation": "block page object dma buffer generation is missing or inactive"
+      },
+      {
+        "id": 262,
+        "command": "record-block-page-object",
+        "scenario": "dead page state",
+        "expected": "rejected",
+        "violation": "block page object page must be live"
+      },
+      {
+        "id": 263,
+        "command": "record-block-page-object",
+        "scenario": "page byte range crosses 4 KiB page",
+        "expected": "rejected",
+        "violation": "block page object byte range exceeds page"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 425,
+      "kind": "BlockPageObjectIntegrated",
+      "block_page_object": "block-page-object:20065@1",
+      "block_dma_buffer": "block-dma-buffer:20061@1",
+      "block_request": "block-request:20046@1",
+      "block_completion": "block-completion:20047@1",
+      "dma_buffer": "dma-buffer:20060@1",
+      "block_device": "block-device:20002@1",
+      "block_range": "block-range:20005@1",
+      "aspace": "guest-address-space:30001@1",
+      "vma_region": "vma-region:30002@1",
+      "page": "page-object:30003@1",
+      "page_dirty_generation": 1,
+      "page_offset": 0,
+      "byte_len": 4096,
+      "operation": "write"
+    }
+  ],
+  "expected": {
+    "views": {
+      "block-page-object": {
+        "count": 1,
+        "block_page_object": "block-page-object:20065@1",
+        "block_dma_buffer": "block-dma-buffer:20061@1",
+        "block_request": "block-request:20046@1",
+        "block_completion": "block-completion:20047@1",
+        "dma_buffer": "dma-buffer:20060@1",
+        "block_device": "block-device:20002@1",
+        "block_range": "block-range:20005@1",
+        "aspace": "guest-address-space:30001@1",
+        "vma_region": "vma-region:30002@1",
+        "page": "page-object:30003@1",
+        "page_dirty_generation": 1,
+        "page_backing": "file-backed",
+        "cow_state": "none",
+        "page_state": "live",
+        "page_offset": 0,
+        "byte_len": 4096,
+        "operation": "write",
+        "recorded_event": 425
+      },
+      "command": {
+        "page_integration_applied": "command-result:260:record-block-page-object:applied",
+        "stale_block_dma_generation_rejected": "command-result:261:record-block-page-object:rejected",
+        "dead_page_rejected": "command-result:262:record-block-page-object:rejected",
+        "oversized_page_range_rejected": "command-result:263:record-block-page-object:rejected"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "historical_edges": [
+          "block-page-object->block-dma-buffer",
+          "block-page-object->block-request",
+          "block-page-object->block-completion",
+          "block-page-object->dma-buffer",
+          "block-page-object->block-device",
+          "block-page-object->block-range",
+          "block-page-object->guest-address-space",
+          "block-page-object->vma-region",
+          "block-page-object->page-object"
+        ]
+      }
+    },
+    "invariants": [
+      "BlockPageObject records exact BlockDmaBuffer, BlockRequestObject, BlockCompletionObject, DmaBufferObject, BlockDeviceObject, BlockRangeObject, GuestAddressSpace, VmaRegion, and PageObject generations",
+      "The source BlockDmaBuffer must still point at the exact request, completion, DMA buffer, block device, and block range generations being integrated",
+      "Only a successful BlockCompletionObject for the same request generation can be integrated into a page",
+      "The guest memory refs must use guest-address-space, vma-region, and page-object kinds with nonzero generations",
+      "The page must be live, non-device-backed, non-external, and not COW-broken at integration time",
+      "The byte range must stay inside one 4 KiB semantic PageObject",
+      "Duplicate live integration for the same BlockDmaBuffer or same page byte range is rejected before mutation",
+      "The semantic object stores stable refs and byte ranges only; raw guest pointers, page-table mappings, DMW pointer leases, and filesystem adapter state remain outside semantic_core"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "block_runtime_b11_page_object_integration_records_exact_refs",
+      "block_runtime_b11_rejects_stale_dead_oversized_and_broken_page",
+      "block_runtime_b11_invariants_reject_page_generation_leak",
+      "block_page_object_view_v1_exposes_page_and_block_dma_contract",
+      "semantic_roots_reject_block_page_object_root_mismatch"
+    ],
+    "osctl_json_view": "block-page-object list --json",
+    "target_executor_event_cursor": 427
+  }
+}

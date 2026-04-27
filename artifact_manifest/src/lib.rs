@@ -355,6 +355,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_dma_buffer_count: usize,
     #[serde(default)]
+    pub block_page_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -561,6 +563,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_dma_buffers: Vec<BlockDmaBufferManifest>,
     #[serde(default)]
+    pub block_page_objects: Vec<BlockPageObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -746,6 +750,8 @@ pub struct SemanticRootSetManifest {
     pub block_request_queue_roots: Vec<String>,
     #[serde(default)]
     pub block_dma_buffer_roots: Vec<String>,
+    #[serde(default)]
+    pub block_page_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2408,6 +2414,37 @@ pub struct BlockDmaBufferManifest {
     pub byte_len: u64,
     pub buffer_len: u32,
     pub buffer_digest: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct BlockPageObjectManifest {
+    pub id: u64,
+    pub block_dma_buffer: u64,
+    pub block_dma_buffer_generation: u64,
+    pub block_request: u64,
+    pub block_request_generation: u64,
+    pub block_completion: u64,
+    pub block_completion_generation: u64,
+    pub dma_buffer: u64,
+    pub dma_buffer_generation: u64,
+    pub block_device: u64,
+    pub block_device_generation: u64,
+    pub block_range: u64,
+    pub block_range_generation: u64,
+    pub aspace: ContractObjectRefManifest,
+    pub vma_region: ContractObjectRefManifest,
+    pub page: ContractObjectRefManifest,
+    pub page_dirty_generation: u64,
+    pub page_backing: String,
+    pub cow_state: String,
+    pub page_state: String,
+    pub page_offset: u64,
+    pub byte_len: u64,
+    pub operation: String,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

@@ -12754,6 +12754,15 @@ fn block_runtime_b9_invariants_reject_backend_generation_and_count_leaks() {
 
 fn setup_b10_block_dma_buffer_graph(access: DmaBufferObjectAccess) -> SemanticGraph {
     let mut graph = setup_b9_block_request_queue_graph();
+    assert!(graph.record_block_completion_object_with_id(
+        1830,
+        1828,
+        1,
+        2,
+        4096,
+        BlockCompletionStatus::Success,
+        "b10 write completion",
+    ));
     assert!(graph.record_queue_object_with_id(
         1831,
         "fake-block9-submit",
@@ -12991,6 +13000,244 @@ fn block_runtime_b10_invariants_reject_dma_generation_and_digest_leaks() {
         graph.check_invariants(),
         Err(SemanticInvariantError::BlockDmaBufferInvalid {
             block_dma_buffer: 1834,
+        })
+    );
+}
+
+fn setup_b11_block_page_object_graph() -> SemanticGraph {
+    let mut graph = setup_b10_block_dma_buffer_graph(DmaBufferObjectAccess::ReadWrite);
+    assert!(graph.record_block_dma_buffer_with_id(
+        1834,
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1),
+        1828,
+        1,
+        1833,
+        1,
+        b10_expected_digest(DmaBufferObjectAccess::ReadWrite),
+        "b11 existing dma buffer",
+    ));
+    graph
+}
+
+fn b11_aspace() -> ContractObjectRef {
+    ContractObjectRef::new(ContractObjectKind::GuestAddressSpace, 1901, 1)
+}
+
+fn b11_vma_region() -> ContractObjectRef {
+    ContractObjectRef::new(ContractObjectKind::VmaRegion, 1902, 1)
+}
+
+fn b11_page(id: u64) -> ContractObjectRef {
+    ContractObjectRef::new(ContractObjectKind::PageObject, id, 1)
+}
+
+#[test]
+fn block_runtime_b11_page_object_integration_records_exact_refs() {
+    let mut graph = setup_b11_block_page_object_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b11-test",
+        SemanticCommand::RecordBlockPageObject {
+            block_page_object: 1835,
+            block_dma_buffer: 1834,
+            block_dma_buffer_generation: 1,
+            block_completion: 1830,
+            block_completion_generation: 1,
+            aspace: b11_aspace(),
+            vma_region: b11_vma_region(),
+            page: b11_page(1903),
+            page_dirty_generation: 1,
+            page_backing: PageBacking::FileBacked,
+            cow_state: CowState::None,
+            page_state: PageObjectState::Live,
+            page_offset: 0,
+            byte_len: 4096,
+            note: "b11 integrate block dma buffer with page object".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.block_page_object_count(), 1);
+    let page = &graph.block_page_objects()[0];
+    assert_eq!(
+        page.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BlockPageObject, 1835, 1)
+    );
+    assert_eq!(page.block_dma_buffer, 1834);
+    assert_eq!(page.block_request, 1828);
+    assert_eq!(page.block_completion, 1830);
+    assert_eq!(page.dma_buffer, 1833);
+    assert_eq!(page.aspace, b11_aspace());
+    assert_eq!(page.vma_region, b11_vma_region());
+    assert_eq!(page.page, b11_page(1903));
+    assert_eq!(page.page_dirty_generation, 1);
+    assert_eq!(page.page_backing, PageBacking::FileBacked);
+    assert_eq!(page.cow_state, CowState::None);
+    assert_eq!(page.page_state, PageObjectState::Live);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BlockPageObjectIntegrated block_page_object=1835 block_dma_buffer=1834@1 block_request=1828@1 block_completion=1830@1 dma_buffer=1833@1 block_device=1824@1 block_range=1825@1 aspace=guest-address-space:1901@1 vma_region=vma-region:1902@1 page=page-object:1903@1 page_dirty_generation=1 page_offset=0 byte_len=4096 operation=write generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b11_rejects_stale_dead_oversized_and_broken_page() {
+    let mut graph = setup_b11_block_page_object_graph();
+    assert!(graph.record_block_page_object_with_id(
+        1835,
+        1834,
+        1,
+        1830,
+        1,
+        b11_aspace(),
+        b11_vma_region(),
+        b11_page(1903),
+        1,
+        PageBacking::FileBacked,
+        CowState::None,
+        PageObjectState::Live,
+        0,
+        4096,
+        "b11 existing page integration",
+    ));
+
+    let stale_dma = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b11-test",
+        SemanticCommand::RecordBlockPageObject {
+            block_page_object: 1836,
+            block_dma_buffer: 1834,
+            block_dma_buffer_generation: 2,
+            block_completion: 1830,
+            block_completion_generation: 1,
+            aspace: b11_aspace(),
+            vma_region: b11_vma_region(),
+            page: b11_page(1904),
+            page_dirty_generation: 1,
+            page_backing: PageBacking::FileBacked,
+            cow_state: CowState::None,
+            page_state: PageObjectState::Live,
+            page_offset: 0,
+            byte_len: 4096,
+            note: "stale dma buffer".to_string(),
+        },
+    ));
+    assert_eq!(stale_dma.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_dma.violations,
+        vec!["block page object dma buffer generation is missing or inactive".to_string()]
+    );
+
+    let dead_page = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b11-test",
+        SemanticCommand::RecordBlockPageObject {
+            block_page_object: 1837,
+            block_dma_buffer: 1834,
+            block_dma_buffer_generation: 1,
+            block_completion: 1830,
+            block_completion_generation: 1,
+            aspace: b11_aspace(),
+            vma_region: b11_vma_region(),
+            page: b11_page(1904),
+            page_dirty_generation: 1,
+            page_backing: PageBacking::FileBacked,
+            cow_state: CowState::None,
+            page_state: PageObjectState::Dead,
+            page_offset: 0,
+            byte_len: 4096,
+            note: "dead page".to_string(),
+        },
+    ));
+    assert_eq!(dead_page.status, CommandStatus::Rejected);
+    assert_eq!(
+        dead_page.violations,
+        vec!["block page object page must be live".to_string()]
+    );
+
+    let oversized = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b11-test",
+        SemanticCommand::RecordBlockPageObject {
+            block_page_object: 1838,
+            block_dma_buffer: 1834,
+            block_dma_buffer_generation: 1,
+            block_completion: 1830,
+            block_completion_generation: 1,
+            aspace: b11_aspace(),
+            vma_region: b11_vma_region(),
+            page: b11_page(1904),
+            page_dirty_generation: 1,
+            page_backing: PageBacking::FileBacked,
+            cow_state: CowState::None,
+            page_state: PageObjectState::Live,
+            page_offset: 1,
+            byte_len: 4096,
+            note: "oversized page range".to_string(),
+        },
+    ));
+    assert_eq!(oversized.status, CommandStatus::Rejected);
+    assert_eq!(
+        oversized.violations,
+        vec!["block page object byte range exceeds page".to_string()]
+    );
+
+    let broken_cow = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "b11-test",
+        SemanticCommand::RecordBlockPageObject {
+            block_page_object: 1839,
+            block_dma_buffer: 1834,
+            block_dma_buffer_generation: 1,
+            block_completion: 1830,
+            block_completion_generation: 1,
+            aspace: b11_aspace(),
+            vma_region: b11_vma_region(),
+            page: b11_page(1904),
+            page_dirty_generation: 1,
+            page_backing: PageBacking::FileBacked,
+            cow_state: CowState::Broken,
+            page_state: PageObjectState::Live,
+            page_offset: 0,
+            byte_len: 4096,
+            note: "broken cow".to_string(),
+        },
+    ));
+    assert_eq!(broken_cow.status, CommandStatus::Rejected);
+    assert_eq!(
+        broken_cow.violations,
+        vec!["block page object COW break must be revalidated before IO".to_string()]
+    );
+}
+
+#[test]
+fn block_runtime_b11_invariants_reject_page_generation_leak() {
+    let mut graph = setup_b11_block_page_object_graph();
+    assert!(graph.record_block_page_object_with_id(
+        1835,
+        1834,
+        1,
+        1830,
+        1,
+        b11_aspace(),
+        b11_vma_region(),
+        b11_page(1903),
+        1,
+        PageBacking::FileBacked,
+        CowState::None,
+        PageObjectState::Live,
+        0,
+        4096,
+        "b11 invariant page integration",
+    ));
+    graph.corrupt_block_page_object_page_generation_for_test(1835, 0);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::BlockPageObjectInvalid {
+            block_page_object: 1835,
         })
     );
 }

@@ -772,6 +772,10 @@ impl SemanticGraph {
                 .block_dma_buffers
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::BlockPageObject => self
+                .block_page_objects
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

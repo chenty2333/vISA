@@ -1981,6 +1981,47 @@ impl BlockDmaBufferRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockPageObjectRecord {
+    pub id: BlockPageObjectId,
+    pub block_dma_buffer: BlockDmaBufferId,
+    pub block_dma_buffer_generation: Generation,
+    pub block_request: BlockRequestObjectId,
+    pub block_request_generation: Generation,
+    pub block_completion: BlockCompletionObjectId,
+    pub block_completion_generation: Generation,
+    pub dma_buffer: DmaBufferObjectId,
+    pub dma_buffer_generation: Generation,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub block_range: BlockRangeObjectId,
+    pub block_range_generation: Generation,
+    pub aspace: ContractObjectRef,
+    pub vma_region: ContractObjectRef,
+    pub page: ContractObjectRef,
+    pub page_dirty_generation: Generation,
+    pub page_backing: PageBacking,
+    pub cow_state: CowState,
+    pub page_state: PageObjectState,
+    pub page_offset: u64,
+    pub byte_len: u64,
+    pub operation: BlockRequestOperation,
+    pub generation: Generation,
+    pub state: BlockPageObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl BlockPageObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::BlockPageObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

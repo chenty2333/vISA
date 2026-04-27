@@ -91,10 +91,29 @@ pub enum AddressSpaceState {
     Dead,
 }
 
+impl AddressSpaceState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Frozen => "frozen",
+            Self::Dead => "dead",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VmaState {
     Mapped,
     Unmapped,
+}
+
+impl VmaState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mapped => "mapped",
+            Self::Unmapped => "unmapped",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,6 +121,16 @@ pub enum PageObjectState {
     Live,
     Frozen,
     Dead,
+}
+
+impl PageObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Frozen => "frozen",
+            Self::Dead => "dead",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -179,11 +208,35 @@ pub enum PageBacking {
     External,
 }
 
+impl PageBacking {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Anonymous => "anonymous",
+            Self::FileBacked => "file-backed",
+            Self::CowChild => "cow-child",
+            Self::SharedMemory => "shared-memory",
+            Self::DeviceMemory => "device-memory",
+            Self::ZeroPage => "zero-page",
+            Self::External => "external",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CowState {
     None,
     Shared,
     Broken,
+}
+
+impl CowState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Shared => "shared",
+            Self::Broken => "broken",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
