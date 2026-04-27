@@ -57,6 +57,7 @@ pub struct SemanticGraph {
     socket_waits: Vec<SocketWaitRecord>,
     network_backpressures: Vec<NetworkBackpressureRecord>,
     network_benchmarks: Vec<NetworkBenchmarkRecord>,
+    network_recovery_benchmarks: Vec<NetworkRecoveryBenchmarkRecord>,
     network_driver_cleanups: Vec<NetworkDriverCleanupRecord>,
     network_generation_audits: Vec<NetworkGenerationAuditRecord>,
     network_fault_injections: Vec<NetworkFaultInjectionRecord>,
@@ -128,6 +129,7 @@ pub struct SemanticGraph {
     next_socket_wait_id: SocketWaitId,
     next_network_backpressure_id: NetworkBackpressureId,
     next_network_benchmark_id: NetworkBenchmarkId,
+    next_network_recovery_benchmark_id: NetworkRecoveryBenchmarkId,
     next_network_driver_cleanup_id: NetworkDriverCleanupId,
     next_network_generation_audit_id: NetworkGenerationAuditId,
     next_network_fault_injection_id: NetworkFaultInjectionId,
@@ -179,6 +181,7 @@ mod network_benchmark;
 mod network_driver_cleanup;
 mod network_fault_injection;
 mod network_generation_audit;
+mod network_recovery_benchmark;
 mod network_rx_interrupt;
 mod network_rx_wait;
 mod network_stack_adapter;
@@ -272,6 +275,7 @@ impl SemanticGraph {
             socket_waits: Vec::new(),
             network_backpressures: Vec::new(),
             network_benchmarks: Vec::new(),
+            network_recovery_benchmarks: Vec::new(),
             network_driver_cleanups: Vec::new(),
             network_generation_audits: Vec::new(),
             network_fault_injections: Vec::new(),
@@ -343,6 +347,7 @@ impl SemanticGraph {
             next_socket_wait_id: 1,
             next_network_backpressure_id: 1,
             next_network_benchmark_id: 1,
+            next_network_recovery_benchmark_id: 1,
             next_network_driver_cleanup_id: 1,
             next_network_generation_audit_id: 1,
             next_network_fault_injection_id: 1,

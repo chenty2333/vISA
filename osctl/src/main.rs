@@ -18,15 +18,16 @@ use artifact_manifest::{
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
-    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
-    SmpStressRunManifest, SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
+    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
+    SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
     StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
     TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
     VirtioNetBackendObjectManifest, WaitRecordManifest,
@@ -333,6 +334,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "network-benchmark"
         | "network-throughput"
         | "network-latency"
+        | "network-recovery-benchmark"
+        | "network-recovery"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -503,7 +506,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -753,6 +756,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         }
         "network-fault-injection" | "packet-loss" | "packet-error" => "network-fault-injection",
         "network-benchmark" | "network-throughput" | "network-latency" => "network-benchmark",
+        "network-recovery-benchmark" | "network-recovery" => "network-recovery-benchmark",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3725,6 +3729,92 @@ fn network_benchmark_view_v1(benchmark: &NetworkBenchmarkManifest) -> serde_json
     })
 }
 
+fn network_recovery_benchmark_view_v1(
+    benchmark: &NetworkRecoveryBenchmarkManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "network-recovery-benchmark",
+        "id": benchmark.id,
+        "generation": benchmark.generation,
+        "state": benchmark.state,
+        "owner": {
+            "adapter": object_ref_json(
+                "network-stack-adapter",
+                benchmark.adapter,
+                benchmark.adapter_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                benchmark.packet_device,
+                benchmark.packet_device_generation,
+            ),
+            "driver_store": object_ref_json(
+                "store",
+                benchmark.driver_store,
+                benchmark.driver_store_generation,
+            ),
+        },
+        "references": {
+            "cleanup": object_ref_json(
+                "network-driver-cleanup",
+                benchmark.cleanup,
+                benchmark.cleanup_generation,
+            ),
+            "io_cleanup": object_ref_json(
+                "io-cleanup",
+                benchmark.io_cleanup,
+                benchmark.io_cleanup_generation,
+            ),
+            "adapter": object_ref_json(
+                "network-stack-adapter",
+                benchmark.adapter,
+                benchmark.adapter_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                benchmark.packet_device,
+                benchmark.packet_device_generation,
+            ),
+            "backend": object_ref_manifest_json(&benchmark.backend),
+            "driver_store": object_ref_json(
+                "store",
+                benchmark.driver_store,
+                benchmark.driver_store_generation,
+            ),
+            "fault_injection": optional_object_ref_json(
+                "network-fault-injection",
+                benchmark.fault_injection,
+                benchmark.fault_injection_generation,
+            ),
+            "events": {
+                "recovery_start_event": benchmark.recovery_start_event,
+                "recovery_complete_event": benchmark.recovery_complete_event,
+                "recorded_at_event": benchmark.recorded_at_event,
+            },
+        },
+        "benchmark": {
+            "scenario": benchmark.scenario,
+            "cancelled_socket_waits": benchmark.cancelled_socket_waits,
+            "revoked_packet_capabilities": benchmark.revoked_packet_capabilities,
+            "recovery_nanos": benchmark.recovery_nanos,
+            "budget_nanos": benchmark.budget_nanos,
+            "within_budget": benchmark.recovery_nanos <= benchmark.budget_nanos,
+        },
+        "note": benchmark.note,
+        "last_transition": {
+            "recorded_at_event": benchmark.recorded_at_event,
+            "cleanup_generation": benchmark.cleanup_generation,
+            "io_cleanup_generation": benchmark.io_cleanup_generation,
+            "adapter_generation": benchmark.adapter_generation,
+            "packet_device_generation": benchmark.packet_device_generation,
+            "driver_store_generation": benchmark.driver_store_generation,
+            "fault_injection_generation": benchmark.fault_injection_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -4902,6 +4992,12 @@ fn stable_views_for_kind(
             .iter()
             .map(network_benchmark_view_v1)
             .collect()),
+        "network-recovery-benchmark" | "network-recovery" => Ok(package
+            .semantic
+            .network_recovery_benchmarks
+            .iter()
+            .map(network_recovery_benchmark_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -5945,6 +6041,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "network-driver-cleanup",
         &package.semantic.roots.network_driver_cleanup_roots,
+    );
+    print_roots(
+        "network-recovery-benchmark",
+        &package.semantic.roots.network_recovery_benchmark_roots,
     );
     print_roots(
         "activation-resume",
@@ -7367,6 +7467,84 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                     backpressure_generation,
                 ),
                 "network-benchmark->network-backpressure",
+                "historical",
+                event,
+            ));
+        }
+    }
+    for benchmark in &package.semantic.network_recovery_benchmarks {
+        let from = object_ref_json(
+            "network-recovery-benchmark",
+            benchmark.id,
+            benchmark.generation,
+        );
+        let event = Some(benchmark.recorded_at_event);
+        for (target, relation) in [
+            (
+                object_ref_json(
+                    "network-driver-cleanup",
+                    benchmark.cleanup,
+                    benchmark.cleanup_generation,
+                ),
+                "network-recovery-benchmark->network-driver-cleanup",
+            ),
+            (
+                object_ref_json(
+                    "io-cleanup",
+                    benchmark.io_cleanup,
+                    benchmark.io_cleanup_generation,
+                ),
+                "network-recovery-benchmark->io-cleanup",
+            ),
+            (
+                object_ref_json(
+                    "network-stack-adapter",
+                    benchmark.adapter,
+                    benchmark.adapter_generation,
+                ),
+                "network-recovery-benchmark->network-stack-adapter",
+            ),
+            (
+                object_ref_json(
+                    "packet-device",
+                    benchmark.packet_device,
+                    benchmark.packet_device_generation,
+                ),
+                "network-recovery-benchmark->packet-device",
+            ),
+            (
+                object_ref_manifest_json(&benchmark.backend),
+                "network-recovery-benchmark->backend",
+            ),
+            (
+                object_ref_json(
+                    "store",
+                    benchmark.driver_store,
+                    benchmark.driver_store_generation,
+                ),
+                "network-recovery-benchmark->driver-store",
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                target,
+                relation,
+                "historical",
+                event,
+            ));
+        }
+        if let (Some(fault_injection), Some(fault_injection_generation)) = (
+            benchmark.fault_injection,
+            benchmark.fault_injection_generation,
+        ) {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(
+                    "network-fault-injection",
+                    fault_injection,
+                    fault_injection_generation,
+                ),
+                "network-recovery-benchmark->network-fault-injection",
                 "historical",
                 event,
             ));
@@ -10009,7 +10187,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -10062,6 +10240,11 @@ fn replay_until(
         package.semantic.roots.network_generation_audit_roots.len(),
         package.semantic.roots.network_fault_injection_roots.len(),
         package.semantic.roots.network_benchmark_roots.len(),
+        package
+            .semantic
+            .roots
+            .network_recovery_benchmark_roots
+            .len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -10213,6 +10396,9 @@ fn replay_until(
     }
     for benchmark in &package.semantic.roots.network_benchmark_roots {
         println!("replay network-benchmark {benchmark}");
+    }
+    for benchmark in &package.semantic.roots.network_recovery_benchmark_roots {
+        println!("replay network-recovery-benchmark {benchmark}");
     }
     Ok(())
 }
@@ -10427,6 +10613,16 @@ fn print_replay_json(
     roots.insert(
         "network_benchmarks".to_owned(),
         serde_json::json!(package.semantic.roots.network_benchmark_roots.len()),
+    );
+    roots.insert(
+        "network_recovery_benchmarks".to_owned(),
+        serde_json::json!(
+            package
+                .semantic
+                .roots
+                .network_recovery_benchmark_roots
+                .len()
+        ),
     );
     roots.insert(
         "resources".to_owned(),
@@ -10756,6 +10952,10 @@ fn print_replay_json(
         "network_benchmark_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.network_benchmark_roots),
     );
+    roots.insert(
+        "network_recovery_benchmark_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.network_recovery_benchmark_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -10800,7 +11000,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -10859,6 +11059,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.network_generation_audit_count,
         package.semantic.network_fault_injection_count,
         package.semantic.network_benchmark_count,
+        package.semantic.network_recovery_benchmark_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -12119,6 +12320,58 @@ mod tests {
         assert_eq!(view["benchmark"]["throughput_bytes_per_sec"], 50_000_000);
         assert_eq!(view["benchmark"]["p99_latency_nanos"], 48_000);
         assert_eq!(view["last_transition"]["recorded_at_event"], 101);
+    }
+
+    #[test]
+    fn network_recovery_benchmark_view_v1_exposes_recovery_metrics() {
+        let view = network_recovery_benchmark_view_v1(&NetworkRecoveryBenchmarkManifest {
+            id: 99,
+            scenario: "host-validation-network-driver-recovery".to_owned(),
+            cleanup: 100,
+            cleanup_generation: 1,
+            io_cleanup: 70,
+            io_cleanup_generation: 2,
+            adapter: 74,
+            adapter_generation: 5,
+            packet_device: 51,
+            packet_device_generation: 4,
+            backend: ContractObjectRefManifest {
+                kind: "virtio-net-backend-object".to_owned(),
+                id: 85,
+                generation: 3,
+            },
+            driver_store: 7,
+            driver_store_generation: 8,
+            fault_injection: Some(102),
+            fault_injection_generation: Some(1),
+            recovery_start_event: 33,
+            recovery_complete_event: 34,
+            cancelled_socket_waits: 1,
+            revoked_packet_capabilities: 1,
+            recovery_nanos: 90_000,
+            budget_nanos: 200_000,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 103,
+            note: "network recovery benchmark".to_owned(),
+        });
+        assert_eq!(view["kind"], "network-recovery-benchmark");
+        assert_eq!(view["owner"]["driver_store"]["generation"], 8);
+        assert_eq!(
+            view["references"]["cleanup"]["kind"],
+            "network-driver-cleanup"
+        );
+        assert_eq!(
+            view["references"]["backend"]["kind"],
+            "virtio-net-backend-object"
+        );
+        assert_eq!(
+            view["references"]["fault_injection"]["kind"],
+            "network-fault-injection"
+        );
+        assert_eq!(view["benchmark"]["recovery_nanos"], 90_000);
+        assert_eq!(view["benchmark"]["within_budget"], true);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 103);
     }
 
     #[test]
@@ -14973,6 +15226,40 @@ mod tests {
                 recorded_at_event: 37,
                 note: "network benchmark graph".to_owned(),
             });
+        package
+            .semantic
+            .network_recovery_benchmarks
+            .push(NetworkRecoveryBenchmarkManifest {
+                id: 104,
+                scenario: "host-validation-network-driver-recovery".to_owned(),
+                cleanup: 100,
+                cleanup_generation: 1,
+                io_cleanup: 70,
+                io_cleanup_generation: 1,
+                adapter: 93,
+                adapter_generation: 1,
+                packet_device: 81,
+                packet_device_generation: 1,
+                backend: ContractObjectRefManifest {
+                    kind: "virtio-net-backend-object".to_owned(),
+                    id: 85,
+                    generation: 1,
+                },
+                driver_store: 1,
+                driver_store_generation: 2,
+                fault_injection: Some(102),
+                fault_injection_generation: Some(1),
+                recovery_start_event: 33,
+                recovery_complete_event: 34,
+                cancelled_socket_waits: 1,
+                revoked_packet_capabilities: 1,
+                recovery_nanos: 90_000,
+                budget_nanos: 200_000,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 38,
+                note: "network recovery benchmark graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -15085,6 +15372,11 @@ mod tests {
                 .iter()
                 .any(|edge| edge["from"]["kind"] == "network-benchmark")
         );
+        assert!(
+            !live
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "network-recovery-benchmark")
+        );
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
@@ -15196,6 +15488,21 @@ mod tests {
             && edge["relation"] == "network-benchmark->network-backpressure"
             && edge["from"]["kind"] == "network-benchmark"
             && edge["to"]["kind"] == "network-backpressure"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-recovery-benchmark->network-driver-cleanup"
+            && edge["from"]["kind"] == "network-recovery-benchmark"
+            && edge["to"]["kind"] == "network-driver-cleanup"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-recovery-benchmark->network-fault-injection"
+            && edge["from"]["kind"] == "network-recovery-benchmark"
+            && edge["to"]["kind"] == "network-fault-injection"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-recovery-benchmark->backend"
+            && edge["from"]["kind"] == "network-recovery-benchmark"
+            && edge["to"]["kind"] == "virtio-net-backend-object"
             && edge["to"]["generation"] == 1));
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
             && edge["relation"] == "network-rx-interrupt->irq-event"

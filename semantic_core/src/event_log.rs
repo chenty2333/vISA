@@ -792,6 +792,28 @@ pub enum EventKind {
         p99_latency_nanos: u64,
         generation: Generation,
     },
+    NetworkRecoveryBenchmarkRecorded {
+        benchmark: NetworkRecoveryBenchmarkId,
+        cleanup: NetworkDriverCleanupId,
+        cleanup_generation: Generation,
+        io_cleanup: IoCleanupId,
+        io_cleanup_generation: Generation,
+        adapter: NetworkStackAdapterId,
+        adapter_generation: Generation,
+        packet_device: PacketDeviceObjectId,
+        packet_device_generation: Generation,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        fault_injection: Option<NetworkFaultInjectionId>,
+        fault_injection_generation: Option<Generation>,
+        recovery_start_event: EventId,
+        recovery_complete_event: EventId,
+        cancelled_socket_waits: u32,
+        revoked_packet_capabilities: u32,
+        recovery_nanos: u64,
+        budget_nanos: u64,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -2210,6 +2232,39 @@ impl EventKind {
             } => format!(
                 "NetworkBenchmarkRecorded benchmark={benchmark} adapter={adapter}@{adapter_generation} packet_device={packet_device}@{packet_device_generation} tx_completion={tx_completion}@{tx_completion_generation} rx_wait_resolution={rx_wait_resolution}@{rx_wait_resolution_generation} endpoint={endpoint}@{endpoint_generation} socket={socket}@{socket_generation} owner_store={owner_store}@{owner_store_generation} sample_packets={sample_packets} sample_bytes={sample_bytes} tx_completed_packets={tx_completed_packets} rx_resolved_packets={rx_resolved_packets} dropped_packets={dropped_packets} measured_nanos={measured_nanos} budget_nanos={budget_nanos} throughput_bytes_per_sec={throughput_bytes_per_sec} p50_latency_nanos={p50_latency_nanos} p99_latency_nanos={p99_latency_nanos} generation={generation}",
             ),
+            Self::NetworkRecoveryBenchmarkRecorded {
+                benchmark,
+                cleanup,
+                cleanup_generation,
+                io_cleanup,
+                io_cleanup_generation,
+                adapter,
+                adapter_generation,
+                packet_device,
+                packet_device_generation,
+                driver_store,
+                driver_store_generation,
+                fault_injection,
+                fault_injection_generation,
+                recovery_start_event,
+                recovery_complete_event,
+                cancelled_socket_waits,
+                revoked_packet_capabilities,
+                recovery_nanos,
+                budget_nanos,
+                generation,
+            } => {
+                let fault_injection_summary = match (*fault_injection, *fault_injection_generation)
+                {
+                    (Some(injection), Some(injection_generation)) => {
+                        format!("{injection}@{injection_generation}")
+                    }
+                    _ => "none".to_string(),
+                };
+                format!(
+                    "NetworkRecoveryBenchmarkRecorded benchmark={benchmark} cleanup={cleanup}@{cleanup_generation} io_cleanup={io_cleanup}@{io_cleanup_generation} adapter={adapter}@{adapter_generation} packet_device={packet_device}@{packet_device_generation} driver_store={driver_store}@{driver_store_generation} fault_injection={fault_injection_summary} recovery_start_event={recovery_start_event} recovery_complete_event={recovery_complete_event} cancelled_socket_waits={cancelled_socket_waits} revoked_packet_capabilities={revoked_packet_capabilities} recovery_nanos={recovery_nanos} budget_nanos={budget_nanos} generation={generation}"
+                )
+            }
             Self::RuntimeActivationResumed {
                 resume,
                 decision,

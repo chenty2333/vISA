@@ -119,6 +119,7 @@ pub enum ObjectKind {
     NetworkGenerationAudit,
     NetworkFaultInjection,
     NetworkBenchmark,
+    NetworkRecoveryBenchmark,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -203,6 +204,7 @@ impl ObjectKind {
             Self::NetworkGenerationAudit => "network-generation-audit",
             Self::NetworkFaultInjection => "network-fault-injection",
             Self::NetworkBenchmark => "network-benchmark",
+            Self::NetworkRecoveryBenchmark => "network-recovery-benchmark",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -462,6 +464,10 @@ typed_ref!(
 );
 typed_ref!(NetworkFaultInjectionRef, ObjectKind::NetworkFaultInjection);
 typed_ref!(NetworkBenchmarkRef, ObjectKind::NetworkBenchmark);
+typed_ref!(
+    NetworkRecoveryBenchmarkRef,
+    ObjectKind::NetworkRecoveryBenchmark
+);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1935,6 +1941,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("network benchmark root/count mismatch"));
     }
+    if roots.network_recovery_benchmark_roots.len()
+        != package.semantic.network_recovery_benchmark_count
+        || package.semantic.network_recovery_benchmarks.len()
+            != package.semantic.network_recovery_benchmark_count
+    {
+        return Err(ContractError::new(
+            "network recovery benchmark root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2510,6 +2525,7 @@ mod tests {
                 network_generation_audit_count: 0,
                 network_fault_injection_count: 0,
                 network_benchmark_count: 0,
+                network_recovery_benchmark_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2603,6 +2619,7 @@ mod tests {
                 network_generation_audits: Vec::new(),
                 network_fault_injections: Vec::new(),
                 network_benchmarks: Vec::new(),
+                network_recovery_benchmarks: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4409,6 +4426,51 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_network_recovery_benchmark_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.network_recovery_benchmark_count = 1;
+        package.semantic.network_recovery_benchmarks.push(
+            artifact_manifest::NetworkRecoveryBenchmarkManifest {
+                id: 52,
+                scenario: "host-validation-network-driver-recovery".to_owned(),
+                cleanup: 46,
+                cleanup_generation: 1,
+                io_cleanup: 32,
+                io_cleanup_generation: 1,
+                adapter: 41,
+                adapter_generation: 1,
+                packet_device: 30,
+                packet_device_generation: 1,
+                backend: artifact_manifest::ContractObjectRefManifest {
+                    kind: "virtio-net-backend-object".to_owned(),
+                    id: 35,
+                    generation: 1,
+                },
+                driver_store: 7,
+                driver_store_generation: 1,
+                fault_injection: Some(48),
+                fault_injection_generation: Some(1),
+                recovery_start_event: 80,
+                recovery_complete_event: 90,
+                cancelled_socket_waits: 1,
+                revoked_packet_capabilities: 1,
+                recovery_nanos: 90_000,
+                budget_nanos: 200_000,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 96,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "network recovery benchmark root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -4945,6 +5007,9 @@ mod tests {
         assert!(NetworkFaultInjectionRef::try_from_ref(network_fault_injection).is_ok());
         let network_benchmark = ObjectRef::new(ObjectKind::NetworkBenchmark, 49, 1).unwrap();
         assert!(NetworkBenchmarkRef::try_from_ref(network_benchmark).is_ok());
+        let network_recovery_benchmark =
+            ObjectRef::new(ObjectKind::NetworkRecoveryBenchmark, 50, 1).unwrap();
+        assert!(NetworkRecoveryBenchmarkRef::try_from_ref(network_recovery_benchmark).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

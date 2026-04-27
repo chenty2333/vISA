@@ -1442,6 +1442,20 @@ pub enum SemanticInvariantError {
         benchmark: NetworkBenchmarkId,
         event: EventId,
     },
+    NetworkRecoveryBenchmarkInvalid {
+        benchmark: NetworkRecoveryBenchmarkId,
+    },
+    NetworkRecoveryBenchmarkMissingTarget {
+        benchmark: NetworkRecoveryBenchmarkId,
+        target: ContractObjectRef,
+    },
+    NetworkRecoveryBenchmarkMetricMismatch {
+        benchmark: NetworkRecoveryBenchmarkId,
+    },
+    NetworkRecoveryBenchmarkMissingEvent {
+        benchmark: NetworkRecoveryBenchmarkId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

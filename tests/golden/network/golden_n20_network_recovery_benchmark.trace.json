@@ -1,0 +1,145 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "N20-network-recovery-benchmark",
+  "name": "golden_n20_network_recovery_benchmark",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md"
+  ],
+  "no_goals": [
+    "real virtio datapath",
+    "real smoltcp recovery timing",
+    "real DMA/IOMMU/MMIO/IRQ hardware access",
+    "calibrated network recovery time",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "N18 has recorded network-fault-injection:10064@1 before the driver cleanup",
+      "N16 has completed network-driver-cleanup:10051@1 for packet-device:10002@1",
+      "The cleanup cancelled one socket wait and revoked one packet device capability",
+      "N20 records recovery timing as deterministic semantic benchmark evidence only"
+    ],
+    "commands": [
+      {
+        "id": 193,
+        "command": "record-network-recovery-benchmark",
+        "benchmark": "network-recovery-benchmark:10068@1",
+        "scenario": "host-validation-network-driver-recovery",
+        "cleanup": "network-driver-cleanup:10051@1",
+        "io_cleanup": "io-cleanup:10052@1",
+        "adapter": "network-stack-adapter:10025@1",
+        "packet_device": "packet-device:10002@1",
+        "backend": "virtio-net-backend-object:10010@1",
+        "driver_store": "store:7@3",
+        "fault_injection": "network-fault-injection:10064@1",
+        "recovery_start_event": 369,
+        "recovery_complete_event": 378,
+        "recovery_nanos": 90000,
+        "budget_nanos": 200000,
+        "expected": "applied"
+      },
+      {
+        "id": 194,
+        "command": "record-network-recovery-benchmark",
+        "scenario": "stale cleanup generation cannot record recovery benchmark",
+        "cleanup": "network-driver-cleanup:10051@2",
+        "expected": "rejected",
+        "violation": "network recovery benchmark cleanup generation is missing or incomplete"
+      },
+      {
+        "id": 195,
+        "command": "record-network-recovery-benchmark",
+        "scenario": "recovery budget overrun cannot record benchmark",
+        "expected": "rejected",
+        "violation": "network recovery benchmark exceeds recovery budget"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 380,
+      "kind": "NetworkRecoveryBenchmarkRecorded",
+      "benchmark": "network-recovery-benchmark:10068@1",
+      "cleanup": "network-driver-cleanup:10051@1",
+      "io_cleanup": "io-cleanup:10052@1",
+      "adapter": "network-stack-adapter:10025@1",
+      "packet_device": "packet-device:10002@1",
+      "driver_store": "store:7@3",
+      "fault_injection": "network-fault-injection:10064@1",
+      "recovery_start_event": 369,
+      "recovery_complete_event": 378,
+      "cancelled_socket_waits": 1,
+      "revoked_packet_capabilities": 1,
+      "recovery_nanos": 90000,
+      "budget_nanos": 200000
+    }
+  ],
+  "expected": {
+    "views": {
+      "network-recovery-benchmark": {
+        "count": 1,
+        "benchmark": "network-recovery-benchmark:10068@1",
+        "cleanup": "network-driver-cleanup:10051@1",
+        "io_cleanup": "io-cleanup:10052@1",
+        "adapter": "network-stack-adapter:10025@1",
+        "packet_device": "packet-device:10002@1",
+        "backend": "virtio-net-backend-object:10010@1",
+        "driver_store": "store:7@3",
+        "fault_injection": "network-fault-injection:10064@1",
+        "cancelled_socket_waits": 1,
+        "revoked_packet_capabilities": 1,
+        "recovery_nanos": 90000,
+        "budget_nanos": 200000,
+        "within_budget": true
+      },
+      "command": {
+        "benchmark_applied": "command-result:193:record-network-recovery-benchmark:applied",
+        "stale_cleanup_rejected": "command-result:194:record-network-recovery-benchmark:rejected",
+        "budget_overrun_rejected": "command-result:195:record-network-recovery-benchmark:rejected"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "historical_edges": [
+          "network-recovery-benchmark->network-driver-cleanup",
+          "network-recovery-benchmark->io-cleanup",
+          "network-recovery-benchmark->network-stack-adapter",
+          "network-recovery-benchmark->packet-device",
+          "network-recovery-benchmark->backend",
+          "network-recovery-benchmark->driver-store",
+          "network-recovery-benchmark->network-fault-injection"
+        ],
+        "live_edges": []
+      }
+    },
+    "invariants": [
+      "NetworkRecoveryBenchmark references exact cleanup, io cleanup, adapter, packet device, backend, driver store, and fault injection generations",
+      "fault injection evidence must precede cleanup start",
+      "cleanup effect counts must match the completed NetworkDriverCleanup record",
+      "recovery_nanos must be nonzero and within budget_nanos",
+      "stale cleanup generation rejects before mutation",
+      "recovery budget overrun rejects before mutation",
+      "NetworkRecoveryBenchmark is historical evidence only and creates no live ownership edge"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "network_runtime_n20_recovery_benchmark_records_cleanup_latency_evidence",
+      "network_runtime_n20_rejects_stale_cleanup_and_budget_overrun",
+      "network_runtime_n20_invariants_reject_cleanup_generation_drift",
+      "network_recovery_benchmark_view_v1_exposes_recovery_metrics",
+      "semantic_roots_reject_network_recovery_benchmark_root_mismatch",
+      "graph_json_edges_separate_live_history_and_cleanup_modes"
+    ],
+    "osctl_json_view": "network-recovery-benchmark list --json",
+    "target_executor_event_cursor": 382
+  }
+}

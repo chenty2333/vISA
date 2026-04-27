@@ -724,6 +724,10 @@ impl SemanticGraph {
                 .network_benchmarks
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::NetworkRecoveryBenchmark => self
+                .network_recovery_benchmarks
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

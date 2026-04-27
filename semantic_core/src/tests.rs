@@ -9855,6 +9855,238 @@ fn network_runtime_n19_invariants_reject_throughput_metric_drift() {
     );
 }
 
+fn setup_n20_network_recovery_graph() -> SemanticGraph {
+    let (mut graph, _, connected_endpoint) = setup_n14_socket_wait_graph();
+    let owner_store = graph.store_id("linux_socket_service").unwrap();
+    let owner_store_generation = graph.store_handle(owner_store).unwrap().generation;
+    let blocker = ContractObjectRef::new(ContractObjectKind::EndpointObject, connected_endpoint, 1);
+    assert_eq!(
+        graph
+            .apply_envelope(CommandEnvelope::new(
+                1,
+                "n20-setup",
+                SemanticCommand::CreateWait {
+                    wait: 1597,
+                    owner_task: None,
+                    owner_store: Some(owner_store),
+                    owner_store_generation: Some(owner_store_generation),
+                    kind: SemanticWaitKind::SocketReadable,
+                    generation: 1,
+                    blockers: vec![blocker],
+                    deadline: None,
+                    restart_policy: RestartPolicy::RestartIfAllowed,
+                    saved_context: Some("n20 pending recv before driver fault".to_string()),
+                },
+            ))
+            .status,
+        CommandStatus::Applied
+    );
+    assert_eq!(
+        graph
+            .apply_envelope(CommandEnvelope::new(
+                2,
+                "n20-setup",
+                SemanticCommand::RecordSocketWait {
+                    socket_wait: 1598,
+                    wait: 1597,
+                    wait_generation: 1,
+                    endpoint: connected_endpoint,
+                    endpoint_generation: 1,
+                    wait_kind: SemanticWaitKind::SocketReadable,
+                    blocker,
+                    note: "n20 pending socket wait before driver fault".to_string(),
+                },
+            ))
+            .status,
+        CommandStatus::Applied
+    );
+    assert_eq!(
+        graph
+            .apply_envelope(CommandEnvelope::new(
+                3,
+                "n20-setup",
+                SemanticCommand::RecordNetworkFaultInjection {
+                    injection: 1609,
+                    adapter: 1575,
+                    adapter_generation: 1,
+                    packet_device: 1541,
+                    packet_device_generation: 1,
+                    packet_queue: 1545,
+                    packet_queue_generation: 1,
+                    packet_descriptor: Some(1547),
+                    packet_descriptor_generation: Some(1),
+                    packet_buffer: Some(1543),
+                    packet_buffer_generation: Some(1),
+                    endpoint: Some(connected_endpoint),
+                    endpoint_generation: Some(1),
+                    direction: PacketBufferDirection::Tx,
+                    kind: NetworkFaultInjectionKind::PacketError,
+                    effect: NetworkFaultInjectionEffect::ReportError,
+                    injected_packets: 1,
+                    dropped_packets: 0,
+                    error_packets: 1,
+                    error_code: "injected-checksum-error".to_string(),
+                    sequence: 19,
+                    note: "n20 injected packet error before recovery".to_string(),
+                },
+            ))
+            .status,
+        CommandStatus::Applied
+    );
+    assert!(graph.cleanup_network_driver_with_id(
+        1599,
+        1600,
+        1575,
+        1,
+        1541,
+        1,
+        ContractObjectRef::new(ContractObjectKind::VirtioNetBackendObject, 1553, 1),
+        "device-fault",
+        "n20 network driver cleanup",
+    ));
+    graph
+}
+
+#[test]
+fn network_runtime_n20_recovery_benchmark_records_cleanup_latency_evidence() {
+    let mut graph = setup_n20_network_recovery_graph();
+    let cleanup = graph.network_driver_cleanups()[0].clone();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "n20-test",
+        SemanticCommand::RecordNetworkRecoveryBenchmark {
+            benchmark: 1615,
+            scenario: "host-validation-network-driver-recovery".to_string(),
+            cleanup: cleanup.id,
+            cleanup_generation: cleanup.generation,
+            io_cleanup: cleanup.io_cleanup,
+            io_cleanup_generation: cleanup.io_cleanup_generation,
+            fault_injection: Some(1609),
+            fault_injection_generation: Some(1),
+            recovery_start_event: cleanup.started_at_event,
+            recovery_complete_event: cleanup.completed_at_event.unwrap(),
+            cancelled_socket_waits: cleanup.cancelled_socket_waits.len() as u32,
+            revoked_packet_capabilities: cleanup.revoked_packet_capabilities.len() as u32,
+            recovery_nanos: 90_000,
+            budget_nanos: 200_000,
+            note: "n20 recovery benchmark".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    assert_eq!(graph.network_recovery_benchmark_count(), 1);
+    let benchmark = &graph.network_recovery_benchmarks()[0];
+    assert_eq!(
+        benchmark.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::NetworkRecoveryBenchmark, 1615, 1)
+    );
+    assert_eq!(benchmark.cleanup, 1599);
+    assert_eq!(benchmark.io_cleanup, 1600);
+    assert_eq!(benchmark.fault_injection, Some(1609));
+    assert_eq!(benchmark.cancelled_socket_waits, 1);
+    assert_eq!(benchmark.revoked_packet_capabilities, 1);
+    assert_eq!(benchmark.recovery_nanos, 90_000);
+    assert!(
+        graph.event_log_tail(1)[0]
+            .kind
+            .summary()
+            .contains("NetworkRecoveryBenchmarkRecorded benchmark=1615")
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn network_runtime_n20_rejects_stale_cleanup_and_budget_overrun() {
+    let mut graph = setup_n20_network_recovery_graph();
+    let cleanup = graph.network_driver_cleanups()[0].clone();
+    let stale_cleanup = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "n20-test",
+        SemanticCommand::RecordNetworkRecoveryBenchmark {
+            benchmark: 1615,
+            scenario: "host-validation-network-driver-recovery".to_string(),
+            cleanup: cleanup.id,
+            cleanup_generation: cleanup.generation.saturating_add(1),
+            io_cleanup: cleanup.io_cleanup,
+            io_cleanup_generation: cleanup.io_cleanup_generation,
+            fault_injection: Some(1609),
+            fault_injection_generation: Some(1),
+            recovery_start_event: cleanup.started_at_event,
+            recovery_complete_event: cleanup.completed_at_event.unwrap(),
+            cancelled_socket_waits: cleanup.cancelled_socket_waits.len() as u32,
+            revoked_packet_capabilities: cleanup.revoked_packet_capabilities.len() as u32,
+            recovery_nanos: 90_000,
+            budget_nanos: 200_000,
+            note: "n20 stale cleanup generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_cleanup.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_cleanup.violations,
+        vec!["network recovery benchmark cleanup generation is missing or incomplete".to_string()]
+    );
+
+    let budget_overrun = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "n20-test",
+        SemanticCommand::RecordNetworkRecoveryBenchmark {
+            benchmark: 1615,
+            scenario: "host-validation-network-driver-recovery".to_string(),
+            cleanup: cleanup.id,
+            cleanup_generation: cleanup.generation,
+            io_cleanup: cleanup.io_cleanup,
+            io_cleanup_generation: cleanup.io_cleanup_generation,
+            fault_injection: Some(1609),
+            fault_injection_generation: Some(1),
+            recovery_start_event: cleanup.started_at_event,
+            recovery_complete_event: cleanup.completed_at_event.unwrap(),
+            cancelled_socket_waits: cleanup.cancelled_socket_waits.len() as u32,
+            revoked_packet_capabilities: cleanup.revoked_packet_capabilities.len() as u32,
+            recovery_nanos: 210_000,
+            budget_nanos: 200_000,
+            note: "n20 recovery budget overrun".to_string(),
+        },
+    ));
+    assert_eq!(budget_overrun.status, CommandStatus::Rejected);
+    assert_eq!(
+        budget_overrun.violations,
+        vec!["network recovery benchmark exceeds recovery budget".to_string()]
+    );
+}
+
+#[test]
+fn network_runtime_n20_invariants_reject_cleanup_generation_drift() {
+    let mut graph = setup_n20_network_recovery_graph();
+    let cleanup = graph.network_driver_cleanups()[0].clone();
+    assert!(graph.record_network_recovery_benchmark_with_id(
+        1615,
+        "host-validation-network-driver-recovery",
+        cleanup.id,
+        cleanup.generation,
+        cleanup.io_cleanup,
+        cleanup.io_cleanup_generation,
+        Some(1609),
+        Some(1),
+        cleanup.started_at_event,
+        cleanup.completed_at_event.unwrap(),
+        cleanup.cancelled_socket_waits.len() as u32,
+        cleanup.revoked_packet_capabilities.len() as u32,
+        90_000,
+        200_000,
+        "n20 recovery benchmark",
+    ));
+    graph.corrupt_network_recovery_benchmark_cleanup_generation_for_test(1615, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::NetworkRecoveryBenchmarkMissingTarget {
+                benchmark: 1615,
+                target: ContractObjectRef::new(ContractObjectKind::NetworkDriverCleanup, 1599, 2),
+            }
+        )
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

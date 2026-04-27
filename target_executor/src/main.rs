@@ -23,11 +23,12 @@ use artifact_manifest::{
     MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
     MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -188,6 +189,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n18_evidence(&mut semantic)?;
     record_network_runtime_n16_evidence(&mut semantic)?;
     record_network_runtime_n19_evidence(&mut semantic)?;
+    record_network_runtime_n20_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -1718,6 +1720,127 @@ fn record_network_runtime_n19_evidence(semantic: &mut SemanticGraph) -> Result<(
     {
         return Err(format!(
             "network runtime n19 budget command {} ({}) was not rejected: status={} violations={:?}",
+            budget_overrun.command_id,
+            budget_overrun.command,
+            budget_overrun.status.as_str(),
+            budget_overrun.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+fn record_network_runtime_n20_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let cleanup = semantic
+        .network_driver_cleanups()
+        .iter()
+        .find(|record| record.id == 10_051 && record.generation == 1)
+        .cloned()
+        .ok_or("network driver cleanup 10051@1 is missing for n20 evidence")?;
+    let cleanup_complete_event = cleanup
+        .completed_at_event
+        .ok_or("network driver cleanup completion event is missing for n20 evidence")?;
+    let cancelled_socket_waits = cleanup.cancelled_socket_waits.len() as u32;
+    let revoked_packet_capabilities = cleanup.revoked_packet_capabilities.len() as u32;
+    let benchmark = semantic.apply_envelope(CommandEnvelope::new(
+        193,
+        "target-executor-n20",
+        SemanticCommand::RecordNetworkRecoveryBenchmark {
+            benchmark: 10_068,
+            scenario: "host-validation-network-driver-recovery".to_owned(),
+            cleanup: cleanup.id,
+            cleanup_generation: cleanup.generation,
+            io_cleanup: cleanup.io_cleanup,
+            io_cleanup_generation: cleanup.io_cleanup_generation,
+            fault_injection: Some(10_064),
+            fault_injection_generation: Some(1),
+            recovery_start_event: cleanup.started_at_event,
+            recovery_complete_event: cleanup_complete_event,
+            cancelled_socket_waits,
+            revoked_packet_capabilities,
+            recovery_nanos: 90_000,
+            budget_nanos: 200_000,
+            note: "n20-record-host-validation-network-recovery-benchmark".to_owned(),
+        },
+    ));
+    if benchmark.status != CommandStatus::Applied {
+        return Err(format!(
+            "network runtime n20 recovery benchmark command {} ({}) failed: status={} violations={:?}",
+            benchmark.command_id,
+            benchmark.command,
+            benchmark.status.as_str(),
+            benchmark.violations
+        )
+        .into());
+    }
+
+    let stale_cleanup = semantic.apply_envelope(CommandEnvelope::new(
+        194,
+        "target-executor-n20",
+        SemanticCommand::RecordNetworkRecoveryBenchmark {
+            benchmark: 10_069,
+            scenario: "stale cleanup generation cannot record recovery benchmark".to_owned(),
+            cleanup: cleanup.id,
+            cleanup_generation: cleanup.generation.saturating_add(1),
+            io_cleanup: cleanup.io_cleanup,
+            io_cleanup_generation: cleanup.io_cleanup_generation,
+            fault_injection: Some(10_064),
+            fault_injection_generation: Some(1),
+            recovery_start_event: cleanup.started_at_event,
+            recovery_complete_event: cleanup_complete_event,
+            cancelled_socket_waits,
+            revoked_packet_capabilities,
+            recovery_nanos: 90_000,
+            budget_nanos: 200_000,
+            note: "n20-reject-stale-cleanup-generation".to_owned(),
+        },
+    ));
+    if stale_cleanup.status != CommandStatus::Rejected
+        || !stale_cleanup
+            .violations
+            .iter()
+            .any(|violation| violation.contains("cleanup generation"))
+    {
+        return Err(format!(
+            "network runtime n20 stale cleanup command {} ({}) was not rejected: status={} violations={:?}",
+            stale_cleanup.command_id,
+            stale_cleanup.command,
+            stale_cleanup.status.as_str(),
+            stale_cleanup.violations
+        )
+        .into());
+    }
+
+    let budget_overrun = semantic.apply_envelope(CommandEnvelope::new(
+        195,
+        "target-executor-n20",
+        SemanticCommand::RecordNetworkRecoveryBenchmark {
+            benchmark: 10_069,
+            scenario: "recovery budget overrun cannot record benchmark".to_owned(),
+            cleanup: cleanup.id,
+            cleanup_generation: cleanup.generation,
+            io_cleanup: cleanup.io_cleanup,
+            io_cleanup_generation: cleanup.io_cleanup_generation,
+            fault_injection: Some(10_064),
+            fault_injection_generation: Some(1),
+            recovery_start_event: cleanup.started_at_event,
+            recovery_complete_event: cleanup_complete_event,
+            cancelled_socket_waits,
+            revoked_packet_capabilities,
+            recovery_nanos: 210_000,
+            budget_nanos: 200_000,
+            note: "n20-reject-recovery-budget-overrun".to_owned(),
+        },
+    ));
+    if budget_overrun.status != CommandStatus::Rejected
+        || !budget_overrun
+            .violations
+            .iter()
+            .any(|violation| violation.contains("recovery budget"))
+    {
+        return Err(format!(
+            "network runtime n20 budget command {} ({}) was not rejected: status={} violations={:?}",
             budget_overrun.command_id,
             budget_overrun.command,
             budget_overrun.status.as_str(),
@@ -4530,6 +4653,7 @@ fn demo_migration_package(
             network_generation_audit_count: semantic.network_generation_audit_count(),
             network_fault_injection_count: semantic.network_fault_injection_count(),
             network_benchmark_count: semantic.network_benchmark_count(),
+            network_recovery_benchmark_count: semantic.network_recovery_benchmark_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -4826,6 +4950,11 @@ fn demo_migration_package(
                 .network_benchmarks()
                 .iter()
                 .map(network_benchmark_manifest)
+                .collect(),
+            network_recovery_benchmarks: semantic
+                .network_recovery_benchmarks()
+                .iter()
+                .map(network_recovery_benchmark_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -6102,6 +6231,39 @@ fn semantic_roots(
                     benchmark.throughput_bytes_per_sec,
                     benchmark.p50_latency_nanos,
                     benchmark.p99_latency_nanos,
+                    benchmark.state.as_str(),
+                    benchmark.generation
+                )
+            })
+            .collect(),
+        network_recovery_benchmark_roots: semantic
+            .network_recovery_benchmarks()
+            .iter()
+            .map(|benchmark| {
+                format!(
+                    "network-recovery-benchmark id={} scenario={} cleanup={}@{} io_cleanup={}@{} adapter={}@{} packet_device={}@{} backend={}:{}@{} driver_store={}@{} fault_injection={} recovery_start_event={} recovery_complete_event={} cancelled_socket_waits={} revoked_packet_capabilities={} recovery_nanos={} budget_nanos={} state={} generation={}",
+                    benchmark.id,
+                    benchmark.scenario,
+                    benchmark.cleanup,
+                    benchmark.cleanup_generation,
+                    benchmark.io_cleanup,
+                    benchmark.io_cleanup_generation,
+                    benchmark.adapter,
+                    benchmark.adapter_generation,
+                    benchmark.packet_device,
+                    benchmark.packet_device_generation,
+                    benchmark.backend.kind.as_str(),
+                    benchmark.backend.id,
+                    benchmark.backend.generation,
+                    benchmark.driver_store,
+                    benchmark.driver_store_generation,
+                    optional_generation_ref(benchmark.fault_injection, benchmark.fault_injection_generation),
+                    benchmark.recovery_start_event,
+                    benchmark.recovery_complete_event,
+                    benchmark.cancelled_socket_waits,
+                    benchmark.revoked_packet_capabilities,
+                    benchmark.recovery_nanos,
+                    benchmark.budget_nanos,
                     benchmark.state.as_str(),
                     benchmark.generation
                 )
@@ -8096,6 +8258,38 @@ fn network_benchmark_manifest(
     }
 }
 
+fn network_recovery_benchmark_manifest(
+    benchmark: &semantic_core::NetworkRecoveryBenchmarkRecord,
+) -> NetworkRecoveryBenchmarkManifest {
+    NetworkRecoveryBenchmarkManifest {
+        id: benchmark.id,
+        scenario: benchmark.scenario.clone(),
+        cleanup: benchmark.cleanup,
+        cleanup_generation: benchmark.cleanup_generation,
+        io_cleanup: benchmark.io_cleanup,
+        io_cleanup_generation: benchmark.io_cleanup_generation,
+        adapter: benchmark.adapter,
+        adapter_generation: benchmark.adapter_generation,
+        packet_device: benchmark.packet_device,
+        packet_device_generation: benchmark.packet_device_generation,
+        backend: contract_object_ref_manifest(benchmark.backend),
+        driver_store: benchmark.driver_store,
+        driver_store_generation: benchmark.driver_store_generation,
+        fault_injection: benchmark.fault_injection,
+        fault_injection_generation: benchmark.fault_injection_generation,
+        recovery_start_event: benchmark.recovery_start_event,
+        recovery_complete_event: benchmark.recovery_complete_event,
+        cancelled_socket_waits: benchmark.cancelled_socket_waits,
+        revoked_packet_capabilities: benchmark.revoked_packet_capabilities,
+        recovery_nanos: benchmark.recovery_nanos,
+        budget_nanos: benchmark.budget_nanos,
+        generation: benchmark.generation,
+        state: benchmark.state.as_str().to_owned(),
+        recorded_at_event: benchmark.recorded_at_event,
+        note: benchmark.note.clone(),
+    }
+}
+
 fn activation_resume_manifest(
     resume: &semantic_core::ActivationResumeRecord,
 ) -> ActivationResumeManifest {
@@ -8400,6 +8594,21 @@ fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateEventManifes
             capability_generation,
         } => {
             let requester_label = requester.as_deref().unwrap_or("unknown");
+            let capability_manifest = match (*capability, *capability_generation) {
+                (Some(id), Some(generation)) => Some(CapabilityHandleArgManifest {
+                    id,
+                    object: "substrate-capability".to_owned(),
+                    generation,
+                    owner_store: None,
+                    owner_store_generation: None,
+                    handle_slot: 0,
+                    handle_generation: 0,
+                    handle_tag: 0,
+                    rights_mask: 0,
+                    rights: Vec::new(),
+                }),
+                _ => None,
+            };
             Some(SubstrateEventManifest {
                 id: event.id,
                 epoch: event.epoch,
@@ -8409,18 +8618,7 @@ fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateEventManifes
                 requester: requester.clone(),
                 artifact: *artifact,
                 store: *store,
-                capability: capability.map(|id| CapabilityHandleArgManifest {
-                    id,
-                    object: "substrate-capability".to_owned(),
-                    generation: capability_generation.unwrap_or(0),
-                    owner_store: None,
-                    owner_store_generation: None,
-                    handle_slot: 0,
-                    handle_generation: 0,
-                    handle_tag: 0,
-                    rights_mask: 0,
-                    rights: Vec::new(),
-                }),
+                capability: capability_manifest,
                 explanation: format!(
                     "{requester_label} was denied {authority}::{operation} by capability gate"
                 ),

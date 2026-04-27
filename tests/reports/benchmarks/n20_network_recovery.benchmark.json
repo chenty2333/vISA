@@ -1,0 +1,49 @@
+{
+  "schema": "vmos-benchmark-report",
+  "schema_version": 1,
+  "name": "n20_network_recovery_host_validation",
+  "checkpoint": "N20-network-recovery-benchmark",
+  "environment": {
+    "mode": "host-validation-semantic-harness",
+    "hardware_dependency": "none",
+    "measurement_source": "recorded NetworkRecoveryBenchmark semantic object",
+    "no_goal": "not a calibrated virtio or smoltcp recovery time"
+  },
+  "metrics": {
+    "benchmark_count": {
+      "value": 1,
+      "unit": "samples"
+    },
+    "recovery_nanos": {
+      "value": 90000,
+      "unit": "semantic-ns"
+    },
+    "budget_nanos": {
+      "value": 200000,
+      "unit": "semantic-ns"
+    },
+    "cancelled_socket_waits": {
+      "value": 1,
+      "unit": "waits"
+    },
+    "revoked_packet_capabilities": {
+      "value": 1,
+      "unit": "capabilities"
+    },
+    "cleanup_effects": {
+      "value": 2,
+      "unit": "semantic-effects"
+    },
+    "within_budget": {
+      "value": 1,
+      "unit": "boolean"
+    }
+  },
+  "validation": {
+    "ok": true,
+    "notes": [
+      "N20 records deterministic host-validation network recovery evidence in the semantic graph.",
+      "Real calibrated network recovery remains adapter/backend benchmark work after the semantic contract is closed."
+    ]
+  }
+}

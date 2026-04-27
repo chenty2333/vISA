@@ -119,6 +119,7 @@ impl SemanticGraph {
         self.check_network_backpressure_invariants()?;
         self.check_network_benchmark_invariants()?;
         self.check_network_driver_cleanup_invariants()?;
+        self.check_network_recovery_benchmark_invariants()?;
         self.check_network_generation_audit_invariants()?;
         self.check_network_fault_injection_invariants()?;
         self.check_hart_event_attribution_invariants()?;

@@ -1579,6 +1579,45 @@ impl NetworkBenchmarkRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkRecoveryBenchmarkRecord {
+    pub id: NetworkRecoveryBenchmarkId,
+    pub scenario: String,
+    pub cleanup: NetworkDriverCleanupId,
+    pub cleanup_generation: Generation,
+    pub io_cleanup: IoCleanupId,
+    pub io_cleanup_generation: Generation,
+    pub adapter: NetworkStackAdapterId,
+    pub adapter_generation: Generation,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub backend: ContractObjectRef,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub fault_injection: Option<NetworkFaultInjectionId>,
+    pub fault_injection_generation: Option<Generation>,
+    pub recovery_start_event: EventId,
+    pub recovery_complete_event: EventId,
+    pub cancelled_socket_waits: u32,
+    pub revoked_packet_capabilities: u32,
+    pub recovery_nanos: u64,
+    pub budget_nanos: u64,
+    pub generation: Generation,
+    pub state: NetworkRecoveryBenchmarkState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl NetworkRecoveryBenchmarkRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::NetworkRecoveryBenchmark,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,
