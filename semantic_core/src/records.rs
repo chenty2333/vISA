@@ -2157,6 +2157,43 @@ impl FatAdapterObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ext4AdapterObjectRecord {
+    pub id: Ext4AdapterObjectId,
+    pub directory_object: DirectoryObjectId,
+    pub directory_object_generation: Generation,
+    pub file_object: FileObjectId,
+    pub file_object_generation: Generation,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub implementation: String,
+    pub version: String,
+    pub profile: String,
+    pub volume_label: String,
+    pub image_bytes: u64,
+    pub adapter_path: String,
+    pub semantic_path: String,
+    pub bytes_read: u64,
+    pub read_digest: u64,
+    pub file_content_digest: u64,
+    pub directory_entries: u64,
+    pub read_only_enforced: bool,
+    pub generation: Generation,
+    pub state: Ext4AdapterObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl Ext4AdapterObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::Ext4AdapterObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

@@ -77,6 +77,7 @@ pub struct SemanticGraph {
     file_objects: Vec<FileObjectRecord>,
     directory_objects: Vec<DirectoryObjectRecord>,
     fat_adapter_objects: Vec<FatAdapterObjectRecord>,
+    ext4_adapter_objects: Vec<Ext4AdapterObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -165,6 +166,7 @@ pub struct SemanticGraph {
     next_file_object_id: FileObjectId,
     next_directory_object_id: DirectoryObjectId,
     next_fat_adapter_object_id: FatAdapterObjectId,
+    next_ext4_adapter_object_id: Ext4AdapterObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -206,6 +208,7 @@ mod directory_object;
 mod dma_buffer_object;
 mod driver_store_binding;
 mod endpoint_object;
+mod ext4_adapter_object;
 mod fake_block_backend_object;
 mod fake_net_backend_object;
 mod fat_adapter_object;
@@ -343,6 +346,7 @@ impl SemanticGraph {
             file_objects: Vec::new(),
             directory_objects: Vec::new(),
             fat_adapter_objects: Vec::new(),
+            ext4_adapter_objects: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -431,6 +435,7 @@ impl SemanticGraph {
             next_file_object_id: 1,
             next_directory_object_id: 1,
             next_fat_adapter_object_id: 1,
+            next_ext4_adapter_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

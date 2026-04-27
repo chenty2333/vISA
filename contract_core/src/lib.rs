@@ -136,6 +136,7 @@ pub enum ObjectKind {
     FileObject,
     DirectoryObject,
     FatAdapterObject,
+    Ext4AdapterObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -237,6 +238,7 @@ impl ObjectKind {
             Self::FileObject => "file-object",
             Self::DirectoryObject => "directory-object",
             Self::FatAdapterObject => "fat-adapter-object",
+            Self::Ext4AdapterObject => "ext4-adapter-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -521,6 +523,7 @@ typed_ref!(BufferCacheObjectRef, ObjectKind::BufferCacheObject);
 typed_ref!(FileObjectRef, ObjectKind::FileObject);
 typed_ref!(DirectoryObjectRef, ObjectKind::DirectoryObject);
 typed_ref!(FatAdapterObjectRef, ObjectKind::FatAdapterObject);
+typed_ref!(Ext4AdapterObjectRef, ObjectKind::Ext4AdapterObject);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2104,6 +2107,13 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("fat adapter object root/count mismatch"));
     }
+    if roots.ext4_adapter_object_roots.len() != package.semantic.ext4_adapter_object_count
+        || package.semantic.ext4_adapter_objects.len() != package.semantic.ext4_adapter_object_count
+    {
+        return Err(ContractError::new(
+            "ext4 adapter object root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2696,6 +2706,7 @@ mod tests {
                 file_object_count: 0,
                 directory_object_count: 0,
                 fat_adapter_object_count: 0,
+                ext4_adapter_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2806,6 +2817,7 @@ mod tests {
                 file_objects: Vec::new(),
                 directory_objects: Vec::new(),
                 fat_adapter_objects: Vec::new(),
+                ext4_adapter_objects: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4504,6 +4516,43 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_ext4_adapter_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.ext4_adapter_object_count = 1;
+        package
+            .semantic
+            .ext4_adapter_objects
+            .push(artifact_manifest::Ext4AdapterObjectManifest {
+                id: 67,
+                directory_object: 65,
+                directory_object_generation: 1,
+                file_object: 64,
+                file_object_generation: 1,
+                block_device: 51,
+                block_device_generation: 1,
+                implementation: "ext4-view".to_owned(),
+                version: "0.9.3".to_owned(),
+                profile: "ext4-read-only-demo-v1".to_owned(),
+                volume_label: "VMOSEXT4".to_owned(),
+                image_bytes: 32_768,
+                adapter_path: "/demo.txt".to_owned(),
+                semantic_path: "/demo/file.txt".to_owned(),
+                bytes_read: 32,
+                read_digest: 1,
+                file_content_digest: 1,
+                directory_entries: 1,
+                read_only_enforced: true,
+                generation: 1,
+                state: "verified".to_owned(),
+                recorded_at_event: 83,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "ext4 adapter object root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -5795,6 +5844,8 @@ mod tests {
         assert!(DirectoryObjectRef::try_from_ref(directory_object).is_ok());
         let fat_adapter_object = ObjectRef::new(ObjectKind::FatAdapterObject, 66, 1).unwrap();
         assert!(FatAdapterObjectRef::try_from_ref(fat_adapter_object).is_ok());
+        let ext4_adapter_object = ObjectRef::new(ObjectKind::Ext4AdapterObject, 67, 1).unwrap();
+        assert!(Ext4AdapterObjectRef::try_from_ref(ext4_adapter_object).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

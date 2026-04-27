@@ -14147,6 +14147,266 @@ fn block_runtime_b15_invariants_reject_fat_adapter_generation_leak() {
     );
 }
 
+fn setup_b16_ext4_adapter_graph() -> SemanticGraph {
+    setup_b15_fat_adapter_graph()
+}
+
+#[test]
+fn block_runtime_b16_ext4_adapter_records_read_only_contract() {
+    let mut graph = setup_b16_ext4_adapter_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b16-test",
+        SemanticCommand::RecordExt4AdapterObject {
+            ext4_adapter_object: 1860,
+            directory_object: 1850,
+            directory_object_generation: 1,
+            file_object: 1845,
+            file_object_generation: 1,
+            block_device: 1824,
+            block_device_generation: 1,
+            implementation: "ext4-view".to_string(),
+            version: "0.9.3".to_string(),
+            profile: "ext4-read-only-demo-v1".to_string(),
+            volume_label: "VMOSEXT4".to_string(),
+            image_bytes: 32_768,
+            adapter_path: "/demo.txt".to_string(),
+            semantic_path: "/demo/file.txt".to_string(),
+            bytes_read: 34,
+            read_digest: 0x6161,
+            file_content_digest: 0xB13,
+            directory_entries: 1,
+            read_only_enforced: true,
+            state: Ext4AdapterObjectState::Verified,
+            note: "b16 record ext4 adapter object".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.ext4_adapter_object_count(), 1);
+    let adapter = &graph.ext4_adapter_objects()[0];
+    assert_eq!(
+        adapter.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::Ext4AdapterObject, 1860, 1)
+    );
+    assert_eq!(adapter.directory_object, 1850);
+    assert_eq!(adapter.file_object, 1845);
+    assert_eq!(adapter.block_device, 1824);
+    assert_eq!(adapter.implementation, "ext4-view");
+    assert_eq!(adapter.profile, "ext4-read-only-demo-v1");
+    assert_eq!(adapter.adapter_path, "/demo.txt");
+    assert_eq!(adapter.semantic_path, "/demo/file.txt");
+    assert_eq!(adapter.bytes_read, 34);
+    assert_eq!(adapter.read_digest, 0x6161);
+    assert_eq!(adapter.file_content_digest, 0xB13);
+    assert_eq!(adapter.directory_entries, 1);
+    assert!(adapter.read_only_enforced);
+    assert_eq!(adapter.state, Ext4AdapterObjectState::Verified);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "Ext4AdapterObjectRecorded ext4_adapter_object=1860 directory_object=1850@1 file_object=1845@1 block_device=1824@1 implementation=ext4-view version=0.9.3 profile=ext4-read-only-demo-v1 volume_label=VMOSEXT4 image_bytes=32768 adapter_path=/demo.txt semantic_path=/demo/file.txt bytes_read=34 read_digest=24929 file_content_digest=2835 directory_entries=1 read_only_enforced=true state=verified generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b16_rejects_stale_not_read_only_duplicate_and_invalid_adapter() {
+    let mut graph = setup_b16_ext4_adapter_graph();
+
+    let stale_directory = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b16-test",
+        SemanticCommand::RecordExt4AdapterObject {
+            ext4_adapter_object: 1861,
+            directory_object: 1850,
+            directory_object_generation: 2,
+            file_object: 1845,
+            file_object_generation: 1,
+            block_device: 1824,
+            block_device_generation: 1,
+            implementation: "ext4-view".to_string(),
+            version: "0.9.3".to_string(),
+            profile: "ext4-read-only-demo-v1".to_string(),
+            volume_label: "VMOSEXT4".to_string(),
+            image_bytes: 32_768,
+            adapter_path: "/demo.txt".to_string(),
+            semantic_path: "/demo/file.txt".to_string(),
+            bytes_read: 34,
+            read_digest: 0x6161,
+            file_content_digest: 0xB13,
+            directory_entries: 1,
+            read_only_enforced: true,
+            state: Ext4AdapterObjectState::Verified,
+            note: "stale directory generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_directory.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_directory.violations,
+        vec!["ext4 adapter directory generation is missing".to_string()]
+    );
+
+    let not_read_only = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b16-test",
+        SemanticCommand::RecordExt4AdapterObject {
+            ext4_adapter_object: 1862,
+            directory_object: 1850,
+            directory_object_generation: 1,
+            file_object: 1845,
+            file_object_generation: 1,
+            block_device: 1824,
+            block_device_generation: 1,
+            implementation: "ext4-view".to_string(),
+            version: "0.9.3".to_string(),
+            profile: "ext4-read-only-demo-v1".to_string(),
+            volume_label: "VMOSEXT4".to_string(),
+            image_bytes: 32_768,
+            adapter_path: "/demo-ro-false.txt".to_string(),
+            semantic_path: "/demo/file.txt".to_string(),
+            bytes_read: 34,
+            read_digest: 0x6161,
+            file_content_digest: 0xB13,
+            directory_entries: 1,
+            read_only_enforced: false,
+            state: Ext4AdapterObjectState::Verified,
+            note: "not read-only".to_string(),
+        },
+    ));
+    assert_eq!(not_read_only.status, CommandStatus::Rejected);
+    assert_eq!(
+        not_read_only.violations,
+        vec!["ext4 adapter object must be verified read-only evidence".to_string()]
+    );
+
+    let invalid_state = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b16-test",
+        SemanticCommand::RecordExt4AdapterObject {
+            ext4_adapter_object: 1863,
+            directory_object: 1850,
+            directory_object_generation: 1,
+            file_object: 1845,
+            file_object_generation: 1,
+            block_device: 1824,
+            block_device_generation: 1,
+            implementation: "ext4-view".to_string(),
+            version: "0.9.3".to_string(),
+            profile: "ext4-read-only-demo-v1".to_string(),
+            volume_label: "VMOSEXT4".to_string(),
+            image_bytes: 32_768,
+            adapter_path: "/invalid.txt".to_string(),
+            semantic_path: "/demo/file.txt".to_string(),
+            bytes_read: 34,
+            read_digest: 0x6161,
+            file_content_digest: 0xB13,
+            directory_entries: 1,
+            read_only_enforced: true,
+            state: Ext4AdapterObjectState::Rejected,
+            note: "invalid adapter state".to_string(),
+        },
+    ));
+    assert_eq!(invalid_state.status, CommandStatus::Rejected);
+    assert_eq!(
+        invalid_state.violations,
+        vec!["ext4 adapter object must be verified read-only evidence".to_string()]
+    );
+
+    assert!(graph.record_ext4_adapter_object_with_id(
+        1860,
+        1850,
+        1,
+        1845,
+        1,
+        1824,
+        1,
+        "ext4-view",
+        "0.9.3",
+        "ext4-read-only-demo-v1",
+        "VMOSEXT4",
+        32_768,
+        "/demo.txt",
+        "/demo/file.txt",
+        34,
+        0x6161,
+        0xB13,
+        1,
+        true,
+        Ext4AdapterObjectState::Verified,
+        "b16 existing ext4 adapter binding",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "b16-test",
+        SemanticCommand::RecordExt4AdapterObject {
+            ext4_adapter_object: 1864,
+            directory_object: 1850,
+            directory_object_generation: 1,
+            file_object: 1845,
+            file_object_generation: 1,
+            block_device: 1824,
+            block_device_generation: 1,
+            implementation: "ext4-view".to_string(),
+            version: "0.9.3".to_string(),
+            profile: "ext4-read-only-demo-v1".to_string(),
+            volume_label: "VMOSEXT4".to_string(),
+            image_bytes: 32_768,
+            adapter_path: "/demo.txt".to_string(),
+            semantic_path: "/demo/file.txt".to_string(),
+            bytes_read: 34,
+            read_digest: 0x6161,
+            file_content_digest: 0xB13,
+            directory_entries: 1,
+            read_only_enforced: true,
+            state: Ext4AdapterObjectState::Verified,
+            note: "duplicate ext4 adapter binding".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["ext4 adapter binding already verified".to_string()]
+    );
+}
+
+#[test]
+fn block_runtime_b16_invariants_reject_ext4_adapter_generation_leak() {
+    let mut graph = setup_b16_ext4_adapter_graph();
+    assert!(graph.record_ext4_adapter_object_with_id(
+        1860,
+        1850,
+        1,
+        1845,
+        1,
+        1824,
+        1,
+        "ext4-view",
+        "0.9.3",
+        "ext4-read-only-demo-v1",
+        "VMOSEXT4",
+        32_768,
+        "/demo.txt",
+        "/demo/file.txt",
+        34,
+        0x6161,
+        0xB13,
+        1,
+        true,
+        Ext4AdapterObjectState::Verified,
+        "b16 invariant ext4 adapter object",
+    ));
+    graph.corrupt_ext4_adapter_file_generation_for_test(1860, 0);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::Ext4AdapterObjectMissingFileObject {
+            ext4_adapter_object: 1860,
+            file_object: 1845,
+        })
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

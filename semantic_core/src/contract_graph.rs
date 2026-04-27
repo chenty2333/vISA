@@ -1451,6 +1451,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::FileObject
             | ContractObjectKind::DirectoryObject
             | ContractObjectKind::FatAdapterObject
+            | ContractObjectKind::Ext4AdapterObject
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

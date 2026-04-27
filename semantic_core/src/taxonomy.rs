@@ -1077,6 +1077,21 @@ impl FatAdapterObjectState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ext4AdapterObjectState {
+    Verified,
+    Rejected,
+}
+
+impl Ext4AdapterObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
 impl BlockRequestQueueEntryState {
     pub const fn as_str(self) -> &'static str {
         match self {

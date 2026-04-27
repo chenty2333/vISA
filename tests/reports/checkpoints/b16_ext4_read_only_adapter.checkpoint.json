@@ -1,0 +1,215 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "B16-ext4-read-only-adapter",
+  "phase": "Phase 5 Block / Disk Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add ext4-view as the fs_adapter read-only ext4 adapter layer and keep ext4-view out of semantic_core",
+    "Build a deterministic minimal ext4-compatible in-memory image in fs_adapter and read /demo.txt through ext4-view",
+    "Add Ext4AdapterObject as stable semantic adapter evidence derived from DirectoryObject and FileObject",
+    "Record Ext4AdapterObject through SemanticCommand::RecordExt4AdapterObject",
+    "Bind DirectoryObject, FileObject, and BlockDevice with exact generations",
+    "Reject stale directory generations, missing read-only enforcement, invalid adapter states, and duplicate adapter bindings before mutation",
+    "Expose ext4 adapter roots/counts through semantic package, osctl ViewV1, graph, replay roots, and roots JSON"
+  ],
+  "no_goals": [
+    "full filesystem namespace",
+    "file descriptor table",
+    "file handle capability gate",
+    "ext4 write support",
+    "adapter-local ext4 cache as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "changed_files": [
+    "Cargo.lock",
+    "Cargo.toml",
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "fs_adapter/Cargo.toml",
+    "fs_adapter/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/ext4_adapter_object.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/block/golden_b16_ext4_read_only.trace.json",
+    "tests/reports/checkpoints/b16_ext4_read_only_adapter.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/block/golden_b16_ext4_read_only.trace.json",
+    "tests/reports/checkpoints/b16_ext4_read_only_adapter.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "ext4-view is constrained to fs_adapter and target_executor orchestration; semantic_core stores only stable Ext4AdapterObject evidence",
+      "Ext4AdapterObject requires exact DirectoryObject, FileObject, and BlockDevice generations",
+      "Adapter evidence requires read_only_enforced=true before recording semantic proof",
+      "Duplicate adapter binding for one DirectoryObject generation and adapter path is rejected and command-visible",
+      "osctl exposes Ext4AdapterObject through stable ViewV1, graph evidence, and replay roots",
+      "Root/count validation covers ext4_adapter_objects so package tampering is rejected"
+    ],
+    "residual_notes": [
+      "B16 does not implement ext4 write support or a full filesystem namespace",
+      "B16 does not expose ext4-view internal inode/block caches as semantic truth",
+      "B17/B18 still need file handle capability gate and filesystem WaitToken integration",
+      "B19/B20 still need disk driver cleanup and pending IO retry/EIO policy"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p fs_adapter",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core block_runtime_b16 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core ext4_adapter_object -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl ext4_adapter_object_view_v1_exposes_read_only_adapter_contract -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl ext4-adapter-object list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 280",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 281",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 282",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 283",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --live --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl replay --until 432 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/block/golden_b16_ext4_read_only.trace.json",
+    "osctl_views": [
+      "osctl ext4-adapter-object list --json <migration.json>",
+      "osctl command show --json <migration.json> 280",
+      "osctl command show --json <migration.json> 281",
+      "osctl command show --json <migration.json> 282",
+      "osctl command show --json <migration.json> 283",
+      "osctl graph --live --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "ext4_adapter_object_roots",
+      "directory_object_roots",
+      "file_object_roots",
+      "block_device_object_roots",
+      "command_result_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 432,
+      "ext4_adapter_object_count": 1,
+      "ext4_adapter_object": "ext4-adapter-object:20085@1",
+      "directory_object": "directory-object:20077@1",
+      "file_object": "file-object:20073@1",
+      "block_device": "block-device:20002@1",
+      "implementation": "ext4-view",
+      "version": "0.9.3",
+      "profile": "ext4-read-only-demo-v1",
+      "volume_label": "VMOSEXT4",
+      "image_bytes": 32768,
+      "adapter_path": "/demo.txt",
+      "semantic_path": "/demo/file.txt",
+      "bytes_read": 35,
+      "read_digest": 3662811571303596532,
+      "file_content_digest": 2835,
+      "directory_entries": 3,
+      "read_only_enforced": true,
+      "state": "verified",
+      "recorded_event": 430,
+      "adapter_verified_command": "command-result:280:record-ext4-adapter-object:applied",
+      "stale_directory_generation_rejected_command": "command-result:281:record-ext4-adapter-object:rejected",
+      "not_read_only_rejected_command": "command-result:282:record-ext4-adapter-object:rejected",
+      "duplicate_binding_rejected_command": "command-result:283:record-ext4-adapter-object:rejected"
+    }
+  },
+  "residual_gaps": [
+    "B17/B18 still need file handle capability gate and filesystem WaitToken integration",
+    "B19/B20 still need disk driver cleanup and pending IO retry/EIO policy",
+    "B21 still needs stale block request generation tests"
+  ],
+  "next_checkpoint": "B17-file-handle-capability-gate"
+}

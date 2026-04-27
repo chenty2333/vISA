@@ -16,9 +16,9 @@ use artifact_manifest::{
     CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest,
     CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
     DeviceObjectManifest, DirectoryObjectManifest, DmaBufferObjectManifest,
-    DriverStoreBindingManifest, EndpointObjectManifest, FakeBlockBackendObjectManifest,
-    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileObjectManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
+    DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
+    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
+    FileObjectManifest, HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
     InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
@@ -375,6 +375,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "directory"
         | "fat-adapter-object"
         | "fat-adapter"
+        | "ext4-adapter-object"
+        | "ext4-adapter"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -546,7 +548,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -813,6 +815,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "file-object" | "file" => "file-object",
         "directory-object" | "directory" => "directory-object",
         "fat-adapter-object" | "fat-adapter" => "fat-adapter-object",
+        "ext4-adapter-object" | "ext4-adapter" => "ext4-adapter-object",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3359,6 +3362,60 @@ fn fat_adapter_object_view_v1(adapter: &FatAdapterObjectManifest) -> serde_json:
             "write_digest": adapter.write_digest,
             "read_digest": adapter.read_digest,
             "file_content_digest": adapter.file_content_digest,
+        },
+        "note": adapter.note,
+        "last_transition": {
+            "recorded_at_event": adapter.recorded_at_event,
+            "directory_object_generation": adapter.directory_object_generation,
+            "file_object_generation": adapter.file_object_generation,
+            "block_device_generation": adapter.block_device_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn ext4_adapter_object_view_v1(adapter: &Ext4AdapterObjectManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "ext4-adapter-object",
+        "id": adapter.id,
+        "generation": adapter.generation,
+        "state": adapter.state,
+        "owner": {
+            "implementation": adapter.implementation,
+            "version": adapter.version,
+            "profile": adapter.profile,
+            "volume_label": adapter.volume_label,
+            "adapter_path": adapter.adapter_path,
+            "semantic_path": adapter.semantic_path,
+        },
+        "references": {
+            "directory_object": object_ref_json(
+                "directory-object",
+                adapter.directory_object,
+                adapter.directory_object_generation,
+            ),
+            "file_object": object_ref_json(
+                "file-object",
+                adapter.file_object,
+                adapter.file_object_generation,
+            ),
+            "block_device": object_ref_json(
+                "block-device",
+                adapter.block_device,
+                adapter.block_device_generation,
+            ),
+            "event": {
+                "id": adapter.recorded_at_event,
+            },
+        },
+        "ext4": {
+            "image_bytes": adapter.image_bytes,
+            "bytes_read": adapter.bytes_read,
+            "read_digest": adapter.read_digest,
+            "file_content_digest": adapter.file_content_digest,
+            "directory_entries": adapter.directory_entries,
+            "read_only_enforced": adapter.read_only_enforced,
         },
         "note": adapter.note,
         "last_transition": {
@@ -6051,6 +6108,12 @@ fn stable_views_for_kind(
             .iter()
             .map(fat_adapter_object_view_v1)
             .collect()),
+        "ext4-adapter-object" | "ext4-adapter" => Ok(package
+            .semantic
+            .ext4_adapter_objects
+            .iter()
+            .map(ext4_adapter_object_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -7165,6 +7228,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.fat_adapter_object_roots,
     );
     print_roots(
+        "ext4-adapter-object",
+        &package.semantic.roots.ext4_adapter_object_roots,
+    );
+    print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
     );
@@ -7958,6 +8025,45 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
                 adapter.block_device_generation,
             ),
             "fat-adapter-object->block-device",
+            "historical",
+            Some(adapter.recorded_at_event),
+        ));
+    }
+    for adapter in &package.semantic.ext4_adapter_objects {
+        if adapter.state != "verified" {
+            continue;
+        }
+        let from = object_ref_json("ext4-adapter-object", adapter.id, adapter.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "directory-object",
+                adapter.directory_object,
+                adapter.directory_object_generation,
+            ),
+            "ext4-adapter-object->directory-object",
+            "historical",
+            Some(adapter.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "file-object",
+                adapter.file_object,
+                adapter.file_object_generation,
+            ),
+            "ext4-adapter-object->file-object",
+            "historical",
+            Some(adapter.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "block-device",
+                adapter.block_device,
+                adapter.block_device_generation,
+            ),
+            "ext4-adapter-object->block-device",
             "historical",
             Some(adapter.recorded_at_event),
         ));
@@ -11979,7 +12085,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -12053,6 +12159,7 @@ fn replay_until(
         package.semantic.roots.file_object_roots.len(),
         package.semantic.roots.directory_object_roots.len(),
         package.semantic.roots.fat_adapter_object_roots.len(),
+        package.semantic.roots.ext4_adapter_object_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -12195,6 +12302,9 @@ fn replay_until(
     }
     for adapter in &package.semantic.roots.fat_adapter_object_roots {
         println!("replay fat-adapter-object {adapter}");
+    }
+    for adapter in &package.semantic.roots.ext4_adapter_object_roots {
+        println!("replay ext4-adapter-object {adapter}");
     }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
@@ -12543,6 +12653,10 @@ fn print_replay_json(
     roots.insert(
         "fat_adapter_objects".to_owned(),
         serde_json::json!(package.semantic.roots.fat_adapter_object_roots.len()),
+    );
+    roots.insert(
+        "ext4_adapter_objects".to_owned(),
+        serde_json::json!(package.semantic.roots.ext4_adapter_object_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -12940,6 +13054,10 @@ fn print_replay_json(
         "fat_adapter_object_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.fat_adapter_object_roots),
     );
+    roots.insert(
+        "ext4_adapter_object_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.ext4_adapter_object_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -12984,7 +13102,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -13060,6 +13178,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.file_object_count,
         package.semantic.directory_object_count,
         package.semantic.fat_adapter_object_count,
+        package.semantic.ext4_adapter_object_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -13134,6 +13253,14 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
     print_roots(
         "network-driver-cleanup",
         &package.semantic.roots.network_driver_cleanup_roots,
+    );
+    print_roots(
+        "fat-adapter-object",
+        &package.semantic.roots.fat_adapter_object_roots,
+    );
+    print_roots(
+        "ext4-adapter-object",
+        &package.semantic.roots.ext4_adapter_object_roots,
     );
 }
 
@@ -14992,6 +15119,50 @@ mod tests {
         assert_eq!(view["fat"]["read_digest"], 0x1234);
         assert_eq!(view["fat"]["file_content_digest"], 0xB13);
         assert_eq!(view["last_transition"]["recorded_at_event"], 121);
+    }
+
+    #[test]
+    fn ext4_adapter_object_view_v1_exposes_read_only_adapter_contract() {
+        let view = ext4_adapter_object_view_v1(&Ext4AdapterObjectManifest {
+            id: 122,
+            directory_object: 120,
+            directory_object_generation: 1,
+            file_object: 119,
+            file_object_generation: 1,
+            block_device: 104,
+            block_device_generation: 1,
+            implementation: "ext4-view".to_owned(),
+            version: "0.9.3".to_owned(),
+            profile: "ext4-read-only-demo-v1".to_owned(),
+            volume_label: "VMOSEXT4".to_owned(),
+            image_bytes: 32 * 1024,
+            adapter_path: "/demo.txt".to_owned(),
+            semantic_path: "/demo/file.txt".to_owned(),
+            bytes_read: 34,
+            read_digest: 0x6121,
+            file_content_digest: 0xB13,
+            directory_entries: 1,
+            read_only_enforced: true,
+            generation: 1,
+            state: "verified".to_owned(),
+            recorded_at_event: 122,
+            note: "ext4 adapter object".to_owned(),
+        });
+        assert_eq!(view["kind"], "ext4-adapter-object");
+        assert_eq!(view["owner"]["implementation"], "ext4-view");
+        assert_eq!(view["owner"]["profile"], "ext4-read-only-demo-v1");
+        assert_eq!(
+            view["references"]["directory_object"]["kind"],
+            "directory-object"
+        );
+        assert_eq!(view["references"]["file_object"]["id"], 119);
+        assert_eq!(view["references"]["block_device"]["generation"], 1);
+        assert_eq!(view["ext4"]["bytes_read"], 34);
+        assert_eq!(view["ext4"]["read_digest"], 0x6121);
+        assert_eq!(view["ext4"]["file_content_digest"], 0xB13);
+        assert_eq!(view["ext4"]["directory_entries"], 1);
+        assert_eq!(view["ext4"]["read_only_enforced"], true);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 122);
     }
 
     #[test]

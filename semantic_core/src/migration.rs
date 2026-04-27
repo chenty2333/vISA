@@ -1312,6 +1312,23 @@ pub enum SemanticInvariantError {
     FatAdapterObjectMissingEvent {
         fat_adapter_object: FatAdapterObjectId,
     },
+    Ext4AdapterObjectInvalid {
+        ext4_adapter_object: Ext4AdapterObjectId,
+    },
+    Ext4AdapterObjectMissingDirectoryObject {
+        ext4_adapter_object: Ext4AdapterObjectId,
+        directory_object: DirectoryObjectId,
+    },
+    Ext4AdapterObjectMissingFileObject {
+        ext4_adapter_object: Ext4AdapterObjectId,
+        file_object: FileObjectId,
+    },
+    Ext4AdapterObjectDuplicateBinding {
+        ext4_adapter_object: Ext4AdapterObjectId,
+    },
+    Ext4AdapterObjectMissingEvent {
+        ext4_adapter_object: Ext4AdapterObjectId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

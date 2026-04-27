@@ -792,6 +792,10 @@ impl SemanticGraph {
                 .fat_adapter_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::Ext4AdapterObject => self
+                .ext4_adapter_objects
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

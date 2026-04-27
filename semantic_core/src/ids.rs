@@ -68,6 +68,7 @@ pub type BufferCacheObjectId = u64;
 pub type FileObjectId = u64;
 pub type DirectoryObjectId = u64;
 pub type FatAdapterObjectId = u64;
+pub type Ext4AdapterObjectId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;
