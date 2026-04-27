@@ -79,6 +79,7 @@ pub struct SemanticGraph {
     fat_adapter_objects: Vec<FatAdapterObjectRecord>,
     ext4_adapter_objects: Vec<Ext4AdapterObjectRecord>,
     file_handle_capabilities: Vec<FileHandleCapabilityRecord>,
+    fs_waits: Vec<FsWaitRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -169,6 +170,7 @@ pub struct SemanticGraph {
     next_fat_adapter_object_id: FatAdapterObjectId,
     next_ext4_adapter_object_id: Ext4AdapterObjectId,
     next_file_handle_capability_id: FileHandleCapabilityId,
+    next_fs_wait_id: FsWaitId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -216,6 +218,7 @@ mod fake_net_backend_object;
 mod fat_adapter_object;
 mod file_handle_capability;
 mod file_object;
+mod fs_wait;
 mod hart;
 mod hart_event;
 mod interface;
@@ -351,6 +354,7 @@ impl SemanticGraph {
             fat_adapter_objects: Vec::new(),
             ext4_adapter_objects: Vec::new(),
             file_handle_capabilities: Vec::new(),
+            fs_waits: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -441,6 +445,7 @@ impl SemanticGraph {
             next_fat_adapter_object_id: 1,
             next_ext4_adapter_object_id: 1,
             next_file_handle_capability_id: 1,
+            next_fs_wait_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

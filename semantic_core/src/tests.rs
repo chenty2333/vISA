@@ -14659,6 +14659,256 @@ fn block_runtime_b17_invariants_reject_file_handle_generation_leak() {
     );
 }
 
+fn setup_b18_fs_wait_graph() -> SemanticGraph {
+    let (mut graph, handle, cap) = setup_b17_file_handle_capability_graph();
+    let cap_generation = graph.capabilities().record(cap).unwrap().generation;
+    let store = graph.store_id("linux_syscall").unwrap();
+    assert!(graph.record_file_handle_capability_with_id(
+        1865,
+        store,
+        1,
+        1845,
+        1,
+        1850,
+        1,
+        cap,
+        cap_generation,
+        handle,
+        "read",
+        0,
+        512,
+        0xB13,
+        "b18 file handle capability",
+    ));
+    graph
+}
+
+#[test]
+fn block_runtime_b18_fs_wait_resolves_through_wait_token() {
+    let mut graph = setup_b18_fs_wait_graph();
+    let store = graph.store_id("linux_syscall").unwrap();
+    let blocker = ContractObjectRef::new(ContractObjectKind::FileHandleCapability, 1865, 1);
+    let create = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b18-test",
+        SemanticCommand::CreateWait {
+            wait: 1870,
+            owner_task: None,
+            owner_store: Some(store),
+            owner_store_generation: Some(1),
+            kind: SemanticWaitKind::FdReadable,
+            generation: 1,
+            blockers: vec![blocker],
+            deadline: None,
+            restart_policy: RestartPolicy::RestartIfAllowed,
+            saved_context: Some("b18 fs read wait".to_string()),
+        },
+    ));
+    assert_eq!(create.status, CommandStatus::Applied);
+
+    let record = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b18-test",
+        SemanticCommand::RecordFsWait {
+            fs_wait: 1871,
+            wait: 1870,
+            wait_generation: 1,
+            file_handle_capability: 1865,
+            file_handle_capability_generation: 1,
+            operation: "read".to_string(),
+            sequence: 1,
+            note: "record fs wait".to_string(),
+        },
+    ));
+    assert_eq!(record.status, CommandStatus::Applied);
+    assert_eq!(graph.fs_wait_count(), 1);
+    assert_eq!(graph.fs_waits()[0].state, FsWaitState::Pending);
+    assert_eq!(
+        graph.fs_waits()[0].object_ref(),
+        ContractObjectRef::new(ContractObjectKind::FsWait, 1871, 1)
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "FsWaitCreated fs_wait=1871 wait=1870@1 owner_store={store}@1 file_object=1845@1 directory_object=1850@1 file_handle_capability=1865@1 operation=read blocker=file-handle-capability:1865@1 sequence=1 byte_len=512 generation=1"
+        )
+    );
+
+    let resolve = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b18-test",
+        SemanticCommand::ResolveFsWait {
+            fs_wait: 1871,
+            fs_wait_generation: 1,
+            note: "resolve fs wait".to_string(),
+        },
+    ));
+    assert_eq!(resolve.status, CommandStatus::Applied);
+    assert_eq!(graph.fs_waits()[0].state, FsWaitState::Resolved);
+    assert_eq!(
+        graph
+            .wait_index()
+            .by_store
+            .iter()
+            .filter(|(_, _, wait)| *wait == 1870)
+            .count(),
+        1
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "FsWaitResolved fs_wait=1871 wait=1870@1 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b18_rejects_stale_or_duplicate_fs_wait_and_cancels_closefd() {
+    let mut graph = setup_b18_fs_wait_graph();
+    let store = graph.store_id("linux_syscall").unwrap();
+    let blocker = ContractObjectRef::new(ContractObjectKind::FileHandleCapability, 1865, 1);
+    assert_eq!(
+        graph
+            .apply_envelope(CommandEnvelope::new(
+                4,
+                "b18-test",
+                SemanticCommand::CreateWait {
+                    wait: 1872,
+                    owner_task: None,
+                    owner_store: Some(store),
+                    owner_store_generation: Some(1),
+                    kind: SemanticWaitKind::FdReadable,
+                    generation: 1,
+                    blockers: vec![blocker],
+                    deadline: None,
+                    restart_policy: RestartPolicy::RestartIfAllowed,
+                    saved_context: Some("b18 cancellable fs wait".to_string()),
+                },
+            ))
+            .status,
+        CommandStatus::Applied
+    );
+    assert_eq!(
+        graph
+            .apply_envelope(CommandEnvelope::new(
+                5,
+                "b18-test",
+                SemanticCommand::RecordFsWait {
+                    fs_wait: 1873,
+                    wait: 1872,
+                    wait_generation: 1,
+                    file_handle_capability: 1865,
+                    file_handle_capability_generation: 1,
+                    operation: "read".to_string(),
+                    sequence: 2,
+                    note: "record cancellable fs wait".to_string(),
+                },
+            ))
+            .status,
+        CommandStatus::Applied
+    );
+
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        6,
+        "b18-test",
+        SemanticCommand::RecordFsWait {
+            fs_wait: 1874,
+            wait: 1872,
+            wait_generation: 1,
+            file_handle_capability: 1865,
+            file_handle_capability_generation: 1,
+            operation: "read".to_string(),
+            sequence: 2,
+            note: "duplicate pending fs wait".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["fs wait token already has a pending fs wait".to_string()]
+    );
+
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        7,
+        "b18-test",
+        SemanticCommand::RecordFsWait {
+            fs_wait: 1875,
+            wait: 1872,
+            wait_generation: 1,
+            file_handle_capability: 1865,
+            file_handle_capability_generation: 2,
+            operation: "read".to_string(),
+            sequence: 3,
+            note: "stale file handle generation".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale.violations,
+        vec!["fs wait file handle capability generation is missing or not allowed".to_string()]
+    );
+
+    let cancel = graph.apply_envelope(CommandEnvelope::new(
+        8,
+        "b18-test",
+        SemanticCommand::CancelFsWait {
+            fs_wait: 1873,
+            fs_wait_generation: 1,
+            errno: 9,
+            reason: WaitCancelReason::CloseFd,
+            note: "close fd cancels fs wait".to_string(),
+        },
+    ));
+    assert_eq!(cancel.status, CommandStatus::Applied);
+    assert_eq!(graph.fs_waits()[0].state, FsWaitState::Cancelled);
+    assert_eq!(
+        graph.fs_waits()[0].cancel_reason,
+        Some(WaitCancelReason::CloseFd)
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "FsWaitCancelled fs_wait=1873 wait=1872@1 reason=close-fd generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b18_invariants_reject_file_handle_generation_leak() {
+    let mut graph = setup_b18_fs_wait_graph();
+    let store = graph.store_id("linux_syscall").unwrap();
+    let blocker = ContractObjectRef::new(ContractObjectKind::FileHandleCapability, 1865, 1);
+    graph.record_wait_created_with_details(
+        1876,
+        None,
+        Some(store),
+        Some(1),
+        SemanticWaitKind::FdReadable,
+        1,
+        vec![blocker],
+        None,
+        RestartPolicy::RestartIfAllowed,
+        Some("b18 invariant fs wait".to_string()),
+    );
+    assert!(graph.record_fs_wait_with_id(
+        1877,
+        1876,
+        1,
+        1865,
+        1,
+        "read",
+        4,
+        "b18 invariant fs wait",
+    ));
+    graph.corrupt_fs_wait_file_handle_generation_for_test(1877, 0);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::FsWaitMissingFileHandleCapability {
+            fs_wait: 1877,
+            file_handle_capability: 1865,
+        })
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

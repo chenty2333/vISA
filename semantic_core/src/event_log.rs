@@ -752,6 +752,37 @@ pub enum EventKind {
         state: FileHandleCapabilityState,
         generation: Generation,
     },
+    FsWaitCreated {
+        fs_wait: FsWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        owner_store: StoreId,
+        owner_store_generation: Generation,
+        file_object: FileObjectId,
+        file_object_generation: Generation,
+        directory_object: DirectoryObjectId,
+        directory_object_generation: Generation,
+        file_handle_capability: FileHandleCapabilityId,
+        file_handle_capability_generation: Generation,
+        operation: String,
+        blocker: ContractObjectRef,
+        sequence: u64,
+        byte_len: u64,
+        generation: Generation,
+    },
+    FsWaitResolved {
+        fs_wait: FsWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        generation: Generation,
+    },
+    FsWaitCancelled {
+        fs_wait: FsWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        reason: WaitCancelReason,
+        generation: Generation,
+    },
     PacketBufferObjectRecorded {
         packet_buffer: PacketBufferObjectId,
         packet_device: PacketDeviceObjectId,
@@ -2438,6 +2469,45 @@ impl EventKind {
             } => format!(
                 "FileHandleCapabilityRecorded file_handle_capability={file_handle_capability} owner_store={owner_store}@{owner_store_generation} file_object={file_object}@{file_object_generation} directory_object={directory_object}@{directory_object_generation} capability={capability}@{capability_generation} handle_slot={handle_slot} handle_generation={handle_generation} handle_tag={handle_tag} operation={operation} file_offset={file_offset} byte_len={byte_len} content_digest={content_digest} state={} generation={generation}",
                 state.as_str()
+            ),
+            Self::FsWaitCreated {
+                fs_wait,
+                wait,
+                wait_generation,
+                owner_store,
+                owner_store_generation,
+                file_object,
+                file_object_generation,
+                directory_object,
+                directory_object_generation,
+                file_handle_capability,
+                file_handle_capability_generation,
+                operation,
+                blocker,
+                sequence,
+                byte_len,
+                generation,
+            } => format!(
+                "FsWaitCreated fs_wait={fs_wait} wait={wait}@{wait_generation} owner_store={owner_store}@{owner_store_generation} file_object={file_object}@{file_object_generation} directory_object={directory_object}@{directory_object_generation} file_handle_capability={file_handle_capability}@{file_handle_capability_generation} operation={operation} blocker={} sequence={sequence} byte_len={byte_len} generation={generation}",
+                blocker.summary()
+            ),
+            Self::FsWaitResolved {
+                fs_wait,
+                wait,
+                wait_generation,
+                generation,
+            } => format!(
+                "FsWaitResolved fs_wait={fs_wait} wait={wait}@{wait_generation} generation={generation}"
+            ),
+            Self::FsWaitCancelled {
+                fs_wait,
+                wait,
+                wait_generation,
+                reason,
+                generation,
+            } => format!(
+                "FsWaitCancelled fs_wait={fs_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
+                reason.as_str()
             ),
             Self::PacketBufferObjectRecorded {
                 packet_buffer,

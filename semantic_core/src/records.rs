@@ -2228,6 +2228,37 @@ impl FileHandleCapabilityRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FsWaitRecord {
+    pub id: FsWaitId,
+    pub wait: WaitId,
+    pub wait_generation: Generation,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub file_object: FileObjectId,
+    pub file_object_generation: Generation,
+    pub directory_object: DirectoryObjectId,
+    pub directory_object_generation: Generation,
+    pub file_handle_capability: FileHandleCapabilityId,
+    pub file_handle_capability_generation: Generation,
+    pub operation: String,
+    pub blocker: ContractObjectRef,
+    pub sequence: u64,
+    pub byte_len: u64,
+    pub generation: Generation,
+    pub state: FsWaitState,
+    pub created_at_event: EventId,
+    pub completed_at_event: Option<EventId>,
+    pub cancel_reason: Option<WaitCancelReason>,
+    pub note: String,
+}
+
+impl FsWaitRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::FsWait, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

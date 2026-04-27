@@ -1355,6 +1355,37 @@ pub enum SemanticInvariantError {
     FileHandleCapabilityMissingEvent {
         file_handle_capability: FileHandleCapabilityId,
     },
+    FsWaitInvalid {
+        fs_wait: FsWaitId,
+    },
+    FsWaitMissingWait {
+        fs_wait: FsWaitId,
+        wait: WaitId,
+    },
+    FsWaitMissingStore {
+        fs_wait: FsWaitId,
+        store: StoreId,
+    },
+    FsWaitMissingFileObject {
+        fs_wait: FsWaitId,
+        file_object: FileObjectId,
+    },
+    FsWaitMissingDirectoryObject {
+        fs_wait: FsWaitId,
+        directory_object: DirectoryObjectId,
+    },
+    FsWaitMissingFileHandleCapability {
+        fs_wait: FsWaitId,
+        file_handle_capability: FileHandleCapabilityId,
+    },
+    FsWaitDuplicateWait {
+        fs_wait: FsWaitId,
+        wait: WaitId,
+    },
+    FsWaitMissingEvent {
+        fs_wait: FsWaitId,
+        event: EventId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

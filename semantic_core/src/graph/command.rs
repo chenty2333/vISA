@@ -508,6 +508,28 @@ pub enum SemanticCommand {
         content_digest: u64,
         note: String,
     },
+    RecordFsWait {
+        fs_wait: FsWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        file_handle_capability: FileHandleCapabilityId,
+        file_handle_capability_generation: Generation,
+        operation: String,
+        sequence: u64,
+        note: String,
+    },
+    ResolveFsWait {
+        fs_wait: FsWaitId,
+        fs_wait_generation: Generation,
+        note: String,
+    },
+    CancelFsWait {
+        fs_wait: FsWaitId,
+        fs_wait_generation: Generation,
+        errno: i32,
+        reason: WaitCancelReason,
+        note: String,
+    },
     RecordVirtioNetBackendObject {
         virtio_net_backend: VirtioNetBackendObjectId,
         name: String,
@@ -1248,6 +1270,9 @@ impl SemanticCommand {
             Self::RecordFatAdapterObject { .. } => "record-fat-adapter-object",
             Self::RecordExt4AdapterObject { .. } => "record-ext4-adapter-object",
             Self::RecordFileHandleCapability { .. } => "record-file-handle-capability",
+            Self::RecordFsWait { .. } => "record-fs-wait",
+            Self::ResolveFsWait { .. } => "resolve-fs-wait",
+            Self::CancelFsWait { .. } => "cancel-fs-wait",
             Self::RecordVirtioNetBackendObject { .. } => "record-virtio-net-backend-object",
             Self::RecordNetworkRxInterrupt { .. } => "record-network-rx-interrupt",
             Self::ResolveNetworkRxWait { .. } => "resolve-network-rx-wait",
@@ -2924,6 +2949,84 @@ impl SemanticGraph {
                     *content_digest,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordFsWait {
+                fs_wait,
+                wait,
+                wait_generation,
+                file_handle_capability,
+                file_handle_capability_generation,
+                operation,
+                sequence,
+                ..
+            } => self
+                .validate_fs_wait(
+                    *fs_wait,
+                    *wait,
+                    *wait_generation,
+                    *file_handle_capability,
+                    *file_handle_capability_generation,
+                    operation,
+                    *sequence,
+                )
+                .map(|_| ())
+                .map_err(CommandError::precondition),
+            SemanticCommand::ResolveFsWait {
+                fs_wait,
+                fs_wait_generation,
+                ..
+            } => {
+                if self.fs_waits.iter().any(|record| {
+                    record.id == *fs_wait
+                        && record.generation == *fs_wait_generation
+                        && record.state == FsWaitState::Pending
+                        && self.waits.iter().any(|wait| {
+                            wait.id == record.wait
+                                && wait.generation == record.wait_generation
+                                && wait.state == WaitState::Pending
+                        })
+                }) {
+                    Ok(())
+                } else {
+                    Err(CommandError::precondition(
+                        "fs wait generation is missing or not pending",
+                    ))
+                }
+            }
+            SemanticCommand::CancelFsWait {
+                fs_wait,
+                fs_wait_generation,
+                reason,
+                ..
+            } => {
+                if !matches!(
+                    reason,
+                    WaitCancelReason::CloseFd
+                        | WaitCancelReason::StoreFault
+                        | WaitCancelReason::CapabilityRevoked
+                        | WaitCancelReason::ResourceDropped
+                        | WaitCancelReason::GenerationMismatch
+                ) {
+                    return Err(CommandError::precondition(
+                        "fs wait cancellation reason is not a filesystem reason",
+                    ));
+                }
+                if self.fs_waits.iter().any(|record| {
+                    record.id == *fs_wait
+                        && record.generation == *fs_wait_generation
+                        && record.state == FsWaitState::Pending
+                        && self.waits.iter().any(|wait| {
+                            wait.id == record.wait
+                                && wait.generation == record.wait_generation
+                                && wait.state == WaitState::Pending
+                        })
+                }) {
+                    Ok(())
+                } else {
+                    Err(CommandError::precondition(
+                        "fs wait generation is missing or not pending",
+                    ))
+                }
+            }
             SemanticCommand::RecordVirtioNetBackendObject {
                 virtio_net_backend,
                 name,
@@ -5471,6 +5574,37 @@ impl SemanticGraph {
                 content_digest,
                 &note,
             ),
+            SemanticCommand::RecordFsWait {
+                fs_wait,
+                wait,
+                wait_generation,
+                file_handle_capability,
+                file_handle_capability_generation,
+                operation,
+                sequence,
+                note,
+            } => self.record_fs_wait_with_id(
+                fs_wait,
+                wait,
+                wait_generation,
+                file_handle_capability,
+                file_handle_capability_generation,
+                &operation,
+                sequence,
+                &note,
+            ),
+            SemanticCommand::ResolveFsWait {
+                fs_wait,
+                fs_wait_generation,
+                note,
+            } => self.resolve_fs_wait(fs_wait, fs_wait_generation, &note),
+            SemanticCommand::CancelFsWait {
+                fs_wait,
+                fs_wait_generation,
+                errno,
+                reason,
+                note,
+            } => self.cancel_fs_wait(fs_wait, fs_wait_generation, errno, reason, &note),
             SemanticCommand::RecordVirtioNetBackendObject {
                 virtio_net_backend,
                 name,

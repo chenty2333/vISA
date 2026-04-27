@@ -18,7 +18,7 @@ use artifact_manifest::{
     DeviceObjectManifest, DirectoryObjectManifest, DmaBufferObjectManifest,
     DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
     FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
-    FileHandleCapabilityManifest, FileObjectManifest, HartEventAttributionManifest,
+    FileHandleCapabilityManifest, FileObjectManifest, FsWaitManifest, HartEventAttributionManifest,
     HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
     IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
     IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
@@ -380,6 +380,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "file-handle-capability"
         | "file-handle"
         | "file-capability"
+        | "fs-wait"
+        | "filesystem-wait"
+        | "file-wait"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -551,7 +554,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -820,6 +823,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "fat-adapter-object" | "fat-adapter" => "fat-adapter-object",
         "ext4-adapter-object" | "ext4-adapter" => "ext4-adapter-object",
         "file-handle-capability" | "file-handle" | "file-capability" => "file-handle-capability",
+        "fs-wait" | "filesystem-wait" | "file-wait" => "fs-wait",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3487,6 +3491,68 @@ fn file_handle_capability_view_v1(capability: &FileHandleCapabilityManifest) -> 
             "capability_generation": capability.capability_generation,
         },
         "last_error": serde_json::Value::Null,
+    })
+}
+
+fn fs_wait_view_v1(wait: &FsWaitManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "fs-wait",
+        "id": wait.id,
+        "generation": wait.generation,
+        "state": wait.state,
+        "owner": {
+            "store": object_ref_json(
+                "store",
+                wait.owner_store,
+                wait.owner_store_generation,
+            ),
+            "operation": wait.operation,
+        },
+        "references": {
+            "wait": object_ref_json("wait-token", wait.wait, wait.wait_generation),
+            "owner_store": object_ref_json(
+                "store",
+                wait.owner_store,
+                wait.owner_store_generation,
+            ),
+            "file_object": object_ref_json(
+                "file-object",
+                wait.file_object,
+                wait.file_object_generation,
+            ),
+            "directory_object": object_ref_json(
+                "directory-object",
+                wait.directory_object,
+                wait.directory_object_generation,
+            ),
+            "file_handle_capability": object_ref_json(
+                "file-handle-capability",
+                wait.file_handle_capability,
+                wait.file_handle_capability_generation,
+            ),
+            "blocker": object_ref_manifest_json(&wait.blocker),
+            "created_event": {
+                "id": wait.created_at_event,
+            },
+            "completed_event": wait.completed_at_event.map(|id| serde_json::json!({ "id": id })),
+        },
+        "wait": {
+            "operation": wait.operation,
+            "sequence": wait.sequence,
+            "byte_len": wait.byte_len,
+            "cancel_reason": wait.cancel_reason,
+        },
+        "note": wait.note,
+        "last_transition": {
+            "created_at_event": wait.created_at_event,
+            "completed_at_event": wait.completed_at_event,
+            "wait_generation": wait.wait_generation,
+            "file_handle_capability_generation": wait.file_handle_capability_generation,
+        },
+        "last_error": wait.cancel_reason.as_ref().map(|reason| serde_json::json!({
+            "cancel_reason": reason,
+        })).unwrap_or(serde_json::Value::Null),
     })
 }
 
@@ -6182,6 +6248,12 @@ fn stable_views_for_kind(
             .iter()
             .map(file_handle_capability_view_v1)
             .collect()),
+        "fs-wait" | "filesystem-wait" | "file-wait" => Ok(package
+            .semantic
+            .fs_waits
+            .iter()
+            .map(fs_wait_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -7303,6 +7375,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         "file-handle-capability",
         &package.semantic.roots.file_handle_capability_roots,
     );
+    print_roots("fs-wait", &package.semantic.roots.fs_wait_roots);
     print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
@@ -8194,6 +8267,44 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             Some(capability.recorded_at_event),
         ));
     }
+    for wait in &package.semantic.fs_waits {
+        if wait.state != "pending" {
+            continue;
+        }
+        let from = object_ref_json("fs-wait", wait.id, wait.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("wait-token", wait.wait, wait.wait_generation),
+            "fs-wait->wait-token",
+            "live",
+            Some(wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "file-handle-capability",
+                wait.file_handle_capability,
+                wait.file_handle_capability_generation,
+            ),
+            "fs-wait->file-handle-capability",
+            "live",
+            Some(wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("file-object", wait.file_object, wait.file_object_generation),
+            "fs-wait->file-object",
+            "live",
+            Some(wait.created_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_manifest_json(&wait.blocker),
+            "fs-wait->blocker",
+            "live",
+            Some(wait.created_at_event),
+        ));
+    }
     for packet_buffer in &package.semantic.packet_buffer_objects {
         if packet_buffer.state != "allocated" && packet_buffer.state != "filled" {
             continue;
@@ -8956,6 +9067,45 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 event,
             ));
         }
+    }
+    for wait in &package.semantic.fs_waits {
+        if wait.state == "pending" {
+            continue;
+        }
+        let event = wait.completed_at_event.or(Some(wait.created_at_event));
+        let from = object_ref_json("fs-wait", wait.id, wait.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("wait-token", wait.wait, wait.wait_generation),
+            "fs-wait->wait-token",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "file-handle-capability",
+                wait.file_handle_capability,
+                wait.file_handle_capability_generation,
+            ),
+            "fs-wait->file-handle-capability",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("file-object", wait.file_object, wait.file_object_generation),
+            "fs-wait->file-object",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_manifest_json(&wait.blocker),
+            "fs-wait->blocker",
+            "historical",
+            event,
+        ));
     }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
@@ -11860,6 +12010,17 @@ fn inspect_package_object_json(
                 .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.file_handle_capability_roots.len() }),
         ),
+        "fs-wait" | "filesystem-wait" | "file-wait" => (
+            "fs-wait",
+            package.semantic.fs_wait_count,
+            package
+                .semantic
+                .fs_waits
+                .iter()
+                .map(fs_wait_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "root_count": package.semantic.roots.fs_wait_roots.len() }),
+        ),
         "command" => (
             "command",
             package.semantic.command_result_count,
@@ -12222,7 +12383,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} fs_waits={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -12298,6 +12459,7 @@ fn replay_until(
         package.semantic.roots.fat_adapter_object_roots.len(),
         package.semantic.roots.ext4_adapter_object_roots.len(),
         package.semantic.roots.file_handle_capability_roots.len(),
+        package.semantic.roots.fs_wait_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -12446,6 +12608,9 @@ fn replay_until(
     }
     for capability in &package.semantic.roots.file_handle_capability_roots {
         println!("replay file-handle-capability {capability}");
+    }
+    for wait in &package.semantic.roots.fs_wait_roots {
+        println!("replay fs-wait {wait}");
     }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
@@ -12802,6 +12967,10 @@ fn print_replay_json(
     roots.insert(
         "file_handle_capabilities".to_owned(),
         serde_json::json!(package.semantic.roots.file_handle_capability_roots.len()),
+    );
+    roots.insert(
+        "fs_waits".to_owned(),
+        serde_json::json!(package.semantic.roots.fs_wait_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -13207,6 +13376,10 @@ fn print_replay_json(
         "file_handle_capability_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.file_handle_capability_roots),
     );
+    roots.insert(
+        "fs_wait_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.fs_wait_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -13251,7 +13424,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} fs_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -13329,6 +13502,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.fat_adapter_object_count,
         package.semantic.ext4_adapter_object_count,
         package.semantic.file_handle_capability_count,
+        package.semantic.fs_wait_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -13416,6 +13590,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         "file-handle-capability",
         &package.semantic.roots.file_handle_capability_roots,
     );
+    print_roots("fs-wait", &package.semantic.roots.fs_wait_roots);
 }
 
 fn print_artifact_summary(manifest: &ArtifactBundleManifest) -> Result<(), Box<dyn Error>> {
@@ -15356,6 +15531,51 @@ mod tests {
         assert_eq!(view["file_access"]["byte_len"], 512);
         assert_eq!(view["file_access"]["content_digest"], 0xB13);
         assert_eq!(view["last_transition"]["recorded_at_event"], 123);
+    }
+
+    #[test]
+    fn fs_wait_view_v1_exposes_file_handle_wait_contract() {
+        let view = fs_wait_view_v1(&FsWaitManifest {
+            id: 124,
+            wait: 55,
+            wait_generation: 1,
+            owner_store: 7,
+            owner_store_generation: 3,
+            file_object: 119,
+            file_object_generation: 1,
+            directory_object: 120,
+            directory_object_generation: 1,
+            file_handle_capability: 123,
+            file_handle_capability_generation: 1,
+            operation: "read".to_owned(),
+            blocker: ContractObjectRefManifest {
+                kind: "file-handle-capability".to_owned(),
+                id: 123,
+                generation: 1,
+            },
+            sequence: 9,
+            byte_len: 512,
+            generation: 1,
+            state: "cancelled".to_owned(),
+            created_at_event: 124,
+            completed_at_event: Some(125),
+            cancel_reason: Some("close-fd".to_owned()),
+            note: "fs wait".to_owned(),
+        });
+        assert_eq!(view["kind"], "fs-wait");
+        assert_eq!(view["owner"]["store"]["id"], 7);
+        assert_eq!(view["owner"]["operation"], "read");
+        assert_eq!(view["references"]["wait"]["kind"], "wait-token");
+        assert_eq!(
+            view["references"]["file_handle_capability"]["kind"],
+            "file-handle-capability"
+        );
+        assert_eq!(view["references"]["file_object"]["id"], 119);
+        assert_eq!(view["references"]["blocker"]["id"], 123);
+        assert_eq!(view["wait"]["sequence"], 9);
+        assert_eq!(view["wait"]["cancel_reason"], "close-fd");
+        assert_eq!(view["last_error"]["cancel_reason"], "close-fd");
+        assert_eq!(view["last_transition"]["completed_at_event"], 125);
     }
 
     #[test]

@@ -21,9 +21,9 @@ use artifact_manifest::{
     DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
     EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
     FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
-    FileObjectManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    FileObjectManifest, FsWaitManifest, GuestStateManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
     IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
@@ -230,6 +230,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b15_evidence(&mut semantic)?;
     record_block_runtime_b16_evidence(&mut semantic)?;
     record_block_runtime_b17_evidence(&mut semantic)?;
+    record_block_runtime_b18_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -5403,6 +5404,224 @@ fn record_block_runtime_b17_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_block_runtime_b18_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let capability = semantic
+        .file_handle_capabilities()
+        .iter()
+        .find(|record| record.id == 20_089 && record.generation == 1)
+        .cloned()
+        .ok_or("block runtime b18 file handle capability evidence is missing")?;
+    let blocker = capability.object_ref();
+
+    let create_read_wait = semantic.apply_envelope(CommandEnvelope::new(
+        289,
+        "target-executor-b18",
+        SemanticCommand::CreateWait {
+            wait: 20_094,
+            owner_task: None,
+            owner_store: Some(capability.owner_store),
+            owner_store_generation: Some(capability.owner_store_generation),
+            kind: SemanticWaitKind::FdReadable,
+            generation: 1,
+            blockers: vec![blocker],
+            deadline: None,
+            restart_policy: RestartPolicy::RestartIfAllowed,
+            saved_context: Some("b18-fs-read-wait-pending".to_owned()),
+        },
+    ));
+    if create_read_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b18 create read wait command {} ({}) failed: status={} violations={:?}",
+            create_read_wait.command_id,
+            create_read_wait.command,
+            create_read_wait.status.as_str(),
+            create_read_wait.violations
+        )
+        .into());
+    }
+
+    let record_read_wait = semantic.apply_envelope(CommandEnvelope::new(
+        290,
+        "target-executor-b18",
+        SemanticCommand::RecordFsWait {
+            fs_wait: 20_095,
+            wait: 20_094,
+            wait_generation: 1,
+            file_handle_capability: capability.id,
+            file_handle_capability_generation: capability.generation,
+            operation: "read".to_owned(),
+            sequence: 1,
+            note: "b18-record-fs-read-wait".to_owned(),
+        },
+    ));
+    if record_read_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b18 record read wait command {} ({}) failed: status={} violations={:?}",
+            record_read_wait.command_id,
+            record_read_wait.command,
+            record_read_wait.status.as_str(),
+            record_read_wait.violations
+        )
+        .into());
+    }
+
+    let resolve_read_wait = semantic.apply_envelope(CommandEnvelope::new(
+        291,
+        "target-executor-b18",
+        SemanticCommand::ResolveFsWait {
+            fs_wait: 20_095,
+            fs_wait_generation: 1,
+            note: "b18-resolve-fs-read-wait".to_owned(),
+        },
+    ));
+    if resolve_read_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b18 resolve read wait command {} ({}) failed: status={} violations={:?}",
+            resolve_read_wait.command_id,
+            resolve_read_wait.command,
+            resolve_read_wait.status.as_str(),
+            resolve_read_wait.violations
+        )
+        .into());
+    }
+
+    let create_cancel_wait = semantic.apply_envelope(CommandEnvelope::new(
+        292,
+        "target-executor-b18",
+        SemanticCommand::CreateWait {
+            wait: 20_096,
+            owner_task: None,
+            owner_store: Some(capability.owner_store),
+            owner_store_generation: Some(capability.owner_store_generation),
+            kind: SemanticWaitKind::FdReadable,
+            generation: 1,
+            blockers: vec![blocker],
+            deadline: None,
+            restart_policy: RestartPolicy::RestartIfAllowed,
+            saved_context: Some("b18-fs-read-wait-close-fd".to_owned()),
+        },
+    ));
+    if create_cancel_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b18 create cancel wait command {} ({}) failed: status={} violations={:?}",
+            create_cancel_wait.command_id,
+            create_cancel_wait.command,
+            create_cancel_wait.status.as_str(),
+            create_cancel_wait.violations
+        )
+        .into());
+    }
+
+    let record_cancel_wait = semantic.apply_envelope(CommandEnvelope::new(
+        293,
+        "target-executor-b18",
+        SemanticCommand::RecordFsWait {
+            fs_wait: 20_097,
+            wait: 20_096,
+            wait_generation: 1,
+            file_handle_capability: capability.id,
+            file_handle_capability_generation: capability.generation,
+            operation: "read".to_owned(),
+            sequence: 2,
+            note: "b18-record-cancellable-fs-wait".to_owned(),
+        },
+    ));
+    if record_cancel_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b18 record cancel wait command {} ({}) failed: status={} violations={:?}",
+            record_cancel_wait.command_id,
+            record_cancel_wait.command,
+            record_cancel_wait.status.as_str(),
+            record_cancel_wait.violations
+        )
+        .into());
+    }
+
+    let duplicate_pending = semantic.apply_envelope(CommandEnvelope::new(
+        294,
+        "target-executor-b18",
+        SemanticCommand::RecordFsWait {
+            fs_wait: 20_098,
+            wait: 20_096,
+            wait_generation: 1,
+            file_handle_capability: capability.id,
+            file_handle_capability_generation: capability.generation,
+            operation: "read".to_owned(),
+            sequence: 2,
+            note: "b18-reject-duplicate-pending-fs-wait".to_owned(),
+        },
+    ));
+    if duplicate_pending.status != CommandStatus::Rejected
+        || !duplicate_pending
+            .violations
+            .iter()
+            .any(|violation| violation.contains("pending fs wait"))
+    {
+        return Err(format!(
+            "block runtime b18 duplicate command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate_pending.command_id,
+            duplicate_pending.command,
+            duplicate_pending.status.as_str(),
+            duplicate_pending.violations
+        )
+        .into());
+    }
+
+    let stale_handle = semantic.apply_envelope(CommandEnvelope::new(
+        295,
+        "target-executor-b18",
+        SemanticCommand::RecordFsWait {
+            fs_wait: 20_099,
+            wait: 20_096,
+            wait_generation: 1,
+            file_handle_capability: capability.id,
+            file_handle_capability_generation: capability.generation.saturating_add(1),
+            operation: "read".to_owned(),
+            sequence: 3,
+            note: "b18-reject-stale-file-handle-capability-generation".to_owned(),
+        },
+    ));
+    if stale_handle.status != CommandStatus::Rejected
+        || !stale_handle
+            .violations
+            .iter()
+            .any(|violation| violation.contains("file handle capability generation"))
+    {
+        return Err(format!(
+            "block runtime b18 stale handle command {} ({}) was not rejected: status={} violations={:?}",
+            stale_handle.command_id,
+            stale_handle.command,
+            stale_handle.status.as_str(),
+            stale_handle.violations
+        )
+        .into());
+    }
+
+    let cancel_wait = semantic.apply_envelope(CommandEnvelope::new(
+        296,
+        "target-executor-b18",
+        SemanticCommand::CancelFsWait {
+            fs_wait: 20_097,
+            fs_wait_generation: 1,
+            errno: 9,
+            reason: WaitCancelReason::CloseFd,
+            note: "b18-cancel-fs-wait-on-close-fd".to_owned(),
+        },
+    ));
+    if cancel_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b18 cancel wait command {} ({}) failed: status={} violations={:?}",
+            cancel_wait.command_id,
+            cancel_wait.command,
+            cancel_wait.status.as_str(),
+            cancel_wait.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -7811,6 +8030,7 @@ fn demo_migration_package(
             fat_adapter_object_count: semantic.fat_adapter_object_count(),
             ext4_adapter_object_count: semantic.ext4_adapter_object_count(),
             file_handle_capability_count: semantic.file_handle_capability_count(),
+            fs_wait_count: semantic.fs_wait_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -8203,6 +8423,7 @@ fn demo_migration_package(
                 .iter()
                 .map(file_handle_capability_manifest)
                 .collect(),
+            fs_waits: semantic.fs_waits().iter().map(fs_wait_manifest).collect(),
             activation_resumes: semantic
                 .activation_resumes()
                 .iter()
@@ -9971,6 +10192,32 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        fs_wait_roots: semantic
+            .fs_waits()
+            .iter()
+            .map(|wait| {
+                format!(
+                    "fs-wait id={} wait={}@{} owner_store={}@{} file_object={}@{} directory_object={}@{} file_handle_capability={}@{} operation={} blocker={} sequence={} byte_len={} state={} generation={}",
+                    wait.id,
+                    wait.wait,
+                    wait.wait_generation,
+                    wait.owner_store,
+                    wait.owner_store_generation,
+                    wait.file_object,
+                    wait.file_object_generation,
+                    wait.directory_object,
+                    wait.directory_object_generation,
+                    wait.file_handle_capability,
+                    wait.file_handle_capability_generation,
+                    wait.operation,
+                    wait.blocker.summary(),
+                    wait.sequence,
+                    wait.byte_len,
+                    wait.state.as_str(),
+                    wait.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -11577,6 +11824,32 @@ fn file_handle_capability_manifest(
         state: capability.state.as_str().to_owned(),
         recorded_at_event: capability.recorded_at_event,
         note: capability.note.clone(),
+    }
+}
+
+fn fs_wait_manifest(wait: &semantic_core::FsWaitRecord) -> FsWaitManifest {
+    FsWaitManifest {
+        id: wait.id,
+        wait: wait.wait,
+        wait_generation: wait.wait_generation,
+        owner_store: wait.owner_store,
+        owner_store_generation: wait.owner_store_generation,
+        file_object: wait.file_object,
+        file_object_generation: wait.file_object_generation,
+        directory_object: wait.directory_object,
+        directory_object_generation: wait.directory_object_generation,
+        file_handle_capability: wait.file_handle_capability,
+        file_handle_capability_generation: wait.file_handle_capability_generation,
+        operation: wait.operation.clone(),
+        blocker: contract_object_ref_manifest(wait.blocker),
+        sequence: wait.sequence,
+        byte_len: wait.byte_len,
+        generation: wait.generation,
+        state: wait.state.as_str().to_owned(),
+        created_at_event: wait.created_at_event,
+        completed_at_event: wait.completed_at_event,
+        cancel_reason: wait.cancel_reason.map(|reason| reason.as_str().to_owned()),
+        note: wait.note.clone(),
     }
 }
 

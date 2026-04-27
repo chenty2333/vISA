@@ -800,6 +800,10 @@ impl SemanticGraph {
                 .file_handle_capabilities
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::FsWait => self
+                .fs_waits
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

@@ -1473,6 +1473,23 @@ impl FileHandleCapabilityState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FsWaitState {
+    Pending,
+    Resolved,
+    Cancelled,
+}
+
+impl FsWaitState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Resolved => "resolved",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkDriverCleanupState {
     Started,
     Completed,

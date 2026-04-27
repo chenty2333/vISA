@@ -138,6 +138,7 @@ pub enum ObjectKind {
     FatAdapterObject,
     Ext4AdapterObject,
     FileHandleCapability,
+    FsWait,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -241,6 +242,7 @@ impl ObjectKind {
             Self::FatAdapterObject => "fat-adapter-object",
             Self::Ext4AdapterObject => "ext4-adapter-object",
             Self::FileHandleCapability => "file-handle-capability",
+            Self::FsWait => "fs-wait",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -527,6 +529,7 @@ typed_ref!(DirectoryObjectRef, ObjectKind::DirectoryObject);
 typed_ref!(FatAdapterObjectRef, ObjectKind::FatAdapterObject);
 typed_ref!(Ext4AdapterObjectRef, ObjectKind::Ext4AdapterObject);
 typed_ref!(FileHandleCapabilityRef, ObjectKind::FileHandleCapability);
+typed_ref!(FsWaitRef, ObjectKind::FsWait);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2125,6 +2128,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "file handle capability root/count mismatch",
         ));
     }
+    if roots.fs_wait_roots.len() != package.semantic.fs_wait_count
+        || package.semantic.fs_waits.len() != package.semantic.fs_wait_count
+    {
+        return Err(ContractError::new("fs wait root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2719,6 +2727,7 @@ mod tests {
                 fat_adapter_object_count: 0,
                 ext4_adapter_object_count: 0,
                 file_handle_capability_count: 0,
+                fs_wait_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2831,6 +2840,7 @@ mod tests {
                 fat_adapter_objects: Vec::new(),
                 ext4_adapter_objects: Vec::new(),
                 file_handle_capabilities: Vec::new(),
+                fs_waits: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4602,6 +4612,45 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_fs_wait_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.fs_wait_count = 1;
+        package
+            .semantic
+            .fs_waits
+            .push(artifact_manifest::FsWaitManifest {
+                id: 69,
+                wait: 70,
+                wait_generation: 1,
+                owner_store: 7,
+                owner_store_generation: 1,
+                file_object: 64,
+                file_object_generation: 1,
+                directory_object: 65,
+                directory_object_generation: 1,
+                file_handle_capability: 68,
+                file_handle_capability_generation: 1,
+                operation: "read".to_owned(),
+                blocker: artifact_manifest::ContractObjectRefManifest {
+                    kind: "file-handle-capability".to_owned(),
+                    id: 68,
+                    generation: 1,
+                },
+                sequence: 1,
+                byte_len: 32,
+                generation: 1,
+                state: "pending".to_owned(),
+                created_at_event: 85,
+                completed_at_event: None,
+                cancel_reason: None,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "fs wait root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -5898,6 +5947,8 @@ mod tests {
         let file_handle_capability =
             ObjectRef::new(ObjectKind::FileHandleCapability, 68, 1).unwrap();
         assert!(FileHandleCapabilityRef::try_from_ref(file_handle_capability).is_ok());
+        let fs_wait = ObjectRef::new(ObjectKind::FsWait, 69, 1).unwrap();
+        assert!(FsWaitRef::try_from_ref(fs_wait).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();
