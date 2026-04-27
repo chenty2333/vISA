@@ -1,0 +1,214 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "B17-file-handle-capability-gate",
+  "phase": "Phase 5 Block / Disk Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add FileHandleCapability as stable semantic evidence for a store-local file access gate",
+    "Add CapabilityClass::FileHandle and require AuthorityObjectRef<FileObject> for file-handle authorization",
+    "Record FileHandleCapability through SemanticCommand::RecordFileHandleCapability",
+    "Bind Store, FileObject, DirectoryObject, and Capability with exact generations",
+    "Reject stale FileObject generations, forged store-local handle generations, oversized ranges, and duplicate file-handle grants before mutation",
+    "Expose file-handle capability roots/counts through semantic package, osctl ViewV1, graph, replay roots, roots JSON, and command evidence"
+  ],
+  "no_goals": [
+    "full filesystem namespace",
+    "file descriptor table",
+    "filesystem WaitToken integration",
+    "real VFS open/read/write dispatch",
+    "adapter-local filesystem cache as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/capability.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/file_handle_capability.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/block/golden_b17_file_handle_capability.trace.json",
+    "tests/reports/checkpoints/b17_file_handle_capability_gate.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/block/golden_b17_file_handle_capability.trace.json",
+    "tests/reports/checkpoints/b17_file_handle_capability_gate.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "FileHandleCapability uses AuthorityObjectRef and store-local CapabilityHandle identity; debug labels are never used for authorization",
+      "The target_executor harness derives owner store generation from the granted capability record instead of hard-coding Store@1",
+      "FileHandleCapability command preflight rejects stale file generations and forged handles before any semantic mutation",
+      "Duplicate file-handle gates are rejected for the same Store generation, FileObject generation, and operation",
+      "osctl exposes FileHandleCapability through stable ViewV1, graph evidence, replay roots, inspect JSON, and direct list JSON",
+      "Root/count validation covers file_handle_capabilities so package tampering is rejected"
+    ],
+    "residual_notes": [
+      "B17 does not implement a file descriptor table or real VFS syscall dispatch",
+      "B17 does not model filesystem blocking; B18 will add filesystem WaitToken integration",
+      "B19/B20 still need disk driver cleanup and pending IO retry/EIO policy",
+      "The existing osctl graph code still reports several historical evidence edges through the live graph path; B17 follows the existing B15/B16 pattern instead of doing a broad graph refactor"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core file_handle_capability -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core block_runtime_b17 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl file_handle_capability_view_v1_exposes_file_and_capability_gate -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl file-handle-capability list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect file-handle-capability --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 284",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 285",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 286",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 287",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 288",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --live --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl replay --until 434 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/block/golden_b17_file_handle_capability.trace.json",
+    "osctl_views": [
+      "osctl file-handle-capability list --json <migration.json>",
+      "osctl inspect file-handle-capability --json <migration.json>",
+      "osctl command show --json <migration.json> 284",
+      "osctl command show --json <migration.json> 285",
+      "osctl command show --json <migration.json> 286",
+      "osctl command show --json <migration.json> 287",
+      "osctl command show --json <migration.json> 288",
+      "osctl graph --live --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "file_handle_capability_roots",
+      "file_object_roots",
+      "directory_object_roots",
+      "target_capability_record_roots",
+      "command_result_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 434,
+      "file_handle_capability_count": 1,
+      "file_handle_capability": "file-handle-capability:20089@1",
+      "owner_store": "store:10@3",
+      "file_object": "file-object:20073@1",
+      "directory_object": "directory-object:20077@1",
+      "capability": "capability:33@1",
+      "handle_slot": 5,
+      "handle_generation": 1,
+      "handle_tag": 8118886230472842782,
+      "operation": "read",
+      "file_offset": 0,
+      "byte_len": 512,
+      "content_digest": 2835,
+      "state": "allowed",
+      "recorded_event": 432,
+      "file_handle_read_allowed_command": "command-result:284:record-file-handle-capability:applied",
+      "stale_file_generation_rejected_command": "command-result:285:record-file-handle-capability:rejected",
+      "forged_handle_generation_rejected_command": "command-result:286:record-file-handle-capability:rejected",
+      "oversized_file_range_rejected_command": "command-result:287:record-file-handle-capability:rejected",
+      "duplicate_file_read_rejected_command": "command-result:288:record-file-handle-capability:rejected"
+    }
+  },
+  "residual_gaps": [
+    "B18 still needs filesystem WaitToken integration",
+    "B19/B20 still need disk driver cleanup and pending IO retry/EIO policy",
+    "B21 still needs stale block request generation tests"
+  ],
+  "next_checkpoint": "B18-fs-wait-token-integration"
+}

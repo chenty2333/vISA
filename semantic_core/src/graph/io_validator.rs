@@ -796,6 +796,10 @@ impl SemanticGraph {
                 .ext4_adapter_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::FileHandleCapability => self
+                .file_handle_capabilities
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

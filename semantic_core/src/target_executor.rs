@@ -83,6 +83,7 @@ pub enum ContractObjectKind {
     DirectoryObject,
     FatAdapterObject,
     Ext4AdapterObject,
+    FileHandleCapability,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -182,6 +183,7 @@ impl ContractObjectKind {
             Self::DirectoryObject => "directory-object",
             Self::FatAdapterObject => "fat-adapter-object",
             Self::Ext4AdapterObject => "ext4-adapter-object",
+            Self::FileHandleCapability => "file-handle-capability",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -621,6 +623,10 @@ impl AuthorityMatrix {
                 _ => return Err(AuthorityMatrixError::UnknownOperation),
             },
             CapabilityClass::NetInterface | CapabilityClass::NetSocket => Some(operation),
+            CapabilityClass::FileHandle => match operation {
+                "open" | "read" | "write" | "close" | "stat" | "seek" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
             CapabilityClass::ServiceImport => {
                 if object.contains('.') || declared_capability {
                     Some(operation)

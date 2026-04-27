@@ -137,6 +137,7 @@ pub enum ObjectKind {
     DirectoryObject,
     FatAdapterObject,
     Ext4AdapterObject,
+    FileHandleCapability,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -239,6 +240,7 @@ impl ObjectKind {
             Self::DirectoryObject => "directory-object",
             Self::FatAdapterObject => "fat-adapter-object",
             Self::Ext4AdapterObject => "ext4-adapter-object",
+            Self::FileHandleCapability => "file-handle-capability",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -524,6 +526,7 @@ typed_ref!(FileObjectRef, ObjectKind::FileObject);
 typed_ref!(DirectoryObjectRef, ObjectKind::DirectoryObject);
 typed_ref!(FatAdapterObjectRef, ObjectKind::FatAdapterObject);
 typed_ref!(Ext4AdapterObjectRef, ObjectKind::Ext4AdapterObject);
+typed_ref!(FileHandleCapabilityRef, ObjectKind::FileHandleCapability);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2114,6 +2117,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "ext4 adapter object root/count mismatch",
         ));
     }
+    if roots.file_handle_capability_roots.len() != package.semantic.file_handle_capability_count
+        || package.semantic.file_handle_capabilities.len()
+            != package.semantic.file_handle_capability_count
+    {
+        return Err(ContractError::new(
+            "file handle capability root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2707,6 +2718,7 @@ mod tests {
                 directory_object_count: 0,
                 fat_adapter_object_count: 0,
                 ext4_adapter_object_count: 0,
+                file_handle_capability_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2818,6 +2830,7 @@ mod tests {
                 directory_objects: Vec::new(),
                 fat_adapter_objects: Vec::new(),
                 ext4_adapter_objects: Vec::new(),
+                file_handle_capabilities: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4553,6 +4566,42 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_file_handle_capability_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.file_handle_capability_count = 1;
+        package.semantic.file_handle_capabilities.push(
+            artifact_manifest::FileHandleCapabilityManifest {
+                id: 68,
+                owner_store: 7,
+                owner_store_generation: 1,
+                file_object: 64,
+                file_object_generation: 1,
+                directory_object: 65,
+                directory_object_generation: 1,
+                capability: 9,
+                capability_generation: 1,
+                handle_slot: 1,
+                handle_generation: 1,
+                handle_tag: 123,
+                operation: "read".to_owned(),
+                file_offset: 0,
+                byte_len: 32,
+                content_digest: 1,
+                generation: 1,
+                state: "allowed".to_owned(),
+                recorded_at_event: 84,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "file handle capability root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -5846,6 +5895,9 @@ mod tests {
         assert!(FatAdapterObjectRef::try_from_ref(fat_adapter_object).is_ok());
         let ext4_adapter_object = ObjectRef::new(ObjectKind::Ext4AdapterObject, 67, 1).unwrap();
         assert!(Ext4AdapterObjectRef::try_from_ref(ext4_adapter_object).is_ok());
+        let file_handle_capability =
+            ObjectRef::new(ObjectKind::FileHandleCapability, 68, 1).unwrap();
+        assert!(FileHandleCapabilityRef::try_from_ref(file_handle_capability).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

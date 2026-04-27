@@ -1329,6 +1329,32 @@ pub enum SemanticInvariantError {
     Ext4AdapterObjectMissingEvent {
         ext4_adapter_object: Ext4AdapterObjectId,
     },
+    FileHandleCapabilityInvalid {
+        file_handle_capability: FileHandleCapabilityId,
+    },
+    FileHandleCapabilityMissingStore {
+        file_handle_capability: FileHandleCapabilityId,
+        store: StoreId,
+    },
+    FileHandleCapabilityMissingFileObject {
+        file_handle_capability: FileHandleCapabilityId,
+        file_object: FileObjectId,
+    },
+    FileHandleCapabilityMissingDirectoryObject {
+        file_handle_capability: FileHandleCapabilityId,
+        directory_object: DirectoryObjectId,
+    },
+    FileHandleCapabilityMissingCapability {
+        file_handle_capability: FileHandleCapabilityId,
+        capability: CapabilityId,
+    },
+    FileHandleCapabilityDuplicateGrant {
+        file_handle_capability: FileHandleCapabilityId,
+        file_object: FileObjectId,
+    },
+    FileHandleCapabilityMissingEvent {
+        file_handle_capability: FileHandleCapabilityId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

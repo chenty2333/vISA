@@ -92,6 +92,7 @@ pub enum CapabilityClass {
     NetInterface,
     NetSocket,
     GuestMemoryAccess,
+    FileHandle,
 }
 
 impl CapabilityClass {
@@ -128,6 +129,8 @@ impl CapabilityClass {
             Self::NetSocket
         } else if object.starts_with("guest-memory.") {
             Self::GuestMemoryAccess
+        } else if object.starts_with("file-handle.") || object.starts_with("file.") {
+            Self::FileHandle
         } else {
             Self::ServiceImport
         }
@@ -152,6 +155,7 @@ impl CapabilityClass {
             Self::NetInterface => "net-interface",
             Self::NetSocket => "net-socket",
             Self::GuestMemoryAccess => "guest-memory-access",
+            Self::FileHandle => "file-handle",
         }
     }
 
@@ -174,6 +178,7 @@ impl CapabilityClass {
             Self::NetInterface => 14,
             Self::NetSocket => 15,
             Self::GuestMemoryAccess => 16,
+            Self::FileHandle => 17,
         }
     }
 
@@ -196,6 +201,7 @@ impl CapabilityClass {
             14 => Some(Self::NetInterface),
             15 => Some(Self::NetSocket),
             16 => Some(Self::GuestMemoryAccess),
+            17 => Some(Self::FileHandle),
             _ => None,
         }
     }
@@ -203,6 +209,7 @@ impl CapabilityClass {
     pub const fn default_object_kind(self) -> ContractObjectKind {
         match self {
             Self::CodePublish => ContractObjectKind::CodeObject,
+            Self::FileHandle => ContractObjectKind::FileObject,
             Self::Snapshot | Self::GuestMemoryAccess | Self::DmwWindow => {
                 ContractObjectKind::MemoryObject
             }

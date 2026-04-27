@@ -1460,6 +1460,19 @@ impl NetworkBackpressureAction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileHandleCapabilityState {
+    Allowed,
+}
+
+impl FileHandleCapabilityState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allowed => "allowed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkDriverCleanupState {
     Started,
     Completed,

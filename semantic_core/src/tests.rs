@@ -14407,6 +14407,258 @@ fn block_runtime_b16_invariants_reject_ext4_adapter_generation_leak() {
     );
 }
 
+fn setup_b17_file_handle_capability_graph() -> (SemanticGraph, CapabilityHandle, CapabilityId) {
+    let mut graph = setup_b16_ext4_adapter_graph();
+    graph.register_store(
+        "linux_syscall",
+        "linux_syscall.wasm",
+        "personality",
+        "kill-on-trap",
+    );
+    let file_ref = ContractObjectRef::new(ContractObjectKind::FileObject, 1845, 1);
+    let cap = graph.grant_capability_with_authority_ref(
+        "linux_syscall",
+        "file-handle./demo/file.txt",
+        AuthorityObjectRef::internal(CapabilityClass::FileHandle, file_ref),
+        &["read", "write"],
+        "task",
+        "b17-test",
+        true,
+    );
+    let handle = graph
+        .capabilities()
+        .record(cap)
+        .and_then(|record| record.store_local_handle(vec!["read".to_string()]))
+        .unwrap();
+    (graph, handle, cap)
+}
+
+#[test]
+fn block_runtime_b17_file_handle_capability_gates_file_object() {
+    let (mut graph, handle, cap) = setup_b17_file_handle_capability_graph();
+    let cap_generation = graph.capabilities().record(cap).unwrap().generation;
+    let store = graph.store_id("linux_syscall").unwrap();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b17-test",
+        SemanticCommand::RecordFileHandleCapability {
+            file_handle_capability: 1865,
+            owner_store: store,
+            owner_store_generation: 1,
+            file_object: 1845,
+            file_object_generation: 1,
+            directory_object: 1850,
+            directory_object_generation: 1,
+            capability: cap,
+            capability_generation: cap_generation,
+            handle: handle.clone(),
+            operation: "read".to_string(),
+            file_offset: 0,
+            byte_len: 512,
+            content_digest: 0xB13,
+            note: "b17 record file handle read capability".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.file_handle_capability_count(), 1);
+    let gate = &graph.file_handle_capabilities()[0];
+    assert_eq!(
+        gate.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::FileHandleCapability, 1865, 1)
+    );
+    assert_eq!(gate.owner_store, store);
+    assert_eq!(gate.file_object, 1845);
+    assert_eq!(gate.directory_object, 1850);
+    assert_eq!(gate.capability, cap);
+    assert_eq!(gate.capability_generation, cap_generation);
+    assert_eq!(gate.handle_slot, handle.slot);
+    assert_eq!(gate.handle_generation, handle.generation);
+    assert_eq!(gate.handle_tag, handle.tag);
+    assert_eq!(gate.operation, "read");
+    assert_eq!(gate.byte_len, 512);
+    assert_eq!(gate.content_digest, 0xB13);
+    assert_eq!(gate.state, FileHandleCapabilityState::Allowed);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "FileHandleCapabilityRecorded file_handle_capability=1865 owner_store={store}@1 file_object=1845@1 directory_object=1850@1 capability={cap}@{cap_generation} handle_slot={} handle_generation={} handle_tag={} operation=read file_offset=0 byte_len=512 content_digest=2835 state=allowed generation=1",
+            handle.slot, handle.generation, handle.tag
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b17_rejects_stale_handle_duplicate_and_oversized_file_gate() {
+    let (mut graph, handle, cap) = setup_b17_file_handle_capability_graph();
+    let cap_generation = graph.capabilities().record(cap).unwrap().generation;
+    let store = graph.store_id("linux_syscall").unwrap();
+
+    let stale_file = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b17-test",
+        SemanticCommand::RecordFileHandleCapability {
+            file_handle_capability: 1866,
+            owner_store: store,
+            owner_store_generation: 1,
+            file_object: 1845,
+            file_object_generation: 2,
+            directory_object: 1850,
+            directory_object_generation: 1,
+            capability: cap,
+            capability_generation: cap_generation,
+            handle: handle.clone(),
+            operation: "read".to_string(),
+            file_offset: 0,
+            byte_len: 512,
+            content_digest: 0xB13,
+            note: "stale file generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_file.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_file.violations,
+        vec!["file handle capability file generation is missing".to_string()]
+    );
+
+    let mut forged_handle = handle.clone();
+    forged_handle.generation = forged_handle.generation.saturating_add(1);
+    let bad_handle = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b17-test",
+        SemanticCommand::RecordFileHandleCapability {
+            file_handle_capability: 1867,
+            owner_store: store,
+            owner_store_generation: 1,
+            file_object: 1845,
+            file_object_generation: 1,
+            directory_object: 1850,
+            directory_object_generation: 1,
+            capability: cap,
+            capability_generation: cap_generation,
+            handle: forged_handle,
+            operation: "read".to_string(),
+            file_offset: 0,
+            byte_len: 512,
+            content_digest: 0xB13,
+            note: "forged handle generation".to_string(),
+        },
+    ));
+    assert_eq!(bad_handle.status, CommandStatus::Rejected);
+    assert_eq!(
+        bad_handle.violations,
+        vec!["file handle capability handle is not authorized".to_string()]
+    );
+
+    let oversized = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b17-test",
+        SemanticCommand::RecordFileHandleCapability {
+            file_handle_capability: 1868,
+            owner_store: store,
+            owner_store_generation: 1,
+            file_object: 1845,
+            file_object_generation: 1,
+            directory_object: 1850,
+            directory_object_generation: 1,
+            capability: cap,
+            capability_generation: cap_generation,
+            handle: handle.clone(),
+            operation: "read".to_string(),
+            file_offset: 4090,
+            byte_len: 16,
+            content_digest: 0xB13,
+            note: "oversized file range".to_string(),
+        },
+    ));
+    assert_eq!(oversized.status, CommandStatus::Rejected);
+    assert_eq!(
+        oversized.violations,
+        vec!["file handle capability file binding mismatch".to_string()]
+    );
+
+    assert!(graph.record_file_handle_capability_with_id(
+        1865,
+        store,
+        1,
+        1845,
+        1,
+        1850,
+        1,
+        cap,
+        cap_generation,
+        handle.clone(),
+        "read",
+        0,
+        512,
+        0xB13,
+        "existing file handle capability",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "b17-test",
+        SemanticCommand::RecordFileHandleCapability {
+            file_handle_capability: 1869,
+            owner_store: store,
+            owner_store_generation: 1,
+            file_object: 1845,
+            file_object_generation: 1,
+            directory_object: 1850,
+            directory_object_generation: 1,
+            capability: cap,
+            capability_generation: cap_generation,
+            handle,
+            operation: "read".to_string(),
+            file_offset: 0,
+            byte_len: 512,
+            content_digest: 0xB13,
+            note: "duplicate file handle capability".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["file handle capability already allowed for file operation".to_string()]
+    );
+}
+
+#[test]
+fn block_runtime_b17_invariants_reject_file_handle_generation_leak() {
+    let (mut graph, handle, cap) = setup_b17_file_handle_capability_graph();
+    let cap_generation = graph.capabilities().record(cap).unwrap().generation;
+    let store = graph.store_id("linux_syscall").unwrap();
+    assert!(graph.record_file_handle_capability_with_id(
+        1865,
+        store,
+        1,
+        1845,
+        1,
+        1850,
+        1,
+        cap,
+        cap_generation,
+        handle,
+        "read",
+        0,
+        512,
+        0xB13,
+        "b17 invariant file handle capability",
+    ));
+    graph.corrupt_file_handle_capability_generation_for_test(1865, 0);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::FileHandleCapabilityMissingFileObject {
+                file_handle_capability: 1865,
+                file_object: 1845,
+            }
+        )
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

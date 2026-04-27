@@ -2194,6 +2194,40 @@ impl Ext4AdapterObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileHandleCapabilityRecord {
+    pub id: FileHandleCapabilityId,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub file_object: FileObjectId,
+    pub file_object_generation: Generation,
+    pub directory_object: DirectoryObjectId,
+    pub directory_object_generation: Generation,
+    pub capability: CapabilityId,
+    pub capability_generation: Generation,
+    pub handle_slot: u32,
+    pub handle_generation: u32,
+    pub handle_tag: u64,
+    pub operation: String,
+    pub file_offset: u64,
+    pub byte_len: u64,
+    pub content_digest: u64,
+    pub generation: Generation,
+    pub state: FileHandleCapabilityState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl FileHandleCapabilityRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::FileHandleCapability,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

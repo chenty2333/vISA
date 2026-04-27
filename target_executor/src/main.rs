@@ -20,20 +20,20 @@ use artifact_manifest::{
     DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
     DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
     EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
-    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileObjectManifest, GuestStateManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
+    FileObjectManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -109,6 +109,7 @@ const SEMANTIC_EVIDENCE_CAPABILITY_SOURCES: &[&str] = &[
     "i7-device-capability",
     "n17-dma-generation-capability",
     "b6-virtio-blk-device-capability",
+    "target-executor-b17",
 ];
 
 #[derive(Clone, Debug, Default)]
@@ -228,6 +229,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b14_evidence(&mut semantic)?;
     record_block_runtime_b15_evidence(&mut semantic)?;
     record_block_runtime_b16_evidence(&mut semantic)?;
+    record_block_runtime_b17_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -5192,6 +5194,215 @@ fn record_block_runtime_b16_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_block_runtime_b17_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let owner_store = semantic_store_id(semantic, "linux_syscall")?;
+    let file_ref = ContractObjectRef::new(ContractObjectKind::FileObject, 20_073, 1);
+    let capability = semantic.grant_capability_with_authority_ref(
+        "linux_syscall",
+        "file-handle./demo/file.txt",
+        AuthorityObjectRef::internal(CapabilityClass::FileHandle, file_ref),
+        &["read", "write"],
+        "task",
+        "target-executor-b17",
+        true,
+    );
+    let capability_record = semantic
+        .capabilities()
+        .record(capability)
+        .ok_or("block runtime b17 file handle capability record is missing")?;
+    let capability_generation = capability_record.generation;
+    let owner_store_generation = capability_record
+        .owner_store_generation
+        .ok_or("block runtime b17 file handle capability owner generation is missing")?;
+    let handle = capability_record
+        .store_local_handle(vec!["read".to_owned()])
+        .ok_or("block runtime b17 file handle capability handle is missing")?;
+
+    let allowed = semantic.apply_envelope(CommandEnvelope::new(
+        284,
+        "target-executor-b17",
+        SemanticCommand::RecordFileHandleCapability {
+            file_handle_capability: 20_089,
+            owner_store,
+            owner_store_generation,
+            file_object: 20_073,
+            file_object_generation: 1,
+            directory_object: 20_077,
+            directory_object_generation: 1,
+            capability,
+            capability_generation,
+            handle: handle.clone(),
+            operation: "read".to_owned(),
+            file_offset: 0,
+            byte_len: 512,
+            content_digest: 0xB13,
+            note: "b17-allow-file-handle-read".to_owned(),
+        },
+    ));
+    if allowed.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b17 file handle command {} ({}) failed: status={} violations={:?}",
+            allowed.command_id,
+            allowed.command,
+            allowed.status.as_str(),
+            allowed.violations
+        )
+        .into());
+    }
+
+    let stale_file = semantic.apply_envelope(CommandEnvelope::new(
+        285,
+        "target-executor-b17",
+        SemanticCommand::RecordFileHandleCapability {
+            file_handle_capability: 20_090,
+            owner_store,
+            owner_store_generation,
+            file_object: 20_073,
+            file_object_generation: 2,
+            directory_object: 20_077,
+            directory_object_generation: 1,
+            capability,
+            capability_generation,
+            handle: handle.clone(),
+            operation: "read".to_owned(),
+            file_offset: 0,
+            byte_len: 512,
+            content_digest: 0xB13,
+            note: "b17-reject-stale-file-generation".to_owned(),
+        },
+    ));
+    if stale_file.status != CommandStatus::Rejected
+        || !stale_file
+            .violations
+            .iter()
+            .any(|violation| violation.contains("file generation"))
+    {
+        return Err(format!(
+            "block runtime b17 stale file command {} ({}) was not rejected: status={} violations={:?}",
+            stale_file.command_id,
+            stale_file.command,
+            stale_file.status.as_str(),
+            stale_file.violations
+        )
+        .into());
+    }
+
+    let mut forged_handle = handle.clone();
+    forged_handle.generation = forged_handle.generation.saturating_add(1);
+    let forged = semantic.apply_envelope(CommandEnvelope::new(
+        286,
+        "target-executor-b17",
+        SemanticCommand::RecordFileHandleCapability {
+            file_handle_capability: 20_091,
+            owner_store,
+            owner_store_generation,
+            file_object: 20_073,
+            file_object_generation: 1,
+            directory_object: 20_077,
+            directory_object_generation: 1,
+            capability,
+            capability_generation,
+            handle: forged_handle,
+            operation: "read".to_owned(),
+            file_offset: 0,
+            byte_len: 512,
+            content_digest: 0xB13,
+            note: "b17-reject-forged-file-handle-generation".to_owned(),
+        },
+    ));
+    if forged.status != CommandStatus::Rejected
+        || !forged
+            .violations
+            .iter()
+            .any(|violation| violation.contains("handle is not authorized"))
+    {
+        return Err(format!(
+            "block runtime b17 forged handle command {} ({}) was not rejected: status={} violations={:?}",
+            forged.command_id,
+            forged.command,
+            forged.status.as_str(),
+            forged.violations
+        )
+        .into());
+    }
+
+    let oversized = semantic.apply_envelope(CommandEnvelope::new(
+        287,
+        "target-executor-b17",
+        SemanticCommand::RecordFileHandleCapability {
+            file_handle_capability: 20_092,
+            owner_store,
+            owner_store_generation,
+            file_object: 20_073,
+            file_object_generation: 1,
+            directory_object: 20_077,
+            directory_object_generation: 1,
+            capability,
+            capability_generation,
+            handle: handle.clone(),
+            operation: "read".to_owned(),
+            file_offset: 4090,
+            byte_len: 16,
+            content_digest: 0xB13,
+            note: "b17-reject-oversized-file-handle-range".to_owned(),
+        },
+    ));
+    if oversized.status != CommandStatus::Rejected
+        || !oversized
+            .violations
+            .iter()
+            .any(|violation| violation.contains("file binding mismatch"))
+    {
+        return Err(format!(
+            "block runtime b17 oversized file command {} ({}) was not rejected: status={} violations={:?}",
+            oversized.command_id,
+            oversized.command,
+            oversized.status.as_str(),
+            oversized.violations
+        )
+        .into());
+    }
+
+    let duplicate = semantic.apply_envelope(CommandEnvelope::new(
+        288,
+        "target-executor-b17",
+        SemanticCommand::RecordFileHandleCapability {
+            file_handle_capability: 20_093,
+            owner_store,
+            owner_store_generation,
+            file_object: 20_073,
+            file_object_generation: 1,
+            directory_object: 20_077,
+            directory_object_generation: 1,
+            capability,
+            capability_generation,
+            handle,
+            operation: "read".to_owned(),
+            file_offset: 0,
+            byte_len: 512,
+            content_digest: 0xB13,
+            note: "b17-reject-duplicate-file-handle-read".to_owned(),
+        },
+    ));
+    if duplicate.status != CommandStatus::Rejected
+        || !duplicate
+            .violations
+            .iter()
+            .any(|violation| violation.contains("already allowed"))
+    {
+        return Err(format!(
+            "block runtime b17 duplicate command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate.command_id,
+            duplicate.command,
+            duplicate.status.as_str(),
+            duplicate.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -7599,6 +7810,7 @@ fn demo_migration_package(
             directory_object_count: semantic.directory_object_count(),
             fat_adapter_object_count: semantic.fat_adapter_object_count(),
             ext4_adapter_object_count: semantic.ext4_adapter_object_count(),
+            file_handle_capability_count: semantic.file_handle_capability_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -7985,6 +8197,11 @@ fn demo_migration_package(
                 .ext4_adapter_objects()
                 .iter()
                 .map(ext4_adapter_object_manifest)
+                .collect(),
+            file_handle_capabilities: semantic
+                .file_handle_capabilities()
+                .iter()
+                .map(file_handle_capability_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -9727,6 +9944,33 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        file_handle_capability_roots: semantic
+            .file_handle_capabilities()
+            .iter()
+            .map(|capability| {
+                format!(
+                    "file-handle-capability id={} owner_store={}@{} file_object={}@{} directory_object={}@{} capability={}@{} handle_slot={} handle_generation={} handle_tag={} operation={} file_offset={} byte_len={} content_digest={} state={} generation={}",
+                    capability.id,
+                    capability.owner_store,
+                    capability.owner_store_generation,
+                    capability.file_object,
+                    capability.file_object_generation,
+                    capability.directory_object,
+                    capability.directory_object_generation,
+                    capability.capability,
+                    capability.capability_generation,
+                    capability.handle_slot,
+                    capability.handle_generation,
+                    capability.handle_tag,
+                    capability.operation,
+                    capability.file_offset,
+                    capability.byte_len,
+                    capability.content_digest,
+                    capability.state.as_str(),
+                    capability.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -11306,6 +11550,33 @@ fn ext4_adapter_object_manifest(
         state: adapter.state.as_str().to_owned(),
         recorded_at_event: adapter.recorded_at_event,
         note: adapter.note.clone(),
+    }
+}
+
+fn file_handle_capability_manifest(
+    capability: &semantic_core::FileHandleCapabilityRecord,
+) -> FileHandleCapabilityManifest {
+    FileHandleCapabilityManifest {
+        id: capability.id,
+        owner_store: capability.owner_store,
+        owner_store_generation: capability.owner_store_generation,
+        file_object: capability.file_object,
+        file_object_generation: capability.file_object_generation,
+        directory_object: capability.directory_object,
+        directory_object_generation: capability.directory_object_generation,
+        capability: capability.capability,
+        capability_generation: capability.capability_generation,
+        handle_slot: capability.handle_slot,
+        handle_generation: capability.handle_generation,
+        handle_tag: capability.handle_tag,
+        operation: capability.operation.clone(),
+        file_offset: capability.file_offset,
+        byte_len: capability.byte_len,
+        content_digest: capability.content_digest,
+        generation: capability.generation,
+        state: capability.state.as_str().to_owned(),
+        recorded_at_event: capability.recorded_at_event,
+        note: capability.note.clone(),
     }
 }
 
