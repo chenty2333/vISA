@@ -704,6 +704,10 @@ impl SemanticGraph {
                 .socket_waits
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::NetworkBackpressure => self
+                .network_backpressures
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

@@ -7906,6 +7906,288 @@ fn network_runtime_n14_invariants_reject_socket_wait_endpoint_generation_leak() 
 }
 
 #[test]
+fn network_runtime_n15_backpressure_records_throttle_reject_and_drop_policy() {
+    let (mut graph, _, connected_endpoint) = setup_n14_socket_wait_graph();
+
+    for (offset, command) in [
+        SemanticCommand::RecordNetworkBackpressure {
+            backpressure: 1594,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1544,
+            packet_queue_generation: 1,
+            endpoint: None,
+            endpoint_generation: None,
+            direction: PacketBufferDirection::Rx,
+            reason: NetworkBackpressureReason::QueueHighWatermark,
+            action: NetworkBackpressureAction::ThrottleProducer,
+            queue_depth: 4,
+            queue_limit: 4,
+            dropped_packets: 0,
+            dropped_bytes: 0,
+            sequence: 1,
+            note: "n15 rx high watermark throttle".to_string(),
+        },
+        SemanticCommand::RecordNetworkBackpressure {
+            backpressure: 1595,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            endpoint: Some(connected_endpoint),
+            endpoint_generation: Some(1),
+            direction: PacketBufferDirection::Tx,
+            reason: NetworkBackpressureReason::QueueFull,
+            action: NetworkBackpressureAction::RejectSend,
+            queue_depth: 4,
+            queue_limit: 4,
+            dropped_packets: 0,
+            dropped_bytes: 0,
+            sequence: 2,
+            note: "n15 tx reject send at queue limit".to_string(),
+        },
+        SemanticCommand::RecordNetworkBackpressure {
+            backpressure: 1596,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1544,
+            packet_queue_generation: 1,
+            endpoint: None,
+            endpoint_generation: None,
+            direction: PacketBufferDirection::Rx,
+            reason: NetworkBackpressureReason::QueueFull,
+            action: NetworkBackpressureAction::DropNewest,
+            queue_depth: 5,
+            queue_limit: 4,
+            dropped_packets: 1,
+            dropped_bytes: 1514,
+            sequence: 3,
+            note: "n15 rx drop newest when full".to_string(),
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let result =
+            graph.apply_envelope(CommandEnvelope::new(1 + offset as u64, "n15-test", command));
+        assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    }
+
+    assert_eq!(graph.network_backpressure_count(), 3);
+    let reject = graph
+        .network_backpressures()
+        .iter()
+        .find(|record| record.id == 1595)
+        .unwrap();
+    assert_eq!(
+        reject.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::NetworkBackpressure, 1595, 1)
+    );
+    assert_eq!(reject.endpoint, Some(connected_endpoint));
+    assert_eq!(reject.socket, Some(1580));
+    assert_eq!(reject.owner_store, graph.store_id("linux_socket_service"));
+    assert_eq!(reject.action, NetworkBackpressureAction::RejectSend);
+    assert_eq!(reject.dropped_packets, 0);
+    let drop_record = graph
+        .network_backpressures()
+        .iter()
+        .find(|record| record.id == 1596)
+        .unwrap();
+    assert_eq!(drop_record.action, NetworkBackpressureAction::DropNewest);
+    assert_eq!(drop_record.dropped_bytes, 1514);
+    assert!(
+        graph.event_log_tail(1)[0]
+            .kind
+            .summary()
+            .contains("NetworkBackpressureRecorded backpressure=1596")
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn network_runtime_n15_rejects_stale_queue_missing_endpoint_and_bad_drop_evidence() {
+    let (mut graph, _, connected_endpoint) = setup_n14_socket_wait_graph();
+    let stale_queue = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n15-test",
+        SemanticCommand::RecordNetworkBackpressure {
+            backpressure: 1594,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1544,
+            packet_queue_generation: 2,
+            endpoint: None,
+            endpoint_generation: None,
+            direction: PacketBufferDirection::Rx,
+            reason: NetworkBackpressureReason::QueueHighWatermark,
+            action: NetworkBackpressureAction::ThrottleProducer,
+            queue_depth: 4,
+            queue_limit: 4,
+            dropped_packets: 0,
+            dropped_bytes: 0,
+            sequence: 1,
+            note: "n15 stale rx queue".to_string(),
+        },
+    ));
+    assert_eq!(stale_queue.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_queue.violations,
+        vec!["network backpressure packet queue generation is missing or inactive".to_string()]
+    );
+
+    let missing_endpoint = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n15-test",
+        SemanticCommand::RecordNetworkBackpressure {
+            backpressure: 1594,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            endpoint: None,
+            endpoint_generation: None,
+            direction: PacketBufferDirection::Tx,
+            reason: NetworkBackpressureReason::QueueFull,
+            action: NetworkBackpressureAction::RejectSend,
+            queue_depth: 4,
+            queue_limit: 4,
+            dropped_packets: 0,
+            dropped_bytes: 0,
+            sequence: 1,
+            note: "n15 reject without endpoint".to_string(),
+        },
+    ));
+    assert_eq!(missing_endpoint.status, CommandStatus::Rejected);
+    assert_eq!(
+        missing_endpoint.violations,
+        vec!["network backpressure reject-send requires endpoint attribution".to_string()]
+    );
+
+    let bad_drop = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "n15-test",
+        SemanticCommand::RecordNetworkBackpressure {
+            backpressure: 1594,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1544,
+            packet_queue_generation: 1,
+            endpoint: None,
+            endpoint_generation: None,
+            direction: PacketBufferDirection::Rx,
+            reason: NetworkBackpressureReason::QueueFull,
+            action: NetworkBackpressureAction::DropNewest,
+            queue_depth: 5,
+            queue_limit: 4,
+            dropped_packets: 0,
+            dropped_bytes: 1514,
+            sequence: 1,
+            note: "n15 bad drop counters".to_string(),
+        },
+    ));
+    assert_eq!(bad_drop.status, CommandStatus::Rejected);
+    assert_eq!(
+        bad_drop.violations,
+        vec!["network backpressure drop action requires dropped packet evidence".to_string()]
+    );
+
+    assert!(graph.record_network_backpressure_with_id(
+        1594,
+        1575,
+        1,
+        1541,
+        1,
+        1545,
+        1,
+        Some(connected_endpoint),
+        Some(1),
+        PacketBufferDirection::Tx,
+        NetworkBackpressureReason::QueueFull,
+        NetworkBackpressureAction::RejectSend,
+        4,
+        4,
+        0,
+        0,
+        7,
+        "n15 first tx reject",
+    ));
+    let duplicate_sequence = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "n15-test",
+        SemanticCommand::RecordNetworkBackpressure {
+            backpressure: 1595,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            endpoint: Some(connected_endpoint),
+            endpoint_generation: Some(1),
+            direction: PacketBufferDirection::Tx,
+            reason: NetworkBackpressureReason::QueueFull,
+            action: NetworkBackpressureAction::RejectSend,
+            queue_depth: 4,
+            queue_limit: 4,
+            dropped_packets: 0,
+            dropped_bytes: 0,
+            sequence: 7,
+            note: "n15 duplicate sequence".to_string(),
+        },
+    ));
+    assert_eq!(duplicate_sequence.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate_sequence.violations,
+        vec!["network backpressure sequence already exists for queue direction".to_string()]
+    );
+}
+
+#[test]
+fn network_runtime_n15_invariants_reject_packet_queue_generation_leak() {
+    let (mut graph, _, _) = setup_n14_socket_wait_graph();
+    assert!(graph.record_network_backpressure_with_id(
+        1594,
+        1575,
+        1,
+        1541,
+        1,
+        1544,
+        1,
+        None,
+        None,
+        PacketBufferDirection::Rx,
+        NetworkBackpressureReason::QueueHighWatermark,
+        NetworkBackpressureAction::ThrottleProducer,
+        4,
+        4,
+        0,
+        0,
+        1,
+        "n15 rx high watermark throttle",
+    ));
+    graph.corrupt_network_backpressure_queue_generation_for_test(1594, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::NetworkBackpressureMissingQueue {
+            backpressure: 1594,
+            packet_queue: 1544,
+        })
+    );
+}
+
+#[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");

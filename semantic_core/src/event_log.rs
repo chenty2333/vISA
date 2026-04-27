@@ -670,6 +670,30 @@ pub enum EventKind {
         reason: WaitCancelReason,
         generation: Generation,
     },
+    NetworkBackpressureRecorded {
+        backpressure: NetworkBackpressureId,
+        adapter: NetworkStackAdapterId,
+        adapter_generation: Generation,
+        packet_device: PacketDeviceObjectId,
+        packet_device_generation: Generation,
+        packet_queue: PacketQueueObjectId,
+        packet_queue_generation: Generation,
+        endpoint: Option<EndpointObjectId>,
+        endpoint_generation: Option<Generation>,
+        socket: Option<SocketObjectId>,
+        socket_generation: Option<Generation>,
+        owner_store: Option<StoreId>,
+        owner_store_generation: Option<Generation>,
+        direction: PacketBufferDirection,
+        reason: NetworkBackpressureReason,
+        action: NetworkBackpressureAction,
+        queue_depth: u32,
+        queue_limit: u32,
+        dropped_packets: u32,
+        dropped_bytes: u32,
+        sequence: u64,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1903,6 +1927,49 @@ impl EventKind {
                 "SocketWaitCancelled socket_wait={socket_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
                 reason.as_str()
             ),
+            Self::NetworkBackpressureRecorded {
+                backpressure,
+                adapter,
+                adapter_generation,
+                packet_device,
+                packet_device_generation,
+                packet_queue,
+                packet_queue_generation,
+                endpoint,
+                endpoint_generation,
+                socket,
+                socket_generation,
+                owner_store,
+                owner_store_generation,
+                direction,
+                reason,
+                action,
+                queue_depth,
+                queue_limit,
+                dropped_packets,
+                dropped_bytes,
+                sequence,
+                generation,
+            } => {
+                let endpoint_summary = endpoint.map_or_else(
+                    || "none".to_string(),
+                    |id| format!("{id}@{}", endpoint_generation.unwrap_or(0)),
+                );
+                let socket_summary = socket.map_or_else(
+                    || "none".to_string(),
+                    |id| format!("{id}@{}", socket_generation.unwrap_or(0)),
+                );
+                let owner_store_summary = owner_store.map_or_else(
+                    || "none".to_string(),
+                    |id| format!("{id}@{}", owner_store_generation.unwrap_or(0)),
+                );
+                format!(
+                    "NetworkBackpressureRecorded backpressure={backpressure} adapter={adapter}@{adapter_generation} packet_device={packet_device}@{packet_device_generation} packet_queue={packet_queue}@{packet_queue_generation} endpoint={endpoint_summary} socket={socket_summary} owner_store={owner_store_summary} direction={} reason={} action={} queue_depth={queue_depth} queue_limit={queue_limit} dropped_packets={dropped_packets} dropped_bytes={dropped_bytes} sequence={sequence} generation={generation}",
+                    direction.as_str(),
+                    reason.as_str(),
+                    action.as_str()
+                )
+            }
             Self::RuntimeActivationResumed {
                 resume,
                 decision,

@@ -1490,6 +1490,45 @@ impl SocketWaitRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkBackpressureRecord {
+    pub id: NetworkBackpressureId,
+    pub adapter: NetworkStackAdapterId,
+    pub adapter_generation: Generation,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub packet_queue: PacketQueueObjectId,
+    pub packet_queue_generation: Generation,
+    pub endpoint: Option<EndpointObjectId>,
+    pub endpoint_generation: Option<Generation>,
+    pub socket: Option<SocketObjectId>,
+    pub socket_generation: Option<Generation>,
+    pub owner_store: Option<StoreId>,
+    pub owner_store_generation: Option<Generation>,
+    pub direction: PacketBufferDirection,
+    pub reason: NetworkBackpressureReason,
+    pub action: NetworkBackpressureAction,
+    pub queue_depth: u32,
+    pub queue_limit: u32,
+    pub dropped_packets: u32,
+    pub dropped_bytes: u32,
+    pub sequence: u64,
+    pub generation: Generation,
+    pub state: NetworkBackpressureState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl NetworkBackpressureRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::NetworkBackpressure,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

@@ -1095,6 +1095,59 @@ impl SocketWaitState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkBackpressureState {
+    Recorded,
+    Retired,
+}
+
+impl NetworkBackpressureState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkBackpressureReason {
+    QueueHighWatermark,
+    QueueFull,
+    SocketCapacity,
+    OversizePacket,
+}
+
+impl NetworkBackpressureReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::QueueHighWatermark => "queue-high-watermark",
+            Self::QueueFull => "queue-full",
+            Self::SocketCapacity => "socket-capacity",
+            Self::OversizePacket => "oversize-packet",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkBackpressureAction {
+    ThrottleProducer,
+    DropNewest,
+    DropOldest,
+    RejectSend,
+}
+
+impl NetworkBackpressureAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ThrottleProducer => "throttle-producer",
+            Self::DropNewest => "drop-newest",
+            Self::DropOldest => "drop-oldest",
+            Self::RejectSend => "reject-send",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

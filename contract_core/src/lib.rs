@@ -114,6 +114,7 @@ pub enum ObjectKind {
     EndpointObject,
     SocketOperation,
     SocketWait,
+    NetworkBackpressure,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -193,6 +194,7 @@ impl ObjectKind {
             Self::EndpointObject => "endpoint-object",
             Self::SocketOperation => "socket-operation",
             Self::SocketWait => "socket-wait",
+            Self::NetworkBackpressure => "network-backpressure",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -444,6 +446,7 @@ typed_ref!(SocketObjectRef, ObjectKind::SocketObject);
 typed_ref!(EndpointObjectRef, ObjectKind::EndpointObject);
 typed_ref!(SocketOperationRef, ObjectKind::SocketOperation);
 typed_ref!(SocketWaitRef, ObjectKind::SocketWait);
+typed_ref!(NetworkBackpressureRef, ObjectKind::NetworkBackpressure);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1880,6 +1883,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("socket wait root/count mismatch"));
     }
+    if roots.network_backpressure_roots.len() != package.semantic.network_backpressure_count
+        || package.semantic.network_backpressures.len()
+            != package.semantic.network_backpressure_count
+    {
+        return Err(ContractError::new(
+            "network backpressure root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2450,6 +2461,7 @@ mod tests {
                 endpoint_object_count: 0,
                 socket_operation_count: 0,
                 socket_wait_count: 0,
+                network_backpressure_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2538,6 +2550,7 @@ mod tests {
                 endpoint_objects: Vec::new(),
                 socket_operations: Vec::new(),
                 socket_waits: Vec::new(),
+                network_backpressures: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4125,6 +4138,44 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_network_backpressure_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.network_backpressure_count = 1;
+        package.semantic.network_backpressures.push(
+            artifact_manifest::NetworkBackpressureManifest {
+                id: 47,
+                adapter: 41,
+                adapter_generation: 1,
+                packet_device: 30,
+                packet_device_generation: 1,
+                packet_queue: 32,
+                packet_queue_generation: 1,
+                endpoint: Some(43),
+                endpoint_generation: Some(1),
+                socket: Some(42),
+                socket_generation: Some(1),
+                owner_store: Some(7),
+                owner_store_generation: Some(1),
+                direction: "tx".to_owned(),
+                reason: "queue-full".to_owned(),
+                action: "reject-send".to_owned(),
+                queue_depth: 4,
+                queue_limit: 4,
+                dropped_packets: 0,
+                dropped_bytes: 0,
+                sequence: 1,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 82,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "network backpressure root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -4648,6 +4699,8 @@ mod tests {
         assert!(SocketOperationRef::try_from_ref(socket_operation).is_ok());
         let socket_wait = ObjectRef::new(ObjectKind::SocketWait, 44, 1).unwrap();
         assert!(SocketWaitRef::try_from_ref(socket_wait).is_ok());
+        let network_backpressure = ObjectRef::new(ObjectKind::NetworkBackpressure, 45, 1).unwrap();
+        assert!(NetworkBackpressureRef::try_from_ref(network_backpressure).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

@@ -1,0 +1,167 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "N15-backpressure-drop-policy",
+  "name": "golden_n15_network_backpressure",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md"
+  ],
+  "no_goals": [
+    "real smoltcp queue internals as semantic truth",
+    "real packet transmission",
+    "network driver fault cleanup",
+    "virtio datapath",
+    "full Linux socket ABI"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "N10 has recorded network-stack-adapter:10025@1",
+      "N2 has recorded rx packet-queue:10004@1 and tx packet-queue:10005@1",
+      "N13 has recorded connected endpoint-object:10032@1 and socket-object:10031@1",
+      "linux_socket_service store is store:9@3"
+    ],
+    "commands": [
+      {
+        "id": 166,
+        "command": "record-network-backpressure",
+        "backpressure": "network-backpressure:10045@1",
+        "packet_queue": "packet-queue:10004@1",
+        "direction": "rx",
+        "reason": "queue-high-watermark",
+        "action": "throttle-producer",
+        "queue_depth": 4,
+        "queue_limit": 4,
+        "expected": "applied"
+      },
+      {
+        "id": 167,
+        "command": "record-network-backpressure",
+        "backpressure": "network-backpressure:10046@1",
+        "packet_queue": "packet-queue:10005@1",
+        "endpoint": "endpoint-object:10032@1",
+        "socket": "socket-object:10031@1",
+        "owner_store": "store:9@3",
+        "direction": "tx",
+        "reason": "queue-full",
+        "action": "reject-send",
+        "queue_depth": 4,
+        "queue_limit": 4,
+        "expected": "applied"
+      },
+      {
+        "id": 168,
+        "command": "record-network-backpressure",
+        "backpressure": "network-backpressure:10047@1",
+        "packet_queue": "packet-queue:10004@1",
+        "direction": "rx",
+        "reason": "queue-full",
+        "action": "drop-newest",
+        "queue_depth": 5,
+        "queue_limit": 4,
+        "dropped_packets": 1,
+        "dropped_bytes": 1514,
+        "expected": "applied"
+      },
+      {
+        "id": 169,
+        "command": "record-network-backpressure",
+        "scenario": "drop policy without packet count evidence",
+        "packet_queue": "packet-queue:10004@1",
+        "direction": "rx",
+        "reason": "queue-full",
+        "action": "drop-newest",
+        "expected": "rejected",
+        "violation": "network backpressure drop action requires dropped packet evidence"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "NetworkBackpressureRecorded",
+      "backpressure": "network-backpressure:10045@1",
+      "adapter": "network-stack-adapter:10025@1",
+      "packet_device": "packet-device:10002@1",
+      "packet_queue": "packet-queue:10004@1",
+      "direction": "rx",
+      "reason": "queue-high-watermark",
+      "action": "throttle-producer",
+      "queue_depth": 4,
+      "queue_limit": 4
+    },
+    {
+      "kind": "NetworkBackpressureRecorded",
+      "backpressure": "network-backpressure:10046@1",
+      "adapter": "network-stack-adapter:10025@1",
+      "packet_device": "packet-device:10002@1",
+      "packet_queue": "packet-queue:10005@1",
+      "endpoint": "endpoint-object:10032@1",
+      "socket": "socket-object:10031@1",
+      "owner_store": "store:9@3",
+      "direction": "tx",
+      "reason": "queue-full",
+      "action": "reject-send"
+    },
+    {
+      "kind": "NetworkBackpressureRecorded",
+      "backpressure": "network-backpressure:10047@1",
+      "adapter": "network-stack-adapter:10025@1",
+      "packet_device": "packet-device:10002@1",
+      "packet_queue": "packet-queue:10004@1",
+      "direction": "rx",
+      "reason": "queue-full",
+      "action": "drop-newest",
+      "dropped_packets": 1,
+      "dropped_bytes": 1514
+    }
+  ],
+  "expected": {
+    "views": {
+      "network-backpressure": {
+        "count": 3,
+        "throttle": "network-backpressure:10045@1",
+        "reject_send": "network-backpressure:10046@1",
+        "drop_newest": "network-backpressure:10047@1",
+        "endpoint_attribution": "endpoint-object:10032@1",
+        "store_attribution": "store:9@3"
+      },
+      "command": {
+        "applied": [
+          "command-result:166:record-network-backpressure:applied",
+          "command-result:167:record-network-backpressure:applied",
+          "command-result:168:record-network-backpressure:applied"
+        ],
+        "rejected": "command-result:169:record-network-backpressure:rejected",
+        "violation": "network backpressure drop action requires dropped packet evidence"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "NetworkBackpressure carries exact NetworkStackAdapter, PacketDevice, PacketQueue, EndpointObject, SocketObject, and Store generations",
+      "rx evidence uses the adapter rx queue; tx evidence uses the adapter tx queue",
+      "reject-send requires endpoint attribution",
+      "drop actions require non-zero dropped packet and byte evidence",
+      "network backpressure graph edges are historical evidence, not live ownership",
+      "smoltcp internals remain adapter implementation details, not semantic truth"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "network_runtime_n15_backpressure_records_throttle_reject_and_drop_policy",
+      "network_runtime_n15_rejects_stale_queue_missing_endpoint_and_bad_drop_evidence",
+      "network_runtime_n15_invariants_reject_packet_queue_generation_leak",
+      "network_backpressure_view_v1_exposes_policy_refs_and_drops",
+      "semantic_roots_reject_network_backpressure_root_mismatch",
+      "graph_json_edges_separate_live_history_and_cleanup_modes"
+    ],
+    "osctl_json_view": "network-backpressure list --json"
+  }
+}

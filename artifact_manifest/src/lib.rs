@@ -321,6 +321,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub socket_wait_count: usize,
     #[serde(default)]
+    pub network_backpressure_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -493,6 +495,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub socket_waits: Vec<SocketWaitManifest>,
     #[serde(default)]
+    pub network_backpressures: Vec<NetworkBackpressureManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -644,6 +648,8 @@ pub struct SemanticRootSetManifest {
     pub socket_operation_roots: Vec<String>,
     #[serde(default)]
     pub socket_wait_roots: Vec<String>,
+    #[serde(default)]
+    pub network_backpressure_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1871,6 +1877,35 @@ pub struct SocketWaitManifest {
     pub cancel_reason: Option<String>,
     pub ready_sequence: Option<u64>,
     pub byte_len: Option<u32>,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct NetworkBackpressureManifest {
+    pub id: u64,
+    pub adapter: u64,
+    pub adapter_generation: u64,
+    pub packet_device: u64,
+    pub packet_device_generation: u64,
+    pub packet_queue: u64,
+    pub packet_queue_generation: u64,
+    pub endpoint: Option<u64>,
+    pub endpoint_generation: Option<u64>,
+    pub socket: Option<u64>,
+    pub socket_generation: Option<u64>,
+    pub owner_store: Option<u64>,
+    pub owner_store_generation: Option<u64>,
+    pub direction: String,
+    pub reason: String,
+    pub action: String,
+    pub queue_depth: u32,
+    pub queue_limit: u32,
+    pub dropped_packets: u32,
+    pub dropped_bytes: u32,
+    pub sequence: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
     pub note: String,
 }
 

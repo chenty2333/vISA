@@ -22,15 +22,16 @@ use artifact_manifest::{
     IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
     MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
     MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest,
-    NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest, PacketBufferObjectManifest,
-    PacketDescriptorObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
-    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    NetworkBackpressureManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
+    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
+    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, SocketObjectManifest,
     SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
@@ -56,7 +57,8 @@ use semantic_core::{
     ExternalObjectDeclaration, FrontendKind, HartState, HostcallCategory, HostcallFrame,
     HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind, IrqLinePolarity,
     IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
-    MigrationObjectRecord, MmioRegionObjectAccess, PackageReplayValidator, PacketBufferDirection,
+    MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
+    NetworkBackpressureReason, PackageReplayValidator, PacketBufferDirection,
     PacketBufferObjectState, PacketQueueRole, QueueObjectRole, ReplayPackageValidationState,
     ResourceKind, RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
     SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
@@ -178,6 +180,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n12_evidence(&mut semantic)?;
     record_network_runtime_n13_evidence(&mut semantic)?;
     record_network_runtime_n14_evidence(&mut semantic)?;
+    record_network_runtime_n15_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -1322,6 +1325,139 @@ fn record_network_runtime_n14_evidence(semantic: &mut SemanticGraph) -> Result<(
             stale_wait.command,
             stale_wait.status.as_str(),
             stale_wait.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+fn record_network_runtime_n15_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let commands = [
+        CommandEnvelope::new(
+            166,
+            "target-executor-n15",
+            SemanticCommand::RecordNetworkBackpressure {
+                backpressure: 10_045,
+                adapter: 10_025,
+                adapter_generation: 1,
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                packet_queue: 10_004,
+                packet_queue_generation: 1,
+                endpoint: None,
+                endpoint_generation: None,
+                direction: PacketBufferDirection::Rx,
+                reason: NetworkBackpressureReason::QueueHighWatermark,
+                action: NetworkBackpressureAction::ThrottleProducer,
+                queue_depth: 4,
+                queue_limit: 4,
+                dropped_packets: 0,
+                dropped_bytes: 0,
+                sequence: 1,
+                note: "n15-rx-high-watermark-throttle-producer".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            167,
+            "target-executor-n15",
+            SemanticCommand::RecordNetworkBackpressure {
+                backpressure: 10_046,
+                adapter: 10_025,
+                adapter_generation: 1,
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                packet_queue: 10_005,
+                packet_queue_generation: 1,
+                endpoint: Some(10_032),
+                endpoint_generation: Some(1),
+                direction: PacketBufferDirection::Tx,
+                reason: NetworkBackpressureReason::QueueFull,
+                action: NetworkBackpressureAction::RejectSend,
+                queue_depth: 4,
+                queue_limit: 4,
+                dropped_packets: 0,
+                dropped_bytes: 0,
+                sequence: 2,
+                note: "n15-tx-queue-full-reject-send".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            168,
+            "target-executor-n15",
+            SemanticCommand::RecordNetworkBackpressure {
+                backpressure: 10_047,
+                adapter: 10_025,
+                adapter_generation: 1,
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                packet_queue: 10_004,
+                packet_queue_generation: 1,
+                endpoint: None,
+                endpoint_generation: None,
+                direction: PacketBufferDirection::Rx,
+                reason: NetworkBackpressureReason::QueueFull,
+                action: NetworkBackpressureAction::DropNewest,
+                queue_depth: 5,
+                queue_limit: 4,
+                dropped_packets: 1,
+                dropped_bytes: 1514,
+                sequence: 3,
+                note: "n15-rx-queue-full-drop-newest".to_owned(),
+            },
+        ),
+    ];
+
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "network runtime n15 evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+
+    let invalid_drop = semantic.apply_envelope(CommandEnvelope::new(
+        169,
+        "target-executor-n15",
+        SemanticCommand::RecordNetworkBackpressure {
+            backpressure: 10_048,
+            adapter: 10_025,
+            adapter_generation: 1,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            packet_queue: 10_004,
+            packet_queue_generation: 1,
+            endpoint: None,
+            endpoint_generation: None,
+            direction: PacketBufferDirection::Rx,
+            reason: NetworkBackpressureReason::QueueFull,
+            action: NetworkBackpressureAction::DropNewest,
+            queue_depth: 5,
+            queue_limit: 4,
+            dropped_packets: 0,
+            dropped_bytes: 1514,
+            sequence: 4,
+            note: "n15-reject-drop-without-packet-count".to_owned(),
+        },
+    ));
+    if invalid_drop.status != CommandStatus::Rejected
+        || !invalid_drop
+            .violations
+            .iter()
+            .any(|violation| violation.contains("drop action"))
+    {
+        return Err(format!(
+            "network runtime n15 invalid drop command {} ({}) was not rejected: status={} violations={:?}",
+            invalid_drop.command_id,
+            invalid_drop.command,
+            invalid_drop.status.as_str(),
+            invalid_drop.violations
         )
         .into());
     }
@@ -3713,6 +3849,7 @@ fn demo_migration_package(
             endpoint_object_count: semantic.endpoint_object_count(),
             socket_operation_count: semantic.socket_operation_count(),
             socket_wait_count: semantic.socket_wait_count(),
+            network_backpressure_count: semantic.network_backpressure_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -3984,6 +4121,11 @@ fn demo_migration_package(
                 .socket_waits()
                 .iter()
                 .map(socket_wait_manifest)
+                .collect(),
+            network_backpressures: semantic
+                .network_backpressures()
+                .iter()
+                .map(network_backpressure_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -5095,6 +5237,43 @@ fn semantic_roots(
                     wait.blocker.generation,
                     wait.state.as_str(),
                     wait.generation
+                )
+            })
+            .collect(),
+        network_backpressure_roots: semantic
+            .network_backpressures()
+            .iter()
+            .map(|backpressure| {
+                let endpoint =
+                    optional_generation_ref(backpressure.endpoint, backpressure.endpoint_generation);
+                let socket =
+                    optional_generation_ref(backpressure.socket, backpressure.socket_generation);
+                let owner_store = optional_generation_ref(
+                    backpressure.owner_store,
+                    backpressure.owner_store_generation,
+                );
+                format!(
+                    "network-backpressure id={} adapter={}@{} packet_device={}@{} packet_queue={}@{} endpoint={} socket={} owner_store={} direction={} reason={} action={} queue_depth={} queue_limit={} dropped_packets={} dropped_bytes={} sequence={} state={} generation={}",
+                    backpressure.id,
+                    backpressure.adapter,
+                    backpressure.adapter_generation,
+                    backpressure.packet_device,
+                    backpressure.packet_device_generation,
+                    backpressure.packet_queue,
+                    backpressure.packet_queue_generation,
+                    endpoint,
+                    socket,
+                    owner_store,
+                    backpressure.direction.as_str(),
+                    backpressure.reason.as_str(),
+                    backpressure.action.as_str(),
+                    backpressure.queue_depth,
+                    backpressure.queue_limit,
+                    backpressure.dropped_packets,
+                    backpressure.dropped_bytes,
+                    backpressure.sequence,
+                    backpressure.state.as_str(),
+                    backpressure.generation
                 )
             })
             .collect(),
@@ -6905,6 +7084,38 @@ fn socket_wait_manifest(wait: &semantic_core::SocketWaitRecord) -> SocketWaitMan
     }
 }
 
+fn network_backpressure_manifest(
+    backpressure: &semantic_core::NetworkBackpressureRecord,
+) -> NetworkBackpressureManifest {
+    NetworkBackpressureManifest {
+        id: backpressure.id,
+        adapter: backpressure.adapter,
+        adapter_generation: backpressure.adapter_generation,
+        packet_device: backpressure.packet_device,
+        packet_device_generation: backpressure.packet_device_generation,
+        packet_queue: backpressure.packet_queue,
+        packet_queue_generation: backpressure.packet_queue_generation,
+        endpoint: backpressure.endpoint,
+        endpoint_generation: backpressure.endpoint_generation,
+        socket: backpressure.socket,
+        socket_generation: backpressure.socket_generation,
+        owner_store: backpressure.owner_store,
+        owner_store_generation: backpressure.owner_store_generation,
+        direction: backpressure.direction.as_str().to_owned(),
+        reason: backpressure.reason.as_str().to_owned(),
+        action: backpressure.action.as_str().to_owned(),
+        queue_depth: backpressure.queue_depth,
+        queue_limit: backpressure.queue_limit,
+        dropped_packets: backpressure.dropped_packets,
+        dropped_bytes: backpressure.dropped_bytes,
+        sequence: backpressure.sequence,
+        generation: backpressure.generation,
+        state: backpressure.state.as_str().to_owned(),
+        recorded_at_event: backpressure.recorded_at_event,
+        note: backpressure.note.clone(),
+    }
+}
+
 fn activation_resume_manifest(
     resume: &semantic_core::ActivationResumeRecord,
 ) -> ActivationResumeManifest {
@@ -7314,6 +7525,13 @@ fn contract_object_ref_manifest(reference: ContractObjectRef) -> ContractObjectR
         kind: reference.kind.as_str().to_owned(),
         id: reference.id,
         generation: reference.generation,
+    }
+}
+
+fn optional_generation_ref(id: Option<u64>, generation: Option<u64>) -> String {
+    match (id, generation) {
+        (Some(id), Some(generation)) => format!("{id}@{generation}"),
+        _ => "none".to_owned(),
     }
 }
 

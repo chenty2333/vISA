@@ -1335,6 +1335,42 @@ pub enum SemanticInvariantError {
         socket_wait: SocketWaitId,
         event: EventId,
     },
+    NetworkBackpressureInvalid {
+        backpressure: NetworkBackpressureId,
+    },
+    NetworkBackpressureMissingAdapter {
+        backpressure: NetworkBackpressureId,
+        adapter: NetworkStackAdapterId,
+    },
+    NetworkBackpressureMissingPacketDevice {
+        backpressure: NetworkBackpressureId,
+        packet_device: PacketDeviceObjectId,
+    },
+    NetworkBackpressureMissingQueue {
+        backpressure: NetworkBackpressureId,
+        packet_queue: PacketQueueObjectId,
+    },
+    NetworkBackpressureMissingEndpoint {
+        backpressure: NetworkBackpressureId,
+        endpoint: EndpointObjectId,
+    },
+    NetworkBackpressureMissingSocket {
+        backpressure: NetworkBackpressureId,
+        socket: SocketObjectId,
+    },
+    NetworkBackpressureMissingOwnerStore {
+        backpressure: NetworkBackpressureId,
+        store: StoreId,
+    },
+    NetworkBackpressureDuplicateSequence {
+        backpressure: NetworkBackpressureId,
+        packet_queue: PacketQueueObjectId,
+        sequence: u64,
+    },
+    NetworkBackpressureMissingEvent {
+        backpressure: NetworkBackpressureId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

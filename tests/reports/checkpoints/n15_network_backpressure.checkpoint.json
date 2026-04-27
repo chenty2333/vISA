@@ -1,0 +1,180 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "N15-backpressure-drop-policy",
+  "phase": "Phase 4 Network Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add NetworkBackpressure as stable semantic evidence for backpressure and drop policy decisions",
+    "Record throttle, reject-send, and drop-newest policies with exact NetworkStackAdapter, PacketDevice, PacketQueue, EndpointObject, SocketObject, and Store generations",
+    "Reject stale queue generations, reject-send without endpoint attribution, duplicate queue-direction sequence numbers, and drop actions without packet/byte drop evidence",
+    "Expose network backpressure roots/counts through semantic package, osctl ViewV1, graph history edges, and replay roots",
+    "Record target_executor N15 evidence for two rx policies, one tx policy, and one rejected malformed drop policy"
+  ],
+  "no_goals": [
+    "real smoltcp queue internals as semantic truth",
+    "real packet transmission",
+    "network driver fault cleanup",
+    "virtio datapath",
+    "full Linux socket ABI"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/network_backpressure.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/network/golden_n15_network_backpressure.trace.json",
+    "tests/reports/checkpoints/n15_network_backpressure.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/network/golden_n15_network_backpressure.trace.json",
+    "tests/reports/checkpoints/n15_network_backpressure.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "Backpressure policy is represented as semantic evidence, not by smoltcp internal queue state",
+      "Endpoint/socket/store attribution is derived from EndpointObject rather than trusted from caller-supplied fields",
+      "Graph edges for NetworkBackpressure are historical evidence and do not create live ownership",
+      "Drop policy cannot claim a drop without dropped packet and byte evidence",
+      "Root/count validation covers network_backpressures so package tampering is rejected",
+      "N15 target_executor evidence includes osctl-visible rejected command evidence"
+    ],
+    "residual_notes": [
+      "network driver fault cleanup is N16",
+      "backpressure is still semantic harness evidence, not a real smoltcp runtime backpressure signal",
+      "real virtio/smoltcp datapath remains a later adapter/backend checkpoint"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p semantic_core -p contract_core -p artifact_manifest -p target_executor -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core network_runtime_n15",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core network_backpressure",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl network_backpressure",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl graph_json_edges_separate_live_history_and_cleanup_modes",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl network-backpressure list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl replay --until 358 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/network/golden_n15_network_backpressure.trace.json",
+    "osctl_views": [
+      "osctl network-backpressure list --json <migration.json>",
+      "osctl command list --json <migration.json>",
+      "osctl graph --history --json <migration.json>",
+      "osctl replay --until 358 --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "network_backpressure_roots",
+      "network_stack_adapter_roots",
+      "packet_device_object_roots",
+      "packet_queue_object_roots",
+      "endpoint_object_roots",
+      "socket_object_roots",
+      "store_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 358,
+      "network_backpressure_count": 3,
+      "throttle_policy": "network-backpressure:10045@1",
+      "reject_send_policy": "network-backpressure:10046@1",
+      "drop_newest_policy": "network-backpressure:10047@1",
+      "rejected_command": "command-result:169:record-network-backpressure:rejected",
+      "rejected_violation": "network backpressure drop action requires dropped packet evidence"
+    }
+  },
+  "residual_gaps": [
+    "network driver fault cleanup, real virtio datapath, real smoltcp packet flow, and complete Linux socket ABI are later Phase 4 checkpoints"
+  ],
+  "next_checkpoint": "N16-network-driver-fault-cleanup"
+}
