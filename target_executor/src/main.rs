@@ -10,7 +10,7 @@ use artifact_manifest::{
     ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
     BlockCompletionObjectManifest, BlockDeviceObjectManifest, BlockRangeObjectManifest,
-    BlockReadPathManifest, BlockRequestObjectManifest, BlockWaitManifest,
+    BlockReadPathManifest, BlockRequestObjectManifest, BlockWaitManifest, BlockWritePathManifest,
     BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
     CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
     CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
@@ -210,6 +210,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b5_evidence(&mut semantic)?;
     record_block_runtime_b6_evidence(&mut semantic)?;
     record_block_runtime_b7_evidence(&mut semantic)?;
+    record_block_runtime_b8_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -3686,6 +3687,215 @@ fn record_block_runtime_b7_evidence(semantic: &mut SemanticGraph) -> Result<(), 
     Ok(())
 }
 
+fn record_block_runtime_b8_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let config = FakeBlockBackendConfig::blk0();
+    let backend = ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 20_026, 1);
+    let write_request = semantic.apply_envelope(CommandEnvelope::new(
+        241,
+        "target-executor-b8",
+        SemanticCommand::RecordBlockRequestObject {
+            block_request: 20_046,
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_range: 20_005,
+            block_range_generation: 1,
+            operation: BlockRequestOperation::Write,
+            sequence: 5,
+            note: "b8-record-write-request".to_owned(),
+        },
+    ));
+    if write_request.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b8 write request command {} ({}) failed: status={} violations={:?}",
+            write_request.command_id,
+            write_request.command,
+            write_request.status.as_str(),
+            write_request.violations
+        )
+        .into());
+    }
+    let write_completion = semantic.apply_envelope(CommandEnvelope::new(
+        242,
+        "target-executor-b8",
+        SemanticCommand::RecordBlockCompletionObject {
+            block_completion: 20_047,
+            block_request: 20_046,
+            block_request_generation: 1,
+            sequence: 5,
+            completed_bytes: 4096,
+            status: BlockCompletionStatus::Success,
+            note: "b8-record-write-completion".to_owned(),
+        },
+    ));
+    if write_completion.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b8 write completion command {} ({}) failed: status={} violations={:?}",
+            write_completion.command_id,
+            write_completion.command,
+            write_completion.status.as_str(),
+            write_completion.violations
+        )
+        .into());
+    }
+    let payload_digest = SemanticGraph::expected_block_write_payload_digest_v1(
+        config.deterministic_seed,
+        20_002,
+        1,
+        20_005,
+        1,
+        64,
+        8,
+        5,
+        4096,
+    );
+    let write_path = semantic.apply_envelope(CommandEnvelope::new(
+        243,
+        "target-executor-b8",
+        SemanticCommand::RecordBlockWritePath {
+            write_path: 20_048,
+            backend,
+            block_request: 20_046,
+            block_request_generation: 1,
+            block_completion: 20_047,
+            block_completion_generation: 1,
+            payload_digest,
+            note: "b8-record-block-write-path-through-fake-backend".to_owned(),
+        },
+    ));
+    if write_path.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b8 write path command {} ({}) failed: status={} violations={:?}",
+            write_path.command_id,
+            write_path.command,
+            write_path.status.as_str(),
+            write_path.violations
+        )
+        .into());
+    }
+
+    let duplicate = semantic.apply_envelope(CommandEnvelope::new(
+        244,
+        "target-executor-b8",
+        SemanticCommand::RecordBlockWritePath {
+            write_path: 20_049,
+            backend,
+            block_request: 20_046,
+            block_request_generation: 1,
+            block_completion: 20_047,
+            block_completion_generation: 1,
+            payload_digest,
+            note: "b8-reject-duplicate-write-path".to_owned(),
+        },
+    ));
+    if duplicate.status != CommandStatus::Rejected
+        || !duplicate
+            .violations
+            .iter()
+            .any(|violation| violation.contains("already exists for request generation"))
+    {
+        return Err(format!(
+            "block runtime b8 duplicate write path command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate.command_id,
+            duplicate.command,
+            duplicate.status.as_str(),
+            duplicate.violations
+        )
+        .into());
+    }
+
+    let stale_backend = semantic.apply_envelope(CommandEnvelope::new(
+        245,
+        "target-executor-b8",
+        SemanticCommand::RecordBlockWritePath {
+            write_path: 20_050,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 20_026, 2),
+            block_request: 20_046,
+            block_request_generation: 1,
+            block_completion: 20_047,
+            block_completion_generation: 1,
+            payload_digest,
+            note: "b8-reject-stale-backend-generation".to_owned(),
+        },
+    ));
+    if stale_backend.status != CommandStatus::Rejected
+        || !stale_backend
+            .violations
+            .iter()
+            .any(|violation| violation.contains("backend generation"))
+    {
+        return Err(format!(
+            "block runtime b8 stale backend command {} ({}) was not rejected: status={} violations={:?}",
+            stale_backend.command_id,
+            stale_backend.command,
+            stale_backend.status.as_str(),
+            stale_backend.violations
+        )
+        .into());
+    }
+
+    let read_not_write = semantic.apply_envelope(CommandEnvelope::new(
+        246,
+        "target-executor-b8",
+        SemanticCommand::RecordBlockWritePath {
+            write_path: 20_051,
+            backend,
+            block_request: 20_009,
+            block_request_generation: 1,
+            block_completion: 20_013,
+            block_completion_generation: 1,
+            payload_digest,
+            note: "b8-reject-read-request-as-write-path".to_owned(),
+        },
+    ));
+    if read_not_write.status != CommandStatus::Rejected
+        || !read_not_write
+            .violations
+            .iter()
+            .any(|violation| violation.contains("operation is not write"))
+    {
+        return Err(format!(
+            "block runtime b8 read-as-write command {} ({}) was not rejected: status={} violations={:?}",
+            read_not_write.command_id,
+            read_not_write.command,
+            read_not_write.status.as_str(),
+            read_not_write.violations
+        )
+        .into());
+    }
+
+    let bad_digest = semantic.apply_envelope(CommandEnvelope::new(
+        247,
+        "target-executor-b8",
+        SemanticCommand::RecordBlockWritePath {
+            write_path: 20_052,
+            backend,
+            block_request: 20_046,
+            block_request_generation: 1,
+            block_completion: 20_047,
+            block_completion_generation: 1,
+            payload_digest: payload_digest.wrapping_add(1),
+            note: "b8-reject-payload-digest-mismatch".to_owned(),
+        },
+    ));
+    if bad_digest.status != CommandStatus::Rejected
+        || !bad_digest
+            .violations
+            .iter()
+            .any(|violation| violation.contains("payload digest mismatch"))
+    {
+        return Err(format!(
+            "block runtime b8 bad digest command {} ({}) was not rejected: status={} violations={:?}",
+            bad_digest.command_id,
+            bad_digest.command,
+            bad_digest.status.as_str(),
+            bad_digest.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -6084,6 +6294,7 @@ fn demo_migration_package(
             fake_block_backend_object_count: semantic.fake_block_backend_object_count(),
             virtio_blk_backend_object_count: semantic.virtio_blk_backend_object_count(),
             block_read_path_count: semantic.block_read_path_count(),
+            block_write_path_count: semantic.block_write_path_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -6425,6 +6636,11 @@ fn demo_migration_package(
                 .block_read_paths()
                 .iter()
                 .map(block_read_path_manifest)
+                .collect(),
+            block_write_paths: semantic
+                .block_write_paths()
+                .iter()
+                .map(block_write_path_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -7917,6 +8133,30 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        block_write_path_roots: semantic
+            .block_write_paths()
+            .iter()
+            .map(|write_path| {
+                format!(
+                    "block-write-path id={} backend={} block_request={}@{} block_completion={}@{} block_device={}@{} block_range={}@{} sequence={} completed_bytes={} payload_digest={} state={} generation={}",
+                    write_path.id,
+                    write_path.backend.summary(),
+                    write_path.block_request,
+                    write_path.block_request_generation,
+                    write_path.block_completion,
+                    write_path.block_completion_generation,
+                    write_path.block_device,
+                    write_path.block_device_generation,
+                    write_path.block_range,
+                    write_path.block_range_generation,
+                    write_path.sequence,
+                    write_path.completed_bytes,
+                    write_path.payload_digest,
+                    write_path.state.as_str(),
+                    write_path.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -9229,6 +9469,32 @@ fn block_read_path_manifest(
         state: read_path.state.as_str().to_owned(),
         recorded_at_event: read_path.recorded_at_event,
         note: read_path.note.clone(),
+    }
+}
+
+fn block_write_path_manifest(
+    write_path: &semantic_core::BlockWritePathRecord,
+) -> BlockWritePathManifest {
+    BlockWritePathManifest {
+        id: write_path.id,
+        backend_kind: write_path.backend.kind.as_str().to_owned(),
+        backend: write_path.backend.id,
+        backend_generation: write_path.backend.generation,
+        block_request: write_path.block_request,
+        block_request_generation: write_path.block_request_generation,
+        block_completion: write_path.block_completion,
+        block_completion_generation: write_path.block_completion_generation,
+        block_device: write_path.block_device,
+        block_device_generation: write_path.block_device_generation,
+        block_range: write_path.block_range,
+        block_range_generation: write_path.block_range_generation,
+        sequence: write_path.sequence,
+        completed_bytes: write_path.completed_bytes,
+        payload_digest: write_path.payload_digest,
+        generation: write_path.generation,
+        state: write_path.state.as_str().to_owned(),
+        recorded_at_event: write_path.recorded_at_event,
+        note: write_path.note.clone(),
     }
 }
 

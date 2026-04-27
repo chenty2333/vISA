@@ -357,6 +357,16 @@ pub enum SemanticCommand {
         data_digest: u64,
         note: String,
     },
+    RecordBlockWritePath {
+        write_path: BlockWritePathId,
+        backend: ContractObjectRef,
+        block_request: BlockRequestObjectId,
+        block_request_generation: Generation,
+        block_completion: BlockCompletionObjectId,
+        block_completion_generation: Generation,
+        payload_digest: u64,
+        note: String,
+    },
     RecordVirtioNetBackendObject {
         virtio_net_backend: VirtioNetBackendObjectId,
         name: String,
@@ -1087,6 +1097,7 @@ impl SemanticCommand {
             Self::RecordFakeBlockBackendObject { .. } => "record-fake-block-backend-object",
             Self::RecordVirtioBlkBackendObject { .. } => "record-virtio-blk-backend-object",
             Self::RecordBlockReadPath { .. } => "record-block-read-path",
+            Self::RecordBlockWritePath { .. } => "record-block-write-path",
             Self::RecordVirtioNetBackendObject { .. } => "record-virtio-net-backend-object",
             Self::RecordNetworkRxInterrupt { .. } => "record-network-rx-interrupt",
             Self::ResolveNetworkRxWait { .. } => "resolve-network-rx-wait",
@@ -2458,6 +2469,26 @@ impl SemanticGraph {
                     *block_completion,
                     *block_completion_generation,
                     *data_digest,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordBlockWritePath {
+                write_path,
+                backend,
+                block_request,
+                block_request_generation,
+                block_completion,
+                block_completion_generation,
+                payload_digest,
+                ..
+            } => self
+                .validate_block_write_path(
+                    *write_path,
+                    *backend,
+                    *block_request,
+                    *block_request_generation,
+                    *block_completion,
+                    *block_completion_generation,
+                    *payload_digest,
                 )
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordVirtioNetBackendObject {
@@ -4713,6 +4744,25 @@ impl SemanticGraph {
                 block_completion,
                 block_completion_generation,
                 data_digest,
+                &note,
+            ),
+            SemanticCommand::RecordBlockWritePath {
+                write_path,
+                backend,
+                block_request,
+                block_request_generation,
+                block_completion,
+                block_completion_generation,
+                payload_digest,
+                note,
+            } => self.record_block_write_path_with_id(
+                write_path,
+                backend,
+                block_request,
+                block_request_generation,
+                block_completion,
+                block_completion_generation,
+                payload_digest,
                 &note,
             ),
             SemanticCommand::RecordVirtioNetBackendObject {

@@ -553,6 +553,22 @@ pub enum EventKind {
         data_digest: u64,
         generation: Generation,
     },
+    BlockWritePathRecorded {
+        write_path: BlockWritePathId,
+        backend: ContractObjectRef,
+        block_request: BlockRequestObjectId,
+        block_request_generation: Generation,
+        block_completion: BlockCompletionObjectId,
+        block_completion_generation: Generation,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        block_range: BlockRangeObjectId,
+        block_range_generation: Generation,
+        sequence: u64,
+        completed_bytes: u64,
+        payload_digest: u64,
+        generation: Generation,
+    },
     PacketBufferObjectRecorded {
         packet_buffer: PacketBufferObjectId,
         packet_device: PacketDeviceObjectId,
@@ -1997,6 +2013,25 @@ impl EventKind {
                 generation,
             } => format!(
                 "BlockReadPathRecorded read_path={read_path} backend={} block_request={block_request}@{block_request_generation} block_completion={block_completion}@{block_completion_generation} block_device={block_device}@{block_device_generation} block_range={block_range}@{block_range_generation} sequence={sequence} completed_bytes={completed_bytes} data_digest={data_digest} generation={generation}",
+                backend.summary()
+            ),
+            Self::BlockWritePathRecorded {
+                write_path,
+                backend,
+                block_request,
+                block_request_generation,
+                block_completion,
+                block_completion_generation,
+                block_device,
+                block_device_generation,
+                block_range,
+                block_range_generation,
+                sequence,
+                completed_bytes,
+                payload_digest,
+                generation,
+            } => format!(
+                "BlockWritePathRecorded write_path={write_path} backend={} block_request={block_request}@{block_request_generation} block_completion={block_completion}@{block_completion_generation} block_device={block_device}@{block_device_generation} block_range={block_range}@{block_range_generation} sequence={sequence} completed_bytes={completed_bytes} payload_digest={payload_digest} generation={generation}",
                 backend.summary()
             ),
             Self::PacketBufferObjectRecorded {
