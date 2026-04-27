@@ -61,6 +61,7 @@ pub struct SemanticGraph {
     network_driver_cleanups: Vec<NetworkDriverCleanupRecord>,
     network_generation_audits: Vec<NetworkGenerationAuditRecord>,
     network_fault_injections: Vec<NetworkFaultInjectionRecord>,
+    block_device_objects: Vec<BlockDeviceObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -133,6 +134,7 @@ pub struct SemanticGraph {
     next_network_driver_cleanup_id: NetworkDriverCleanupId,
     next_network_generation_audit_id: NetworkGenerationAuditId,
     next_network_fault_injection_id: NetworkFaultInjectionId,
+    next_block_device_object_id: BlockDeviceObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -150,6 +152,7 @@ pub struct SemanticGraph {
 
 mod activation_migration;
 mod authority;
+mod block_device_object;
 mod boundary;
 mod capability;
 mod cleanup;
@@ -279,6 +282,7 @@ impl SemanticGraph {
             network_driver_cleanups: Vec::new(),
             network_generation_audits: Vec::new(),
             network_fault_injections: Vec::new(),
+            block_device_objects: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -351,6 +355,7 @@ impl SemanticGraph {
             next_network_driver_cleanup_id: 1,
             next_network_generation_audit_id: 1,
             next_network_fault_injection_id: 1,
+            next_block_device_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

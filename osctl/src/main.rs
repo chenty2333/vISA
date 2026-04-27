@@ -8,13 +8,13 @@ use std::path::Path;
 use artifact_manifest::{
     ActivationCleanupManifest, ActivationContextManifest, ActivationMigrationManifest,
     ActivationRecordManifest, ActivationResumeManifest, ActivationWaitManifest,
-    ArtifactBundleManifest, BoundaryValidationReportManifest, CapabilityRecordManifest,
-    CleanupTransactionManifest, CodeObjectManifest, CommandResultManifest,
-    ContractObjectRefManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
-    DriverStoreBindingManifest, EndpointObjectManifest, FakeNetBackendObjectManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    ArtifactBundleManifest, BlockDeviceObjectManifest, BoundaryValidationReportManifest,
+    CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
+    CommandResultManifest, ContractObjectRefManifest, CrossHartSchedulerDecisionManifest,
+    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
+    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
+    FakeNetBackendObjectManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
@@ -336,6 +336,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "network-latency"
         | "network-recovery-benchmark"
         | "network-recovery"
+        | "block-device"
+        | "block-device-object"
+        | "block"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -506,7 +509,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -757,6 +760,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "network-fault-injection" | "packet-loss" | "packet-error" => "network-fault-injection",
         "network-benchmark" | "network-throughput" | "network-latency" => "network-benchmark",
         "network-recovery-benchmark" | "network-recovery" => "network-recovery-benchmark",
+        "block-device" | "block-device-object" | "block" => "block-device",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2409,6 +2413,40 @@ fn packet_device_object_view_v1(packet_device: &PacketDeviceObjectManifest) -> s
         "last_transition": {
             "recorded_at_event": packet_device.recorded_at_event,
             "device_generation": packet_device.device_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn block_device_object_view_v1(block_device: &BlockDeviceObjectManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "block-device",
+        "id": block_device.id,
+        "generation": block_device.generation,
+        "state": block_device.state,
+        "owner": {
+            "device": object_ref_json("device", block_device.device, block_device.device_generation),
+        },
+        "references": {
+            "device": object_ref_json("device", block_device.device, block_device.device_generation),
+            "event": {
+                "id": block_device.recorded_at_event,
+            },
+        },
+        "identity": {
+            "name": block_device.name,
+        },
+        "contract": {
+            "sector_size": block_device.sector_size,
+            "sector_count": block_device.sector_count,
+            "read_only": block_device.read_only,
+            "max_transfer_sectors": block_device.max_transfer_sectors,
+        },
+        "note": block_device.note,
+        "last_transition": {
+            "recorded_at_event": block_device.recorded_at_event,
+            "device_generation": block_device.device_generation,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -4998,6 +5036,12 @@ fn stable_views_for_kind(
             .iter()
             .map(network_recovery_benchmark_view_v1)
             .collect()),
+        "block-device" | "block-device-object" | "block" => Ok(package
+            .semantic
+            .block_device_objects
+            .iter()
+            .map(block_device_object_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -6047,6 +6091,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.network_recovery_benchmark_roots,
     );
     print_roots(
+        "block-device",
+        &package.semantic.roots.block_device_object_roots,
+    );
+    print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
     );
@@ -6247,6 +6295,22 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "packet-device->device",
             "live",
             Some(packet_device.recorded_at_event),
+        ));
+    }
+    for block_device in &package.semantic.block_device_objects {
+        if block_device.state != "registered" {
+            continue;
+        }
+        edges.push(graph_edge(
+            object_ref_json("block-device", block_device.id, block_device.generation),
+            object_ref_json(
+                "device",
+                block_device.device,
+                block_device.device_generation,
+            ),
+            "block-device->device",
+            "live",
+            Some(block_device.recorded_at_event),
         ));
     }
     for packet_buffer in &package.semantic.packet_buffer_objects {
@@ -10187,7 +10251,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -10245,6 +10309,7 @@ fn replay_until(
             .roots
             .network_recovery_benchmark_roots
             .len(),
+        package.semantic.roots.block_device_object_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -10339,6 +10404,9 @@ fn replay_until(
     }
     for packet_device in &package.semantic.roots.packet_device_object_roots {
         println!("replay packet-device {packet_device}");
+    }
+    for block_device in &package.semantic.roots.block_device_object_roots {
+        println!("replay block-device {block_device}");
     }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
@@ -10623,6 +10691,10 @@ fn print_replay_json(
                 .network_recovery_benchmark_roots
                 .len()
         ),
+    );
+    roots.insert(
+        "block_devices".to_owned(),
+        serde_json::json!(package.semantic.roots.block_device_object_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -10956,6 +11028,10 @@ fn print_replay_json(
         "network_recovery_benchmark_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.network_recovery_benchmark_roots),
     );
+    roots.insert(
+        "block_device_object_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.block_device_object_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -11000,7 +11076,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -11060,6 +11136,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.network_fault_injection_count,
         package.semantic.network_benchmark_count,
         package.semantic.network_recovery_benchmark_count,
+        package.semantic.block_device_object_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -12372,6 +12449,33 @@ mod tests {
         assert_eq!(view["benchmark"]["recovery_nanos"], 90_000);
         assert_eq!(view["benchmark"]["within_budget"], true);
         assert_eq!(view["last_transition"]["recorded_at_event"], 103);
+    }
+
+    #[test]
+    fn block_device_view_v1_exposes_device_and_sector_contract() {
+        let view = block_device_object_view_v1(&BlockDeviceObjectManifest {
+            id: 104,
+            name: "blk0".to_owned(),
+            device: 35,
+            device_generation: 1,
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 104,
+            note: "block device".to_owned(),
+        });
+        assert_eq!(view["kind"], "block-device");
+        assert_eq!(view["owner"]["device"]["kind"], "device");
+        assert_eq!(view["references"]["device"]["generation"], 1);
+        assert_eq!(view["identity"]["name"], "blk0");
+        assert_eq!(view["contract"]["sector_size"], 512);
+        assert_eq!(view["contract"]["sector_count"], 4096);
+        assert_eq!(view["contract"]["read_only"], false);
+        assert_eq!(view["contract"]["max_transfer_sectors"], 128);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 104);
     }
 
     #[test]
@@ -15260,6 +15364,23 @@ mod tests {
                 recorded_at_event: 38,
                 note: "network recovery benchmark graph".to_owned(),
             });
+        package
+            .semantic
+            .block_device_objects
+            .push(BlockDeviceObjectManifest {
+                id: 105,
+                name: "blk0".to_owned(),
+                device: 35,
+                device_generation: 1,
+                sector_size: 512,
+                sector_count: 4096,
+                read_only: false,
+                max_transfer_sectors: 128,
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 39,
+                note: "block device graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -15276,6 +15397,10 @@ mod tests {
             && edge["relation"] == "packet-descriptor->packet-buffer"
             && edge["from"]["kind"] == "packet-descriptor"
             && edge["to"]["kind"] == "packet-buffer"));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "block-device->device"
+            && edge["from"]["kind"] == "block-device"
+            && edge["to"]["kind"] == "device"));
         assert!(live.iter().any(|edge| edge["mode"] == "live"
             && edge["relation"] == "fake-net-backend->packet-device"
             && edge["from"]["kind"] == "fake-net-backend"

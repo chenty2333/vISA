@@ -10088,6 +10088,183 @@ fn network_runtime_n20_invariants_reject_cleanup_generation_drift() {
 }
 
 #[test]
+fn block_runtime_b0_block_device_object_records_contract_identity() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1701,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b0 backing device",
+    ));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b0-test",
+        SemanticCommand::RecordBlockDeviceObject {
+            block_device: 1702,
+            name: "blk0".to_string(),
+            device: 1701,
+            device_generation: 1,
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            note: "b0 block device object".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.block_device_object_count(), 1);
+    let block_device = &graph.block_device_objects()[0];
+    assert_eq!(
+        block_device.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BlockDeviceObject, 1702, 1)
+    );
+    assert_eq!(block_device.device, 1701);
+    assert_eq!(block_device.device_generation, 1);
+    assert_eq!(block_device.sector_size, 512);
+    assert_eq!(block_device.sector_count, 4096);
+    assert_eq!(block_device.max_transfer_sectors, 128);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BlockDeviceObjectRecorded block_device=1702 device=1701@1 sector_size=512 sector_count=4096 read_only=false max_transfer_sectors=128 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b0_rejects_stale_or_non_block_device() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::Device, None, "device:not-block");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1703,
+        "not-block0",
+        "fake-device",
+        resource,
+        resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "b0 wrong backing device",
+    ));
+
+    let wrong_class = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b0-test",
+        SemanticCommand::RecordBlockDeviceObject {
+            block_device: 1704,
+            name: "blk0".to_string(),
+            device: 1703,
+            device_generation: 1,
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            note: "b0 wrong class".to_string(),
+        },
+    ));
+    assert_eq!(wrong_class.status, CommandStatus::Rejected);
+
+    let block_resource =
+        graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk1");
+    let block_resource_generation = graph.resource_handle(block_resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1705,
+        "fake-block1",
+        "block-device",
+        block_resource,
+        block_resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b0 stale backing device",
+    ));
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b0-test",
+        SemanticCommand::RecordBlockDeviceObject {
+            block_device: 1706,
+            name: "blk1".to_string(),
+            device: 1705,
+            device_generation: 2,
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            note: "b0 stale generation".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+
+    let bad_contract = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b0-test",
+        SemanticCommand::RecordBlockDeviceObject {
+            block_device: 1709,
+            name: "blk1".to_string(),
+            device: 1705,
+            device_generation: 1,
+            sector_size: 0,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            note: "b0 bad sector size".to_string(),
+        },
+    ));
+    assert_eq!(bad_contract.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn block_runtime_b0_invariants_reject_block_device_generation_leak() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1707,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b0 invariant backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1708,
+        "blk0",
+        1707,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b0 invariant block device",
+    ));
+    graph.corrupt_block_device_object_device_generation_for_test(1708, 2);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::BlockDeviceObjectMissingDevice {
+            block_device: 1708,
+            device: 1707,
+        })
+    );
+}
+
+#[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();
     let hart_generation = register_idle_test_hart(&mut graph);

@@ -1618,6 +1618,32 @@ impl NetworkRecoveryBenchmarkRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockDeviceObjectRecord {
+    pub id: BlockDeviceObjectId,
+    pub name: String,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub sector_size: u32,
+    pub sector_count: u64,
+    pub read_only: bool,
+    pub max_transfer_sectors: u32,
+    pub generation: Generation,
+    pub state: BlockDeviceObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl BlockDeviceObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::BlockDeviceObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

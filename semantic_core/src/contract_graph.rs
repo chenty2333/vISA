@@ -1435,6 +1435,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::NetworkFaultInjection
             | ContractObjectKind::NetworkBenchmark
             | ContractObjectKind::NetworkRecoveryBenchmark
+            | ContractObjectKind::BlockDeviceObject
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

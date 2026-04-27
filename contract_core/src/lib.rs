@@ -120,6 +120,7 @@ pub enum ObjectKind {
     NetworkFaultInjection,
     NetworkBenchmark,
     NetworkRecoveryBenchmark,
+    BlockDeviceObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -205,6 +206,7 @@ impl ObjectKind {
             Self::NetworkFaultInjection => "network-fault-injection",
             Self::NetworkBenchmark => "network-benchmark",
             Self::NetworkRecoveryBenchmark => "network-recovery-benchmark",
+            Self::BlockDeviceObject => "block-device-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -468,6 +470,7 @@ typed_ref!(
     NetworkRecoveryBenchmarkRef,
     ObjectKind::NetworkRecoveryBenchmark
 );
+typed_ref!(BlockDeviceObjectRef, ObjectKind::BlockDeviceObject);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1950,6 +1953,13 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "network recovery benchmark root/count mismatch",
         ));
     }
+    if roots.block_device_object_roots.len() != package.semantic.block_device_object_count
+        || package.semantic.block_device_objects.len() != package.semantic.block_device_object_count
+    {
+        return Err(ContractError::new(
+            "block device object root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2526,6 +2536,7 @@ mod tests {
                 network_fault_injection_count: 0,
                 network_benchmark_count: 0,
                 network_recovery_benchmark_count: 0,
+                block_device_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2620,6 +2631,7 @@ mod tests {
                 network_fault_injections: Vec::new(),
                 network_benchmarks: Vec::new(),
                 network_recovery_benchmarks: Vec::new(),
+                block_device_objects: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4471,6 +4483,32 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_block_device_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.block_device_object_count = 1;
+        package
+            .semantic
+            .block_device_objects
+            .push(artifact_manifest::BlockDeviceObjectManifest {
+                id: 53,
+                name: "fake-block0".to_owned(),
+                device: 17,
+                device_generation: 1,
+                sector_size: 512,
+                sector_count: 4096,
+                read_only: false,
+                max_transfer_sectors: 128,
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 99,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "block device object root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -5010,6 +5048,8 @@ mod tests {
         let network_recovery_benchmark =
             ObjectRef::new(ObjectKind::NetworkRecoveryBenchmark, 50, 1).unwrap();
         assert!(NetworkRecoveryBenchmarkRef::try_from_ref(network_recovery_benchmark).is_ok());
+        let block_device_object = ObjectRef::new(ObjectKind::BlockDeviceObject, 51, 1).unwrap();
+        assert!(BlockDeviceObjectRef::try_from_ref(block_device_object).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

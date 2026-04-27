@@ -152,7 +152,10 @@ impl SemanticGraph {
     fn resource_kind_can_back_device(kind: ResourceKind) -> bool {
         matches!(
             kind,
-            ResourceKind::Device | ResourceKind::PacketDevice | ResourceKind::PciDevice
+            ResourceKind::Device
+                | ResourceKind::PacketDevice
+                | ResourceKind::BlockDevice
+                | ResourceKind::PciDevice
         )
     }
 

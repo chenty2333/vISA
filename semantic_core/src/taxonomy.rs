@@ -790,6 +790,21 @@ impl PacketDeviceObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockDeviceObjectState {
+    Registered,
+    Retired,
+}
+
+impl BlockDeviceObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Registered => "registered",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PacketBufferDirection {
     Rx,
     Tx,
@@ -1378,6 +1393,7 @@ pub enum ResourceKind {
     Epoll,
     Device,
     PacketDevice,
+    BlockDevice,
     NetInterface,
     NetSocket,
     SocketQueue,
@@ -1403,6 +1419,7 @@ impl ResourceKind {
             Self::Epoll => "epoll",
             Self::Device => "device",
             Self::PacketDevice => "packet-device",
+            Self::BlockDevice => "block-device",
             Self::NetInterface => "net-interface",
             Self::NetSocket => "net-socket",
             Self::SocketQueue => "socket-queue",
@@ -1425,6 +1442,7 @@ impl ResourceKind {
 pub enum AuthorityKind {
     Device,
     PacketDevice,
+    BlockDevice,
     DmwWindow,
     MmioRegion,
     DmaPool,
@@ -1438,6 +1456,7 @@ impl AuthorityKind {
         match kind {
             ResourceKind::Device => Some(Self::Device),
             ResourceKind::PacketDevice => Some(Self::PacketDevice),
+            ResourceKind::BlockDevice => Some(Self::BlockDevice),
             ResourceKind::DmwWindow => Some(Self::DmwWindow),
             ResourceKind::MmioRegion => Some(Self::MmioRegion),
             ResourceKind::DmaPool => Some(Self::DmaPool),
@@ -1452,6 +1471,7 @@ impl AuthorityKind {
         match self {
             Self::Device => "device",
             Self::PacketDevice => "packet-device",
+            Self::BlockDevice => "block-device",
             Self::DmwWindow => "dmw-window",
             Self::MmioRegion => "mmio-region",
             Self::DmaPool => "dma-pool",

@@ -439,6 +439,16 @@ pub enum EventKind {
         max_payload_len: u32,
         generation: Generation,
     },
+    BlockDeviceObjectRecorded {
+        block_device: BlockDeviceObjectId,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        sector_size: u32,
+        sector_count: u64,
+        read_only: bool,
+        max_transfer_sectors: u32,
+        generation: Generation,
+    },
     PacketBufferObjectRecorded {
         packet_buffer: PacketBufferObjectId,
         packet_device: PacketDeviceObjectId,
@@ -1745,6 +1755,18 @@ impl EventKind {
                 generation,
             } => format!(
                 "PacketDeviceObjectRecorded packet_device={packet_device} device={device}@{device_generation} mtu={mtu} rx_queue_depth={rx_queue_depth} tx_queue_depth={tx_queue_depth} frame_format_version={frame_format_version} max_payload_len={max_payload_len} generation={generation}"
+            ),
+            Self::BlockDeviceObjectRecorded {
+                block_device,
+                device,
+                device_generation,
+                sector_size,
+                sector_count,
+                read_only,
+                max_transfer_sectors,
+                generation,
+            } => format!(
+                "BlockDeviceObjectRecorded block_device={block_device} device={device}@{device_generation} sector_size={sector_size} sector_count={sector_count} read_only={read_only} max_transfer_sectors={max_transfer_sectors} generation={generation}"
             ),
             Self::PacketBufferObjectRecorded {
                 packet_buffer,

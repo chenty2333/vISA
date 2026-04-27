@@ -204,7 +204,9 @@ impl AuthorityPlane {
         {
             match authority.kind {
                 AuthorityKind::DmwWindow => dmw += 1,
-                AuthorityKind::Device | AuthorityKind::PacketDevice => device += 1,
+                AuthorityKind::Device
+                | AuthorityKind::PacketDevice
+                | AuthorityKind::BlockDevice => device += 1,
                 AuthorityKind::MmioRegion => mmio += 1,
                 AuthorityKind::DmaPool | AuthorityKind::DmaBuffer => dma += 1,
                 AuthorityKind::IrqLine => irq += 1,

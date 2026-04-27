@@ -607,6 +607,17 @@ pub enum SemanticCommand {
         budget_nanos: u64,
         note: String,
     },
+    RecordBlockDeviceObject {
+        block_device: BlockDeviceObjectId,
+        name: String,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        sector_size: u32,
+        sector_count: u64,
+        read_only: bool,
+        max_transfer_sectors: u32,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -1000,6 +1011,7 @@ impl SemanticCommand {
             Self::RecordNetworkFaultInjection { .. } => "record-network-fault-injection",
             Self::RecordNetworkBenchmark { .. } => "record-network-benchmark",
             Self::RecordNetworkRecoveryBenchmark { .. } => "record-network-recovery-benchmark",
+            Self::RecordBlockDeviceObject { .. } => "record-block-device-object",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -2891,6 +2903,26 @@ impl SemanticGraph {
                     *revoked_packet_capabilities,
                     *recovery_nanos,
                     *budget_nanos,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordBlockDeviceObject {
+                block_device,
+                name,
+                device,
+                device_generation,
+                sector_size,
+                sector_count,
+                max_transfer_sectors,
+                ..
+            } => self
+                .validate_block_device_object(
+                    *block_device,
+                    name,
+                    *device,
+                    *device_generation,
+                    *sector_size,
+                    *sector_count,
+                    *max_transfer_sectors,
                 )
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
@@ -4833,6 +4865,27 @@ impl SemanticGraph {
                 revoked_packet_capabilities,
                 recovery_nanos,
                 budget_nanos,
+                &note,
+            ),
+            SemanticCommand::RecordBlockDeviceObject {
+                block_device,
+                name,
+                device,
+                device_generation,
+                sector_size,
+                sector_count,
+                read_only,
+                max_transfer_sectors,
+                note,
+            } => self.record_block_device_object_with_id(
+                block_device,
+                &name,
+                device,
+                device_generation,
+                sector_size,
+                sector_count,
+                read_only,
+                max_transfer_sectors,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

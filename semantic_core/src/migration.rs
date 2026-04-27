@@ -1456,6 +1456,16 @@ pub enum SemanticInvariantError {
         benchmark: NetworkRecoveryBenchmarkId,
         event: EventId,
     },
+    BlockDeviceObjectInvalid {
+        block_device: BlockDeviceObjectId,
+    },
+    BlockDeviceObjectMissingDevice {
+        block_device: BlockDeviceObjectId,
+        device: DeviceObjectId,
+    },
+    BlockDeviceObjectMissingEvent {
+        block_device: BlockDeviceObjectId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

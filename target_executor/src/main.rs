@@ -9,21 +9,21 @@ use artifact_manifest::{
     ActivationCleanupManifest, ActivationCleanupStepManifest, ActivationContextManifest,
     ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
-    BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
-    CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
-    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
-    CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
-    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
-    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
-    EndpointObjectManifest, FakeNetBackendObjectManifest, GuestStateManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    BlockDeviceObjectManifest, BoundaryValidationReportManifest,
+    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
+    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
+    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
+    ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
+    DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
+    DriverStoreBindingManifest, EndpointObjectManifest, FakeNetBackendObjectManifest,
+    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
+    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
+    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
     NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
     PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
@@ -190,6 +190,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n16_evidence(&mut semantic)?;
     record_network_runtime_n19_evidence(&mut semantic)?;
     record_network_runtime_n20_evidence(&mut semantic)?;
+    record_block_runtime_b0_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -2257,6 +2258,119 @@ fn record_network_runtime_n18_evidence(semantic: &mut SemanticGraph) -> Result<(
             malformed_error.command,
             malformed_error.status.as_str(),
             malformed_error.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+fn record_block_runtime_b0_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let block_resource =
+        semantic.register_resource(ResourceKind::BlockDevice, None, "block-device:fake-block0");
+    let block_resource_generation = semantic
+        .resource_handle(block_resource)
+        .map(|handle| handle.generation)
+        .ok_or("b0 block device resource handle is missing")?;
+    if !semantic.record_device_object_with_id(
+        20_001,
+        "fake-block0",
+        "block-device",
+        block_resource,
+        block_resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b0-record-block-backing-device",
+    ) {
+        return Err("b0 block backing device could not be recorded".into());
+    }
+
+    let block_device = semantic.apply_envelope(CommandEnvelope::new(
+        196,
+        "target-executor-b0",
+        SemanticCommand::RecordBlockDeviceObject {
+            block_device: 20_002,
+            name: "blk0".to_owned(),
+            device: 20_001,
+            device_generation: 1,
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            note: "b0-record-block-device-object-harness".to_owned(),
+        },
+    ));
+    if block_device.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b0 block device command {} ({}) failed: status={} violations={:?}",
+            block_device.command_id,
+            block_device.command,
+            block_device.status.as_str(),
+            block_device.violations
+        )
+        .into());
+    }
+
+    let stale_device = semantic.apply_envelope(CommandEnvelope::new(
+        197,
+        "target-executor-b0",
+        SemanticCommand::RecordBlockDeviceObject {
+            block_device: 20_003,
+            name: "blk0-stale".to_owned(),
+            device: 20_001,
+            device_generation: 2,
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            note: "b0-reject-stale-device-generation".to_owned(),
+        },
+    ));
+    if stale_device.status != CommandStatus::Rejected
+        || !stale_device
+            .violations
+            .iter()
+            .any(|violation| violation.contains("device generation"))
+    {
+        return Err(format!(
+            "block runtime b0 stale device command {} ({}) was not rejected: status={} violations={:?}",
+            stale_device.command_id,
+            stale_device.command,
+            stale_device.status.as_str(),
+            stale_device.violations
+        )
+        .into());
+    }
+
+    let bad_contract = semantic.apply_envelope(CommandEnvelope::new(
+        198,
+        "target-executor-b0",
+        SemanticCommand::RecordBlockDeviceObject {
+            block_device: 20_004,
+            name: "blk0-bad-sector".to_owned(),
+            device: 20_001,
+            device_generation: 1,
+            sector_size: 0,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            note: "b0-reject-zero-sector-size".to_owned(),
+        },
+    ));
+    if bad_contract.status != CommandStatus::Rejected
+        || !bad_contract
+            .violations
+            .iter()
+            .any(|violation| violation.contains("contract values"))
+    {
+        return Err(format!(
+            "block runtime b0 bad contract command {} ({}) was not rejected: status={} violations={:?}",
+            bad_contract.command_id,
+            bad_contract.command,
+            bad_contract.status.as_str(),
+            bad_contract.violations
         )
         .into());
     }
@@ -4654,6 +4768,7 @@ fn demo_migration_package(
             network_fault_injection_count: semantic.network_fault_injection_count(),
             network_benchmark_count: semantic.network_benchmark_count(),
             network_recovery_benchmark_count: semantic.network_recovery_benchmark_count(),
+            block_device_object_count: semantic.block_device_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -4955,6 +5070,11 @@ fn demo_migration_package(
                 .network_recovery_benchmarks()
                 .iter()
                 .map(network_recovery_benchmark_manifest)
+                .collect(),
+            block_device_objects: semantic
+                .block_device_objects()
+                .iter()
+                .map(block_device_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -6269,6 +6389,25 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        block_device_object_roots: semantic
+            .block_device_objects()
+            .iter()
+            .map(|block_device| {
+                format!(
+                    "block-device-object id={} name={} device={}@{} sector_size={} sector_count={} read_only={} max_transfer_sectors={} state={} generation={}",
+                    block_device.id,
+                    block_device.name,
+                    block_device.device,
+                    block_device.device_generation,
+                    block_device.sector_size,
+                    block_device.sector_count,
+                    block_device.read_only,
+                    block_device.max_transfer_sectors,
+                    block_device.state.as_str(),
+                    block_device.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -7399,6 +7538,25 @@ fn device_object_manifest(device: &semantic_core::DeviceObjectRecord) -> DeviceO
         state: device.state.as_str().to_owned(),
         recorded_at_event: device.recorded_at_event,
         note: device.note.clone(),
+    }
+}
+
+fn block_device_object_manifest(
+    block_device: &semantic_core::BlockDeviceObjectRecord,
+) -> BlockDeviceObjectManifest {
+    BlockDeviceObjectManifest {
+        id: block_device.id,
+        name: block_device.name.clone(),
+        device: block_device.device,
+        device_generation: block_device.device_generation,
+        sector_size: block_device.sector_size,
+        sector_count: block_device.sector_count,
+        read_only: block_device.read_only,
+        max_transfer_sectors: block_device.max_transfer_sectors,
+        generation: block_device.generation,
+        state: block_device.state.as_str().to_owned(),
+        recorded_at_event: block_device.recorded_at_event,
+        note: block_device.note.clone(),
     }
 }
 
