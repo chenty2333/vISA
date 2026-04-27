@@ -20,9 +20,9 @@ use artifact_manifest::{
     DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
     DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
     EndpointObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    FileObjectManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    FatAdapterObjectManifest, FileObjectManifest, GuestStateManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
     IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
@@ -51,6 +51,7 @@ use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
     validate_migration_against_manifest, validate_replay_quiescent,
 };
+use fs_adapter::{FatAdapterConfig, build_fat_read_write_evidence};
 use net_stack_adapter::{SmoltcpAdapterConfig, build_smoltcp_adapter_evidence};
 use runtime::{HostValidationSmokeTrace, RuntimeOnlyExecutor};
 use semantic_core::{
@@ -62,16 +63,16 @@ use semantic_core::{
     ContractGraphSnapshot, ContractObjectKind, ContractObjectRef, ContractViolation, CowState,
     DescriptorObjectAccess, DirectoryEntryKind, DirectoryObjectState, DmaBufferObjectAccess,
     EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration,
-    FileObjectState, FrontendKind, HartState, HostcallCategory, HostcallFrame, HostcallLinkState,
-    HostcallSpec, HostcallTraceRecord, IpiEventKind, IrqLinePolarity, IrqLineTrigger,
-    ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
-    MmioRegionObjectAccess, NetworkBackpressureAction, NetworkBackpressureReason,
-    NetworkFaultInjectionEffect, NetworkFaultInjectionKind, PackageReplayValidator,
-    PacketBufferDirection, PacketBufferObjectState, PacketQueueRole, PageBacking, PageObjectState,
-    QueueObjectRole, ReplayPackageValidationState, ResourceKind, RestartPolicy, RuntimeMode,
-    SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind,
-    SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState,
-    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    FatAdapterObjectState, FileObjectState, FrontendKind, HartState, HostcallCategory,
+    HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind,
+    IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
+    MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
+    NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
+    PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
+    PageBacking, PageObjectState, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
+    RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
+    SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
+    StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
     TombstoneRecord, TrapSurfaceState, VerifiedArtifact, WaitCancelReason, memory_class_policies,
     validate_contract_graph,
@@ -221,6 +222,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b12_evidence(&mut semantic)?;
     record_block_runtime_b13_evidence(&mut semantic)?;
     record_block_runtime_b14_evidence(&mut semantic)?;
+    record_block_runtime_b15_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -4835,6 +4837,181 @@ fn record_block_runtime_b14_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_block_runtime_b15_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let payload = b"vmos fat adapter read write payload";
+    let evidence = build_fat_read_write_evidence(FatAdapterConfig::default_vmos(), payload)
+        .map_err(|error| format!("block runtime b15 fat adapter evidence failed: {error}"))?;
+
+    let adapter = semantic.apply_envelope(CommandEnvelope::new(
+        276,
+        "target-executor-b15",
+        SemanticCommand::RecordFatAdapterObject {
+            fat_adapter_object: 20_081,
+            directory_object: 20_077,
+            directory_object_generation: 1,
+            file_object: 20_073,
+            file_object_generation: 1,
+            block_device: 20_002,
+            block_device_generation: 1,
+            implementation: evidence.implementation.to_owned(),
+            version: evidence.version.to_owned(),
+            profile: evidence.profile.to_owned(),
+            volume_label: evidence.volume_label.to_owned(),
+            image_bytes: evidence.image_bytes as u64,
+            adapter_path: evidence.file_path.to_owned(),
+            semantic_path: "/demo/file.txt".to_owned(),
+            bytes_written: evidence.bytes_written,
+            bytes_read: evidence.bytes_read,
+            write_digest: evidence.write_digest,
+            read_digest: evidence.read_digest,
+            file_content_digest: 0xB13,
+            state: FatAdapterObjectState::Verified,
+            note: "b15-verify-fatfs-read-write-adapter".to_owned(),
+        },
+    ));
+    if adapter.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b15 fat adapter command {} ({}) failed: status={} violations={:?}",
+            adapter.command_id,
+            adapter.command,
+            adapter.status.as_str(),
+            adapter.violations
+        )
+        .into());
+    }
+
+    let stale_directory = semantic.apply_envelope(CommandEnvelope::new(
+        277,
+        "target-executor-b15",
+        SemanticCommand::RecordFatAdapterObject {
+            fat_adapter_object: 20_082,
+            directory_object: 20_077,
+            directory_object_generation: 2,
+            file_object: 20_073,
+            file_object_generation: 1,
+            block_device: 20_002,
+            block_device_generation: 1,
+            implementation: evidence.implementation.to_owned(),
+            version: evidence.version.to_owned(),
+            profile: evidence.profile.to_owned(),
+            volume_label: evidence.volume_label.to_owned(),
+            image_bytes: evidence.image_bytes as u64,
+            adapter_path: evidence.file_path.to_owned(),
+            semantic_path: "/demo/file.txt".to_owned(),
+            bytes_written: evidence.bytes_written,
+            bytes_read: evidence.bytes_read,
+            write_digest: evidence.write_digest,
+            read_digest: evidence.read_digest,
+            file_content_digest: 0xB13,
+            state: FatAdapterObjectState::Verified,
+            note: "b15-reject-stale-directory-generation".to_owned(),
+        },
+    ));
+    if stale_directory.status != CommandStatus::Rejected
+        || !stale_directory
+            .violations
+            .iter()
+            .any(|violation| violation.contains("directory generation"))
+    {
+        return Err(format!(
+            "block runtime b15 stale directory command {} ({}) was not rejected: status={} violations={:?}",
+            stale_directory.command_id,
+            stale_directory.command,
+            stale_directory.status.as_str(),
+            stale_directory.violations
+        )
+        .into());
+    }
+
+    let digest_mismatch = semantic.apply_envelope(CommandEnvelope::new(
+        278,
+        "target-executor-b15",
+        SemanticCommand::RecordFatAdapterObject {
+            fat_adapter_object: 20_083,
+            directory_object: 20_077,
+            directory_object_generation: 1,
+            file_object: 20_073,
+            file_object_generation: 1,
+            block_device: 20_002,
+            block_device_generation: 1,
+            implementation: evidence.implementation.to_owned(),
+            version: evidence.version.to_owned(),
+            profile: evidence.profile.to_owned(),
+            volume_label: evidence.volume_label.to_owned(),
+            image_bytes: evidence.image_bytes as u64,
+            adapter_path: "BROKEN.TXT".to_owned(),
+            semantic_path: "/demo/file.txt".to_owned(),
+            bytes_written: evidence.bytes_written,
+            bytes_read: evidence.bytes_read,
+            write_digest: evidence.write_digest,
+            read_digest: evidence.read_digest.wrapping_add(1),
+            file_content_digest: 0xB13,
+            state: FatAdapterObjectState::Verified,
+            note: "b15-reject-read-write-digest-mismatch".to_owned(),
+        },
+    ));
+    if digest_mismatch.status != CommandStatus::Rejected
+        || !digest_mismatch
+            .violations
+            .iter()
+            .any(|violation| violation.contains("roundtrip mismatch"))
+    {
+        return Err(format!(
+            "block runtime b15 digest mismatch command {} ({}) was not rejected: status={} violations={:?}",
+            digest_mismatch.command_id,
+            digest_mismatch.command,
+            digest_mismatch.status.as_str(),
+            digest_mismatch.violations
+        )
+        .into());
+    }
+
+    let duplicate = semantic.apply_envelope(CommandEnvelope::new(
+        279,
+        "target-executor-b15",
+        SemanticCommand::RecordFatAdapterObject {
+            fat_adapter_object: 20_084,
+            directory_object: 20_077,
+            directory_object_generation: 1,
+            file_object: 20_073,
+            file_object_generation: 1,
+            block_device: 20_002,
+            block_device_generation: 1,
+            implementation: evidence.implementation.to_owned(),
+            version: evidence.version.to_owned(),
+            profile: evidence.profile.to_owned(),
+            volume_label: evidence.volume_label.to_owned(),
+            image_bytes: evidence.image_bytes as u64,
+            adapter_path: evidence.file_path.to_owned(),
+            semantic_path: "/demo/file.txt".to_owned(),
+            bytes_written: evidence.bytes_written,
+            bytes_read: evidence.bytes_read,
+            write_digest: evidence.write_digest,
+            read_digest: evidence.read_digest,
+            file_content_digest: 0xB13,
+            state: FatAdapterObjectState::Verified,
+            note: "b15-reject-duplicate-fat-adapter-binding".to_owned(),
+        },
+    ));
+    if duplicate.status != CommandStatus::Rejected
+        || !duplicate
+            .violations
+            .iter()
+            .any(|violation| violation.contains("binding already verified"))
+    {
+        return Err(format!(
+            "block runtime b15 duplicate command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate.command_id,
+            duplicate.command,
+            duplicate.status.as_str(),
+            duplicate.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -7240,6 +7417,7 @@ fn demo_migration_package(
             buffer_cache_object_count: semantic.buffer_cache_object_count(),
             file_object_count: semantic.file_object_count(),
             directory_object_count: semantic.directory_object_count(),
+            fat_adapter_object_count: semantic.fat_adapter_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -7616,6 +7794,11 @@ fn demo_migration_package(
                 .directory_objects()
                 .iter()
                 .map(directory_object_manifest)
+                .collect(),
+            fat_adapter_objects: semantic
+                .fat_adapter_objects()
+                .iter()
+                .map(fat_adapter_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -9298,6 +9481,36 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        fat_adapter_object_roots: semantic
+            .fat_adapter_objects()
+            .iter()
+            .map(|adapter| {
+                format!(
+                    "fat-adapter-object id={} directory_object={}@{} file_object={}@{} block_device={}@{} implementation={} version={} profile={} volume_label={} image_bytes={} adapter_path={} semantic_path={} bytes_written={} bytes_read={} write_digest={} read_digest={} file_content_digest={} state={} generation={}",
+                    adapter.id,
+                    adapter.directory_object,
+                    adapter.directory_object_generation,
+                    adapter.file_object,
+                    adapter.file_object_generation,
+                    adapter.block_device,
+                    adapter.block_device_generation,
+                    adapter.implementation,
+                    adapter.version,
+                    adapter.profile,
+                    adapter.volume_label,
+                    adapter.image_bytes,
+                    adapter.adapter_path,
+                    adapter.semantic_path,
+                    adapter.bytes_written,
+                    adapter.bytes_read,
+                    adapter.write_digest,
+                    adapter.read_digest,
+                    adapter.file_content_digest,
+                    adapter.state.as_str(),
+                    adapter.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -10817,6 +11030,36 @@ fn directory_object_manifest(
         state: directory.state.as_str().to_owned(),
         recorded_at_event: directory.recorded_at_event,
         note: directory.note.clone(),
+    }
+}
+
+fn fat_adapter_object_manifest(
+    adapter: &semantic_core::FatAdapterObjectRecord,
+) -> FatAdapterObjectManifest {
+    FatAdapterObjectManifest {
+        id: adapter.id,
+        directory_object: adapter.directory_object,
+        directory_object_generation: adapter.directory_object_generation,
+        file_object: adapter.file_object,
+        file_object_generation: adapter.file_object_generation,
+        block_device: adapter.block_device,
+        block_device_generation: adapter.block_device_generation,
+        implementation: adapter.implementation.clone(),
+        version: adapter.version.clone(),
+        profile: adapter.profile.clone(),
+        volume_label: adapter.volume_label.clone(),
+        image_bytes: adapter.image_bytes,
+        adapter_path: adapter.adapter_path.clone(),
+        semantic_path: adapter.semantic_path.clone(),
+        bytes_written: adapter.bytes_written,
+        bytes_read: adapter.bytes_read,
+        write_digest: adapter.write_digest,
+        read_digest: adapter.read_digest,
+        file_content_digest: adapter.file_content_digest,
+        generation: adapter.generation,
+        state: adapter.state.as_str().to_owned(),
+        recorded_at_event: adapter.recorded_at_event,
+        note: adapter.note.clone(),
     }
 }
 

@@ -363,6 +363,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub directory_object_count: usize,
     #[serde(default)]
+    pub fat_adapter_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -577,6 +579,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub directory_objects: Vec<DirectoryObjectManifest>,
     #[serde(default)]
+    pub fat_adapter_objects: Vec<FatAdapterObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -770,6 +774,8 @@ pub struct SemanticRootSetManifest {
     pub file_object_roots: Vec<String>,
     #[serde(default)]
     pub directory_object_roots: Vec<String>,
+    #[serde(default)]
+    pub fat_adapter_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2535,6 +2541,33 @@ pub struct DirectoryObjectManifest {
     pub entry_kind: String,
     pub file_size: u64,
     pub content_digest: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct FatAdapterObjectManifest {
+    pub id: u64,
+    pub directory_object: u64,
+    pub directory_object_generation: u64,
+    pub file_object: u64,
+    pub file_object_generation: u64,
+    pub block_device: u64,
+    pub block_device_generation: u64,
+    pub implementation: String,
+    pub version: String,
+    pub profile: String,
+    pub volume_label: String,
+    pub image_bytes: u64,
+    pub adapter_path: String,
+    pub semantic_path: String,
+    pub bytes_written: u64,
+    pub bytes_read: u64,
+    pub write_digest: u64,
+    pub read_digest: u64,
+    pub file_content_digest: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

@@ -1,0 +1,204 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "B15-fat-adapter-read-write",
+  "phase": "Phase 5 Block / Disk Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add fs_adapter crate as the FAT adapter layer and keep fatfs out of semantic_core",
+    "Use fatfs 0.3.6 to format an in-memory FAT image, create DEMO.TXT, write payload bytes, and read them back",
+    "Add FatAdapterObject as stable semantic adapter evidence derived from DirectoryObject and FileObject",
+    "Record FatAdapterObject through SemanticCommand::RecordFatAdapterObject",
+    "Bind DirectoryObject, FileObject, and BlockDevice with exact generations",
+    "Reject stale directory generations, read/write digest mismatches, invalid adapter states, and duplicate adapter bindings before mutation",
+    "Expose fat adapter roots/counts through semantic package, osctl ViewV1, graph, replay roots, and roots JSON"
+  ],
+  "no_goals": [
+    "full filesystem namespace",
+    "file descriptor table",
+    "file handle capability gate",
+    "ext4 adapter",
+    "adapter-local FAT cache as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "changed_files": [
+    "Cargo.lock",
+    "Cargo.toml",
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "fs_adapter/Cargo.toml",
+    "fs_adapter/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/fat_adapter_object.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/Cargo.toml",
+    "target_executor/src/main.rs",
+    "tests/golden/block/golden_b15_fat_adapter_read_write.trace.json",
+    "tests/reports/checkpoints/b15_fat_adapter_read_write.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/block/golden_b15_fat_adapter_read_write.trace.json",
+    "tests/reports/checkpoints/b15_fat_adapter_read_write.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "fatfs is constrained to fs_adapter and target_executor orchestration; semantic_core stores only stable FatAdapterObject evidence",
+      "FatAdapterObject requires exact DirectoryObject, FileObject, and BlockDevice generations",
+      "Adapter evidence validates read/write byte count and digest roundtrip before recording semantic proof",
+      "Duplicate adapter binding for one DirectoryObject generation and adapter path is rejected and command-visible",
+      "osctl exposes FatAdapterObject through stable ViewV1, graph evidence, and replay roots",
+      "Root/count validation covers fat_adapter_objects so package tampering is rejected"
+    ],
+    "residual_notes": [
+      "B15 does not implement file descriptor tables or file handle capabilities",
+      "B15 does not expose fatfs internal allocation tables, directory cache, or block cache as semantic truth",
+      "B16 still needs ext4 read-only adapter boundary outside semantic_core",
+      "B17/B18 still need file handle capability gate and filesystem WaitToken integration"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p fs_adapter",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p semantic_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p contract_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core block_runtime_b15 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core fat_adapter_object -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl fat_adapter_object_view_v1_exposes_read_write_adapter_contract -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl fat-adapter-object list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 276",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 277",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 278",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 279",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --live --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl replay --until 431 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/block/golden_b15_fat_adapter_read_write.trace.json",
+    "osctl_views": [
+      "osctl fat-adapter-object list --json <migration.json>",
+      "osctl command show --json <migration.json> 276",
+      "osctl command show --json <migration.json> 277",
+      "osctl command show --json <migration.json> 278",
+      "osctl command show --json <migration.json> 279",
+      "osctl graph --live --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "fat_adapter_object_roots",
+      "directory_object_roots",
+      "file_object_roots",
+      "block_device_object_roots",
+      "command_result_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 431,
+      "fat_adapter_object_count": 1,
+      "fat_adapter_object": "fat-adapter-object:20081@1",
+      "directory_object": "directory-object:20077@1",
+      "file_object": "file-object:20073@1",
+      "block_device": "block-device:20002@1",
+      "implementation": "fatfs",
+      "version": "0.3.6",
+      "profile": "fatfs-read-write-demo-v1",
+      "volume_label": "VMOSFAT",
+      "image_bytes": 1048576,
+      "adapter_path": "DEMO.TXT",
+      "semantic_path": "/demo/file.txt",
+      "bytes_written": 35,
+      "bytes_read": 35,
+      "write_digest": 981135298602857991,
+      "read_digest": 981135298602857991,
+      "file_content_digest": 2835,
+      "state": "verified",
+      "recorded_event": 429,
+      "adapter_verified_command": "command-result:276:record-fat-adapter-object:applied",
+      "stale_directory_generation_rejected_command": "command-result:277:record-fat-adapter-object:rejected",
+      "roundtrip_mismatch_rejected_command": "command-result:278:record-fat-adapter-object:rejected",
+      "duplicate_binding_rejected_command": "command-result:279:record-fat-adapter-object:rejected"
+    }
+  },
+  "residual_gaps": [
+    "B16 still needs ext4 read-only adapter boundary outside semantic_core",
+    "B17/B18 still need file handle capability gate and filesystem WaitToken integration",
+    "B19/B20 still need disk driver cleanup and pending IO retry/EIO policy"
+  ],
+  "next_checkpoint": "B16-ext4-read-only-adapter"
+}

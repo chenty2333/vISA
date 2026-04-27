@@ -1062,6 +1062,21 @@ impl DirectoryObjectState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FatAdapterObjectState {
+    Verified,
+    Rejected,
+}
+
+impl FatAdapterObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
 impl BlockRequestQueueEntryState {
     pub const fn as_str(self) -> &'static str {
         match self {

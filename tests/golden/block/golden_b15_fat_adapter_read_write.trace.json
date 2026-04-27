@@ -1,0 +1,155 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "B15-fat-adapter-read-write",
+  "name": "golden_b15_fat_adapter_read_write",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md"
+  ],
+  "no_goals": [
+    "full filesystem namespace",
+    "file descriptor table",
+    "file handle capability gate",
+    "ext4 adapter",
+    "adapter-local FAT cache as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "B14 already recorded DirectoryObject 20077@1 mapping /demo/file.txt to FileObject 20073@1",
+      "fs_adapter uses fatfs 0.3.6 to format an in-memory FAT image, create DEMO.TXT, write payload bytes, and read them back",
+      "FatAdapterObject records adapter evidence as historical semantic proof without exposing fatfs internals as semantic truth"
+    ],
+    "commands": [
+      {
+        "id": 276,
+        "command": "record-fat-adapter-object",
+        "fat_adapter_object": "fat-adapter-object:20081@1",
+        "directory_object": "directory-object:20077@1",
+        "file_object": "file-object:20073@1",
+        "block_device": "block-device:20002@1",
+        "implementation": "fatfs",
+        "version": "0.3.6",
+        "profile": "fatfs-read-write-demo-v1",
+        "volume_label": "VMOSFAT",
+        "image_bytes": 1048576,
+        "adapter_path": "DEMO.TXT",
+        "semantic_path": "/demo/file.txt",
+        "bytes_written": 35,
+        "bytes_read": 35,
+        "write_digest": 981135298602857991,
+        "read_digest": 981135298602857991,
+        "file_content_digest": 2835,
+        "state": "verified",
+        "expected": "applied"
+      },
+      {
+        "id": 277,
+        "command": "record-fat-adapter-object",
+        "scenario": "stale directory generation",
+        "expected": "rejected",
+        "violation": "fat adapter directory generation is missing"
+      },
+      {
+        "id": 278,
+        "command": "record-fat-adapter-object",
+        "scenario": "read/write digest mismatch",
+        "expected": "rejected",
+        "violation": "fat adapter read/write roundtrip mismatch"
+      },
+      {
+        "id": 279,
+        "command": "record-fat-adapter-object",
+        "scenario": "duplicate adapter binding",
+        "expected": "rejected",
+        "violation": "fat adapter binding already verified"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 429,
+      "kind": "FatAdapterObjectRecorded",
+      "fat_adapter_object": "fat-adapter-object:20081@1",
+      "directory_object": "directory-object:20077@1",
+      "file_object": "file-object:20073@1",
+      "block_device": "block-device:20002@1",
+      "implementation": "fatfs",
+      "version": "0.3.6",
+      "profile": "fatfs-read-write-demo-v1",
+      "volume_label": "VMOSFAT",
+      "image_bytes": 1048576,
+      "adapter_path": "DEMO.TXT",
+      "semantic_path": "/demo/file.txt",
+      "bytes_written": 35,
+      "bytes_read": 35,
+      "write_digest": 981135298602857991,
+      "read_digest": 981135298602857991,
+      "file_content_digest": 2835,
+      "state": "verified"
+    }
+  ],
+  "expected": {
+    "views": {
+      "fat-adapter-object": {
+        "count": 1,
+        "fat_adapter_object": "fat-adapter-object:20081@1",
+        "directory_object": "directory-object:20077@1",
+        "file_object": "file-object:20073@1",
+        "block_device": "block-device:20002@1",
+        "implementation": "fatfs",
+        "version": "0.3.6",
+        "profile": "fatfs-read-write-demo-v1",
+        "adapter_path": "DEMO.TXT",
+        "semantic_path": "/demo/file.txt",
+        "bytes_written": 35,
+        "bytes_read": 35,
+        "write_digest": 981135298602857991,
+        "read_digest": 981135298602857991,
+        "recorded_event": 429
+      },
+      "command": {
+        "adapter_verified": "command-result:276:record-fat-adapter-object:applied",
+        "stale_directory_generation_rejected": "command-result:277:record-fat-adapter-object:rejected",
+        "roundtrip_mismatch_rejected": "command-result:278:record-fat-adapter-object:rejected",
+        "duplicate_binding_rejected": "command-result:279:record-fat-adapter-object:rejected"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "historical_edges": [
+          "fat-adapter-object->directory-object",
+          "fat-adapter-object->file-object",
+          "fat-adapter-object->block-device"
+        ]
+      }
+    },
+    "invariants": [
+      "FatAdapterObject records exact DirectoryObject, FileObject, and BlockDevice generations",
+      "The adapter evidence must be verified and read/write byte counts and digests must match",
+      "The DirectoryObject must still bind the exact FileObject generation",
+      "The FileObject content digest and block-device generation must match the semantic source object",
+      "Duplicate adapter binding for the same DirectoryObject generation and adapter path is rejected before mutation",
+      "fatfs is confined to fs_adapter/target_executor evidence; semantic_core stores only stable adapter evidence"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "fat_adapter_formats_writes_and_reads_back_file",
+      "fat_adapter_rejects_invalid_config_or_empty_payload",
+      "block_runtime_b15_fat_adapter_records_read_write_contract",
+      "block_runtime_b15_rejects_stale_mismatch_duplicate_and_invalid_adapter",
+      "block_runtime_b15_invariants_reject_fat_adapter_generation_leak",
+      "fat_adapter_object_view_v1_exposes_read_write_adapter_contract",
+      "semantic_roots_reject_fat_adapter_object_root_mismatch"
+    ],
+    "osctl_json_view": "fat-adapter-object list --json",
+    "target_executor_event_cursor": 431
+  }
+}

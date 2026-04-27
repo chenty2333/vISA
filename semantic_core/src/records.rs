@@ -2120,6 +2120,43 @@ impl DirectoryObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FatAdapterObjectRecord {
+    pub id: FatAdapterObjectId,
+    pub directory_object: DirectoryObjectId,
+    pub directory_object_generation: Generation,
+    pub file_object: FileObjectId,
+    pub file_object_generation: Generation,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub implementation: String,
+    pub version: String,
+    pub profile: String,
+    pub volume_label: String,
+    pub image_bytes: u64,
+    pub adapter_path: String,
+    pub semantic_path: String,
+    pub bytes_written: u64,
+    pub bytes_read: u64,
+    pub write_digest: u64,
+    pub read_digest: u64,
+    pub file_content_digest: u64,
+    pub generation: Generation,
+    pub state: FatAdapterObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl FatAdapterObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::FatAdapterObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

@@ -1450,6 +1450,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::BufferCacheObject
             | ContractObjectKind::FileObject
             | ContractObjectKind::DirectoryObject
+            | ContractObjectKind::FatAdapterObject
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

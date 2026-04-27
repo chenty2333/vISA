@@ -9,6 +9,7 @@ members = [
     "devfs_service",
     "epoll_service",
     "futex_service",
+    "fs_adapter",
     "kernel",
     "linux_user_demo",
     "linux_socket_service",
@@ -35,6 +36,7 @@ members = [
 artifact_manifest = { path = "artifact_manifest" }
 bootloader_api = "0.11.15"
 contract_core = { path = "contract_core" }
+fatfs = "0.3.6"
 hex = "0.4.3"
 linked_list_allocator = "0.10.6"
 pic8259 = "0.10.4"
@@ -42,6 +44,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 semantic_core = { path = "semantic_core" }
 service_core = { path = "service_core" }
+fs_adapter = { path = "fs_adapter" }
 net_stack_adapter = { path = "net_stack_adapter" }
 smoltcp = { version = "0.13.0", default-features = false, features = ["alloc", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
 substrate_api = { path = "substrate_api" }

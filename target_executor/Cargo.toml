@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 artifact_manifest.workspace = true
 contract_core.workspace = true
+fs_adapter.workspace = true
 hex.workspace = true
 net_stack_adapter.workspace = true
 semantic_core.workspace = true
