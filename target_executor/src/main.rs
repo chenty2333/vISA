@@ -33,7 +33,7 @@ use artifact_manifest::{
     SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, SocketObjectManifest,
-    SocketOperationManifest, StopTheWorldRendezvousManifest,
+    SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
     SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
     TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
@@ -177,6 +177,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n11_evidence(&mut semantic)?;
     record_network_runtime_n12_evidence(&mut semantic)?;
     record_network_runtime_n13_evidence(&mut semantic)?;
+    record_network_runtime_n14_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -1178,6 +1179,149 @@ fn record_network_runtime_n13_evidence(semantic: &mut SemanticGraph) -> Result<(
             invalid_send.command,
             invalid_send.status.as_str(),
             invalid_send.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+fn record_network_runtime_n14_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let linux_socket_store = semantic
+        .store_id("linux_socket_service")
+        .ok_or("linux_socket_service store is missing for n14 evidence")?;
+    let linux_socket_store_generation = semantic
+        .store_handle(linux_socket_store)
+        .map(|handle| handle.generation)
+        .ok_or("linux_socket_service store handle is missing for n14 evidence")?;
+    let connected_endpoint = ContractObjectRef::new(ContractObjectKind::EndpointObject, 10_032, 1);
+    let listening_endpoint = ContractObjectRef::new(ContractObjectKind::EndpointObject, 10_029, 1);
+
+    let commands = [
+        CommandEnvelope::new(
+            159,
+            "target-executor-n14",
+            SemanticCommand::CreateWait {
+                wait: 10_040,
+                owner_task: None,
+                owner_store: Some(linux_socket_store),
+                owner_store_generation: Some(linux_socket_store_generation),
+                kind: SemanticWaitKind::SocketReadable,
+                generation: 1,
+                blockers: vec![connected_endpoint],
+                deadline: None,
+                restart_policy: RestartPolicy::RestartIfAllowed,
+                saved_context: Some("recv-would-block".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            160,
+            "target-executor-n14",
+            SemanticCommand::RecordSocketWait {
+                socket_wait: 10_041,
+                wait: 10_040,
+                wait_generation: 1,
+                endpoint: 10_032,
+                endpoint_generation: 1,
+                wait_kind: SemanticWaitKind::SocketReadable,
+                blocker: connected_endpoint,
+                note: "n14-record-readable-wait-on-connected-endpoint".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            161,
+            "target-executor-n14",
+            SemanticCommand::ResolveSocketWait {
+                socket_wait: 10_041,
+                socket_wait_generation: 1,
+                ready_sequence: 1,
+                byte_len: 19,
+                note: "n14-resolve-readable-wait".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            162,
+            "target-executor-n14",
+            SemanticCommand::CreateWait {
+                wait: 10_042,
+                owner_task: None,
+                owner_store: Some(linux_socket_store),
+                owner_store_generation: Some(linux_socket_store_generation),
+                kind: SemanticWaitKind::SocketAccept,
+                generation: 1,
+                blockers: vec![listening_endpoint],
+                deadline: None,
+                restart_policy: RestartPolicy::RestartIfAllowed,
+                saved_context: Some("accept-would-block".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            163,
+            "target-executor-n14",
+            SemanticCommand::RecordSocketWait {
+                socket_wait: 10_043,
+                wait: 10_042,
+                wait_generation: 1,
+                endpoint: 10_029,
+                endpoint_generation: 1,
+                wait_kind: SemanticWaitKind::SocketAccept,
+                blocker: listening_endpoint,
+                note: "n14-record-accept-wait-on-listening-endpoint".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            164,
+            "target-executor-n14",
+            SemanticCommand::CancelSocketWait {
+                socket_wait: 10_043,
+                socket_wait_generation: 1,
+                errno: 9,
+                reason: semantic_core::WaitCancelReason::CloseFd,
+                note: "n14-cancel-accept-wait-on-close".to_owned(),
+            },
+        ),
+    ];
+
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "network runtime n14 evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+
+    let stale_wait = semantic.apply_envelope(CommandEnvelope::new(
+        165,
+        "target-executor-n14",
+        SemanticCommand::RecordSocketWait {
+            socket_wait: 10_044,
+            wait: 10_040,
+            wait_generation: 1,
+            endpoint: 10_032,
+            endpoint_generation: 1,
+            wait_kind: SemanticWaitKind::SocketReadable,
+            blocker: connected_endpoint,
+            note: "n14-reject-record-socket-wait-on-resolved-token".to_owned(),
+        },
+    ));
+    if stale_wait.status != CommandStatus::Rejected
+        || !stale_wait
+            .violations
+            .iter()
+            .any(|violation| violation.contains("not pending"))
+    {
+        return Err(format!(
+            "network runtime n14 stale wait command {} ({}) was not rejected: status={} violations={:?}",
+            stale_wait.command_id,
+            stale_wait.command,
+            stale_wait.status.as_str(),
+            stale_wait.violations
         )
         .into());
     }
@@ -3568,6 +3712,7 @@ fn demo_migration_package(
             socket_object_count: semantic.socket_object_count(),
             endpoint_object_count: semantic.endpoint_object_count(),
             socket_operation_count: semantic.socket_operation_count(),
+            socket_wait_count: semantic.socket_wait_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -3834,6 +3979,11 @@ fn demo_migration_package(
                 .socket_operations()
                 .iter()
                 .map(socket_operation_manifest)
+                .collect(),
+            socket_waits: semantic
+                .socket_waits()
+                .iter()
+                .map(socket_wait_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -4919,6 +5069,32 @@ fn semantic_roots(
                     operation.sequence,
                     operation.state.as_str(),
                     operation.generation
+                )
+            })
+            .collect(),
+        socket_wait_roots: semantic
+            .socket_waits()
+            .iter()
+            .map(|wait| {
+                format!(
+                    "socket-wait id={} wait={}@{} kind={} endpoint={}@{} socket={}@{} adapter={}@{} owner_store={}@{} blocker={}:{}@{} state={} generation={}",
+                    wait.id,
+                    wait.wait,
+                    wait.wait_generation,
+                    wait.wait_kind.as_str(),
+                    wait.endpoint,
+                    wait.endpoint_generation,
+                    wait.socket,
+                    wait.socket_generation,
+                    wait.adapter,
+                    wait.adapter_generation,
+                    wait.owner_store,
+                    wait.owner_store_generation,
+                    wait.blocker.kind.as_str(),
+                    wait.blocker.id,
+                    wait.blocker.generation,
+                    wait.state.as_str(),
+                    wait.generation
                 )
             })
             .collect(),
@@ -6700,6 +6876,32 @@ fn socket_operation_manifest(
         state: operation.state.as_str().to_owned(),
         recorded_at_event: operation.recorded_at_event,
         note: operation.note.clone(),
+    }
+}
+
+fn socket_wait_manifest(wait: &semantic_core::SocketWaitRecord) -> SocketWaitManifest {
+    SocketWaitManifest {
+        id: wait.id,
+        wait: wait.wait,
+        wait_generation: wait.wait_generation,
+        endpoint: wait.endpoint,
+        endpoint_generation: wait.endpoint_generation,
+        socket: wait.socket,
+        socket_generation: wait.socket_generation,
+        adapter: wait.adapter,
+        adapter_generation: wait.adapter_generation,
+        owner_store: wait.owner_store,
+        owner_store_generation: wait.owner_store_generation,
+        wait_kind: wait.wait_kind.as_str().to_owned(),
+        blocker: contract_object_ref_manifest(wait.blocker),
+        generation: wait.generation,
+        state: wait.state.as_str().to_owned(),
+        created_at_event: wait.created_at_event,
+        completed_at_event: wait.completed_at_event,
+        cancel_reason: wait.cancel_reason.map(|reason| reason.as_str().to_owned()),
+        ready_sequence: wait.ready_sequence,
+        byte_len: wait.byte_len,
+        note: wait.note.clone(),
     }
 }
 

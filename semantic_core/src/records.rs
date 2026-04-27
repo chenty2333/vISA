@@ -1459,6 +1459,37 @@ impl SocketOperationRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SocketWaitRecord {
+    pub id: SocketWaitId,
+    pub wait: WaitId,
+    pub wait_generation: Generation,
+    pub endpoint: EndpointObjectId,
+    pub endpoint_generation: Generation,
+    pub socket: SocketObjectId,
+    pub socket_generation: Generation,
+    pub adapter: NetworkStackAdapterId,
+    pub adapter_generation: Generation,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub wait_kind: SemanticWaitKind,
+    pub blocker: ContractObjectRef,
+    pub generation: Generation,
+    pub state: SocketWaitState,
+    pub created_at_event: EventId,
+    pub completed_at_event: Option<EventId>,
+    pub cancel_reason: Option<WaitCancelReason>,
+    pub ready_sequence: Option<u64>,
+    pub byte_len: Option<u32>,
+    pub note: String,
+}
+
+impl SocketWaitRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::SocketWait, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

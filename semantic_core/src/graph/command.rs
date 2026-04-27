@@ -463,6 +463,30 @@ pub enum SemanticCommand {
         sequence: u64,
         note: String,
     },
+    RecordSocketWait {
+        socket_wait: SocketWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        endpoint: EndpointObjectId,
+        endpoint_generation: Generation,
+        wait_kind: SemanticWaitKind,
+        blocker: ContractObjectRef,
+        note: String,
+    },
+    ResolveSocketWait {
+        socket_wait: SocketWaitId,
+        socket_wait_generation: Generation,
+        ready_sequence: u64,
+        byte_len: u32,
+        note: String,
+    },
+    CancelSocketWait {
+        socket_wait: SocketWaitId,
+        socket_wait_generation: Generation,
+        errno: i32,
+        reason: WaitCancelReason,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -847,6 +871,9 @@ impl SemanticCommand {
             Self::ConnectSocketEndpoint { .. } => "connect-socket-endpoint",
             Self::SendSocket { .. } => "send-socket",
             Self::RecvSocket { .. } => "recv-socket",
+            Self::RecordSocketWait { .. } => "record-socket-wait",
+            Self::ResolveSocketWait { .. } => "resolve-socket-wait",
+            Self::CancelSocketWait { .. } => "cancel-socket-wait",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -2432,6 +2459,74 @@ impl SemanticGraph {
                     *sequence,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordSocketWait {
+                socket_wait,
+                wait,
+                wait_generation,
+                endpoint,
+                endpoint_generation,
+                wait_kind,
+                blocker,
+                ..
+            } => self
+                .validate_socket_wait(
+                    *socket_wait,
+                    *wait,
+                    *wait_generation,
+                    *endpoint,
+                    *endpoint_generation,
+                    *wait_kind,
+                    *blocker,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::ResolveSocketWait {
+                socket_wait,
+                socket_wait_generation,
+                ready_sequence,
+                byte_len,
+                ..
+            } => {
+                if self.socket_waits.iter().any(|record| {
+                    record.id == *socket_wait
+                        && record.generation == *socket_wait_generation
+                        && record.state == SocketWaitState::Pending
+                        && *ready_sequence > 0
+                        && (!matches!(record.wait_kind, SemanticWaitKind::SocketReadable)
+                            || *byte_len > 0)
+                }) {
+                    Ok(())
+                } else {
+                    Err(CommandError::precondition(
+                        "socket wait is not pending or readiness is empty",
+                    ))
+                }
+            }
+            SemanticCommand::CancelSocketWait {
+                socket_wait,
+                socket_wait_generation,
+                reason,
+                ..
+            } => {
+                if self.socket_waits.iter().any(|record| {
+                    record.id == *socket_wait
+                        && record.generation == *socket_wait_generation
+                        && record.state == SocketWaitState::Pending
+                }) && matches!(
+                    reason,
+                    WaitCancelReason::CloseFd
+                        | WaitCancelReason::StoreFault
+                        | WaitCancelReason::CapabilityRevoked
+                        | WaitCancelReason::DeviceFault
+                        | WaitCancelReason::ResourceDropped
+                        | WaitCancelReason::GenerationMismatch
+                ) {
+                    Ok(())
+                } else {
+                    Err(CommandError::precondition(
+                        "socket wait is not pending or cancel reason is not socket-visible",
+                    ))
+                }
+            }
             SemanticCommand::RecordQueueObject {
                 queue,
                 name,
@@ -4101,6 +4196,45 @@ impl SemanticGraph {
                 sequence,
                 &note,
             ),
+            SemanticCommand::RecordSocketWait {
+                socket_wait,
+                wait,
+                wait_generation,
+                endpoint,
+                endpoint_generation,
+                wait_kind,
+                blocker,
+                note,
+            } => self.record_socket_wait_with_id(
+                socket_wait,
+                wait,
+                wait_generation,
+                endpoint,
+                endpoint_generation,
+                wait_kind,
+                blocker,
+                &note,
+            ),
+            SemanticCommand::ResolveSocketWait {
+                socket_wait,
+                socket_wait_generation,
+                ready_sequence,
+                byte_len,
+                note,
+            } => self.resolve_socket_wait(
+                socket_wait,
+                socket_wait_generation,
+                ready_sequence,
+                byte_len,
+                &note,
+            ),
+            SemanticCommand::CancelSocketWait {
+                socket_wait,
+                socket_wait_generation,
+                errno,
+                reason,
+                note,
+            } => self.cancel_socket_wait(socket_wait, socket_wait_generation, errno, reason, &note),
             SemanticCommand::RecordQueueObject {
                 queue,
                 name,

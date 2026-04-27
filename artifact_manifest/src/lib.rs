@@ -319,6 +319,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub socket_operation_count: usize,
     #[serde(default)]
+    pub socket_wait_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -489,6 +491,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub socket_operations: Vec<SocketOperationManifest>,
     #[serde(default)]
+    pub socket_waits: Vec<SocketWaitManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -638,6 +642,8 @@ pub struct SemanticRootSetManifest {
     pub endpoint_object_roots: Vec<String>,
     #[serde(default)]
     pub socket_operation_roots: Vec<String>,
+    #[serde(default)]
+    pub socket_wait_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1840,6 +1846,31 @@ pub struct SocketOperationManifest {
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SocketWaitManifest {
+    pub id: u64,
+    pub wait: u64,
+    pub wait_generation: u64,
+    pub endpoint: u64,
+    pub endpoint_generation: u64,
+    pub socket: u64,
+    pub socket_generation: u64,
+    pub adapter: u64,
+    pub adapter_generation: u64,
+    pub owner_store: u64,
+    pub owner_store_generation: u64,
+    pub wait_kind: String,
+    pub blocker: ContractObjectRefManifest,
+    pub generation: u64,
+    pub state: String,
+    pub created_at_event: u64,
+    pub completed_at_event: Option<u64>,
+    pub cancel_reason: Option<String>,
+    pub ready_sequence: Option<u64>,
+    pub byte_len: Option<u32>,
     pub note: String,
 }
 

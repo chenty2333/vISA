@@ -700,6 +700,10 @@ impl SemanticGraph {
                 .socket_operations
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::SocketWait => self
+                .socket_waits
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

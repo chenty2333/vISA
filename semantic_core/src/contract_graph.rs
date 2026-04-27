@@ -1428,6 +1428,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::SocketObject
             | ContractObjectKind::EndpointObject
             | ContractObjectKind::SocketOperation
+            | ContractObjectKind::SocketWait
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

@@ -1300,6 +1300,41 @@ pub enum SemanticInvariantError {
     SocketOperationMissingEvent {
         operation: SocketOperationId,
     },
+    SocketWaitInvalid {
+        socket_wait: SocketWaitId,
+    },
+    SocketWaitMissingWait {
+        socket_wait: SocketWaitId,
+        wait: WaitId,
+    },
+    SocketWaitMissingEndpoint {
+        socket_wait: SocketWaitId,
+        endpoint: EndpointObjectId,
+    },
+    SocketWaitMissingSocket {
+        socket_wait: SocketWaitId,
+        socket: SocketObjectId,
+    },
+    SocketWaitMissingAdapter {
+        socket_wait: SocketWaitId,
+        adapter: NetworkStackAdapterId,
+    },
+    SocketWaitMissingOwnerStore {
+        socket_wait: SocketWaitId,
+        store: StoreId,
+    },
+    SocketWaitMissingBlocker {
+        socket_wait: SocketWaitId,
+        blocker: ContractObjectRef,
+    },
+    SocketWaitDuplicateWait {
+        socket_wait: SocketWaitId,
+        wait: WaitId,
+    },
+    SocketWaitMissingEvent {
+        socket_wait: SocketWaitId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

@@ -639,6 +639,37 @@ pub enum EventKind {
         sequence: u64,
         generation: Generation,
     },
+    SocketWaitCreated {
+        socket_wait: SocketWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        endpoint: EndpointObjectId,
+        endpoint_generation: Generation,
+        socket: SocketObjectId,
+        socket_generation: Generation,
+        adapter: NetworkStackAdapterId,
+        adapter_generation: Generation,
+        owner_store: StoreId,
+        owner_store_generation: Generation,
+        wait_kind: SemanticWaitKind,
+        blocker: ContractObjectRef,
+        generation: Generation,
+    },
+    SocketWaitResolved {
+        socket_wait: SocketWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        ready_sequence: u64,
+        byte_len: u32,
+        generation: Generation,
+    },
+    SocketWaitCancelled {
+        socket_wait: SocketWaitId,
+        wait: WaitId,
+        wait_generation: Generation,
+        reason: WaitCancelReason,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1829,6 +1860,48 @@ impl EventKind {
                 remote_addr[1],
                 remote_addr[2],
                 remote_addr[3]
+            ),
+            Self::SocketWaitCreated {
+                socket_wait,
+                wait,
+                wait_generation,
+                endpoint,
+                endpoint_generation,
+                socket,
+                socket_generation,
+                adapter,
+                adapter_generation,
+                owner_store,
+                owner_store_generation,
+                wait_kind,
+                blocker,
+                generation,
+            } => format!(
+                "SocketWaitCreated socket_wait={socket_wait} wait={wait}@{wait_generation} endpoint={endpoint}@{endpoint_generation} socket={socket}@{socket_generation} adapter={adapter}@{adapter_generation} owner_store={owner_store}@{owner_store_generation} kind={} blocker={}:{}@{} generation={generation}",
+                wait_kind.as_str(),
+                blocker.kind.as_str(),
+                blocker.id,
+                blocker.generation
+            ),
+            Self::SocketWaitResolved {
+                socket_wait,
+                wait,
+                wait_generation,
+                ready_sequence,
+                byte_len,
+                generation,
+            } => format!(
+                "SocketWaitResolved socket_wait={socket_wait} wait={wait}@{wait_generation} ready_sequence={ready_sequence} byte_len={byte_len} generation={generation}"
+            ),
+            Self::SocketWaitCancelled {
+                socket_wait,
+                wait,
+                wait_generation,
+                reason,
+                generation,
+            } => format!(
+                "SocketWaitCancelled socket_wait={socket_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
+                reason.as_str()
             ),
             Self::RuntimeActivationResumed {
                 resume,

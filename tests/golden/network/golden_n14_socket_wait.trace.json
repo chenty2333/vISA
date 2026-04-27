@@ -1,0 +1,191 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "N14-socket-wait-token-integration",
+  "name": "golden_n14_socket_wait",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/05-wait-token-event-bridge.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md"
+  ],
+  "no_goals": [
+    "backpressure or drop policy",
+    "real smoltcp readiness as semantic truth",
+    "real packet transmission",
+    "network driver fault cleanup",
+    "full Linux socket ABI"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "N13 has recorded a listening endpoint endpoint-object:10029@1",
+      "N13 has recorded a connected endpoint endpoint-object:10032@1",
+      "linux_socket_service store is store:9@3"
+    ],
+    "commands": [
+      {
+        "id": 159,
+        "command": "create-wait",
+        "wait": "wait-token:10040@1",
+        "kind": "socket-readable",
+        "owner_store": "store:9@3",
+        "blocker": "endpoint-object:10032@1",
+        "expected": "applied"
+      },
+      {
+        "id": 160,
+        "command": "record-socket-wait",
+        "socket_wait": "socket-wait:10041@1",
+        "wait": "wait-token:10040@1",
+        "endpoint": "endpoint-object:10032@1",
+        "expected": "applied"
+      },
+      {
+        "id": 161,
+        "command": "resolve-socket-wait",
+        "socket_wait": "socket-wait:10041@1",
+        "ready_sequence": 1,
+        "byte_len": 19,
+        "expected": "applied"
+      },
+      {
+        "id": 162,
+        "command": "create-wait",
+        "wait": "wait-token:10042@1",
+        "kind": "socket-accept",
+        "owner_store": "store:9@3",
+        "blocker": "endpoint-object:10029@1",
+        "expected": "applied"
+      },
+      {
+        "id": 163,
+        "command": "record-socket-wait",
+        "socket_wait": "socket-wait:10043@1",
+        "wait": "wait-token:10042@1",
+        "endpoint": "endpoint-object:10029@1",
+        "expected": "applied"
+      },
+      {
+        "id": 164,
+        "command": "cancel-socket-wait",
+        "socket_wait": "socket-wait:10043@1",
+        "reason": "close-fd",
+        "expected": "applied"
+      },
+      {
+        "id": 165,
+        "command": "record-socket-wait",
+        "scenario": "record socket wait against a resolved wait token",
+        "wait": "wait-token:10040@1",
+        "endpoint": "endpoint-object:10032@1",
+        "expected": "rejected",
+        "violation": "socket wait token generation is missing or not pending"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "WaitCreated",
+      "wait": "wait-token:10040@1",
+      "wait_kind": "socket-readable",
+      "owner_store": "store:9@3",
+      "blocker": "endpoint-object:10032@1"
+    },
+    {
+      "kind": "SocketWaitCreated",
+      "socket_wait": "socket-wait:10041@1",
+      "wait": "wait-token:10040@1",
+      "endpoint": "endpoint-object:10032@1",
+      "socket": "socket-object:10031@1",
+      "adapter": "network-stack-adapter:10025@1",
+      "owner_store": "store:9@3",
+      "wait_kind": "socket-readable"
+    },
+    {
+      "kind": "WaitResolved",
+      "wait": "wait-token:10040@1",
+      "reason": "socket-ready"
+    },
+    {
+      "kind": "SocketWaitResolved",
+      "socket_wait": "socket-wait:10041@1",
+      "ready_sequence": 1,
+      "byte_len": 19
+    },
+    {
+      "kind": "SocketWaitCreated",
+      "socket_wait": "socket-wait:10043@1",
+      "wait": "wait-token:10042@1",
+      "endpoint": "endpoint-object:10029@1",
+      "socket": "socket-object:10027@1",
+      "adapter": "network-stack-adapter:10025@1",
+      "owner_store": "store:9@3",
+      "wait_kind": "socket-accept"
+    },
+    {
+      "kind": "WaitCancelled",
+      "wait": "wait-token:10042@1",
+      "reason": "close-fd"
+    },
+    {
+      "kind": "SocketWaitCancelled",
+      "socket_wait": "socket-wait:10043@1",
+      "reason": "close-fd"
+    }
+  ],
+  "expected": {
+    "views": {
+      "socket-wait": {
+        "count": 2,
+        "resolved": "socket-wait:10041@1",
+        "cancelled": "socket-wait:10043@1",
+        "readable_wait": "wait-token:10040@1",
+        "accept_wait": "wait-token:10042@1",
+        "connected_endpoint": "endpoint-object:10032@1",
+        "listening_endpoint": "endpoint-object:10029@1"
+      },
+      "wait": {
+        "resolved": "wait-token:10040@1",
+        "cancelled": "wait-token:10042@1",
+        "pending_count_after_checkpoint": 0
+      },
+      "command": {
+        "applied": [
+          "command-result:160:record-socket-wait:applied",
+          "command-result:161:resolve-socket-wait:applied",
+          "command-result:163:record-socket-wait:applied",
+          "command-result:164:cancel-socket-wait:applied"
+        ],
+        "rejected": "command-result:165:record-socket-wait:rejected",
+        "violation": "socket wait token generation is missing or not pending"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "SocketWait carries exact WaitToken, EndpointObject, SocketObject, NetworkStackAdapter, and Store generations",
+      "SocketReadable waits require a connected endpoint generation",
+      "SocketAccept waits require a listening endpoint generation",
+      "resolve/cancel update the underlying WaitToken record",
+      "completed SocketWait graph edges are historical, not live ownership",
+      "reusing a resolved WaitToken for a new SocketWait is rejected"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "network_runtime_n14_socket_wait_resolves_and_cancels_wait_tokens",
+      "network_runtime_n14_accept_wait_can_resolve_without_payload_bytes",
+      "network_runtime_n14_rejects_wrong_socket_wait_state_and_generation",
+      "network_runtime_n14_invariants_reject_socket_wait_endpoint_generation_leak",
+      "socket_wait_view_v1_exposes_wait_endpoint_and_readiness_generations",
+      "semantic_roots_reject_socket_wait_root_mismatch",
+      "graph_json_edges_separate_live_history_and_cleanup_modes"
+    ],
+    "osctl_json_view": "socket-wait list --json"
+  }
+}

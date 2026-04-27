@@ -1078,6 +1078,23 @@ impl SocketOperationState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SocketWaitState {
+    Pending,
+    Resolved,
+    Cancelled,
+}
+
+impl SocketWaitState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Resolved => "resolved",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

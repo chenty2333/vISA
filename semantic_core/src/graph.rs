@@ -54,6 +54,7 @@ pub struct SemanticGraph {
     socket_objects: Vec<SocketObjectRecord>,
     endpoint_objects: Vec<EndpointObjectRecord>,
     socket_operations: Vec<SocketOperationRecord>,
+    socket_waits: Vec<SocketWaitRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -119,6 +120,7 @@ pub struct SemanticGraph {
     next_socket_object_id: SocketObjectId,
     next_endpoint_object_id: EndpointObjectId,
     next_socket_operation_id: SocketOperationId,
+    next_socket_wait_id: SocketWaitId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -186,6 +188,7 @@ mod smp_stress;
 mod snapshot;
 mod socket_object;
 mod socket_operation;
+mod socket_wait;
 mod stop_the_world;
 mod store;
 mod substrate;
@@ -251,6 +254,7 @@ impl SemanticGraph {
             socket_objects: Vec::new(),
             endpoint_objects: Vec::new(),
             socket_operations: Vec::new(),
+            socket_waits: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -316,6 +320,7 @@ impl SemanticGraph {
             next_socket_object_id: 1,
             next_endpoint_object_id: 1,
             next_socket_operation_id: 1,
+            next_socket_wait_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

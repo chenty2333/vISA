@@ -113,6 +113,7 @@ pub enum ObjectKind {
     SocketObject,
     EndpointObject,
     SocketOperation,
+    SocketWait,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -191,6 +192,7 @@ impl ObjectKind {
             Self::SocketObject => "socket-object",
             Self::EndpointObject => "endpoint-object",
             Self::SocketOperation => "socket-operation",
+            Self::SocketWait => "socket-wait",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -441,6 +443,7 @@ typed_ref!(NetworkStackAdapterRef, ObjectKind::NetworkStackAdapter);
 typed_ref!(SocketObjectRef, ObjectKind::SocketObject);
 typed_ref!(EndpointObjectRef, ObjectKind::EndpointObject);
 typed_ref!(SocketOperationRef, ObjectKind::SocketOperation);
+typed_ref!(SocketWaitRef, ObjectKind::SocketWait);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1872,6 +1875,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("socket operation root/count mismatch"));
     }
+    if roots.socket_wait_roots.len() != package.semantic.socket_wait_count
+        || package.semantic.socket_waits.len() != package.semantic.socket_wait_count
+    {
+        return Err(ContractError::new("socket wait root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2441,6 +2449,7 @@ mod tests {
                 socket_object_count: 0,
                 endpoint_object_count: 0,
                 socket_operation_count: 0,
+                socket_wait_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2528,6 +2537,7 @@ mod tests {
                 socket_objects: Vec::new(),
                 endpoint_objects: Vec::new(),
                 socket_operations: Vec::new(),
+                socket_waits: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4076,6 +4086,45 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_socket_wait_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.socket_wait_count = 1;
+        package
+            .semantic
+            .socket_waits
+            .push(artifact_manifest::SocketWaitManifest {
+                id: 45,
+                wait: 46,
+                wait_generation: 1,
+                endpoint: 43,
+                endpoint_generation: 1,
+                socket: 42,
+                socket_generation: 1,
+                adapter: 41,
+                adapter_generation: 1,
+                owner_store: 7,
+                owner_store_generation: 1,
+                wait_kind: "socket-readable".to_owned(),
+                blocker: artifact_manifest::ContractObjectRefManifest {
+                    kind: "endpoint-object".to_owned(),
+                    id: 43,
+                    generation: 1,
+                },
+                generation: 1,
+                state: "pending".to_owned(),
+                created_at_event: 81,
+                completed_at_event: None,
+                cancel_reason: None,
+                ready_sequence: None,
+                byte_len: None,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "socket wait root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -4597,6 +4646,8 @@ mod tests {
         assert!(EndpointObjectRef::try_from_ref(endpoint_object).is_ok());
         let socket_operation = ObjectRef::new(ObjectKind::SocketOperation, 43, 1).unwrap();
         assert!(SocketOperationRef::try_from_ref(socket_operation).is_ok());
+        let socket_wait = ObjectRef::new(ObjectKind::SocketWait, 44, 1).unwrap();
+        assert!(SocketWaitRef::try_from_ref(socket_wait).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();
