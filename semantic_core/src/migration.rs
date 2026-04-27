@@ -1185,6 +1185,29 @@ pub enum SemanticInvariantError {
     NetworkTxCapabilityGateMissingEvent {
         tx_gate: NetworkTxCapabilityGateId,
     },
+    NetworkTxCompletionInvalid {
+        completion: NetworkTxCompletionId,
+    },
+    NetworkTxCompletionMissingGate {
+        completion: NetworkTxCompletionId,
+        tx_gate: NetworkTxCapabilityGateId,
+    },
+    NetworkTxCompletionMissingBackend {
+        completion: NetworkTxCompletionId,
+        backend: ContractObjectRef,
+    },
+    NetworkTxCompletionDuplicateGate {
+        completion: NetworkTxCompletionId,
+        tx_gate: NetworkTxCapabilityGateId,
+    },
+    NetworkTxCompletionDuplicateSequence {
+        completion: NetworkTxCompletionId,
+        tx_queue: PacketQueueObjectId,
+        completion_sequence: u64,
+    },
+    NetworkTxCompletionMissingEvent {
+        completion: NetworkTxCompletionId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

@@ -1299,6 +1299,41 @@ impl NetworkTxCapabilityGateRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkTxCompletionRecord {
+    pub id: NetworkTxCompletionId,
+    pub tx_gate: NetworkTxCapabilityGateId,
+    pub tx_gate_generation: Generation,
+    pub backend: ContractObjectRef,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub tx_queue: PacketQueueObjectId,
+    pub tx_queue_generation: Generation,
+    pub packet_descriptor: PacketDescriptorObjectId,
+    pub packet_descriptor_generation: Generation,
+    pub packet_buffer: PacketBufferObjectId,
+    pub packet_buffer_generation: Generation,
+    pub byte_len: u32,
+    pub sequence: u64,
+    pub completion_sequence: u64,
+    pub generation: Generation,
+    pub state: NetworkTxCompletionState,
+    pub completed_at_event: EventId,
+    pub note: String,
+}
+
+impl NetworkTxCompletionRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::NetworkTxCompletion,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

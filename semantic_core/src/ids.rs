@@ -40,6 +40,7 @@ pub type VirtioNetBackendObjectId = u64;
 pub type NetworkRxInterruptId = u64;
 pub type NetworkRxWaitResolutionId = u64;
 pub type NetworkTxCapabilityGateId = u64;
+pub type NetworkTxCompletionId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

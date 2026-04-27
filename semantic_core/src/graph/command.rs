@@ -369,6 +369,14 @@ pub enum SemanticCommand {
         handle: CapabilityHandle,
         note: String,
     },
+    RecordNetworkTxCompletion {
+        completion: NetworkTxCompletionId,
+        tx_gate: NetworkTxCapabilityGateId,
+        tx_gate_generation: Generation,
+        backend: ContractObjectRef,
+        completion_sequence: u64,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -744,6 +752,7 @@ impl SemanticCommand {
             Self::RecordNetworkRxInterrupt { .. } => "record-network-rx-interrupt",
             Self::ResolveNetworkRxWait { .. } => "resolve-network-rx-wait",
             Self::RecordNetworkTxCapabilityGate { .. } => "record-network-tx-capability-gate",
+            Self::RecordNetworkTxCompletion { .. } => "record-network-tx-completion",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -2112,6 +2121,22 @@ impl SemanticGraph {
                     handle,
                 )
                 .map(|_| ())
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordNetworkTxCompletion {
+                completion,
+                tx_gate,
+                tx_gate_generation,
+                backend,
+                completion_sequence,
+                ..
+            } => self
+                .validate_network_tx_completion(
+                    *completion,
+                    *tx_gate,
+                    *tx_gate_generation,
+                    *backend,
+                    *completion_sequence,
+                )
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
                 queue,
@@ -3573,6 +3598,21 @@ impl SemanticGraph {
                 device_capability,
                 device_capability_generation,
                 handle,
+                &note,
+            ),
+            SemanticCommand::RecordNetworkTxCompletion {
+                completion,
+                tx_gate,
+                tx_gate_generation,
+                backend,
+                completion_sequence,
+                note,
+            } => self.record_network_tx_completion_with_id(
+                completion,
+                tx_gate,
+                tx_gate_generation,
+                backend,
+                completion_sequence,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

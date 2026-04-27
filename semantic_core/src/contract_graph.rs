@@ -1423,6 +1423,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::NetworkRxInterrupt
             | ContractObjectKind::NetworkRxWaitResolution
             | ContractObjectKind::NetworkTxCapabilityGate
+            | ContractObjectKind::NetworkTxCompletion
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

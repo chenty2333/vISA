@@ -22,14 +22,15 @@ use artifact_manifest::{
     IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
     MigrationTargetManifest, MmioRegionObjectManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkTxCapabilityGateManifest, PacketBufferObjectManifest,
-    PacketDescriptorObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
-    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
-    RemotePreemptManifest, RequiredArtifactProfileManifest, RunnableQueueEntryManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
-    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    NetworkRxWaitResolutionManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
+    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
+    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
+    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
@@ -169,6 +170,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n6_evidence(&mut semantic)?;
     record_network_runtime_n7_evidence(&mut semantic)?;
     record_network_runtime_n8_evidence(&mut semantic)?;
+    record_network_runtime_n9_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -739,6 +741,62 @@ fn record_network_runtime_n8_evidence(semantic: &mut SemanticGraph) -> Result<()
             denied.command,
             denied.status.as_str(),
             denied.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn record_network_runtime_n9_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let backend = ContractObjectRef::new(ContractObjectKind::VirtioNetBackendObject, 10_010, 1);
+    let command = CommandEnvelope::new(
+        142,
+        "target-executor-n9",
+        SemanticCommand::RecordNetworkTxCompletion {
+            completion: 10_023,
+            tx_gate: 10_021,
+            tx_gate_generation: 1,
+            backend,
+            completion_sequence: 1,
+            note: "n9-record-tx-completion-after-capability-gate".to_owned(),
+        },
+    );
+    let result = semantic.apply_envelope(command);
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "network runtime n9 evidence command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+
+    let duplicate = semantic.apply_envelope(CommandEnvelope::new(
+        143,
+        "target-executor-n9",
+        SemanticCommand::RecordNetworkTxCompletion {
+            completion: 10_024,
+            tx_gate: 10_021,
+            tx_gate_generation: 1,
+            backend,
+            completion_sequence: 2,
+            note: "n9-reject-duplicate-tx-completion-for-gate".to_owned(),
+        },
+    ));
+    if duplicate.status != CommandStatus::Rejected
+        || !duplicate
+            .violations
+            .iter()
+            .any(|violation| violation.contains("already completed"))
+    {
+        return Err(format!(
+            "network runtime n9 duplicate tx completion command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate.command_id,
+            duplicate.command,
+            duplicate.status.as_str(),
+            duplicate.violations
         )
         .into());
     }
@@ -3123,6 +3181,7 @@ fn demo_migration_package(
             network_rx_interrupt_count: semantic.network_rx_interrupt_count(),
             network_rx_wait_resolution_count: semantic.network_rx_wait_resolution_count(),
             network_tx_capability_gate_count: semantic.network_tx_capability_gate_count(),
+            network_tx_completion_count: semantic.network_tx_completion_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -3364,6 +3423,11 @@ fn demo_migration_package(
                 .network_tx_capability_gates()
                 .iter()
                 .map(network_tx_capability_gate_manifest)
+                .collect(),
+            network_tx_completions: semantic
+                .network_tx_completions()
+                .iter()
+                .map(network_tx_completion_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -4302,6 +4366,34 @@ fn semantic_roots(
                     gate.sequence,
                     gate.state.as_str(),
                     gate.generation
+                )
+            })
+            .collect(),
+        network_tx_completion_roots: semantic
+            .network_tx_completions()
+            .iter()
+            .map(|completion| {
+                format!(
+                    "network-tx-completion id={} tx_gate={}@{} backend={} driver_store={}@{} packet_device={}@{} tx_queue={}@{} packet_descriptor={}@{} packet_buffer={}@{} byte_len={} sequence={} completion_sequence={} state={} generation={}",
+                    completion.id,
+                    completion.tx_gate,
+                    completion.tx_gate_generation,
+                    completion.backend.summary(),
+                    completion.driver_store,
+                    completion.driver_store_generation,
+                    completion.packet_device,
+                    completion.packet_device_generation,
+                    completion.tx_queue,
+                    completion.tx_queue_generation,
+                    completion.packet_descriptor,
+                    completion.packet_descriptor_generation,
+                    completion.packet_buffer,
+                    completion.packet_buffer_generation,
+                    completion.byte_len,
+                    completion.sequence,
+                    completion.completion_sequence,
+                    completion.state.as_str(),
+                    completion.generation
                 )
             })
             .collect(),
@@ -5948,6 +6040,36 @@ fn network_tx_capability_gate_manifest(
         state: gate.state.as_str().to_owned(),
         recorded_at_event: gate.recorded_at_event,
         note: gate.note.clone(),
+    }
+}
+
+fn network_tx_completion_manifest(
+    completion: &semantic_core::NetworkTxCompletionRecord,
+) -> NetworkTxCompletionManifest {
+    NetworkTxCompletionManifest {
+        id: completion.id,
+        tx_gate: completion.tx_gate,
+        tx_gate_generation: completion.tx_gate_generation,
+        backend_kind: completion.backend.kind.as_str().to_owned(),
+        backend: completion.backend.id,
+        backend_generation: completion.backend.generation,
+        driver_store: completion.driver_store,
+        driver_store_generation: completion.driver_store_generation,
+        packet_device: completion.packet_device,
+        packet_device_generation: completion.packet_device_generation,
+        tx_queue: completion.tx_queue,
+        tx_queue_generation: completion.tx_queue_generation,
+        packet_descriptor: completion.packet_descriptor,
+        packet_descriptor_generation: completion.packet_descriptor_generation,
+        packet_buffer: completion.packet_buffer,
+        packet_buffer_generation: completion.packet_buffer_generation,
+        byte_len: completion.byte_len,
+        sequence: completion.sequence,
+        completion_sequence: completion.completion_sequence,
+        generation: completion.generation,
+        state: completion.state.as_str().to_owned(),
+        completed_at_event: completion.completed_at_event,
+        note: completion.note.clone(),
     }
 }
 

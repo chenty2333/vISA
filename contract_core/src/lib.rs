@@ -108,6 +108,7 @@ pub enum ObjectKind {
     NetworkRxInterrupt,
     NetworkRxWaitResolution,
     NetworkTxCapabilityGate,
+    NetworkTxCompletion,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -181,6 +182,7 @@ impl ObjectKind {
             Self::NetworkRxInterrupt => "network-rx-interrupt",
             Self::NetworkRxWaitResolution => "network-rx-wait-resolution",
             Self::NetworkTxCapabilityGate => "network-tx-capability-gate",
+            Self::NetworkTxCompletion => "network-tx-completion",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -426,6 +428,7 @@ typed_ref!(
     NetworkTxCapabilityGateRef,
     ObjectKind::NetworkTxCapabilityGate
 );
+typed_ref!(NetworkTxCompletionRef, ObjectKind::NetworkTxCompletion);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1826,6 +1829,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "network tx capability gate root/count mismatch",
         ));
     }
+    if roots.network_tx_completion_roots.len() != package.semantic.network_tx_completion_count
+        || package.semantic.network_tx_completions.len()
+            != package.semantic.network_tx_completion_count
+    {
+        return Err(ContractError::new(
+            "network tx completion root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2390,6 +2401,7 @@ mod tests {
                 network_rx_interrupt_count: 0,
                 network_rx_wait_resolution_count: 0,
                 network_tx_capability_gate_count: 0,
+                network_tx_completion_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2472,6 +2484,7 @@ mod tests {
                 network_rx_interrupts: Vec::new(),
                 network_rx_wait_resolutions: Vec::new(),
                 network_tx_capability_gates: Vec::new(),
+                network_tx_completions: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3850,6 +3863,42 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_network_tx_completion_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.network_tx_completion_count = 1;
+        package.semantic.network_tx_completions.push(
+            artifact_manifest::NetworkTxCompletionManifest {
+                id: 40,
+                tx_gate: 39,
+                tx_gate_generation: 1,
+                backend_kind: "virtio-net-backend-object".to_owned(),
+                backend: 35,
+                backend_generation: 1,
+                driver_store: 12,
+                driver_store_generation: 1,
+                packet_device: 31,
+                packet_device_generation: 1,
+                tx_queue: 33,
+                tx_queue_generation: 1,
+                packet_descriptor: 34,
+                packet_descriptor_generation: 1,
+                packet_buffer: 32,
+                packet_buffer_generation: 1,
+                byte_len: 64,
+                sequence: 1,
+                completion_sequence: 1,
+                generation: 1,
+                state: "completed".to_owned(),
+                completed_at_event: 76,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "network tx completion root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -4361,6 +4410,8 @@ mod tests {
         let network_tx_capability_gate =
             ObjectRef::new(ObjectKind::NetworkTxCapabilityGate, 38, 1).unwrap();
         assert!(NetworkTxCapabilityGateRef::try_from_ref(network_tx_capability_gate).is_ok());
+        let network_tx_completion = ObjectRef::new(ObjectKind::NetworkTxCompletion, 39, 1).unwrap();
+        assert!(NetworkTxCompletionRef::try_from_ref(network_tx_completion).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

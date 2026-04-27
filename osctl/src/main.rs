@@ -17,15 +17,15 @@ use artifact_manifest::{
     IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
     IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest, NetworkTxCapabilityGateManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
-    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
-    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
-    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
-    VirtioNetBackendObjectManifest, WaitRecordManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
+    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
+    SmpStressRunManifest, StopTheWorldRendezvousManifest, StoreRecordManifest,
+    SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
+    TimerInterruptManifest, TrapRecordManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -303,6 +303,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "rx-wait-resolution"
         | "network-tx-capability-gate"
         | "tx-capability-gate"
+        | "network-tx-completion"
+        | "tx-completion"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -473,7 +475,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -710,6 +712,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "network-rx-interrupt" | "rx-interrupt" => "network-rx-interrupt",
         "network-rx-wait-resolution" | "rx-wait-resolution" => "network-rx-wait-resolution",
         "network-tx-capability-gate" | "tx-capability-gate" => "network-tx-capability-gate",
+        "network-tx-completion" | "tx-completion" => "network-tx-completion",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2813,6 +2816,75 @@ fn network_tx_capability_gate_view_v1(gate: &NetworkTxCapabilityGateManifest) ->
     })
 }
 
+fn network_tx_completion_view_v1(completion: &NetworkTxCompletionManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "network-tx-completion",
+        "id": completion.id,
+        "generation": completion.generation,
+        "state": completion.state,
+        "owner": {
+            "driver_store": object_ref_json(
+                "store",
+                completion.driver_store,
+                completion.driver_store_generation,
+            ),
+            "backend": object_ref_json(
+                osctl_kind_from_contract_kind(&completion.backend_kind),
+                completion.backend,
+                completion.backend_generation,
+            ),
+        },
+        "references": {
+            "tx_gate": object_ref_json(
+                "network-tx-capability-gate",
+                completion.tx_gate,
+                completion.tx_gate_generation,
+            ),
+            "backend": object_ref_json(
+                osctl_kind_from_contract_kind(&completion.backend_kind),
+                completion.backend,
+                completion.backend_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                completion.packet_device,
+                completion.packet_device_generation,
+            ),
+            "tx_queue": object_ref_json(
+                "packet-queue",
+                completion.tx_queue,
+                completion.tx_queue_generation,
+            ),
+            "packet_descriptor": object_ref_json(
+                "packet-descriptor",
+                completion.packet_descriptor,
+                completion.packet_descriptor_generation,
+            ),
+            "packet_buffer": object_ref_json(
+                "packet-buffer",
+                completion.packet_buffer,
+                completion.packet_buffer_generation,
+            ),
+            "event": {
+                "id": completion.completed_at_event,
+            },
+        },
+        "tx": {
+            "byte_len": completion.byte_len,
+            "sequence": completion.sequence,
+            "completion_sequence": completion.completion_sequence,
+        },
+        "note": completion.note,
+        "last_transition": {
+            "completed_at_event": completion.completed_at_event,
+            "tx_gate_generation": completion.tx_gate_generation,
+            "backend_generation": completion.backend_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -3924,6 +3996,12 @@ fn stable_views_for_kind(
             .iter()
             .map(network_tx_capability_gate_view_v1)
             .collect()),
+        "network-tx-completion" | "tx-completion" => Ok(package
+            .semantic
+            .network_tx_completions
+            .iter()
+            .map(network_tx_completion_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -4940,6 +5018,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.network_tx_capability_gate_roots,
     );
     print_roots(
+        "network-tx-completion",
+        &package.semantic.roots.network_tx_completion_roots,
+    );
+    print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
     );
@@ -5756,6 +5838,68 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "network-tx-capability-gate->capability",
             "historical",
             Some(gate.recorded_at_event),
+        ));
+    }
+    for completion in &package.semantic.network_tx_completions {
+        let from = object_ref_json(
+            "network-tx-completion",
+            completion.id,
+            completion.generation,
+        );
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "network-tx-capability-gate",
+                completion.tx_gate,
+                completion.tx_gate_generation,
+            ),
+            "network-tx-completion->tx-gate",
+            "historical",
+            Some(completion.completed_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                osctl_kind_from_contract_kind(&completion.backend_kind),
+                completion.backend,
+                completion.backend_generation,
+            ),
+            "network-tx-completion->backend",
+            "historical",
+            Some(completion.completed_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "packet-descriptor",
+                completion.packet_descriptor,
+                completion.packet_descriptor_generation,
+            ),
+            "network-tx-completion->packet-descriptor",
+            "historical",
+            Some(completion.completed_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "packet-buffer",
+                completion.packet_buffer,
+                completion.packet_buffer_generation,
+            ),
+            "network-tx-completion->packet-buffer",
+            "historical",
+            Some(completion.completed_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "packet-device",
+                completion.packet_device,
+                completion.packet_device_generation,
+            ),
+            "network-tx-completion->packet-device",
+            "historical",
+            Some(completion.completed_at_event),
         ));
     }
     for interrupt in &package.semantic.timer_interrupts {
@@ -7192,6 +7336,14 @@ fn object_ref_json(kind: &str, id: u64, generation: u64) -> serde_json::Value {
     })
 }
 
+fn osctl_kind_from_contract_kind(kind: &str) -> &str {
+    match kind {
+        "fake-net-backend-object" => "fake-net-backend",
+        "virtio-net-backend-object" => "virtio-net-backend",
+        other => other,
+    }
+}
+
 fn object_ref_manifest_json(object: &ContractObjectRefManifest) -> serde_json::Value {
     object_ref_json(&object.kind, object.id, object.generation)
 }
@@ -8219,7 +8371,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -8261,6 +8413,7 @@ fn replay_until(
         package.semantic.roots.packet_descriptor_object_roots.len(),
         package.semantic.roots.fake_net_backend_object_roots.len(),
         package.semantic.roots.virtio_net_backend_object_roots.len(),
+        package.semantic.roots.network_tx_completion_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -8379,6 +8532,9 @@ fn replay_until(
     }
     for gate in &package.semantic.roots.network_tx_capability_gate_roots {
         println!("replay network-tx-capability-gate {gate}");
+    }
+    for completion in &package.semantic.roots.network_tx_completion_roots {
+        println!("replay network-tx-completion {completion}");
     }
     Ok(())
 }
@@ -8549,6 +8705,10 @@ fn print_replay_json(
                 .network_tx_capability_gate_roots
                 .len()
         ),
+    );
+    roots.insert(
+        "network_tx_completions".to_owned(),
+        serde_json::json!(package.semantic.roots.network_tx_completion_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -9697,6 +9857,51 @@ mod tests {
         assert_eq!(view["authority"]["handle_slot"], 4);
         assert_eq!(view["tx"]["byte_len"], 64);
         assert_eq!(view["last_transition"]["recorded_at_event"], 68);
+    }
+
+    #[test]
+    fn network_tx_completion_view_v1_exposes_gate_backend_and_descriptor_generations() {
+        let view = network_tx_completion_view_v1(&NetworkTxCompletionManifest {
+            id: 71,
+            tx_gate: 68,
+            tx_gate_generation: 2,
+            backend_kind: "virtio-net-backend-object".to_owned(),
+            backend: 72,
+            backend_generation: 3,
+            driver_store: 7,
+            driver_store_generation: 4,
+            packet_device: 51,
+            packet_device_generation: 5,
+            tx_queue: 53,
+            tx_queue_generation: 6,
+            packet_descriptor: 54,
+            packet_descriptor_generation: 7,
+            packet_buffer: 52,
+            packet_buffer_generation: 8,
+            byte_len: 64,
+            sequence: 9,
+            completion_sequence: 10,
+            generation: 1,
+            state: "completed".to_owned(),
+            completed_at_event: 73,
+            note: "tx completion".to_owned(),
+        });
+        assert_eq!(view["kind"], "network-tx-completion");
+        assert_eq!(view["owner"]["backend"]["kind"], "virtio-net-backend");
+        assert_eq!(view["owner"]["backend"]["generation"], 3);
+        assert_eq!(
+            view["references"]["tx_gate"]["kind"],
+            "network-tx-capability-gate"
+        );
+        assert_eq!(view["references"]["tx_gate"]["generation"], 2);
+        assert_eq!(
+            view["references"]["packet_descriptor"]["kind"],
+            "packet-descriptor"
+        );
+        assert_eq!(view["references"]["packet_descriptor"]["generation"], 7);
+        assert_eq!(view["references"]["packet_buffer"]["generation"], 8);
+        assert_eq!(view["tx"]["completion_sequence"], 10);
+        assert_eq!(view["last_transition"]["completed_at_event"], 73);
     }
 
     #[test]
@@ -12192,6 +12397,34 @@ mod tests {
                 recorded_at_event: 23,
                 note: "network tx capability gate graph".to_owned(),
             });
+        package
+            .semantic
+            .network_tx_completions
+            .push(NetworkTxCompletionManifest {
+                id: 92,
+                tx_gate: 91,
+                tx_gate_generation: 1,
+                backend_kind: "virtio-net-backend-object".to_owned(),
+                backend: 85,
+                backend_generation: 1,
+                driver_store: 1,
+                driver_store_generation: 2,
+                packet_device: 81,
+                packet_device_generation: 1,
+                tx_queue: 89,
+                tx_queue_generation: 1,
+                packet_descriptor: 90,
+                packet_descriptor_generation: 1,
+                packet_buffer: 88,
+                packet_buffer_generation: 1,
+                byte_len: 64,
+                sequence: 2,
+                completion_sequence: 1,
+                generation: 1,
+                state: "completed".to_owned(),
+                completed_at_event: 24,
+                note: "network tx completion graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -12250,6 +12483,21 @@ mod tests {
             && edge["relation"] == "network-tx-capability-gate->capability"
             && edge["from"]["kind"] == "network-tx-capability-gate"
             && edge["to"]["kind"] == "capability"));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-tx-completion->tx-gate"
+            && edge["from"]["kind"] == "network-tx-completion"
+            && edge["to"]["kind"] == "network-tx-capability-gate"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-tx-completion->backend"
+            && edge["from"]["kind"] == "network-tx-completion"
+            && edge["to"]["kind"] == "virtio-net-backend"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-tx-completion->packet-descriptor"
+            && edge["from"]["kind"] == "network-tx-completion"
+            && edge["to"]["kind"] == "packet-descriptor"
+            && edge["to"]["generation"] == 1));
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
             && edge["from"]["kind"] == "hostcall"
             && edge["to"]["kind"] == "activation"));

@@ -309,6 +309,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub network_tx_capability_gate_count: usize,
     #[serde(default)]
+    pub network_tx_completion_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -469,6 +471,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub network_tx_capability_gates: Vec<NetworkTxCapabilityGateManifest>,
     #[serde(default)]
+    pub network_tx_completions: Vec<NetworkTxCompletionManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -608,6 +612,8 @@ pub struct SemanticRootSetManifest {
     pub network_rx_wait_resolution_roots: Vec<String>,
     #[serde(default)]
     pub network_tx_capability_gate_roots: Vec<String>,
+    #[serde(default)]
+    pub network_tx_completion_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1688,6 +1694,33 @@ pub struct NetworkTxCapabilityGateManifest {
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct NetworkTxCompletionManifest {
+    pub id: u64,
+    pub tx_gate: u64,
+    pub tx_gate_generation: u64,
+    pub backend_kind: String,
+    pub backend: u64,
+    pub backend_generation: u64,
+    pub driver_store: u64,
+    pub driver_store_generation: u64,
+    pub packet_device: u64,
+    pub packet_device_generation: u64,
+    pub tx_queue: u64,
+    pub tx_queue_generation: u64,
+    pub packet_descriptor: u64,
+    pub packet_descriptor_generation: u64,
+    pub packet_buffer: u64,
+    pub packet_buffer_generation: u64,
+    pub byte_len: u32,
+    pub sequence: u64,
+    pub completion_sequence: u64,
+    pub generation: u64,
+    pub state: String,
+    pub completed_at_event: u64,
     pub note: String,
 }
 

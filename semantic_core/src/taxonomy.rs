@@ -976,6 +976,21 @@ impl NetworkTxCapabilityGateState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkTxCompletionState {
+    Completed,
+    Retired,
+}
+
+impl NetworkTxCompletionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,
