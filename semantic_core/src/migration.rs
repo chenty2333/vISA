@@ -1208,6 +1208,28 @@ pub enum SemanticInvariantError {
     NetworkTxCompletionMissingEvent {
         completion: NetworkTxCompletionId,
     },
+    NetworkStackAdapterInvalid {
+        adapter: NetworkStackAdapterId,
+    },
+    NetworkStackAdapterMissingPacketDevice {
+        adapter: NetworkStackAdapterId,
+        packet_device: PacketDeviceObjectId,
+    },
+    NetworkStackAdapterMissingBackend {
+        adapter: NetworkStackAdapterId,
+        backend: ContractObjectRef,
+    },
+    NetworkStackAdapterMissingQueue {
+        adapter: NetworkStackAdapterId,
+        packet_queue: PacketQueueObjectId,
+    },
+    NetworkStackAdapterDuplicatePacketDevice {
+        adapter: NetworkStackAdapterId,
+        packet_device: PacketDeviceObjectId,
+    },
+    NetworkStackAdapterMissingEvent {
+        adapter: NetworkStackAdapterId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

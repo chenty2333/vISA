@@ -1334,6 +1334,44 @@ impl NetworkTxCompletionRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkStackAdapterRecord {
+    pub id: NetworkStackAdapterId,
+    pub implementation: String,
+    pub implementation_version: String,
+    pub profile: String,
+    pub medium: String,
+    pub backend: ContractObjectRef,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub rx_queue: PacketQueueObjectId,
+    pub rx_queue_generation: Generation,
+    pub tx_queue: PacketQueueObjectId,
+    pub tx_queue_generation: Generation,
+    pub mac: [u8; 6],
+    pub ipv4_addr: [u8; 4],
+    pub ipv4_prefix_len: u8,
+    pub mtu: u32,
+    pub rx_queue_depth: u32,
+    pub tx_queue_depth: u32,
+    pub max_payload_len: u32,
+    pub socket_capacity: u16,
+    pub generation: Generation,
+    pub state: NetworkStackAdapterState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl NetworkStackAdapterRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::NetworkStackAdapter,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

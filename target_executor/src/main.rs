@@ -22,10 +22,10 @@ use artifact_manifest::{
     IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
     MigrationTargetManifest, MmioRegionObjectManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -43,6 +43,7 @@ use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
     validate_migration_against_manifest, validate_replay_quiescent,
 };
+use net_stack_adapter::{SmoltcpAdapterConfig, build_smoltcp_adapter_evidence};
 use runtime::{HostValidationSmokeTrace, RuntimeOnlyExecutor};
 use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, AuthorityObjectRef, BoundaryKind,
@@ -171,6 +172,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n7_evidence(&mut semantic)?;
     record_network_runtime_n8_evidence(&mut semantic)?;
     record_network_runtime_n9_evidence(&mut semantic)?;
+    record_network_runtime_n10_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -793,6 +795,94 @@ fn record_network_runtime_n9_evidence(semantic: &mut SemanticGraph) -> Result<()
     {
         return Err(format!(
             "network runtime n9 duplicate tx completion command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate.command_id,
+            duplicate.command,
+            duplicate.status.as_str(),
+            duplicate.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn record_network_runtime_n10_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let evidence = build_smoltcp_adapter_evidence(SmoltcpAdapterConfig::default_vmos())
+        .map_err(|err| format!("network runtime n10 smoltcp adapter evidence failed: {err}"))?;
+    let backend = ContractObjectRef::new(ContractObjectKind::VirtioNetBackendObject, 10_010, 1);
+    let command = CommandEnvelope::new(
+        144,
+        "target-executor-n10",
+        SemanticCommand::RecordNetworkStackAdapter {
+            adapter: 10_025,
+            backend,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            rx_queue: 10_004,
+            rx_queue_generation: 1,
+            tx_queue: 10_005,
+            tx_queue_generation: 1,
+            implementation: evidence.implementation.to_owned(),
+            implementation_version: evidence.version.to_owned(),
+            profile: evidence.profile.to_owned(),
+            medium: evidence.medium.to_owned(),
+            mac: evidence.hardware_addr,
+            ipv4_addr: evidence.ipv4_addr,
+            ipv4_prefix_len: evidence.ipv4_prefix_len,
+            mtu: evidence.mtu,
+            rx_queue_depth: evidence.rx_queue_depth,
+            tx_queue_depth: evidence.tx_queue_depth,
+            max_payload_len: evidence.max_payload_len,
+            socket_capacity: evidence.socket_capacity,
+            note: "n10-bind-smoltcp-adapter-to-packet-device".to_owned(),
+        },
+    );
+    let result = semantic.apply_envelope(command);
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "network runtime n10 evidence command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+
+    let duplicate = semantic.apply_envelope(CommandEnvelope::new(
+        145,
+        "target-executor-n10",
+        SemanticCommand::RecordNetworkStackAdapter {
+            adapter: 10_026,
+            backend,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            rx_queue: 10_004,
+            rx_queue_generation: 1,
+            tx_queue: 10_005,
+            tx_queue_generation: 1,
+            implementation: evidence.implementation.to_owned(),
+            implementation_version: evidence.version.to_owned(),
+            profile: evidence.profile.to_owned(),
+            medium: evidence.medium.to_owned(),
+            mac: evidence.hardware_addr,
+            ipv4_addr: evidence.ipv4_addr,
+            ipv4_prefix_len: evidence.ipv4_prefix_len,
+            mtu: evidence.mtu,
+            rx_queue_depth: evidence.rx_queue_depth,
+            tx_queue_depth: evidence.tx_queue_depth,
+            max_payload_len: evidence.max_payload_len,
+            socket_capacity: evidence.socket_capacity,
+            note: "n10-reject-duplicate-smoltcp-adapter".to_owned(),
+        },
+    ));
+    if duplicate.status != CommandStatus::Rejected
+        || !duplicate
+            .violations
+            .iter()
+            .any(|violation| violation.contains("already bound"))
+    {
+        return Err(format!(
+            "network runtime n10 duplicate adapter command {} ({}) was not rejected: status={} violations={:?}",
             duplicate.command_id,
             duplicate.command,
             duplicate.status.as_str(),
@@ -3182,6 +3272,7 @@ fn demo_migration_package(
             network_rx_wait_resolution_count: semantic.network_rx_wait_resolution_count(),
             network_tx_capability_gate_count: semantic.network_tx_capability_gate_count(),
             network_tx_completion_count: semantic.network_tx_completion_count(),
+            network_stack_adapter_count: semantic.network_stack_adapter_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -3428,6 +3519,11 @@ fn demo_migration_package(
                 .network_tx_completions()
                 .iter()
                 .map(network_tx_completion_manifest)
+                .collect(),
+            network_stack_adapters: semantic
+                .network_stack_adapters()
+                .iter()
+                .map(network_stack_adapter_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -4394,6 +4490,39 @@ fn semantic_roots(
                     completion.completion_sequence,
                     completion.state.as_str(),
                     completion.generation
+                )
+            })
+            .collect(),
+        network_stack_adapter_roots: semantic
+            .network_stack_adapters()
+            .iter()
+            .map(|adapter| {
+                format!(
+                    "network-stack-adapter id={} implementation={} version={} profile={} medium={} backend={} packet_device={}@{} rx_queue={}@{} tx_queue={}@{} ipv4={}.{}.{}.{}/{} mtu={} rx_queue_depth={} tx_queue_depth={} max_payload_len={} socket_capacity={} state={} generation={}",
+                    adapter.id,
+                    adapter.implementation,
+                    adapter.implementation_version,
+                    adapter.profile,
+                    adapter.medium,
+                    adapter.backend.summary(),
+                    adapter.packet_device,
+                    adapter.packet_device_generation,
+                    adapter.rx_queue,
+                    adapter.rx_queue_generation,
+                    adapter.tx_queue,
+                    adapter.tx_queue_generation,
+                    adapter.ipv4_addr[0],
+                    adapter.ipv4_addr[1],
+                    adapter.ipv4_addr[2],
+                    adapter.ipv4_addr[3],
+                    adapter.ipv4_prefix_len,
+                    adapter.mtu,
+                    adapter.rx_queue_depth,
+                    adapter.tx_queue_depth,
+                    adapter.max_payload_len,
+                    adapter.socket_capacity,
+                    adapter.state.as_str(),
+                    adapter.generation
                 )
             })
             .collect(),
@@ -6070,6 +6199,39 @@ fn network_tx_completion_manifest(
         state: completion.state.as_str().to_owned(),
         completed_at_event: completion.completed_at_event,
         note: completion.note.clone(),
+    }
+}
+
+fn network_stack_adapter_manifest(
+    adapter: &semantic_core::NetworkStackAdapterRecord,
+) -> NetworkStackAdapterManifest {
+    NetworkStackAdapterManifest {
+        id: adapter.id,
+        implementation: adapter.implementation.clone(),
+        implementation_version: adapter.implementation_version.clone(),
+        profile: adapter.profile.clone(),
+        medium: adapter.medium.clone(),
+        backend_kind: adapter.backend.kind.as_str().to_owned(),
+        backend: adapter.backend.id,
+        backend_generation: adapter.backend.generation,
+        packet_device: adapter.packet_device,
+        packet_device_generation: adapter.packet_device_generation,
+        rx_queue: adapter.rx_queue,
+        rx_queue_generation: adapter.rx_queue_generation,
+        tx_queue: adapter.tx_queue,
+        tx_queue_generation: adapter.tx_queue_generation,
+        mac: adapter.mac,
+        ipv4_addr: adapter.ipv4_addr,
+        ipv4_prefix_len: adapter.ipv4_prefix_len,
+        mtu: adapter.mtu,
+        rx_queue_depth: adapter.rx_queue_depth,
+        tx_queue_depth: adapter.tx_queue_depth,
+        max_payload_len: adapter.max_payload_len,
+        socket_capacity: adapter.socket_capacity,
+        generation: adapter.generation,
+        state: adapter.state.as_str().to_owned(),
+        recorded_at_event: adapter.recorded_at_event,
+        note: adapter.note.clone(),
     }
 }
 

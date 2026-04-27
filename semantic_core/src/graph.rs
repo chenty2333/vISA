@@ -50,6 +50,7 @@ pub struct SemanticGraph {
     network_rx_wait_resolutions: Vec<NetworkRxWaitResolutionRecord>,
     network_tx_capability_gates: Vec<NetworkTxCapabilityGateRecord>,
     network_tx_completions: Vec<NetworkTxCompletionRecord>,
+    network_stack_adapters: Vec<NetworkStackAdapterRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -111,6 +112,7 @@ pub struct SemanticGraph {
     next_network_rx_wait_resolution_id: NetworkRxWaitResolutionId,
     next_network_tx_capability_gate_id: NetworkTxCapabilityGateId,
     next_network_tx_completion_id: NetworkTxCompletionId,
+    next_network_stack_adapter_id: NetworkStackAdapterId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -155,6 +157,7 @@ mod mmio_region_object;
 mod network;
 mod network_rx_interrupt;
 mod network_rx_wait;
+mod network_stack_adapter;
 mod network_tx_completion;
 mod network_tx_gate;
 mod packet_buffer_object;
@@ -235,6 +238,7 @@ impl SemanticGraph {
             network_rx_wait_resolutions: Vec::new(),
             network_tx_capability_gates: Vec::new(),
             network_tx_completions: Vec::new(),
+            network_stack_adapters: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -296,6 +300,7 @@ impl SemanticGraph {
             next_network_rx_wait_resolution_id: 1,
             next_network_tx_capability_gate_id: 1,
             next_network_tx_completion_id: 1,
+            next_network_stack_adapter_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

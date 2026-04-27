@@ -684,6 +684,10 @@ impl SemanticGraph {
                 .network_tx_completions
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::NetworkStackAdapter => self
+                .network_stack_adapters
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

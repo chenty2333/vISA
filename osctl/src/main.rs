@@ -16,15 +16,15 @@ use artifact_manifest::{
     HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
     IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
     IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
-    NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
-    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
-    SchedulerDecisionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
-    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
-    SmpStressRunManifest, StopTheWorldRendezvousManifest, StoreRecordManifest,
-    SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
+    NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest,
+    NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest, PacketBufferObjectManifest,
+    PacketDescriptorObjectManifest, PacketDeviceObjectManifest, PacketQueueObjectManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
+    SavedContextManifest, SchedulerDecisionManifest, SmpCleanupQuiescenceManifest,
+    SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
+    SmpSnapshotBarrierManifest, SmpStressRunManifest, StopTheWorldRendezvousManifest,
+    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest, TaskRecordManifest,
     TimerInterruptManifest, TrapRecordManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
@@ -305,6 +305,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "tx-capability-gate"
         | "network-tx-completion"
         | "tx-completion"
+        | "network-stack-adapter"
+        | "smoltcp-adapter"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -475,7 +477,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -713,6 +715,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "network-rx-wait-resolution" | "rx-wait-resolution" => "network-rx-wait-resolution",
         "network-tx-capability-gate" | "tx-capability-gate" => "network-tx-capability-gate",
         "network-tx-completion" | "tx-completion" => "network-tx-completion",
+        "network-stack-adapter" | "smoltcp-adapter" => "network-stack-adapter",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2885,6 +2888,76 @@ fn network_tx_completion_view_v1(completion: &NetworkTxCompletionManifest) -> se
     })
 }
 
+fn network_stack_adapter_view_v1(adapter: &NetworkStackAdapterManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "network-stack-adapter",
+        "id": adapter.id,
+        "generation": adapter.generation,
+        "state": adapter.state,
+        "owner": {
+            "backend": object_ref_json(
+                osctl_kind_from_contract_kind(&adapter.backend_kind),
+                adapter.backend,
+                adapter.backend_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                adapter.packet_device,
+                adapter.packet_device_generation,
+            ),
+        },
+        "references": {
+            "backend": object_ref_json(
+                osctl_kind_from_contract_kind(&adapter.backend_kind),
+                adapter.backend,
+                adapter.backend_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                adapter.packet_device,
+                adapter.packet_device_generation,
+            ),
+            "rx_queue": object_ref_json(
+                "packet-queue",
+                adapter.rx_queue,
+                adapter.rx_queue_generation,
+            ),
+            "tx_queue": object_ref_json(
+                "packet-queue",
+                adapter.tx_queue,
+                adapter.tx_queue_generation,
+            ),
+            "event": {
+                "id": adapter.recorded_at_event,
+            },
+        },
+        "adapter": {
+            "implementation": adapter.implementation,
+            "implementation_version": adapter.implementation_version,
+            "profile": adapter.profile,
+            "medium": adapter.medium,
+            "socket_capacity": adapter.socket_capacity,
+        },
+        "network": {
+            "mac": adapter.mac,
+            "ipv4_addr": adapter.ipv4_addr,
+            "ipv4_prefix_len": adapter.ipv4_prefix_len,
+            "mtu": adapter.mtu,
+            "rx_queue_depth": adapter.rx_queue_depth,
+            "tx_queue_depth": adapter.tx_queue_depth,
+            "max_payload_len": adapter.max_payload_len,
+        },
+        "note": adapter.note,
+        "last_transition": {
+            "recorded_at_event": adapter.recorded_at_event,
+            "backend_generation": adapter.backend_generation,
+            "packet_device_generation": adapter.packet_device_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -4002,6 +4075,12 @@ fn stable_views_for_kind(
             .iter()
             .map(network_tx_completion_view_v1)
             .collect()),
+        "network-stack-adapter" | "smoltcp-adapter" => Ok(package
+            .semantic
+            .network_stack_adapters
+            .iter()
+            .map(network_stack_adapter_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -5022,6 +5101,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.network_tx_completion_roots,
     );
     print_roots(
+        "network-stack-adapter",
+        &package.semantic.roots.network_stack_adapter_roots,
+    );
+    print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
     );
@@ -5332,6 +5415,56 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "virtio-net-backend->driver-binding",
             "live",
             Some(backend.recorded_at_event),
+        ));
+    }
+    for adapter in &package.semantic.network_stack_adapters {
+        if adapter.state != "bound" {
+            continue;
+        }
+        let from = object_ref_json("network-stack-adapter", adapter.id, adapter.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                osctl_kind_from_contract_kind(&adapter.backend_kind),
+                adapter.backend,
+                adapter.backend_generation,
+            ),
+            "network-stack-adapter->backend",
+            "live",
+            Some(adapter.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "packet-device",
+                adapter.packet_device,
+                adapter.packet_device_generation,
+            ),
+            "network-stack-adapter->packet-device",
+            "live",
+            Some(adapter.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "packet-queue",
+                adapter.rx_queue,
+                adapter.rx_queue_generation,
+            ),
+            "network-stack-adapter->rx-queue",
+            "live",
+            Some(adapter.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "packet-queue",
+                adapter.tx_queue,
+                adapter.tx_queue_generation,
+            ),
+            "network-stack-adapter->tx-queue",
+            "live",
+            Some(adapter.recorded_at_event),
         ));
     }
     for rx in &package.semantic.network_rx_interrupts {
@@ -8371,7 +8504,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -8414,6 +8547,7 @@ fn replay_until(
         package.semantic.roots.fake_net_backend_object_roots.len(),
         package.semantic.roots.virtio_net_backend_object_roots.len(),
         package.semantic.roots.network_tx_completion_roots.len(),
+        package.semantic.roots.network_stack_adapter_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -8535,6 +8669,9 @@ fn replay_until(
     }
     for completion in &package.semantic.roots.network_tx_completion_roots {
         println!("replay network-tx-completion {completion}");
+    }
+    for adapter in &package.semantic.roots.network_stack_adapter_roots {
+        println!("replay network-stack-adapter {adapter}");
     }
     Ok(())
 }
@@ -8709,6 +8846,10 @@ fn print_replay_json(
     roots.insert(
         "network_tx_completions".to_owned(),
         serde_json::json!(package.semantic.roots.network_tx_completion_roots.len()),
+    );
+    roots.insert(
+        "network_stack_adapters".to_owned(),
+        serde_json::json!(package.semantic.roots.network_stack_adapter_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -9902,6 +10043,48 @@ mod tests {
         assert_eq!(view["references"]["packet_buffer"]["generation"], 8);
         assert_eq!(view["tx"]["completion_sequence"], 10);
         assert_eq!(view["last_transition"]["completed_at_event"], 73);
+    }
+
+    #[test]
+    fn network_stack_adapter_view_v1_exposes_smoltcp_profile_and_queue_generations() {
+        let view = network_stack_adapter_view_v1(&NetworkStackAdapterManifest {
+            id: 74,
+            implementation: "smoltcp".to_owned(),
+            implementation_version: "0.13.0".to_owned(),
+            profile: "smoltcp-0.13.0-ethernet-ipv4-tcp-v1".to_owned(),
+            medium: "ethernet".to_owned(),
+            backend_kind: "virtio-net-backend-object".to_owned(),
+            backend: 72,
+            backend_generation: 3,
+            packet_device: 51,
+            packet_device_generation: 5,
+            rx_queue: 53,
+            rx_queue_generation: 6,
+            tx_queue: 54,
+            tx_queue_generation: 7,
+            mac: [2, 0x76, 0x6d, 0x6f, 0x73, 1],
+            ipv4_addr: [10, 0, 2, 15],
+            ipv4_prefix_len: 24,
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            max_payload_len: 512,
+            socket_capacity: 0,
+            generation: 1,
+            state: "bound".to_owned(),
+            recorded_at_event: 75,
+            note: "smoltcp adapter".to_owned(),
+        });
+        assert_eq!(view["kind"], "network-stack-adapter");
+        assert_eq!(view["owner"]["backend"]["kind"], "virtio-net-backend");
+        assert_eq!(view["owner"]["backend"]["generation"], 3);
+        assert_eq!(view["references"]["packet_device"]["generation"], 5);
+        assert_eq!(view["references"]["rx_queue"]["generation"], 6);
+        assert_eq!(view["references"]["tx_queue"]["generation"], 7);
+        assert_eq!(view["adapter"]["implementation"], "smoltcp");
+        assert_eq!(view["adapter"]["socket_capacity"], 0);
+        assert_eq!(view["network"]["ipv4_prefix_len"], 24);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 75);
     }
 
     #[test]
@@ -12425,6 +12608,37 @@ mod tests {
                 completed_at_event: 24,
                 note: "network tx completion graph".to_owned(),
             });
+        package
+            .semantic
+            .network_stack_adapters
+            .push(NetworkStackAdapterManifest {
+                id: 93,
+                implementation: "smoltcp".to_owned(),
+                implementation_version: "0.13.0".to_owned(),
+                profile: "smoltcp-0.13.0-ethernet-ipv4-tcp-v1".to_owned(),
+                medium: "ethernet".to_owned(),
+                backend_kind: "virtio-net-backend-object".to_owned(),
+                backend: 85,
+                backend_generation: 1,
+                packet_device: 81,
+                packet_device_generation: 1,
+                rx_queue: 82,
+                rx_queue_generation: 1,
+                tx_queue: 89,
+                tx_queue_generation: 1,
+                mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
+                ipv4_addr: [10, 0, 2, 15],
+                ipv4_prefix_len: 24,
+                mtu: 1500,
+                rx_queue_depth: 4,
+                tx_queue_depth: 4,
+                max_payload_len: 512,
+                socket_capacity: 0,
+                generation: 1,
+                state: "bound".to_owned(),
+                recorded_at_event: 25,
+                note: "network stack adapter graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -12461,6 +12675,21 @@ mod tests {
             && edge["relation"] == "network-rx-interrupt->rx-queue"
             && edge["from"]["kind"] == "network-rx-interrupt"
             && edge["to"]["kind"] == "packet-queue"));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "network-stack-adapter->backend"
+            && edge["from"]["kind"] == "network-stack-adapter"
+            && edge["to"]["kind"] == "virtio-net-backend"
+            && edge["to"]["generation"] == 1));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "network-stack-adapter->rx-queue"
+            && edge["from"]["kind"] == "network-stack-adapter"
+            && edge["to"]["kind"] == "packet-queue"
+            && edge["to"]["id"] == 82));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "network-stack-adapter->tx-queue"
+            && edge["from"]["kind"] == "network-stack-adapter"
+            && edge["to"]["kind"] == "packet-queue"
+            && edge["to"]["id"] == 89));
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"

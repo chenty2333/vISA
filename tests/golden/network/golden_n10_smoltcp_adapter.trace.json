@@ -1,0 +1,109 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "N10-smoltcp-adapter",
+  "name": "golden_n10_smoltcp_adapter",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md",
+    "references/specs/semantic-contract-v0.1/11-wasi-wit-boundary.md"
+  ],
+  "no_goals": [
+    "real virtio MMIO/DMA/IRQ execution",
+    "real packet transmission through smoltcp",
+    "SocketObject semantic model",
+    "EndpointObject semantic model",
+    "bind/listen/connect/send/recv semantic commands",
+    "backpressure or drop policy"
+  ],
+  "stimulus": {
+    "commands": [
+      {
+        "id": 1,
+        "command": "net_stack_adapter::build_smoltcp_adapter_evidence",
+        "profile": "smoltcp-0.13.0-ethernet-ipv4-tcp-v1",
+        "expected": "accepted"
+      },
+      {
+        "id": 2,
+        "command": "record-network-stack-adapter",
+        "adapter": "network-stack-adapter:10025@1",
+        "backend": "virtio-net-backend:10010@1",
+        "packet_device": "packet-device:10002@1",
+        "rx_queue": "packet-queue:10004@1",
+        "tx_queue": "packet-queue:10005@1",
+        "expected": "applied"
+      },
+      {
+        "id": 3,
+        "command": "record-network-stack-adapter",
+        "scenario": "duplicate smoltcp adapter for same PacketDevice generation",
+        "expected": "rejected",
+        "violation": "network stack adapter packet device already bound"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "NetworkStackAdapterBound",
+      "adapter": "network-stack-adapter:10025@1",
+      "implementation": "smoltcp",
+      "profile": "smoltcp-0.13.0-ethernet-ipv4-tcp-v1",
+      "backend": "virtio-net-backend:10010@1",
+      "packet_device": "packet-device:10002@1",
+      "rx_queue": "packet-queue:10004@1",
+      "tx_queue": "packet-queue:10005@1"
+    }
+  ],
+  "expected": {
+    "views": {
+      "network-stack-adapter": {
+        "count": 1,
+        "adapter": "network-stack-adapter:10025@1",
+        "implementation": "smoltcp",
+        "implementation_version": "0.13.0",
+        "profile": "smoltcp-0.13.0-ethernet-ipv4-tcp-v1",
+        "medium": "ethernet",
+        "backend": "virtio-net-backend:10010@1",
+        "packet_device": "packet-device:10002@1",
+        "rx_queue": "packet-queue:10004@1",
+        "tx_queue": "packet-queue:10005@1",
+        "ipv4": "10.0.2.15/24",
+        "mtu": 1500,
+        "socket_capacity": 0,
+        "state": "bound"
+      },
+      "command": {
+        "applied": "command-result:144:record-network-stack-adapter:applied",
+        "rejected": "command-result:145:record-network-stack-adapter:rejected",
+        "violation": "network stack adapter packet device already bound"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "smoltcp is used only inside net_stack_adapter, not as semantic truth",
+      "NetworkStackAdapter binds exact PacketDevice, RxQueue, TxQueue, and backend generations",
+      "Socket capacity remains zero until N11 SocketObject",
+      "Duplicate adapter for one PacketDevice generation is rejected and command-visible"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "smoltcp_adapter_builds_ethernet_ipv4_tcp_profile",
+      "smoltcp_adapter_rejects_contract_and_prefix_mismatch",
+      "network_runtime_n10_smoltcp_adapter_binds_packet_device_contract",
+      "network_runtime_n10_rejects_stale_profile_queue_and_duplicate_adapter",
+      "network_runtime_n10_invariants_reject_adapter_profile_drift",
+      "network_stack_adapter_view_v1_exposes_smoltcp_profile_and_queue_generations",
+      "semantic_roots_reject_network_stack_adapter_root_mismatch"
+    ],
+    "osctl_json_view": "network-stack-adapter list --json"
+  }
+}

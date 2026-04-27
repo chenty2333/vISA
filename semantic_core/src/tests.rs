@@ -6696,6 +6696,225 @@ fn network_runtime_n9_invariants_reject_duplicate_completion_sequence() {
     );
 }
 
+fn setup_n10_network_stack_adapter_graph() -> SemanticGraph {
+    setup_n9_network_tx_completion_graph()
+}
+
+#[test]
+fn network_runtime_n10_smoltcp_adapter_binds_packet_device_contract() {
+    let mut graph = setup_n10_network_stack_adapter_graph();
+    let backend = ContractObjectRef::new(ContractObjectKind::VirtioNetBackendObject, 1553, 1);
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n10-test",
+        SemanticCommand::RecordNetworkStackAdapter {
+            adapter: 1575,
+            backend,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            rx_queue: 1544,
+            rx_queue_generation: 1,
+            tx_queue: 1545,
+            tx_queue_generation: 1,
+            implementation: "smoltcp".to_string(),
+            implementation_version: "0.13.0".to_string(),
+            profile: "smoltcp-0.13.0-ethernet-ipv4-tcp-v1".to_string(),
+            medium: "ethernet".to_string(),
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+            ipv4_addr: [10, 0, 2, 15],
+            ipv4_prefix_len: 24,
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            max_payload_len: 512,
+            socket_capacity: 0,
+            note: "n10 smoltcp adapter binds packet device".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.network_stack_adapter_count(), 1);
+    let adapter = &graph.network_stack_adapters()[0];
+    assert_eq!(
+        adapter.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::NetworkStackAdapter, 1575, 1)
+    );
+    assert_eq!(adapter.backend, backend);
+    assert_eq!(adapter.packet_device, 1541);
+    assert_eq!(adapter.rx_queue, 1544);
+    assert_eq!(adapter.tx_queue, 1545);
+    assert_eq!(adapter.profile, "smoltcp-0.13.0-ethernet-ipv4-tcp-v1");
+    assert_eq!(adapter.socket_capacity, 0);
+    assert!(
+        graph.event_log_tail(1)[0]
+            .kind
+            .summary()
+            .contains("NetworkStackAdapterBound adapter=1575 implementation=smoltcp")
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn network_runtime_n10_rejects_stale_profile_queue_and_duplicate_adapter() {
+    let mut graph = setup_n10_network_stack_adapter_graph();
+    let backend = ContractObjectRef::new(ContractObjectKind::VirtioNetBackendObject, 1553, 1);
+    let unsupported_profile = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "n10-test",
+        SemanticCommand::RecordNetworkStackAdapter {
+            adapter: 1575,
+            backend,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            rx_queue: 1544,
+            rx_queue_generation: 1,
+            tx_queue: 1545,
+            tx_queue_generation: 1,
+            implementation: "smoltcp".to_string(),
+            implementation_version: "0.13.0".to_string(),
+            profile: "smoltcp-unknown".to_string(),
+            medium: "ethernet".to_string(),
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+            ipv4_addr: [10, 0, 2, 15],
+            ipv4_prefix_len: 24,
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            max_payload_len: 512,
+            socket_capacity: 0,
+            note: "n10 unsupported profile".to_string(),
+        },
+    ));
+    assert_eq!(unsupported_profile.status, CommandStatus::Rejected);
+    assert_eq!(
+        unsupported_profile.violations,
+        vec!["network stack adapter profile is unsupported".to_string()]
+    );
+
+    let stale_queue = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "n10-test",
+        SemanticCommand::RecordNetworkStackAdapter {
+            adapter: 1575,
+            backend,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            rx_queue: 1544,
+            rx_queue_generation: 2,
+            tx_queue: 1545,
+            tx_queue_generation: 1,
+            implementation: "smoltcp".to_string(),
+            implementation_version: "0.13.0".to_string(),
+            profile: "smoltcp-0.13.0-ethernet-ipv4-tcp-v1".to_string(),
+            medium: "ethernet".to_string(),
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+            ipv4_addr: [10, 0, 2, 15],
+            ipv4_prefix_len: 24,
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            max_payload_len: 512,
+            socket_capacity: 0,
+            note: "n10 stale rx queue".to_string(),
+        },
+    ));
+    assert_eq!(stale_queue.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_queue.violations,
+        vec!["network stack adapter rx queue generation is missing or inactive".to_string()]
+    );
+
+    assert!(graph.record_network_stack_adapter_with_id(
+        1575,
+        backend,
+        1541,
+        1,
+        1544,
+        1,
+        1545,
+        1,
+        "smoltcp",
+        "0.13.0",
+        "smoltcp-0.13.0-ethernet-ipv4-tcp-v1",
+        "ethernet",
+        [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+        [10, 0, 2, 15],
+        24,
+        1500,
+        4,
+        4,
+        512,
+        0,
+        "n10 smoltcp adapter",
+    ));
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "n10-test",
+        SemanticCommand::RecordNetworkStackAdapter {
+            adapter: 1576,
+            backend,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            rx_queue: 1544,
+            rx_queue_generation: 1,
+            tx_queue: 1545,
+            tx_queue_generation: 1,
+            implementation: "smoltcp".to_string(),
+            implementation_version: "0.13.0".to_string(),
+            profile: "smoltcp-0.13.0-ethernet-ipv4-tcp-v1".to_string(),
+            medium: "ethernet".to_string(),
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+            ipv4_addr: [10, 0, 2, 15],
+            ipv4_prefix_len: 24,
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            max_payload_len: 512,
+            socket_capacity: 0,
+            note: "n10 duplicate adapter".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["network stack adapter packet device already bound".to_string()]
+    );
+}
+
+#[test]
+fn network_runtime_n10_invariants_reject_adapter_profile_drift() {
+    let mut graph = setup_n10_network_stack_adapter_graph();
+    let backend = ContractObjectRef::new(ContractObjectKind::VirtioNetBackendObject, 1553, 1);
+    assert!(graph.record_network_stack_adapter_with_id(
+        1575,
+        backend,
+        1541,
+        1,
+        1544,
+        1,
+        1545,
+        1,
+        "smoltcp",
+        "0.13.0",
+        "smoltcp-0.13.0-ethernet-ipv4-tcp-v1",
+        "ethernet",
+        [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+        [10, 0, 2, 15],
+        24,
+        1500,
+        4,
+        4,
+        512,
+        0,
+        "n10 smoltcp adapter",
+    ));
+    graph.corrupt_network_stack_adapter_profile_for_test(1575, "smoltcp-drift");
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::NetworkStackAdapterInvalid { adapter: 1575 })
+    );
+}
+
 #[test]
 fn authority_bindings_drive_resource_and_capability_lifecycle() {
     let mut graph = SemanticGraph::new();

@@ -109,6 +109,7 @@ pub enum ObjectKind {
     NetworkRxWaitResolution,
     NetworkTxCapabilityGate,
     NetworkTxCompletion,
+    NetworkStackAdapter,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -183,6 +184,7 @@ impl ObjectKind {
             Self::NetworkRxWaitResolution => "network-rx-wait-resolution",
             Self::NetworkTxCapabilityGate => "network-tx-capability-gate",
             Self::NetworkTxCompletion => "network-tx-completion",
+            Self::NetworkStackAdapter => "network-stack-adapter",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -429,6 +431,7 @@ typed_ref!(
     ObjectKind::NetworkTxCapabilityGate
 );
 typed_ref!(NetworkTxCompletionRef, ObjectKind::NetworkTxCompletion);
+typed_ref!(NetworkStackAdapterRef, ObjectKind::NetworkStackAdapter);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1837,6 +1840,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "network tx completion root/count mismatch",
         ));
     }
+    if roots.network_stack_adapter_roots.len() != package.semantic.network_stack_adapter_count
+        || package.semantic.network_stack_adapters.len()
+            != package.semantic.network_stack_adapter_count
+    {
+        return Err(ContractError::new(
+            "network stack adapter root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2402,6 +2413,7 @@ mod tests {
                 network_rx_wait_resolution_count: 0,
                 network_tx_capability_gate_count: 0,
                 network_tx_completion_count: 0,
+                network_stack_adapter_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2485,6 +2497,7 @@ mod tests {
                 network_rx_wait_resolutions: Vec::new(),
                 network_tx_capability_gates: Vec::new(),
                 network_tx_completions: Vec::new(),
+                network_stack_adapters: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3899,6 +3912,45 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_network_stack_adapter_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.network_stack_adapter_count = 1;
+        package.semantic.network_stack_adapters.push(
+            artifact_manifest::NetworkStackAdapterManifest {
+                id: 41,
+                implementation: "smoltcp".to_owned(),
+                implementation_version: "0.13.0".to_owned(),
+                profile: "smoltcp-0.13.0-ethernet-ipv4-tcp-v1".to_owned(),
+                medium: "ethernet".to_owned(),
+                backend_kind: "virtio-net-backend-object".to_owned(),
+                backend: 35,
+                backend_generation: 1,
+                packet_device: 31,
+                packet_device_generation: 1,
+                rx_queue: 32,
+                rx_queue_generation: 1,
+                tx_queue: 33,
+                tx_queue_generation: 1,
+                mac: [2, 0x76, 0x6d, 0x6f, 0x73, 1],
+                ipv4_addr: [10, 0, 2, 15],
+                ipv4_prefix_len: 24,
+                mtu: 1500,
+                rx_queue_depth: 4,
+                tx_queue_depth: 4,
+                max_payload_len: 512,
+                socket_capacity: 0,
+                generation: 1,
+                state: "bound".to_owned(),
+                recorded_at_event: 77,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "network stack adapter root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -4412,6 +4464,8 @@ mod tests {
         assert!(NetworkTxCapabilityGateRef::try_from_ref(network_tx_capability_gate).is_ok());
         let network_tx_completion = ObjectRef::new(ObjectKind::NetworkTxCompletion, 39, 1).unwrap();
         assert!(NetworkTxCompletionRef::try_from_ref(network_tx_completion).is_ok());
+        let network_stack_adapter = ObjectRef::new(ObjectKind::NetworkStackAdapter, 40, 1).unwrap();
+        assert!(NetworkStackAdapterRef::try_from_ref(network_stack_adapter).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();
