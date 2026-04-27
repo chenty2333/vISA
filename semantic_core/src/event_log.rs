@@ -513,6 +513,17 @@ pub enum EventKind {
         reason: WaitCancelReason,
         generation: Generation,
     },
+    FakeBlockBackendObjectBound {
+        fake_block_backend: FakeBlockBackendObjectId,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        sector_size: u32,
+        sector_count: u64,
+        read_only: bool,
+        max_transfer_sectors: u32,
+        deterministic_seed: u64,
+        generation: Generation,
+    },
     PacketBufferObjectRecorded {
         packet_buffer: PacketBufferObjectId,
         packet_device: PacketDeviceObjectId,
@@ -1911,6 +1922,19 @@ impl EventKind {
             } => format!(
                 "BlockWaitCancelled block_wait={block_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
                 reason.as_str()
+            ),
+            Self::FakeBlockBackendObjectBound {
+                fake_block_backend,
+                block_device,
+                block_device_generation,
+                sector_size,
+                sector_count,
+                read_only,
+                max_transfer_sectors,
+                deterministic_seed,
+                generation,
+            } => format!(
+                "FakeBlockBackendObjectBound fake_block_backend={fake_block_backend} block_device={block_device}@{block_device_generation} sector_size={sector_size} sector_count={sector_count} read_only={read_only} max_transfer_sectors={max_transfer_sectors} deterministic_seed={deterministic_seed} generation={generation}"
             ),
             Self::PacketBufferObjectRecorded {
                 packet_buffer,

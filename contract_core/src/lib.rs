@@ -125,6 +125,7 @@ pub enum ObjectKind {
     BlockRequestObject,
     BlockCompletionObject,
     BlockWait,
+    FakeBlockBackendObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -215,6 +216,7 @@ impl ObjectKind {
             Self::BlockRequestObject => "block-request-object",
             Self::BlockCompletionObject => "block-completion-object",
             Self::BlockWait => "block-wait",
+            Self::FakeBlockBackendObject => "fake-block-backend-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -483,6 +485,10 @@ typed_ref!(BlockRangeObjectRef, ObjectKind::BlockRangeObject);
 typed_ref!(BlockRequestObjectRef, ObjectKind::BlockRequestObject);
 typed_ref!(BlockCompletionObjectRef, ObjectKind::BlockCompletionObject);
 typed_ref!(BlockWaitRef, ObjectKind::BlockWait);
+typed_ref!(
+    FakeBlockBackendObjectRef,
+    ObjectKind::FakeBlockBackendObject
+);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1998,6 +2004,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("block wait root/count mismatch"));
     }
+    if roots.fake_block_backend_object_roots.len()
+        != package.semantic.fake_block_backend_object_count
+        || package.semantic.fake_block_backends.len()
+            != package.semantic.fake_block_backend_object_count
+    {
+        return Err(ContractError::new(
+            "fake block backend object root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2579,6 +2594,7 @@ mod tests {
                 block_request_object_count: 0,
                 block_completion_object_count: 0,
                 block_wait_count: 0,
+                fake_block_backend_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2678,6 +2694,7 @@ mod tests {
                 block_request_objects: Vec::new(),
                 block_completion_objects: Vec::new(),
                 block_waits: Vec::new(),
+                fake_block_backends: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -3904,6 +3921,37 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "fake net backend object root/count mismatch"
+        );
+    }
+
+    #[test]
+    fn semantic_roots_reject_fake_block_backend_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.fake_block_backend_object_count = 1;
+        package.semantic.fake_block_backends.push(
+            artifact_manifest::FakeBlockBackendObjectManifest {
+                id: 56,
+                name: "fake-block0".to_owned(),
+                block_device: 51,
+                block_device_generation: 1,
+                provider: "service_core".to_owned(),
+                profile: "fake-block-v1".to_owned(),
+                sector_size: 512,
+                sector_count: 4096,
+                read_only: false,
+                max_transfer_sectors: 128,
+                deterministic_seed: 1,
+                generation: 1,
+                state: "bound".to_owned(),
+                recorded_at_event: 72,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "fake block backend object root/count mismatch"
         );
     }
 
@@ -5219,6 +5267,9 @@ mod tests {
         assert!(BlockCompletionObjectRef::try_from_ref(block_completion_object).is_ok());
         let block_wait = ObjectRef::new(ObjectKind::BlockWait, 55, 1).unwrap();
         assert!(BlockWaitRef::try_from_ref(block_wait).is_ok());
+        let fake_block_backend_object =
+            ObjectRef::new(ObjectKind::FakeBlockBackendObject, 56, 1).unwrap();
+        assert!(FakeBlockBackendObjectRef::try_from_ref(fake_block_backend_object).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

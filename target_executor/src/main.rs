@@ -16,20 +16,20 @@ use artifact_manifest::{
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
     ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
     DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
-    DriverStoreBindingManifest, EndpointObjectManifest, FakeNetBackendObjectManifest,
-    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
-    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
-    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    DriverStoreBindingManifest, EndpointObjectManifest, FakeBlockBackendObjectManifest,
+    FakeNetBackendObjectManifest, GuestStateManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -70,6 +70,9 @@ use semantic_core::{
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
     TombstoneRecord, TrapSurfaceState, VerifiedArtifact, WaitCancelReason, memory_class_policies,
     validate_contract_graph,
+};
+use service_core::fake_block::{
+    FAKE_BLOCK_BACKEND_PROFILE, FAKE_BLOCK_BACKEND_PROVIDER, FakeBlockBackendConfig,
 };
 use service_core::fake_net::{
     FAKE_NET_BACKEND_PROFILE, FAKE_NET_BACKEND_PROVIDER, FAKE_NET_BACKEND_SEED,
@@ -196,6 +199,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b2_evidence(&mut semantic)?;
     record_block_runtime_b3_evidence(&mut semantic)?;
     record_block_runtime_b4_evidence(&mut semantic)?;
+    record_block_runtime_b5_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -3016,6 +3020,141 @@ fn record_block_runtime_b4_evidence(semantic: &mut SemanticGraph) -> Result<(), 
     Ok(())
 }
 
+fn record_block_runtime_b5_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let config = FakeBlockBackendConfig::blk0();
+    let bind_backend = semantic.apply_envelope(CommandEnvelope::new(
+        222,
+        "target-executor-b5",
+        SemanticCommand::RecordFakeBlockBackendObject {
+            fake_block_backend: 20_026,
+            name: "fake-block0".to_owned(),
+            block_device: 20_002,
+            block_device_generation: 1,
+            provider: FAKE_BLOCK_BACKEND_PROVIDER.to_owned(),
+            profile: FAKE_BLOCK_BACKEND_PROFILE.to_owned(),
+            sector_size: config.sector_size,
+            sector_count: config.sector_count,
+            read_only: config.read_only,
+            max_transfer_sectors: config.max_transfer_sectors,
+            deterministic_seed: config.deterministic_seed,
+            note: "b5-bind-fake-block-backend".to_owned(),
+        },
+    ));
+    if bind_backend.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b5 bind fake backend command {} ({}) failed: status={} violations={:?}",
+            bind_backend.command_id,
+            bind_backend.command,
+            bind_backend.status.as_str(),
+            bind_backend.violations
+        )
+        .into());
+    }
+
+    let duplicate_backend = semantic.apply_envelope(CommandEnvelope::new(
+        223,
+        "target-executor-b5",
+        SemanticCommand::RecordFakeBlockBackendObject {
+            fake_block_backend: 20_027,
+            name: "fake-block0-duplicate".to_owned(),
+            block_device: 20_002,
+            block_device_generation: 1,
+            provider: FAKE_BLOCK_BACKEND_PROVIDER.to_owned(),
+            profile: FAKE_BLOCK_BACKEND_PROFILE.to_owned(),
+            sector_size: config.sector_size,
+            sector_count: config.sector_count,
+            read_only: config.read_only,
+            max_transfer_sectors: config.max_transfer_sectors,
+            deterministic_seed: config.deterministic_seed,
+            note: "b5-reject-duplicate-fake-block-backend".to_owned(),
+        },
+    ));
+    if duplicate_backend.status != CommandStatus::Rejected
+        || !duplicate_backend
+            .violations
+            .iter()
+            .any(|violation| violation.contains("already bound"))
+    {
+        return Err(format!(
+            "block runtime b5 duplicate fake backend command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate_backend.command_id,
+            duplicate_backend.command,
+            duplicate_backend.status.as_str(),
+            duplicate_backend.violations
+        )
+        .into());
+    }
+
+    let stale_backend = semantic.apply_envelope(CommandEnvelope::new(
+        224,
+        "target-executor-b5",
+        SemanticCommand::RecordFakeBlockBackendObject {
+            fake_block_backend: 20_028,
+            name: "fake-block0-stale".to_owned(),
+            block_device: 20_002,
+            block_device_generation: 2,
+            provider: FAKE_BLOCK_BACKEND_PROVIDER.to_owned(),
+            profile: FAKE_BLOCK_BACKEND_PROFILE.to_owned(),
+            sector_size: config.sector_size,
+            sector_count: config.sector_count,
+            read_only: config.read_only,
+            max_transfer_sectors: config.max_transfer_sectors,
+            deterministic_seed: config.deterministic_seed,
+            note: "b5-reject-stale-block-device-generation".to_owned(),
+        },
+    ));
+    if stale_backend.status != CommandStatus::Rejected
+        || !stale_backend.violations.iter().any(|violation| {
+            violation.contains("block device generation") || violation.contains("missing")
+        })
+    {
+        return Err(format!(
+            "block runtime b5 stale fake backend command {} ({}) was not rejected: status={} violations={:?}",
+            stale_backend.command_id,
+            stale_backend.command,
+            stale_backend.status.as_str(),
+            stale_backend.violations
+        )
+        .into());
+    }
+
+    let mismatched_backend = semantic.apply_envelope(CommandEnvelope::new(
+        225,
+        "target-executor-b5",
+        SemanticCommand::RecordFakeBlockBackendObject {
+            fake_block_backend: 20_029,
+            name: "fake-block0-mismatched".to_owned(),
+            block_device: 20_002,
+            block_device_generation: 1,
+            provider: FAKE_BLOCK_BACKEND_PROVIDER.to_owned(),
+            profile: FAKE_BLOCK_BACKEND_PROFILE.to_owned(),
+            sector_size: config.sector_size,
+            sector_count: config.sector_count.saturating_add(1),
+            read_only: config.read_only,
+            max_transfer_sectors: config.max_transfer_sectors,
+            deterministic_seed: config.deterministic_seed,
+            note: "b5-reject-contract-mismatch".to_owned(),
+        },
+    ));
+    if mismatched_backend.status != CommandStatus::Rejected
+        || !mismatched_backend
+            .violations
+            .iter()
+            .any(|violation| violation.contains("contract does not match"))
+    {
+        return Err(format!(
+            "block runtime b5 mismatched fake backend command {} ({}) was not rejected: status={} violations={:?}",
+            mismatched_backend.command_id,
+            mismatched_backend.command,
+            mismatched_backend.status.as_str(),
+            mismatched_backend.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -5411,6 +5550,7 @@ fn demo_migration_package(
             block_request_object_count: semantic.block_request_object_count(),
             block_completion_object_count: semantic.block_completion_object_count(),
             block_wait_count: semantic.block_wait_count(),
+            fake_block_backend_object_count: semantic.fake_block_backend_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -5737,6 +5877,11 @@ fn demo_migration_package(
                 .block_waits()
                 .iter()
                 .map(block_wait_manifest)
+                .collect(),
+            fake_block_backends: semantic
+                .fake_block_backends()
+                .iter()
+                .map(fake_block_backend_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -7151,6 +7296,28 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        fake_block_backend_object_roots: semantic
+            .fake_block_backends()
+            .iter()
+            .map(|backend| {
+                format!(
+                    "fake-block-backend-object id={} name={} block_device={}@{} provider={} profile={} sector_size={} sector_count={} read_only={} max_transfer_sectors={} deterministic_seed={} state={} generation={}",
+                    backend.id,
+                    backend.name,
+                    backend.block_device,
+                    backend.block_device_generation,
+                    backend.provider,
+                    backend.profile,
+                    backend.sector_size,
+                    backend.sector_count,
+                    backend.read_only,
+                    backend.max_transfer_sectors,
+                    backend.deterministic_seed,
+                    backend.state.as_str(),
+                    backend.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -8383,6 +8550,28 @@ fn block_wait_manifest(wait: &semantic_core::BlockWaitRecord) -> BlockWaitManife
         completion_generation: wait.completion_generation,
         cancel_reason: wait.cancel_reason.map(|reason| reason.as_str().to_owned()),
         note: wait.note.clone(),
+    }
+}
+
+fn fake_block_backend_object_manifest(
+    backend: &semantic_core::FakeBlockBackendObjectRecord,
+) -> FakeBlockBackendObjectManifest {
+    FakeBlockBackendObjectManifest {
+        id: backend.id,
+        name: backend.name.clone(),
+        block_device: backend.block_device,
+        block_device_generation: backend.block_device_generation,
+        provider: backend.provider.clone(),
+        profile: backend.profile.clone(),
+        sector_size: backend.sector_size,
+        sector_count: backend.sector_count,
+        read_only: backend.read_only,
+        max_transfer_sectors: backend.max_transfer_sectors,
+        deterministic_seed: backend.deterministic_seed,
+        generation: backend.generation,
+        state: backend.state.as_str().to_owned(),
+        recorded_at_event: backend.recorded_at_event,
+        note: backend.note.clone(),
     }
 }
 

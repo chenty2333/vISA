@@ -4,6 +4,7 @@
 extern crate std;
 
 pub mod driver;
+pub mod fake_block;
 pub mod fake_net;
 pub mod linux_socket;
 pub mod net;

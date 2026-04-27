@@ -1093,6 +1093,20 @@ pub enum SemanticInvariantError {
     FakeNetBackendObjectMissingEvent {
         fake_net_backend: FakeNetBackendObjectId,
     },
+    FakeBlockBackendObjectInvalid {
+        fake_block_backend: FakeBlockBackendObjectId,
+    },
+    FakeBlockBackendObjectMissingBlockDevice {
+        fake_block_backend: FakeBlockBackendObjectId,
+        block_device: BlockDeviceObjectId,
+    },
+    FakeBlockBackendObjectDuplicateBinding {
+        fake_block_backend: FakeBlockBackendObjectId,
+        block_device: BlockDeviceObjectId,
+    },
+    FakeBlockBackendObjectMissingEvent {
+        fake_block_backend: FakeBlockBackendObjectId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

@@ -11264,6 +11264,228 @@ fn block_runtime_b4_cancelled_wait_records_reason_and_invariant_generation() {
 }
 
 #[test]
+fn block_runtime_b5_fake_block_backend_binds_exact_block_device_contract() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1778,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b5 backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1779,
+        "blk0",
+        1778,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b5 block device",
+    ));
+
+    let command = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b5-test",
+        SemanticCommand::RecordFakeBlockBackendObject {
+            fake_block_backend: 1780,
+            name: "fake-block0".to_string(),
+            block_device: 1779,
+            block_device_generation: 1,
+            provider: "service_core".to_string(),
+            profile: "fake-block-v1".to_string(),
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            deterministic_seed: 0x766d_6f73_626c_6b31,
+            note: "b5 bind fake block backend".to_string(),
+        },
+    ));
+    assert_eq!(command.status, CommandStatus::Applied);
+    assert_eq!(graph.fake_block_backend_object_count(), 1);
+    let backend = &graph.fake_block_backends()[0];
+    assert_eq!(
+        backend.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1780, 1)
+    );
+    assert_eq!(backend.block_device, 1779);
+    assert_eq!(backend.block_device_generation, 1);
+    assert_eq!(backend.state, FakeBlockBackendObjectState::Bound);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "FakeBlockBackendObjectBound fake_block_backend=1780 block_device=1779@1 sector_size=512 sector_count=4096 read_only=false max_transfer_sectors=128 deterministic_seed=8533599410300152625 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b5_rejects_stale_duplicate_and_mismatched_backends() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk1");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1781,
+        "fake-block1",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b5 reject backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1782,
+        "blk1",
+        1781,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b5 reject block device",
+    ));
+    assert!(graph.record_fake_block_backend_object_with_id(
+        1783,
+        "fake-block1",
+        1782,
+        1,
+        "service_core",
+        "fake-block-v1",
+        512,
+        4096,
+        false,
+        128,
+        0x766d_6f73_626c_6b31,
+        "b5 existing backend",
+    ));
+
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b5-test",
+        SemanticCommand::RecordFakeBlockBackendObject {
+            fake_block_backend: 1784,
+            name: "fake-block1-duplicate".to_string(),
+            block_device: 1782,
+            block_device_generation: 1,
+            provider: "service_core".to_string(),
+            profile: "fake-block-v1".to_string(),
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            deterministic_seed: 0x766d_6f73_626c_6b31,
+            note: "b5 duplicate backend".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b5-test",
+        SemanticCommand::RecordFakeBlockBackendObject {
+            fake_block_backend: 1785,
+            name: "fake-block1-stale".to_string(),
+            block_device: 1782,
+            block_device_generation: 2,
+            provider: "service_core".to_string(),
+            profile: "fake-block-v1".to_string(),
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            deterministic_seed: 0x766d_6f73_626c_6b31,
+            note: "b5 stale backend".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+
+    let mismatch = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b5-test",
+        SemanticCommand::RecordFakeBlockBackendObject {
+            fake_block_backend: 1786,
+            name: "fake-block1-mismatch".to_string(),
+            block_device: 1782,
+            block_device_generation: 1,
+            provider: "service_core".to_string(),
+            profile: "fake-block-v1".to_string(),
+            sector_size: 512,
+            sector_count: 8192,
+            read_only: false,
+            max_transfer_sectors: 128,
+            deterministic_seed: 0x766d_6f73_626c_6b31,
+            note: "b5 mismatched backend".to_string(),
+        },
+    ));
+    assert_eq!(mismatch.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn block_runtime_b5_invariants_reject_fake_backend_generation_leak() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk2");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1787,
+        "fake-block2",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b5 invariant backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1788,
+        "blk2",
+        1787,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b5 invariant block device",
+    ));
+    assert!(graph.record_fake_block_backend_object_with_id(
+        1789,
+        "fake-block2",
+        1788,
+        1,
+        "service_core",
+        "fake-block-v1",
+        512,
+        4096,
+        false,
+        128,
+        0x766d_6f73_626c_6b31,
+        "b5 invariant backend",
+    ));
+    graph.corrupt_fake_block_backend_block_device_generation_for_test(1789, 2);
+    assert!(matches!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::FakeBlockBackendObjectMissingBlockDevice {
+                fake_block_backend: 1789,
+                block_device: 1788,
+            }
+        ),
+    ));
+}
+
+#[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();
     let hart_generation = register_idle_test_hart(&mut graph);

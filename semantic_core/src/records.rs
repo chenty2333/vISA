@@ -1753,6 +1753,35 @@ impl BlockWaitRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FakeBlockBackendObjectRecord {
+    pub id: FakeBlockBackendObjectId,
+    pub name: String,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub provider: String,
+    pub profile: String,
+    pub sector_size: u32,
+    pub sector_count: u64,
+    pub read_only: bool,
+    pub max_transfer_sectors: u32,
+    pub deterministic_seed: u64,
+    pub generation: Generation,
+    pub state: FakeBlockBackendObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl FakeBlockBackendObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::FakeBlockBackendObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

@@ -14,10 +14,11 @@ use artifact_manifest::{
     CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest,
     CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
     DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
-    EndpointObjectManifest, FakeNetBackendObjectManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    EndpointObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -349,6 +350,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-completion-object"
         | "block-wait"
         | "block-wait-token"
+        | "fake-block-backend"
+        | "fake-block-backend-object"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -519,7 +522,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -775,6 +778,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "block-request" | "block-request-object" => "block-request",
         "block-completion" | "block-completion-object" => "block-completion",
         "block-wait" | "block-wait-token" => "block-wait",
+        "fake-block-backend" | "fake-block-backend-object" => "fake-block-backend",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2661,6 +2665,53 @@ fn block_wait_view_v1(wait: &BlockWaitManifest) -> serde_json::Value {
             "block_range_generation": wait.block_range_generation,
         },
         "last_error": wait.cancel_reason,
+    })
+}
+
+fn fake_block_backend_object_view_v1(
+    backend: &FakeBlockBackendObjectManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "fake-block-backend",
+        "id": backend.id,
+        "generation": backend.generation,
+        "state": backend.state,
+        "owner": {
+            "block_device": object_ref_json(
+                "block-device",
+                backend.block_device,
+                backend.block_device_generation,
+            ),
+        },
+        "references": {
+            "block_device": object_ref_json(
+                "block-device",
+                backend.block_device,
+                backend.block_device_generation,
+            ),
+            "event": {
+                "id": backend.recorded_at_event,
+            },
+        },
+        "identity": {
+            "name": backend.name,
+            "provider": backend.provider,
+            "profile": backend.profile,
+            "deterministic_seed": backend.deterministic_seed,
+        },
+        "contract": {
+            "sector_size": backend.sector_size,
+            "sector_count": backend.sector_count,
+            "read_only": backend.read_only,
+            "max_transfer_sectors": backend.max_transfer_sectors,
+        },
+        "note": backend.note,
+        "last_transition": {
+            "recorded_at_event": backend.recorded_at_event,
+            "block_device_generation": backend.block_device_generation,
+        },
+        "last_error": serde_json::Value::Null,
     })
 }
 
@@ -5278,6 +5329,12 @@ fn stable_views_for_kind(
             .iter()
             .map(block_wait_view_v1)
             .collect()),
+        "fake-block-backend" | "fake-block-backend-object" => Ok(package
+            .semantic
+            .fake_block_backends
+            .iter()
+            .map(fake_block_backend_object_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -6331,6 +6388,23 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.block_device_object_roots,
     );
     print_roots(
+        "block-range",
+        &package.semantic.roots.block_range_object_roots,
+    );
+    print_roots(
+        "block-request",
+        &package.semantic.roots.block_request_object_roots,
+    );
+    print_roots(
+        "block-completion",
+        &package.semantic.roots.block_completion_object_roots,
+    );
+    print_roots("block-wait", &package.semantic.roots.block_wait_roots);
+    print_roots(
+        "fake-block-backend",
+        &package.semantic.roots.fake_block_backend_object_roots,
+    );
+    print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
     );
@@ -6625,6 +6699,22 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "block-wait->block-device",
             "live",
             Some(block_wait.created_at_event),
+        ));
+    }
+    for backend in &package.semantic.fake_block_backends {
+        if backend.state != "bound" {
+            continue;
+        }
+        edges.push(graph_edge(
+            object_ref_json("fake-block-backend", backend.id, backend.generation),
+            object_ref_json(
+                "block-device",
+                backend.block_device,
+                backend.block_device_generation,
+            ),
+            "fake-block-backend->block-device",
+            "live",
+            Some(backend.recorded_at_event),
         ));
     }
     for packet_buffer in &package.semantic.packet_buffer_objects {
@@ -9609,6 +9699,7 @@ fn optional_object_ref_json(
 
 fn osctl_kind_from_contract_kind(kind: &str) -> &str {
     match kind {
+        "fake-block-backend-object" => "fake-block-backend",
         "fake-net-backend-object" => "fake-net-backend",
         "virtio-net-backend-object" => "virtio-net-backend",
         other => other,
@@ -10642,7 +10733,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -10701,6 +10792,11 @@ fn replay_until(
             .network_recovery_benchmark_roots
             .len(),
         package.semantic.roots.block_device_object_roots.len(),
+        package.semantic.roots.block_range_object_roots.len(),
+        package.semantic.roots.block_request_object_roots.len(),
+        package.semantic.roots.block_completion_object_roots.len(),
+        package.semantic.roots.block_wait_roots.len(),
+        package.semantic.roots.fake_block_backend_object_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -10810,6 +10906,9 @@ fn replay_until(
     }
     for block_wait in &package.semantic.roots.block_wait_roots {
         println!("replay block-wait {block_wait}");
+    }
+    for backend in &package.semantic.roots.fake_block_backend_object_roots {
+        println!("replay fake-block-backend {backend}");
     }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
@@ -11114,6 +11213,10 @@ fn print_replay_json(
     roots.insert(
         "block_waits".to_owned(),
         serde_json::json!(package.semantic.roots.block_wait_roots.len()),
+    );
+    roots.insert(
+        "fake_block_backends".to_owned(),
+        serde_json::json!(package.semantic.roots.fake_block_backend_object_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -11467,6 +11570,10 @@ fn print_replay_json(
         "block_wait_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.block_wait_roots),
     );
+    roots.insert(
+        "fake_block_backend_object_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.fake_block_backend_object_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -11511,7 +11618,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -11572,6 +11679,11 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.network_benchmark_count,
         package.semantic.network_recovery_benchmark_count,
         package.semantic.block_device_object_count,
+        package.semantic.block_range_object_count,
+        package.semantic.block_request_object_count,
+        package.semantic.block_completion_object_count,
+        package.semantic.block_wait_count,
+        package.semantic.fake_block_backend_object_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -13024,6 +13136,36 @@ mod tests {
         assert_eq!(view["wait"]["sequence"], 1);
         assert_eq!(view["wait"]["byte_len"], 4096);
         assert_eq!(view["last_transition"]["completed_at_event"], 110);
+    }
+
+    #[test]
+    fn fake_block_backend_view_v1_exposes_block_device_and_profile_contract() {
+        let view = fake_block_backend_object_view_v1(&FakeBlockBackendObjectManifest {
+            id: 111,
+            name: "fake-block0".to_owned(),
+            block_device: 104,
+            block_device_generation: 1,
+            provider: "service_core".to_owned(),
+            profile: "fake-block-v1".to_owned(),
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            deterministic_seed: 0x766d_6f73_626c_6b31,
+            generation: 1,
+            state: "bound".to_owned(),
+            recorded_at_event: 111,
+            note: "fake block backend".to_owned(),
+        });
+        assert_eq!(view["kind"], "fake-block-backend");
+        assert_eq!(view["owner"]["block_device"]["kind"], "block-device");
+        assert_eq!(view["owner"]["block_device"]["generation"], 1);
+        assert_eq!(view["identity"]["provider"], "service_core");
+        assert_eq!(view["identity"]["profile"], "fake-block-v1");
+        assert_eq!(view["contract"]["sector_size"], 512);
+        assert_eq!(view["contract"]["sector_count"], 4096);
+        assert_eq!(view["contract"]["max_transfer_sectors"], 128);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 111);
     }
 
     #[test]
@@ -16003,6 +16145,26 @@ mod tests {
             cancel_reason: None,
             note: "block wait graph".to_owned(),
         });
+        package
+            .semantic
+            .fake_block_backends
+            .push(FakeBlockBackendObjectManifest {
+                id: 111,
+                name: "fake-block0".to_owned(),
+                block_device: 105,
+                block_device_generation: 1,
+                provider: "service_core".to_owned(),
+                profile: "fake-block-v1".to_owned(),
+                sector_size: 512,
+                sector_count: 4096,
+                read_only: false,
+                max_transfer_sectors: 128,
+                deterministic_seed: 7,
+                generation: 1,
+                state: "bound".to_owned(),
+                recorded_at_event: 45,
+                note: "fake block backend graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -16031,6 +16193,11 @@ mod tests {
             && edge["relation"] == "block-request->block-range"
             && edge["from"]["kind"] == "block-request"
             && edge["to"]["kind"] == "block-range"));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "fake-block-backend->block-device"
+            && edge["from"]["kind"] == "fake-block-backend"
+            && edge["to"]["kind"] == "block-device"
+            && edge["to"]["generation"] == 1));
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
             && edge["relation"] == "block-completion->block-request"

@@ -66,6 +66,7 @@ pub struct SemanticGraph {
     block_request_objects: Vec<BlockRequestObjectRecord>,
     block_completion_objects: Vec<BlockCompletionObjectRecord>,
     block_waits: Vec<BlockWaitRecord>,
+    fake_block_backends: Vec<FakeBlockBackendObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -143,6 +144,7 @@ pub struct SemanticGraph {
     next_block_request_object_id: BlockRequestObjectId,
     next_block_completion_object_id: BlockCompletionObjectId,
     next_block_wait_id: BlockWaitId,
+    next_fake_block_backend_object_id: FakeBlockBackendObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -177,6 +179,7 @@ mod device_object;
 mod dma_buffer_object;
 mod driver_store_binding;
 mod endpoint_object;
+mod fake_block_backend_object;
 mod fake_net_backend_object;
 mod hart;
 mod hart_event;
@@ -299,6 +302,7 @@ impl SemanticGraph {
             block_request_objects: Vec::new(),
             block_completion_objects: Vec::new(),
             block_waits: Vec::new(),
+            fake_block_backends: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -376,6 +380,7 @@ impl SemanticGraph {
             next_block_request_object_id: 1,
             next_block_completion_object_id: 1,
             next_block_wait_id: 1,
+            next_fake_block_backend_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

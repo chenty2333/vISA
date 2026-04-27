@@ -899,6 +899,21 @@ impl BlockWaitState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FakeBlockBackendObjectState {
+    Bound,
+    Retired,
+}
+
+impl FakeBlockBackendObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bound => "bound",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PacketBufferDirection {
     Rx,
     Tx,
