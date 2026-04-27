@@ -413,6 +413,13 @@ impl SemanticGraph {
                 device,
                 device_generation,
             ),
+            ContractObjectKind::PacketDeviceObject => {
+                self.packet_device_objects.iter().any(|record| {
+                    record.object_ref() == capability.target
+                        && record.device == device
+                        && record.device_generation == device_generation
+                })
+            }
             _ => false,
         }
     }

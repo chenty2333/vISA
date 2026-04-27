@@ -694,6 +694,30 @@ pub enum EventKind {
         sequence: u64,
         generation: Generation,
     },
+    NetworkDriverCleanupStarted {
+        cleanup: NetworkDriverCleanupId,
+        io_cleanup: IoCleanupId,
+        driver_store: StoreId,
+        driver_store_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        driver_binding: DriverStoreBindingId,
+        driver_binding_generation: Generation,
+        packet_device: PacketDeviceObjectId,
+        packet_device_generation: Generation,
+        adapter: NetworkStackAdapterId,
+        adapter_generation: Generation,
+        backend: ContractObjectRef,
+        generation: Generation,
+    },
+    NetworkDriverCleanupCompleted {
+        cleanup: NetworkDriverCleanupId,
+        io_cleanup: IoCleanupId,
+        io_cleanup_generation: Generation,
+        cancelled_socket_waits: usize,
+        revoked_packet_capabilities: usize,
+        generation: Generation,
+    },
     RuntimeActivationResumed {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,
@@ -1970,6 +1994,37 @@ impl EventKind {
                     action.as_str()
                 )
             }
+            Self::NetworkDriverCleanupStarted {
+                cleanup,
+                io_cleanup,
+                driver_store,
+                driver_store_generation,
+                device,
+                device_generation,
+                driver_binding,
+                driver_binding_generation,
+                packet_device,
+                packet_device_generation,
+                adapter,
+                adapter_generation,
+                backend,
+                generation,
+            } => format!(
+                "NetworkDriverCleanupStarted cleanup={cleanup} io_cleanup={io_cleanup} driver_store={driver_store}@{driver_store_generation} device={device}@{device_generation} driver_binding={driver_binding}@{driver_binding_generation} packet_device={packet_device}@{packet_device_generation} adapter={adapter}@{adapter_generation} backend={}:{}@{} generation={generation}",
+                backend.kind.as_str(),
+                backend.id,
+                backend.generation
+            ),
+            Self::NetworkDriverCleanupCompleted {
+                cleanup,
+                io_cleanup,
+                io_cleanup_generation,
+                cancelled_socket_waits,
+                revoked_packet_capabilities,
+                generation,
+            } => format!(
+                "NetworkDriverCleanupCompleted cleanup={cleanup} io_cleanup={io_cleanup}@{io_cleanup_generation} cancelled_socket_waits={cancelled_socket_waits} revoked_packet_capabilities={revoked_packet_capabilities} generation={generation}"
+            ),
             Self::RuntimeActivationResumed {
                 resume,
                 decision,

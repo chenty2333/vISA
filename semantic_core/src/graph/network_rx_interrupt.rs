@@ -240,6 +240,13 @@ impl SemanticGraph {
                     rx_interrupt: record.id,
                 });
             };
+            let cleanup_covers_binding = self.network_driver_cleanup_covers_binding(
+                backend_record.driver_binding,
+                backend_record.driver_binding_generation,
+            );
+            let binding_available = binding_record.state == DriverStoreBindingState::Bound
+                || (binding_record.state == DriverStoreBindingState::Released
+                    && cleanup_covers_binding);
             let irq_capability_target = ContractObjectRef::new(
                 ContractObjectKind::IrqLineObject,
                 irq_record.irq_line,
@@ -253,7 +260,7 @@ impl SemanticGraph {
                     && capability.operation == "ack"
                     && capability.state == DeviceCapabilityState::Active
             });
-            if !irq_capability_active {
+            if !irq_capability_active && !cleanup_covers_binding {
                 return Err(
                     SemanticInvariantError::NetworkRxInterruptMissingIrqCapability {
                         rx_interrupt: record.id,
@@ -275,7 +282,7 @@ impl SemanticGraph {
                 || packet_device_record.state != PacketDeviceObjectState::Registered
                 || rx_queue_record.state != PacketQueueObjectState::Registered
                 || rx_queue_record.role != PacketQueueRole::Rx
-                || binding_record.state != DriverStoreBindingState::Bound
+                || !binding_available
                 || backend_record.packet_device != packet_device_record.id
                 || backend_record.packet_device_generation != packet_device_record.generation
                 || rx_queue_record.packet_device != packet_device_record.id

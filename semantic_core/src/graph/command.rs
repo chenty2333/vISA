@@ -507,6 +507,17 @@ pub enum SemanticCommand {
         sequence: u64,
         note: String,
     },
+    CleanupNetworkDriver {
+        cleanup: NetworkDriverCleanupId,
+        io_cleanup: IoCleanupId,
+        adapter: NetworkStackAdapterId,
+        adapter_generation: Generation,
+        packet_device: PacketDeviceObjectId,
+        packet_device_generation: Generation,
+        backend: ContractObjectRef,
+        reason: String,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -895,6 +906,7 @@ impl SemanticCommand {
             Self::ResolveSocketWait { .. } => "resolve-socket-wait",
             Self::CancelSocketWait { .. } => "cancel-socket-wait",
             Self::RecordNetworkBackpressure { .. } => "record-network-backpressure",
+            Self::CleanupNetworkDriver { .. } => "cleanup-network-driver",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -2586,6 +2598,28 @@ impl SemanticGraph {
                     *dropped_packets,
                     *dropped_bytes,
                     *sequence,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::CleanupNetworkDriver {
+                cleanup,
+                io_cleanup,
+                adapter,
+                adapter_generation,
+                packet_device,
+                packet_device_generation,
+                backend,
+                reason,
+                ..
+            } => self
+                .validate_network_driver_cleanup(
+                    *cleanup,
+                    *io_cleanup,
+                    *adapter,
+                    *adapter_generation,
+                    *packet_device,
+                    *packet_device_generation,
+                    *backend,
+                    reason,
                 )
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
@@ -4333,6 +4367,27 @@ impl SemanticGraph {
                 dropped_packets,
                 dropped_bytes,
                 sequence,
+                &note,
+            ),
+            SemanticCommand::CleanupNetworkDriver {
+                cleanup,
+                io_cleanup,
+                adapter,
+                adapter_generation,
+                packet_device,
+                packet_device_generation,
+                backend,
+                reason,
+                note,
+            } => self.cleanup_network_driver_with_id(
+                cleanup,
+                io_cleanup,
+                adapter,
+                adapter_generation,
+                packet_device,
+                packet_device_generation,
+                backend,
+                &reason,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

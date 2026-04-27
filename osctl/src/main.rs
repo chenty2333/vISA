@@ -17,15 +17,15 @@ use artifact_manifest::{
     InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
-    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
-    SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
+    NetworkBackpressureManifest, NetworkDriverCleanupManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    RunnableQueueManifest, RuntimeActivationRecordManifest, SavedContextManifest,
+    SchedulerDecisionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
+    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
+    SmpStressRunManifest, SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
     StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
     TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
     VirtioNetBackendObjectManifest, WaitRecordManifest,
@@ -321,6 +321,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "network-backpressure"
         | "backpressure"
         | "drop-policy"
+        | "network-driver-cleanup"
+        | "network-cleanup"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -491,7 +493,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -735,6 +737,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "socket-operation" | "socket-op" => "socket-operation",
         "socket-wait" | "socket-wait-token" => "socket-wait",
         "network-backpressure" | "backpressure" | "drop-policy" => "network-backpressure",
+        "network-driver-cleanup" | "network-cleanup" => "network-driver-cleanup",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3325,6 +3328,98 @@ fn network_backpressure_view_v1(backpressure: &NetworkBackpressureManifest) -> s
     })
 }
 
+fn network_driver_cleanup_view_v1(cleanup: &NetworkDriverCleanupManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "network-driver-cleanup",
+        "id": cleanup.id,
+        "generation": cleanup.generation,
+        "state": cleanup.state,
+        "owner": {
+            "driver_store": object_ref_json(
+                "store",
+                cleanup.driver_store,
+                cleanup.driver_store_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                cleanup.packet_device,
+                cleanup.packet_device_generation,
+            ),
+            "adapter": object_ref_json(
+                "network-stack-adapter",
+                cleanup.adapter,
+                cleanup.adapter_generation,
+            ),
+        },
+        "references": {
+            "io_cleanup": object_ref_json(
+                "io-cleanup",
+                cleanup.io_cleanup,
+                cleanup.io_cleanup_generation,
+            ),
+            "driver_store": object_ref_json(
+                "store",
+                cleanup.driver_store,
+                cleanup.driver_store_generation,
+            ),
+            "device": object_ref_json(
+                "device",
+                cleanup.device,
+                cleanup.device_generation,
+            ),
+            "driver_binding": object_ref_json(
+                "driver-store-binding",
+                cleanup.driver_binding,
+                cleanup.driver_binding_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device",
+                cleanup.packet_device,
+                cleanup.packet_device_generation,
+            ),
+            "adapter": object_ref_json(
+                "network-stack-adapter",
+                cleanup.adapter,
+                cleanup.adapter_generation,
+            ),
+            "backend": object_ref_manifest_json(&cleanup.backend),
+            "cancelled_socket_waits": cleanup
+                .cancelled_socket_waits
+                .iter()
+                .map(object_ref_manifest_json)
+                .collect::<Vec<_>>(),
+            "cancelled_wait_tokens": cleanup
+                .cancelled_wait_tokens
+                .iter()
+                .map(object_ref_manifest_json)
+                .collect::<Vec<_>>(),
+            "revoked_packet_capabilities": cleanup
+                .revoked_packet_capabilities
+                .iter()
+                .map(object_ref_manifest_json)
+                .collect::<Vec<_>>(),
+        },
+        "cleanup": {
+            "reason": cleanup.reason,
+            "cancelled_socket_wait_count": cleanup.cancelled_socket_waits.len(),
+            "revoked_packet_capability_count": cleanup.revoked_packet_capabilities.len(),
+        },
+        "note": cleanup.note,
+        "last_transition": {
+            "started_at_event": cleanup.started_at_event,
+            "completed_at_event": cleanup.completed_at_event,
+            "io_cleanup_generation": cleanup.io_cleanup_generation,
+            "driver_store_generation": cleanup.driver_store_generation,
+            "device_generation": cleanup.device_generation,
+            "driver_binding_generation": cleanup.driver_binding_generation,
+            "packet_device_generation": cleanup.packet_device_generation,
+            "adapter_generation": cleanup.adapter_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -4478,6 +4573,12 @@ fn stable_views_for_kind(
             .iter()
             .map(network_backpressure_view_v1)
             .collect()),
+        "network-driver-cleanup" | "network-cleanup" => Ok(package
+            .semantic
+            .network_driver_cleanups
+            .iter()
+            .map(network_driver_cleanup_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -5299,7 +5400,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         return Ok(());
     }
     println!(
-        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} descriptor_roots={} dma_buffer_roots={} mmio_region_roots={} irq_line_roots={} irq_event_roots={} device_capability_roots={} driver_store_binding_roots={} io_wait_roots={} io_cleanup_roots={} io_fault_injection_roots={} io_validation_report_roots={} packet_device_roots={} packet_buffer_roots={} packet_queue_roots={} packet_descriptor_roots={} fake_net_backend_roots={} virtio_net_backend_roots={} socket_wait_roots={} network_backpressure_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
+        "graph package={} cursor={} hart_roots={} task_roots={} resource_roots={} authority_roots={} store_roots={} capability_roots={} target_store_record_roots={} target_capability_record_roots={} fastpath_roots={} boundary_roots={} artifact_verification_roots={} store_activation_roots={} executor_transition_roots={} target_artifact_roots={} code_object_roots={} activation_record_roots={} trap_roots={} hostcall_trace_roots={} migration_object_roots={} tombstone_roots={} contract_violation_roots={} timer_interrupt_roots={} ipi_event_roots={} remote_preempt_roots={} remote_park_roots={} cross_hart_scheduler_decision_roots={} activation_migration_roots={} smp_safe_point_roots={} stop_the_world_rendezvous_roots={} smp_code_publish_barrier_roots={} smp_cleanup_quiescence_roots={} smp_snapshot_barrier_roots={} smp_stress_run_roots={} smp_scaling_benchmark_roots={} device_roots={} queue_roots={} descriptor_roots={} dma_buffer_roots={} mmio_region_roots={} irq_line_roots={} irq_event_roots={} device_capability_roots={} driver_store_binding_roots={} io_wait_roots={} io_cleanup_roots={} io_fault_injection_roots={} io_validation_report_roots={} packet_device_roots={} packet_buffer_roots={} packet_queue_roots={} packet_descriptor_roots={} fake_net_backend_roots={} virtio_net_backend_roots={} socket_wait_roots={} network_backpressure_roots={} network_driver_cleanup_roots={} activation_resume_roots={} activation_wait_roots={} activation_cleanup_roots={} preemption_latency_roots={} hart_event_attribution_roots={}",
         package.package_id,
         package.semantic.event_log_cursor,
         package.semantic.roots.hart_roots.len(),
@@ -5361,6 +5462,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.virtio_net_backend_object_roots.len(),
         package.semantic.roots.socket_wait_roots.len(),
         package.semantic.roots.network_backpressure_roots.len(),
+        package.semantic.roots.network_driver_cleanup_roots.len(),
         package.semantic.roots.activation_resume_roots.len(),
         package.semantic.roots.activation_wait_roots.len(),
         package.semantic.roots.activation_cleanup_roots.len(),
@@ -5516,6 +5618,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "network-backpressure",
         &package.semantic.roots.network_backpressure_roots,
+    );
+    print_roots(
+        "network-driver-cleanup",
+        &package.semantic.roots.network_driver_cleanup_roots,
     );
     print_roots(
         "activation-resume",
@@ -6584,6 +6690,97 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "network-backpressure->owner-store",
                 "historical",
                 Some(backpressure.recorded_at_event),
+            ));
+        }
+    }
+    for cleanup in &package.semantic.network_driver_cleanups {
+        let from = object_ref_json("network-driver-cleanup", cleanup.id, cleanup.generation);
+        let event = cleanup
+            .completed_at_event
+            .or(Some(cleanup.started_at_event));
+        for (target, relation) in [
+            (
+                object_ref_json(
+                    "io-cleanup",
+                    cleanup.io_cleanup,
+                    cleanup.io_cleanup_generation,
+                ),
+                "network-driver-cleanup->io-cleanup",
+            ),
+            (
+                object_ref_json(
+                    "store",
+                    cleanup.driver_store,
+                    cleanup.driver_store_generation,
+                ),
+                "network-driver-cleanup->driver-store",
+            ),
+            (
+                object_ref_json("device", cleanup.device, cleanup.device_generation),
+                "network-driver-cleanup->device",
+            ),
+            (
+                object_ref_json(
+                    "driver-store-binding",
+                    cleanup.driver_binding,
+                    cleanup.driver_binding_generation,
+                ),
+                "network-driver-cleanup->driver-binding",
+            ),
+            (
+                object_ref_json(
+                    "packet-device",
+                    cleanup.packet_device,
+                    cleanup.packet_device_generation,
+                ),
+                "network-driver-cleanup->packet-device",
+            ),
+            (
+                object_ref_json(
+                    "network-stack-adapter",
+                    cleanup.adapter,
+                    cleanup.adapter_generation,
+                ),
+                "network-driver-cleanup->network-stack-adapter",
+            ),
+            (
+                object_ref_manifest_json(&cleanup.backend),
+                "network-driver-cleanup->backend",
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                target,
+                relation,
+                "historical",
+                event,
+            ));
+        }
+        for socket_wait in &cleanup.cancelled_socket_waits {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(socket_wait),
+                "network-driver-cleanup->cancelled-socket-wait",
+                "cleanup-effect",
+                event,
+            ));
+        }
+        for wait in &cleanup.cancelled_wait_tokens {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(wait),
+                "network-driver-cleanup->cancelled-wait-token",
+                "cleanup-effect",
+                event,
+            ));
+        }
+        for capability in &cleanup.revoked_packet_capabilities {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(capability),
+                "network-driver-cleanup->revoked-packet-capability",
+                "cleanup-effect",
+                event,
             ));
         }
     }
@@ -9224,7 +9421,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -9273,6 +9470,7 @@ fn replay_until(
         package.semantic.roots.socket_operation_roots.len(),
         package.semantic.roots.socket_wait_roots.len(),
         package.semantic.roots.network_backpressure_roots.len(),
+        package.semantic.roots.network_driver_cleanup_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -9412,6 +9610,9 @@ fn replay_until(
     }
     for backpressure in &package.semantic.roots.network_backpressure_roots {
         println!("replay network-backpressure {backpressure}");
+    }
+    for cleanup in &package.semantic.roots.network_driver_cleanup_roots {
+        println!("replay network-driver-cleanup {cleanup}");
     }
     Ok(())
 }
@@ -9610,6 +9811,10 @@ fn print_replay_json(
     roots.insert(
         "network_backpressures".to_owned(),
         serde_json::json!(package.semantic.roots.network_backpressure_roots.len()),
+    );
+    roots.insert(
+        "network_driver_cleanups".to_owned(),
+        serde_json::json!(package.semantic.roots.network_driver_cleanup_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -9923,6 +10128,10 @@ fn print_replay_json(
         "network_backpressure_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.network_backpressure_roots),
     );
+    roots.insert(
+        "network_driver_cleanup_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.network_driver_cleanup_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -9967,7 +10176,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -10022,6 +10231,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.virtio_net_backend_object_count,
         package.semantic.socket_wait_count,
         package.semantic.network_backpressure_count,
+        package.semantic.network_driver_cleanup_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -10092,6 +10302,10 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
     print_roots(
         "network-backpressure",
         &package.semantic.roots.network_backpressure_roots,
+    );
+    print_roots(
+        "network-driver-cleanup",
+        &package.semantic.roots.network_driver_cleanup_roots,
     );
 }
 
@@ -11063,6 +11277,69 @@ mod tests {
         assert_eq!(view["policy"]["queue_depth"], 4);
         assert_eq!(view["policy"]["dropped_packets"], 0);
         assert_eq!(view["last_transition"]["recorded_at_event"], 86);
+    }
+
+    #[test]
+    fn network_driver_cleanup_view_v1_exposes_cleanup_effects_and_generations() {
+        let view = network_driver_cleanup_view_v1(&NetworkDriverCleanupManifest {
+            id: 87,
+            io_cleanup: 70,
+            io_cleanup_generation: 1,
+            driver_store: 7,
+            driver_store_generation: 3,
+            device: 35,
+            device_generation: 1,
+            driver_binding: 44,
+            driver_binding_generation: 2,
+            packet_device: 51,
+            packet_device_generation: 4,
+            adapter: 74,
+            adapter_generation: 5,
+            backend: ContractObjectRefManifest {
+                kind: "virtio-net-backend-object".to_owned(),
+                id: 85,
+                generation: 6,
+            },
+            cancelled_socket_waits: vec![ContractObjectRefManifest {
+                kind: "socket-wait".to_owned(),
+                id: 90,
+                generation: 1,
+            }],
+            cancelled_wait_tokens: vec![ContractObjectRefManifest {
+                kind: "wait-token".to_owned(),
+                id: 91,
+                generation: 1,
+            }],
+            revoked_packet_capabilities: vec![ContractObjectRefManifest {
+                kind: "device-capability".to_owned(),
+                id: 92,
+                generation: 1,
+            }],
+            generation: 1,
+            state: "completed".to_owned(),
+            started_at_event: 88,
+            completed_at_event: Some(89),
+            reason: "device-fault".to_owned(),
+            note: "network cleanup".to_owned(),
+        });
+        assert_eq!(view["kind"], "network-driver-cleanup");
+        assert_eq!(view["owner"]["packet_device"]["kind"], "packet-device");
+        assert_eq!(view["owner"]["packet_device"]["generation"], 4);
+        assert_eq!(view["references"]["io_cleanup"]["kind"], "io-cleanup");
+        assert_eq!(view["references"]["driver_binding"]["generation"], 2);
+        assert_eq!(
+            view["references"]["backend"]["kind"],
+            "virtio-net-backend-object"
+        );
+        assert_eq!(view["references"]["cancelled_socket_waits"][0]["id"], 90);
+        assert_eq!(view["references"]["cancelled_wait_tokens"][0]["id"], 91);
+        assert_eq!(
+            view["references"]["revoked_packet_capabilities"][0]["id"],
+            92
+        );
+        assert_eq!(view["cleanup"]["reason"], "device-fault");
+        assert_eq!(view["cleanup"]["cancelled_socket_wait_count"], 1);
+        assert_eq!(view["last_transition"]["completed_at_event"], 89);
     }
 
     #[test]
@@ -13766,6 +14043,50 @@ mod tests {
                 recorded_at_event: 32,
                 note: "network backpressure graph".to_owned(),
             });
+        package
+            .semantic
+            .network_driver_cleanups
+            .push(NetworkDriverCleanupManifest {
+                id: 100,
+                io_cleanup: 70,
+                io_cleanup_generation: 1,
+                driver_store: 1,
+                driver_store_generation: 2,
+                device: 35,
+                device_generation: 1,
+                driver_binding: 44,
+                driver_binding_generation: 1,
+                packet_device: 81,
+                packet_device_generation: 1,
+                adapter: 93,
+                adapter_generation: 1,
+                backend: ContractObjectRefManifest {
+                    kind: "virtio-net-backend-object".to_owned(),
+                    id: 85,
+                    generation: 1,
+                },
+                cancelled_socket_waits: vec![ContractObjectRefManifest {
+                    kind: "socket-wait".to_owned(),
+                    id: 97,
+                    generation: 1,
+                }],
+                cancelled_wait_tokens: vec![ContractObjectRefManifest {
+                    kind: "wait-token".to_owned(),
+                    id: 45,
+                    generation: 1,
+                }],
+                revoked_packet_capabilities: vec![ContractObjectRefManifest {
+                    kind: "device-capability".to_owned(),
+                    id: 42,
+                    generation: 1,
+                }],
+                generation: 1,
+                state: "completed".to_owned(),
+                started_at_event: 33,
+                completed_at_event: Some(34),
+                reason: "device-fault".to_owned(),
+                note: "network driver cleanup graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -13858,6 +14179,11 @@ mod tests {
                 .iter()
                 .any(|edge| edge["from"]["kind"] == "network-backpressure")
         );
+        assert!(
+            !live
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "network-driver-cleanup")
+        );
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
@@ -13899,6 +14225,31 @@ mod tests {
             && edge["relation"] == "network-backpressure->endpoint-object"
             && edge["from"]["kind"] == "network-backpressure"
             && edge["to"]["kind"] == "endpoint-object"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-driver-cleanup->io-cleanup"
+            && edge["from"]["kind"] == "network-driver-cleanup"
+            && edge["to"]["kind"] == "io-cleanup"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["relation"] == "network-driver-cleanup->backend"
+            && edge["from"]["kind"] == "network-driver-cleanup"
+            && edge["to"]["kind"] == "virtio-net-backend-object"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "cleanup-effect"
+            && edge["relation"] == "network-driver-cleanup->cancelled-socket-wait"
+            && edge["from"]["kind"] == "network-driver-cleanup"
+            && edge["to"]["kind"] == "socket-wait"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "cleanup-effect"
+            && edge["relation"] == "network-driver-cleanup->cancelled-wait-token"
+            && edge["from"]["kind"] == "network-driver-cleanup"
+            && edge["to"]["kind"] == "wait-token"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "cleanup-effect"
+            && edge["relation"] == "network-driver-cleanup->revoked-packet-capability"
+            && edge["from"]["kind"] == "network-driver-cleanup"
+            && edge["to"]["kind"] == "device-capability"
             && edge["to"]["generation"] == 1));
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
             && edge["relation"] == "network-rx-interrupt->irq-event"

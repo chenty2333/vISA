@@ -323,6 +323,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub network_backpressure_count: usize,
     #[serde(default)]
+    pub network_driver_cleanup_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -497,6 +499,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub network_backpressures: Vec<NetworkBackpressureManifest>,
     #[serde(default)]
+    pub network_driver_cleanups: Vec<NetworkDriverCleanupManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -650,6 +654,8 @@ pub struct SemanticRootSetManifest {
     pub socket_wait_roots: Vec<String>,
     #[serde(default)]
     pub network_backpressure_roots: Vec<String>,
+    #[serde(default)]
+    pub network_driver_cleanup_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -1906,6 +1912,37 @@ pub struct NetworkBackpressureManifest {
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct NetworkDriverCleanupManifest {
+    pub id: u64,
+    pub io_cleanup: u64,
+    pub io_cleanup_generation: u64,
+    pub driver_store: u64,
+    pub driver_store_generation: u64,
+    pub device: u64,
+    pub device_generation: u64,
+    pub driver_binding: u64,
+    pub driver_binding_generation: u64,
+    pub packet_device: u64,
+    pub packet_device_generation: u64,
+    pub adapter: u64,
+    pub adapter_generation: u64,
+    pub backend: ContractObjectRefManifest,
+    #[serde(default)]
+    pub cancelled_socket_waits: Vec<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub cancelled_wait_tokens: Vec<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub revoked_packet_capabilities: Vec<ContractObjectRefManifest>,
+    pub generation: u64,
+    pub state: String,
+    pub started_at_event: u64,
+    #[serde(default)]
+    pub completed_at_event: Option<u64>,
+    pub reason: String,
     pub note: String,
 }
 

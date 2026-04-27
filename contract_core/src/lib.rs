@@ -115,6 +115,7 @@ pub enum ObjectKind {
     SocketOperation,
     SocketWait,
     NetworkBackpressure,
+    NetworkDriverCleanup,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -195,6 +196,7 @@ impl ObjectKind {
             Self::SocketOperation => "socket-operation",
             Self::SocketWait => "socket-wait",
             Self::NetworkBackpressure => "network-backpressure",
+            Self::NetworkDriverCleanup => "network-driver-cleanup",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -447,6 +449,7 @@ typed_ref!(EndpointObjectRef, ObjectKind::EndpointObject);
 typed_ref!(SocketOperationRef, ObjectKind::SocketOperation);
 typed_ref!(SocketWaitRef, ObjectKind::SocketWait);
 typed_ref!(NetworkBackpressureRef, ObjectKind::NetworkBackpressure);
+typed_ref!(NetworkDriverCleanupRef, ObjectKind::NetworkDriverCleanup);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -1891,6 +1894,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "network backpressure root/count mismatch",
         ));
     }
+    if roots.network_driver_cleanup_roots.len() != package.semantic.network_driver_cleanup_count
+        || package.semantic.network_driver_cleanups.len()
+            != package.semantic.network_driver_cleanup_count
+    {
+        return Err(ContractError::new(
+            "network driver cleanup root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2462,6 +2473,7 @@ mod tests {
                 socket_operation_count: 0,
                 socket_wait_count: 0,
                 network_backpressure_count: 0,
+                network_driver_cleanup_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2551,6 +2563,7 @@ mod tests {
                 socket_operations: Vec::new(),
                 socket_waits: Vec::new(),
                 network_backpressures: Vec::new(),
+                network_driver_cleanups: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4176,6 +4189,49 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_network_driver_cleanup_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.network_driver_cleanup_count = 1;
+        package.semantic.network_driver_cleanups.push(
+            artifact_manifest::NetworkDriverCleanupManifest {
+                id: 48,
+                io_cleanup: 88,
+                io_cleanup_generation: 1,
+                driver_store: 9,
+                driver_store_generation: 3,
+                device: 30,
+                device_generation: 1,
+                driver_binding: 31,
+                driver_binding_generation: 1,
+                packet_device: 32,
+                packet_device_generation: 1,
+                adapter: 33,
+                adapter_generation: 1,
+                backend: artifact_manifest::ContractObjectRefManifest {
+                    kind: "virtio-net-backend-object".to_owned(),
+                    id: 34,
+                    generation: 1,
+                },
+                cancelled_socket_waits: Vec::new(),
+                cancelled_wait_tokens: Vec::new(),
+                revoked_packet_capabilities: Vec::new(),
+                generation: 1,
+                state: "completed".to_owned(),
+                started_at_event: 91,
+                completed_at_event: Some(92),
+                reason: "device-fault".to_owned(),
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "network driver cleanup root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_activation_resume_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.activation_resume_count = 1;
@@ -4701,6 +4757,9 @@ mod tests {
         assert!(SocketWaitRef::try_from_ref(socket_wait).is_ok());
         let network_backpressure = ObjectRef::new(ObjectKind::NetworkBackpressure, 45, 1).unwrap();
         assert!(NetworkBackpressureRef::try_from_ref(network_backpressure).is_ok());
+        let network_driver_cleanup =
+            ObjectRef::new(ObjectKind::NetworkDriverCleanup, 46, 1).unwrap();
+        assert!(NetworkDriverCleanupRef::try_from_ref(network_driver_cleanup).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

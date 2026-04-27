@@ -324,6 +324,24 @@ impl SemanticGraph {
                 });
             };
             let packet_device_ref = packet_device_record.object_ref();
+            let cleanup_covers_packet_device = self
+                .network_driver_cleanup_covers_packet_device_for_store(
+                    record.driver_store,
+                    record.driver_store_generation,
+                    record.packet_device,
+                    record.packet_device_generation,
+                );
+            let device_capability_available = device_capability_record.state
+                == DeviceCapabilityState::Active
+                || (device_capability_record.state == DeviceCapabilityState::Revoked
+                    && cleanup_covers_packet_device);
+            let capability_generation_ok = if cleanup_covers_packet_device {
+                capability_record.generation >= record.capability_generation
+            } else {
+                capability_record.generation == record.capability_generation
+            };
+            let capability_revocation_ok =
+                !capability_record.revoked || cleanup_covers_packet_device;
             if record.id == 0
                 || record.generation == 0
                 || record.driver_store_generation == 0
@@ -355,7 +373,7 @@ impl SemanticGraph {
                 || buffer_record.packet_device != record.packet_device
                 || buffer_record.packet_device_generation != record.packet_device_generation
                 || buffer_record.sequence != record.sequence
-                || device_capability_record.state != DeviceCapabilityState::Active
+                || !device_capability_available
                 || device_capability_record.driver_store != record.driver_store
                 || device_capability_record.driver_store_generation
                     != record.driver_store_generation
@@ -367,8 +385,8 @@ impl SemanticGraph {
                 || device_capability_record.handle_slot != record.handle_slot
                 || device_capability_record.handle_generation != record.handle_generation
                 || device_capability_record.handle_tag != record.handle_tag
-                || capability_record.generation != record.capability_generation
-                || capability_record.revoked
+                || !capability_generation_ok
+                || !capability_revocation_ok
                 || capability_record.subject != store_record.package
                 || capability_record.object_ref
                     != Some(AuthorityObjectRef::internal(

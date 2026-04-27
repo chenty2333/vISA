@@ -1529,6 +1529,43 @@ impl NetworkBackpressureRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkDriverCleanupRecord {
+    pub id: NetworkDriverCleanupId,
+    pub io_cleanup: IoCleanupId,
+    pub io_cleanup_generation: Generation,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub driver_binding: DriverStoreBindingId,
+    pub driver_binding_generation: Generation,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub adapter: NetworkStackAdapterId,
+    pub adapter_generation: Generation,
+    pub backend: ContractObjectRef,
+    pub cancelled_socket_waits: Vec<ContractObjectRef>,
+    pub cancelled_wait_tokens: Vec<ContractObjectRef>,
+    pub revoked_packet_capabilities: Vec<ContractObjectRef>,
+    pub generation: Generation,
+    pub state: NetworkDriverCleanupState,
+    pub started_at_event: EventId,
+    pub completed_at_event: Option<EventId>,
+    pub reason: String,
+    pub note: String,
+}
+
+impl NetworkDriverCleanupRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::NetworkDriverCleanup,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivationResumeRecord {
     pub id: ActivationResumeId,
     pub scheduler_decision: SchedulerDecisionId,

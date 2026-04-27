@@ -1371,6 +1371,36 @@ pub enum SemanticInvariantError {
         backpressure: NetworkBackpressureId,
         event: EventId,
     },
+    NetworkDriverCleanupInvalid {
+        cleanup: NetworkDriverCleanupId,
+    },
+    NetworkDriverCleanupMissingIoCleanup {
+        cleanup: NetworkDriverCleanupId,
+        io_cleanup: IoCleanupId,
+    },
+    NetworkDriverCleanupMissingAdapter {
+        cleanup: NetworkDriverCleanupId,
+        adapter: NetworkStackAdapterId,
+    },
+    NetworkDriverCleanupMissingPacketDevice {
+        cleanup: NetworkDriverCleanupId,
+        packet_device: PacketDeviceObjectId,
+    },
+    NetworkDriverCleanupMissingBackend {
+        cleanup: NetworkDriverCleanupId,
+        backend: ContractObjectRef,
+    },
+    NetworkDriverCleanupMissingEffectTarget {
+        cleanup: NetworkDriverCleanupId,
+        target: ContractObjectRef,
+    },
+    NetworkDriverCleanupLiveLeak {
+        cleanup: NetworkDriverCleanupId,
+    },
+    NetworkDriverCleanupMissingEvent {
+        cleanup: NetworkDriverCleanupId,
+        event: EventId,
+    },
     ActivationResumeMissingDecision {
         resume: ActivationResumeId,
         decision: SchedulerDecisionId,

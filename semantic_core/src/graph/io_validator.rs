@@ -708,11 +708,15 @@ impl SemanticGraph {
                 .network_backpressures
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::NetworkDriverCleanup => self
+                .network_driver_cleanups
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }
 
-    fn io_validation_historical_object_exists(&self, object: ContractObjectRef) -> bool {
+    pub(crate) fn io_validation_historical_object_exists(&self, object: ContractObjectRef) -> bool {
         if object.kind == ContractObjectKind::Capability {
             return self
                 .capabilities
@@ -753,6 +757,11 @@ impl SemanticGraph {
                 .map(|record| (record.device, record.device_generation)),
             ContractObjectKind::IrqLineObject => self
                 .irq_line_objects
+                .iter()
+                .find(|record| record.id == target.id && record.generation == target.generation)
+                .map(|record| (record.device, record.device_generation)),
+            ContractObjectKind::PacketDeviceObject => self
+                .packet_device_objects
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
                 .map(|record| (record.device, record.device_generation)),

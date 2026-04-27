@@ -22,11 +22,11 @@ use artifact_manifest::{
     IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
     MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
     MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    NetworkBackpressureManifest, NetworkDriverCleanupManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -181,6 +181,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n13_evidence(&mut semantic)?;
     record_network_runtime_n14_evidence(&mut semantic)?;
     record_network_runtime_n15_evidence(&mut semantic)?;
+    record_network_runtime_n16_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -1458,6 +1459,114 @@ fn record_network_runtime_n15_evidence(semantic: &mut SemanticGraph) -> Result<(
             invalid_drop.command,
             invalid_drop.status.as_str(),
             invalid_drop.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+fn record_network_runtime_n16_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let linux_socket_store = semantic
+        .store_id("linux_socket_service")
+        .ok_or("linux_socket_service store is missing for n16 evidence")?;
+    let linux_socket_store_generation = semantic
+        .store_handle(linux_socket_store)
+        .map(|handle| handle.generation)
+        .ok_or("linux_socket_service store handle is missing for n16 evidence")?;
+    let connected_endpoint = ContractObjectRef::new(ContractObjectKind::EndpointObject, 10_032, 1);
+    let commands = [
+        CommandEnvelope::new(
+            170,
+            "target-executor-n16",
+            SemanticCommand::CreateWait {
+                wait: 10_049,
+                owner_task: None,
+                owner_store: Some(linux_socket_store),
+                owner_store_generation: Some(linux_socket_store_generation),
+                kind: SemanticWaitKind::SocketReadable,
+                generation: 1,
+                blockers: vec![connected_endpoint],
+                deadline: None,
+                restart_policy: RestartPolicy::RestartIfAllowed,
+                saved_context: Some("n16-recv-would-block-before-driver-fault".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            171,
+            "target-executor-n16",
+            SemanticCommand::RecordSocketWait {
+                socket_wait: 10_050,
+                wait: 10_049,
+                wait_generation: 1,
+                endpoint: 10_032,
+                endpoint_generation: 1,
+                wait_kind: SemanticWaitKind::SocketReadable,
+                blocker: connected_endpoint,
+                note: "n16-record-pending-socket-wait-before-driver-cleanup".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            172,
+            "target-executor-n16",
+            SemanticCommand::CleanupNetworkDriver {
+                cleanup: 10_051,
+                io_cleanup: 10_052,
+                adapter: 10_025,
+                adapter_generation: 1,
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                backend: ContractObjectRef::new(
+                    ContractObjectKind::VirtioNetBackendObject,
+                    10_010,
+                    1,
+                ),
+                reason: "device-fault".to_owned(),
+                note: "n16-cleanup-virtio-net-driver-fault".to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "network runtime n16 evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+
+    let stale_cleanup = semantic.apply_envelope(CommandEnvelope::new(
+        173,
+        "target-executor-n16",
+        SemanticCommand::CleanupNetworkDriver {
+            cleanup: 10_053,
+            io_cleanup: 10_054,
+            adapter: 10_025,
+            adapter_generation: 2,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            backend: ContractObjectRef::new(ContractObjectKind::VirtioNetBackendObject, 10_010, 1),
+            reason: "device-fault".to_owned(),
+            note: "n16-reject-stale-adapter-cleanup".to_owned(),
+        },
+    ));
+    if stale_cleanup.status != CommandStatus::Rejected
+        || !stale_cleanup
+            .violations
+            .iter()
+            .any(|violation| violation.contains("adapter generation"))
+    {
+        return Err(format!(
+            "network runtime n16 stale cleanup command {} ({}) was not rejected: status={} violations={:?}",
+            stale_cleanup.command_id,
+            stale_cleanup.command,
+            stale_cleanup.status.as_str(),
+            stale_cleanup.violations
         )
         .into());
     }
@@ -3850,6 +3959,7 @@ fn demo_migration_package(
             socket_operation_count: semantic.socket_operation_count(),
             socket_wait_count: semantic.socket_wait_count(),
             network_backpressure_count: semantic.network_backpressure_count(),
+            network_driver_cleanup_count: semantic.network_driver_cleanup_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -4126,6 +4236,11 @@ fn demo_migration_package(
                 .network_backpressures()
                 .iter()
                 .map(network_backpressure_manifest)
+                .collect(),
+            network_driver_cleanups: semantic
+                .network_driver_cleanups()
+                .iter()
+                .map(network_driver_cleanup_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -5274,6 +5389,35 @@ fn semantic_roots(
                     backpressure.sequence,
                     backpressure.state.as_str(),
                     backpressure.generation
+                )
+            })
+            .collect(),
+        network_driver_cleanup_roots: semantic
+            .network_driver_cleanups()
+            .iter()
+            .map(|cleanup| {
+                format!(
+                    "network-driver-cleanup id={} io_cleanup={}@{} driver_store={}@{} device={}@{} binding={}@{} packet_device={}@{} adapter={}@{} backend={}:{}@{} state={} generation={} cancelled_socket_waits={} revoked_packet_capabilities={}",
+                    cleanup.id,
+                    cleanup.io_cleanup,
+                    cleanup.io_cleanup_generation,
+                    cleanup.driver_store,
+                    cleanup.driver_store_generation,
+                    cleanup.device,
+                    cleanup.device_generation,
+                    cleanup.driver_binding,
+                    cleanup.driver_binding_generation,
+                    cleanup.packet_device,
+                    cleanup.packet_device_generation,
+                    cleanup.adapter,
+                    cleanup.adapter_generation,
+                    cleanup.backend.kind.as_str(),
+                    cleanup.backend.id,
+                    cleanup.backend.generation,
+                    cleanup.state.as_str(),
+                    cleanup.generation,
+                    cleanup.cancelled_socket_waits.len(),
+                    cleanup.revoked_packet_capabilities.len()
                 )
             })
             .collect(),
@@ -7113,6 +7257,51 @@ fn network_backpressure_manifest(
         state: backpressure.state.as_str().to_owned(),
         recorded_at_event: backpressure.recorded_at_event,
         note: backpressure.note.clone(),
+    }
+}
+
+fn network_driver_cleanup_manifest(
+    cleanup: &semantic_core::NetworkDriverCleanupRecord,
+) -> NetworkDriverCleanupManifest {
+    NetworkDriverCleanupManifest {
+        id: cleanup.id,
+        io_cleanup: cleanup.io_cleanup,
+        io_cleanup_generation: cleanup.io_cleanup_generation,
+        driver_store: cleanup.driver_store,
+        driver_store_generation: cleanup.driver_store_generation,
+        device: cleanup.device,
+        device_generation: cleanup.device_generation,
+        driver_binding: cleanup.driver_binding,
+        driver_binding_generation: cleanup.driver_binding_generation,
+        packet_device: cleanup.packet_device,
+        packet_device_generation: cleanup.packet_device_generation,
+        adapter: cleanup.adapter,
+        adapter_generation: cleanup.adapter_generation,
+        backend: contract_object_ref_manifest(cleanup.backend),
+        cancelled_socket_waits: cleanup
+            .cancelled_socket_waits
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        cancelled_wait_tokens: cleanup
+            .cancelled_wait_tokens
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        revoked_packet_capabilities: cleanup
+            .revoked_packet_capabilities
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        generation: cleanup.generation,
+        state: cleanup.state.as_str().to_owned(),
+        started_at_event: cleanup.started_at_event,
+        completed_at_event: cleanup.completed_at_event,
+        reason: cleanup.reason.clone(),
+        note: cleanup.note.clone(),
     }
 }
 

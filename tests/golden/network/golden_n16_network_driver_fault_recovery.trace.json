@@ -1,0 +1,200 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "N16-network-driver-fault-cleanup",
+  "name": "golden_n16_network_driver_fault_recovery",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md",
+    "references/specs/semantic-contract-v0.1/05-wait-token-event-bridge.md",
+    "references/specs/semantic-contract-v0.1/06-store-fault-cleanup.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md"
+  ],
+  "no_goals": [
+    "real virtio datapath",
+    "real smoltcp packet processing",
+    "real DMA/IOMMU/MMIO/IRQ hardware access",
+    "full Linux socket ABI",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "N5 has recorded virtio-net-backend-object:10010@1",
+      "N10 has recorded network-stack-adapter:10025@1 bound to packet-device:10002@1",
+      "N14 has recorded socket-wait:10050@1 backed by wait-token:10049@1",
+      "driver_virtio_net store is store:7@3",
+      "packet-device authority capability device-capability:10020@1 is active before cleanup"
+    ],
+    "commands": [
+      {
+        "id": 170,
+        "command": "create-wait",
+        "wait": "wait-token:10049@1",
+        "owner_store": "store:7@3",
+        "kind": "socket-readable",
+        "expected": "applied"
+      },
+      {
+        "id": 171,
+        "command": "record-socket-wait",
+        "socket_wait": "socket-wait:10050@1",
+        "wait": "wait-token:10049@1",
+        "adapter": "network-stack-adapter:10025@1",
+        "expected": "applied"
+      },
+      {
+        "id": 172,
+        "command": "cleanup-network-driver",
+        "cleanup": "network-driver-cleanup:10051@1",
+        "io_cleanup": "io-cleanup:10052@1",
+        "driver_store": "store:7@3",
+        "device": "device:10001@1",
+        "driver_binding": "driver-store-binding:10009@1",
+        "packet_device": "packet-device:10002@1",
+        "adapter": "network-stack-adapter:10025@1",
+        "backend": "virtio-net-backend-object:10010@1",
+        "reason": "device-fault",
+        "expected": "applied"
+      },
+      {
+        "id": 173,
+        "command": "cleanup-network-driver",
+        "scenario": "stale adapter generation cannot start cleanup",
+        "adapter": "network-stack-adapter:10025@2",
+        "expected": "rejected",
+        "violation": "network driver cleanup adapter generation is missing or inactive"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 360,
+      "kind": "NetworkDriverCleanupStarted",
+      "cleanup": "network-driver-cleanup:10051@1",
+      "io_cleanup": "io-cleanup:10052@1",
+      "driver_store": "store:7@3",
+      "device": "device:10001@1",
+      "driver_binding": "driver-store-binding:10009@1",
+      "packet_device": "packet-device:10002@1",
+      "adapter": "network-stack-adapter:10025@1",
+      "backend": "virtio-net-backend-object:10010@1"
+    },
+    {
+      "id": 361,
+      "kind": "IoCleanupStarted",
+      "cleanup": "io-cleanup:10052@1",
+      "driver_store": "store:7@3",
+      "device": "device:10001@1",
+      "driver_binding": "driver-store-binding:10009@1"
+    },
+    {
+      "id": 362,
+      "kind": "CapabilityRevoked",
+      "capability": "capability:28"
+    },
+    {
+      "id": 363,
+      "kind": "CapabilityRevoked",
+      "capability": "capability:29"
+    },
+    {
+      "id": 364,
+      "kind": "CapabilityRevoked",
+      "capability": "capability:30"
+    },
+    {
+      "id": 365,
+      "kind": "IoCleanupCompleted",
+      "cleanup": "io-cleanup:10052@1",
+      "cancelled_io_waits": 0,
+      "revoked_device_capabilities": 3,
+      "released_irq_lines": 1
+    },
+    {
+      "id": 366,
+      "kind": "WaitCancelled",
+      "wait": "wait-token:10049@1",
+      "reason": "device-fault",
+      "errno": 5
+    },
+    {
+      "id": 367,
+      "kind": "SocketWaitCancelled",
+      "socket_wait": "socket-wait:10050@1",
+      "wait": "wait-token:10049@1",
+      "reason": "device-fault"
+    },
+    {
+      "id": 368,
+      "kind": "NetworkDriverCleanupCompleted",
+      "cleanup": "network-driver-cleanup:10051@1",
+      "io_cleanup": "io-cleanup:10052@1",
+      "cancelled_socket_waits": 1,
+      "revoked_packet_capabilities": 1
+    }
+  ],
+  "expected": {
+    "views": {
+      "network-driver-cleanup": {
+        "count": 1,
+        "cleanup": "network-driver-cleanup:10051@1",
+        "io_cleanup": "io-cleanup:10052@1",
+        "driver_store": "store:7@3",
+        "adapter": "network-stack-adapter:10025@1",
+        "cancelled_socket_wait": "socket-wait:10050@1",
+        "cancelled_wait_token": "wait-token:10049@1",
+        "revoked_packet_capability": "device-capability:10020@1"
+      },
+      "command": {
+        "applied": "command-result:172:cleanup-network-driver:applied",
+        "rejected": "command-result:173:cleanup-network-driver:rejected",
+        "violation": "network driver cleanup adapter generation is missing or inactive"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "historical_edges": [
+          "network-driver-cleanup->io-cleanup",
+          "network-driver-cleanup->driver-store",
+          "network-driver-cleanup->device",
+          "network-driver-cleanup->driver-binding",
+          "network-driver-cleanup->packet-device",
+          "network-driver-cleanup->network-stack-adapter",
+          "network-driver-cleanup->backend"
+        ],
+        "cleanup_effect_edges": [
+          "network-driver-cleanup->cancelled-socket-wait",
+          "network-driver-cleanup->cancelled-wait-token",
+          "network-driver-cleanup->revoked-packet-capability"
+        ],
+        "live_edges": []
+      }
+    },
+    "invariants": [
+      "NetworkDriverCleanup carries exact Store, DeviceObject, DriverStoreBinding, PacketDeviceObject, NetworkStackAdapter, Backend, and IoCleanup generations",
+      "driver fault cleanup delegates shared device teardown to IoCleanup rather than duplicating IO cleanup semantics",
+      "pending socket waits owned by the adapter are cancelled with WaitCancelReason::DeviceFault",
+      "packet-device capabilities owned by the driver store are revoked and recorded as cleanup-effect refs",
+      "historical RX/TX/network evidence can remain attributable after cleanup without creating live ownership",
+      "stale adapter generation rejects cleanup before mutation"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "network_runtime_n16_driver_cleanup_cancels_socket_waits_and_revokes_packet_capability",
+      "network_runtime_n16_rejects_stale_adapter_wrong_backend_and_duplicate_io_cleanup",
+      "network_runtime_n16_invariants_reject_stale_cleanup_effect_generation",
+      "network_driver_cleanup_view_v1_exposes_cleanup_effects_and_generations",
+      "semantic_roots_reject_network_driver_cleanup_root_mismatch",
+      "graph_json_edges_separate_live_history_and_cleanup_modes"
+    ],
+    "osctl_json_view": "network-driver-cleanup list --json",
+    "target_executor_event_cursor": 370
+  }
+}

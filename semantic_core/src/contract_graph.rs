@@ -1430,6 +1430,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::SocketOperation
             | ContractObjectKind::SocketWait
             | ContractObjectKind::NetworkBackpressure
+            | ContractObjectKind::NetworkDriverCleanup
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

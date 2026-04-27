@@ -271,6 +271,12 @@ impl SemanticGraph {
                     },
                 );
             };
+            let binding_available = binding_record.state == DriverStoreBindingState::Bound
+                || (binding_record.state == DriverStoreBindingState::Released
+                    && self.network_driver_cleanup_covers_binding(
+                        record.driver_binding,
+                        record.driver_binding_generation,
+                    ));
             if record.id == 0
                 || record.generation == 0
                 || record.name.is_empty()
@@ -292,7 +298,7 @@ impl SemanticGraph {
                 || (record.negotiated_features & !record.driver_features) != 0
                 || record.state != VirtioNetBackendObjectState::SkeletonReady
                 || packet_device_record.state != PacketDeviceObjectState::Registered
-                || binding_record.state != DriverStoreBindingState::Bound
+                || !binding_available
                 || binding_record.device != packet_device_record.device
                 || binding_record.device_generation != packet_device_record.device_generation
                 || record.device != packet_device_record.device

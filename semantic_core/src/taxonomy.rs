@@ -1148,6 +1148,23 @@ impl NetworkBackpressureAction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkDriverCleanupState {
+    Started,
+    Completed,
+    Retired,
+}
+
+impl NetworkDriverCleanupState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::Completed => "completed",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,
