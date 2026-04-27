@@ -768,6 +768,10 @@ impl SemanticGraph {
                 .block_request_queues
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::BlockDmaBuffer => self
+                .block_dma_buffers
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

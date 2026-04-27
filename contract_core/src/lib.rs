@@ -130,6 +130,7 @@ pub enum ObjectKind {
     BlockReadPath,
     BlockWritePath,
     BlockRequestQueue,
+    BlockDmaBuffer,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -225,6 +226,7 @@ impl ObjectKind {
             Self::BlockReadPath => "block-read-path",
             Self::BlockWritePath => "block-write-path",
             Self::BlockRequestQueue => "block-request-queue",
+            Self::BlockDmaBuffer => "block-dma-buffer",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -504,6 +506,7 @@ typed_ref!(
 typed_ref!(BlockReadPathRef, ObjectKind::BlockReadPath);
 typed_ref!(BlockWritePathRef, ObjectKind::BlockWritePath);
 typed_ref!(BlockRequestQueueRef, ObjectKind::BlockRequestQueue);
+typed_ref!(BlockDmaBufferRef, ObjectKind::BlockDmaBuffer);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2054,6 +2057,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "block request queue root/count mismatch",
         ));
     }
+    if roots.block_dma_buffer_roots.len() != package.semantic.block_dma_buffer_count
+        || package.semantic.block_dma_buffers.len() != package.semantic.block_dma_buffer_count
+    {
+        return Err(ContractError::new("block dma buffer root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2640,6 +2648,7 @@ mod tests {
                 block_read_path_count: 0,
                 block_write_path_count: 0,
                 block_request_queue_count: 0,
+                block_dma_buffer_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2744,6 +2753,7 @@ mod tests {
                 block_read_paths: Vec::new(),
                 block_write_paths: Vec::new(),
                 block_request_queues: Vec::new(),
+                block_dma_buffers: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4195,6 +4205,45 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_block_dma_buffer_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.block_dma_buffer_count = 1;
+        package
+            .semantic
+            .block_dma_buffers
+            .push(artifact_manifest::BlockDmaBufferManifest {
+                id: 61,
+                backend_kind: "fake-block-backend-object".to_owned(),
+                backend: 56,
+                backend_generation: 1,
+                block_request: 53,
+                block_request_generation: 1,
+                dma_buffer: 20,
+                dma_buffer_generation: 1,
+                block_device: 51,
+                block_device_generation: 1,
+                block_range: 52,
+                block_range_generation: 1,
+                descriptor: 19,
+                descriptor_generation: 1,
+                queue: 18,
+                queue_generation: 1,
+                operation: "write".to_owned(),
+                access: "read-write".to_owned(),
+                byte_len: 4096,
+                buffer_len: 4096,
+                buffer_digest: 1,
+                generation: 1,
+                state: "bound".to_owned(),
+                recorded_at_event: 77,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "block dma buffer root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -5474,6 +5523,8 @@ mod tests {
         assert!(BlockWritePathRef::try_from_ref(block_write_path).is_ok());
         let block_request_queue = ObjectRef::new(ObjectKind::BlockRequestQueue, 60, 1).unwrap();
         assert!(BlockRequestQueueRef::try_from_ref(block_request_queue).is_ok());
+        let block_dma_buffer = ObjectRef::new(ObjectKind::BlockDmaBuffer, 61, 1).unwrap();
+        assert!(BlockDmaBufferRef::try_from_ref(block_dma_buffer).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

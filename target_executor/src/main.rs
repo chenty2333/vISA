@@ -9,10 +9,10 @@ use artifact_manifest::{
     ActivationCleanupManifest, ActivationCleanupStepManifest, ActivationContextManifest,
     ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
-    BlockCompletionObjectManifest, BlockDeviceObjectManifest, BlockRangeObjectManifest,
-    BlockReadPathManifest, BlockRequestObjectManifest, BlockRequestQueueEntryManifest,
-    BlockRequestQueueManifest, BlockWaitManifest, BlockWritePathManifest,
-    BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
+    BlockCompletionObjectManifest, BlockDeviceObjectManifest, BlockDmaBufferManifest,
+    BlockRangeObjectManifest, BlockReadPathManifest, BlockRequestObjectManifest,
+    BlockRequestQueueEntryManifest, BlockRequestQueueManifest, BlockWaitManifest,
+    BlockWritePathManifest, BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
     CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
     CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
     CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
@@ -214,6 +214,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b7_evidence(&mut semantic)?;
     record_block_runtime_b8_evidence(&mut semantic)?;
     record_block_runtime_b9_evidence(&mut semantic)?;
+    record_block_runtime_b10_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -4048,6 +4049,228 @@ fn record_block_runtime_b9_evidence(semantic: &mut SemanticGraph) -> Result<(), 
     Ok(())
 }
 
+fn record_block_runtime_b10_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let config = FakeBlockBackendConfig::blk0();
+    let backend = ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 20_026, 1);
+    let dma_resource =
+        semantic.register_resource(ResourceKind::DmaBuffer, None, "dma:fake-block0-buf0");
+    let dma_resource_generation = semantic
+        .resource_handle(dma_resource)
+        .map(|handle| handle.generation)
+        .ok_or("b10 dma resource handle is missing")?;
+
+    let queue = semantic.apply_envelope(CommandEnvelope::new(
+        253,
+        "target-executor-b10",
+        SemanticCommand::RecordQueueObject {
+            queue: 20_058,
+            name: "fake-block0-submit".to_owned(),
+            role: QueueObjectRole::Submission,
+            queue_index: 1,
+            depth: 16,
+            device: 20_001,
+            device_generation: 1,
+            note: "b10-record-block-submission-queue".to_owned(),
+        },
+    ));
+    if queue.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b10 queue command {} ({}) failed: status={} violations={:?}",
+            queue.command_id,
+            queue.command,
+            queue.status.as_str(),
+            queue.violations
+        )
+        .into());
+    }
+
+    let descriptor = semantic.apply_envelope(CommandEnvelope::new(
+        254,
+        "target-executor-b10",
+        SemanticCommand::RecordDescriptorObject {
+            descriptor: 20_059,
+            queue: 20_058,
+            queue_generation: 1,
+            slot: 0,
+            access: DescriptorObjectAccess::ReadWrite,
+            length: 4096,
+            note: "b10-record-block-dma-descriptor".to_owned(),
+        },
+    ));
+    if descriptor.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b10 descriptor command {} ({}) failed: status={} violations={:?}",
+            descriptor.command_id,
+            descriptor.command,
+            descriptor.status.as_str(),
+            descriptor.violations
+        )
+        .into());
+    }
+
+    let dma_buffer = semantic.apply_envelope(CommandEnvelope::new(
+        255,
+        "target-executor-b10",
+        SemanticCommand::RecordDmaBufferObject {
+            dma_buffer: 20_060,
+            descriptor: 20_059,
+            descriptor_generation: 1,
+            resource: dma_resource,
+            resource_generation: dma_resource_generation,
+            access: DmaBufferObjectAccess::ReadWrite,
+            length: 4096,
+            note: "b10-record-dma-buffer-object".to_owned(),
+        },
+    ));
+    if dma_buffer.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b10 dma buffer command {} ({}) failed: status={} violations={:?}",
+            dma_buffer.command_id,
+            dma_buffer.command,
+            dma_buffer.status.as_str(),
+            dma_buffer.violations
+        )
+        .into());
+    }
+
+    let buffer_digest = SemanticGraph::expected_block_dma_buffer_digest_v1(
+        config.deterministic_seed,
+        20_002,
+        1,
+        20_005,
+        1,
+        20_046,
+        1,
+        20_060,
+        1,
+        20_059,
+        1,
+        20_058,
+        1,
+        BlockRequestOperation::Write,
+        DmaBufferObjectAccess::ReadWrite,
+        5,
+        4096,
+        4096,
+    );
+    let binding = semantic.apply_envelope(CommandEnvelope::new(
+        256,
+        "target-executor-b10",
+        SemanticCommand::RecordBlockDmaBuffer {
+            block_dma_buffer: 20_061,
+            backend,
+            block_request: 20_046,
+            block_request_generation: 1,
+            dma_buffer: 20_060,
+            dma_buffer_generation: 1,
+            buffer_digest,
+            note: "b10-bind-block-request-to-dma-buffer".to_owned(),
+        },
+    ));
+    if binding.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b10 binding command {} ({}) failed: status={} violations={:?}",
+            binding.command_id,
+            binding.command,
+            binding.status.as_str(),
+            binding.violations
+        )
+        .into());
+    }
+
+    let stale_dma = semantic.apply_envelope(CommandEnvelope::new(
+        257,
+        "target-executor-b10",
+        SemanticCommand::RecordBlockDmaBuffer {
+            block_dma_buffer: 20_062,
+            backend,
+            block_request: 20_046,
+            block_request_generation: 1,
+            dma_buffer: 20_060,
+            dma_buffer_generation: 2,
+            buffer_digest,
+            note: "b10-reject-stale-dma-generation".to_owned(),
+        },
+    ));
+    if stale_dma.status != CommandStatus::Rejected
+        || !stale_dma
+            .violations
+            .iter()
+            .any(|violation| violation.contains("dma generation"))
+    {
+        return Err(format!(
+            "block runtime b10 stale dma command {} ({}) was not rejected: status={} violations={:?}",
+            stale_dma.command_id,
+            stale_dma.command,
+            stale_dma.status.as_str(),
+            stale_dma.violations
+        )
+        .into());
+    }
+
+    let bad_digest = semantic.apply_envelope(CommandEnvelope::new(
+        258,
+        "target-executor-b10",
+        SemanticCommand::RecordBlockDmaBuffer {
+            block_dma_buffer: 20_063,
+            backend,
+            block_request: 20_046,
+            block_request_generation: 1,
+            dma_buffer: 20_060,
+            dma_buffer_generation: 1,
+            buffer_digest: buffer_digest ^ 1,
+            note: "b10-reject-dma-buffer-digest-mismatch".to_owned(),
+        },
+    ));
+    if bad_digest.status != CommandStatus::Rejected
+        || !bad_digest
+            .violations
+            .iter()
+            .any(|violation| violation.contains("digest mismatch"))
+    {
+        return Err(format!(
+            "block runtime b10 bad digest command {} ({}) was not rejected: status={} violations={:?}",
+            bad_digest.command_id,
+            bad_digest.command,
+            bad_digest.status.as_str(),
+            bad_digest.violations
+        )
+        .into());
+    }
+
+    let stale_request = semantic.apply_envelope(CommandEnvelope::new(
+        259,
+        "target-executor-b10",
+        SemanticCommand::RecordBlockDmaBuffer {
+            block_dma_buffer: 20_064,
+            backend,
+            block_request: 20_046,
+            block_request_generation: 2,
+            dma_buffer: 20_060,
+            dma_buffer_generation: 1,
+            buffer_digest,
+            note: "b10-reject-stale-request-generation".to_owned(),
+        },
+    ));
+    if stale_request.status != CommandStatus::Rejected
+        || !stale_request
+            .violations
+            .iter()
+            .any(|violation| violation.contains("request generation"))
+    {
+        return Err(format!(
+            "block runtime b10 stale request command {} ({}) was not rejected: status={} violations={:?}",
+            stale_request.command_id,
+            stale_request.command,
+            stale_request.status.as_str(),
+            stale_request.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -6448,6 +6671,7 @@ fn demo_migration_package(
             block_read_path_count: semantic.block_read_path_count(),
             block_write_path_count: semantic.block_write_path_count(),
             block_request_queue_count: semantic.block_request_queue_count(),
+            block_dma_buffer_count: semantic.block_dma_buffer_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -6799,6 +7023,11 @@ fn demo_migration_package(
                 .block_request_queues()
                 .iter()
                 .map(block_request_queue_manifest)
+                .collect(),
+            block_dma_buffers: semantic
+                .block_dma_buffers()
+                .iter()
+                .map(block_dma_buffer_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -8336,6 +8565,36 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        block_dma_buffer_roots: semantic
+            .block_dma_buffers()
+            .iter()
+            .map(|buffer| {
+                format!(
+                    "block-dma-buffer id={} backend={} block_request={}@{} dma_buffer={}@{} block_device={}@{} block_range={}@{} descriptor={}@{} queue={}@{} operation={} access={} byte_len={} buffer_len={} buffer_digest={} state={} generation={}",
+                    buffer.id,
+                    buffer.backend.summary(),
+                    buffer.block_request,
+                    buffer.block_request_generation,
+                    buffer.dma_buffer,
+                    buffer.dma_buffer_generation,
+                    buffer.block_device,
+                    buffer.block_device_generation,
+                    buffer.block_range,
+                    buffer.block_range_generation,
+                    buffer.descriptor,
+                    buffer.descriptor_generation,
+                    buffer.queue,
+                    buffer.queue_generation,
+                    buffer.operation.as_str(),
+                    buffer.access.as_str(),
+                    buffer.byte_len,
+                    buffer.buffer_len,
+                    buffer.buffer_digest,
+                    buffer.state.as_str(),
+                    buffer.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -9710,6 +9969,38 @@ fn block_request_queue_manifest(
         state: queue.state.as_str().to_owned(),
         recorded_at_event: queue.recorded_at_event,
         note: queue.note.clone(),
+    }
+}
+
+fn block_dma_buffer_manifest(
+    buffer: &semantic_core::BlockDmaBufferRecord,
+) -> BlockDmaBufferManifest {
+    BlockDmaBufferManifest {
+        id: buffer.id,
+        backend_kind: buffer.backend.kind.as_str().to_owned(),
+        backend: buffer.backend.id,
+        backend_generation: buffer.backend.generation,
+        block_request: buffer.block_request,
+        block_request_generation: buffer.block_request_generation,
+        dma_buffer: buffer.dma_buffer,
+        dma_buffer_generation: buffer.dma_buffer_generation,
+        block_device: buffer.block_device,
+        block_device_generation: buffer.block_device_generation,
+        block_range: buffer.block_range,
+        block_range_generation: buffer.block_range_generation,
+        descriptor: buffer.descriptor,
+        descriptor_generation: buffer.descriptor_generation,
+        queue: buffer.queue,
+        queue_generation: buffer.queue_generation,
+        operation: buffer.operation.as_str().to_owned(),
+        access: buffer.access.as_str().to_owned(),
+        byte_len: buffer.byte_len,
+        buffer_len: buffer.buffer_len,
+        buffer_digest: buffer.buffer_digest,
+        generation: buffer.generation,
+        state: buffer.state.as_str().to_owned(),
+        recorded_at_event: buffer.recorded_at_event,
+        note: buffer.note.clone(),
     }
 }
 

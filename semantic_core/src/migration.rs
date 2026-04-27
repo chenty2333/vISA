@@ -1203,6 +1203,32 @@ pub enum SemanticInvariantError {
     BlockRequestQueueMissingEvent {
         queue: BlockRequestQueueId,
     },
+    BlockDmaBufferInvalid {
+        block_dma_buffer: BlockDmaBufferId,
+    },
+    BlockDmaBufferMissingBackend {
+        block_dma_buffer: BlockDmaBufferId,
+        backend: ContractObjectRef,
+    },
+    BlockDmaBufferMissingRequest {
+        block_dma_buffer: BlockDmaBufferId,
+        block_request: BlockRequestObjectId,
+    },
+    BlockDmaBufferMissingDmaBuffer {
+        block_dma_buffer: BlockDmaBufferId,
+        dma_buffer: DmaBufferObjectId,
+    },
+    BlockDmaBufferDuplicateRequest {
+        block_dma_buffer: BlockDmaBufferId,
+        block_request: BlockRequestObjectId,
+    },
+    BlockDmaBufferDuplicateDmaBuffer {
+        block_dma_buffer: BlockDmaBufferId,
+        dma_buffer: DmaBufferObjectId,
+    },
+    BlockDmaBufferMissingEvent {
+        block_dma_buffer: BlockDmaBufferId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

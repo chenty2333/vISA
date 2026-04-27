@@ -1,0 +1,240 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "B10-dma-backed-block-buffer",
+  "phase": "Phase 5 Block / Disk Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add BlockDmaBuffer as a stable semantic DMA-backed block buffer evidence object",
+    "Record BlockDmaBuffer through SemanticCommand::RecordBlockDmaBuffer",
+    "Bind BlockRequestObject to DmaBufferObject with exact generations, direction-compatible DMA access, and deterministic digest evidence",
+    "Require the descriptor, queue, device, block device, block range, request, and DMA buffer chain to match before mutation",
+    "Expose block DMA buffer roots/counts through semantic package, osctl ViewV1, graph, replay roots, and roots JSON",
+    "Reject stale DMA buffer generations, stale request generations, digest mismatch, duplicate live request bindings, duplicate live DMA bindings, too-short buffers, and access mismatches before mutation"
+  ],
+  "no_goals": [
+    "real virtio block DMA execution",
+    "raw DMA address exposure",
+    "adapter-local ring state as semantic truth",
+    "page object integration",
+    "page cache or filesystem adapter",
+    "FAT/ext4 integration",
+    "target-side cwasm execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/block_dma_buffer.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/block/golden_b10_dma_backed_block_buffer.trace.json",
+    "tests/reports/checkpoints/b10_dma_backed_block_buffer.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/block/golden_b10_dma_backed_block_buffer.trace.json",
+    "tests/reports/checkpoints/b10_dma_backed_block_buffer.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "BlockDmaBuffer uses exact ObjectRef-style generations for backend, block request, DMA buffer, block device, block range, descriptor, and queue",
+      "BlockDmaBuffer refuses stale request generations, stale DMA generations, digest mismatch, duplicate live request bindings, duplicate live DMA bindings, too-short buffers, and access mismatches before mutation",
+      "BlockDmaBuffer re-checks the descriptor to queue to device to block-device chain instead of trusting the block request alone",
+      "osctl exposes BlockDmaBuffer through stable ViewV1 and normalizes backend kind to the public osctl object kind",
+      "Root/count validation covers block_dma_buffers so package tampering is rejected"
+    ],
+    "bad_smells_checked": [
+      "No virtio-drivers dependency or adapter internals were introduced into semantic_core",
+      "No raw DMA address, substrate mapping, page cache, FAT/ext4 adapter, filesystem object, or real block execution path was added",
+      "The fake backend remains an adapter/evidence source; BlockDmaBuffer stores stable semantic references, byte counts, access mode, and digest only",
+      "The new graph module is domain-scoped and mirrors existing block read/write/queue boundary shape",
+      "Target executor evidence remains a host-side semantic harness and does not run real block IO"
+    ],
+    "residual_notes": [
+      "B11 still needs PageObject integration",
+      "B12 still needs BufferCacheObject semantics",
+      "B15/B16 still need FAT/ext4 adapter boundaries outside semantic_core"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo check -p semantic_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p contract_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core block_runtime_b10",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core block_dma_buffer",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl block_dma_buffer_view_v1_exposes_request_dma_and_buffer_contract",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl block-dma-buffer list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 256",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 257",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 258",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 259",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --live --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl replay --until 426 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    },
+    {
+      "command": "if rg \"smoltcp::|virtio_drivers|fatfs|ext4|ext4_view|std::net|tokio::|async_std\" semantic_core contract_core target_executor osctl artifact_manifest -g '*.rs'; then exit 1; else exit 0; fi",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/block/golden_b10_dma_backed_block_buffer.trace.json",
+    "osctl_views": [
+      "osctl block-dma-buffer list --json <migration.json>",
+      "osctl command show --json <migration.json> 256",
+      "osctl command show --json <migration.json> 257",
+      "osctl command show --json <migration.json> 258",
+      "osctl command show --json <migration.json> 259",
+      "osctl graph --live --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "block_dma_buffer_roots",
+      "dma_buffer_object_roots",
+      "descriptor_object_roots",
+      "queue_object_roots",
+      "block_request_object_roots",
+      "block_device_object_roots",
+      "block_range_object_roots",
+      "fake_block_backend_object_roots",
+      "command_result_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 426,
+      "block_dma_buffer_count": 1,
+      "block_dma_buffer": "block-dma-buffer:20061@1",
+      "backend": "fake-block-backend:20026@1",
+      "block_request": "block-request:20046@1",
+      "dma_buffer": "dma-buffer:20060@1",
+      "block_device": "block-device:20002@1",
+      "block_range": "block-range:20005@1",
+      "descriptor": "descriptor:20059@1",
+      "queue": "queue:20058@1",
+      "operation": "write",
+      "access": "read-write",
+      "byte_len": 4096,
+      "buffer_len": 4096,
+      "buffer_digest": 12318446517424984074,
+      "recorded_event": 424,
+      "buffer_applied_command": "command-result:256:record-block-dma-buffer:applied",
+      "stale_dma_generation_rejected_command": "command-result:257:record-block-dma-buffer:rejected",
+      "digest_mismatch_rejected_command": "command-result:258:record-block-dma-buffer:rejected",
+      "stale_request_generation_rejected_command": "command-result:259:record-block-dma-buffer:rejected"
+    }
+  },
+  "residual_gaps": [
+    "B11 still needs PageObject integration",
+    "B12 still needs BufferCacheObject semantics",
+    "B15/B16 still need FAT/ext4 adapter boundaries outside semantic_core"
+  ],
+  "next_checkpoint": "B11-page-object-integration"
+}

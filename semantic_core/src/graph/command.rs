@@ -376,6 +376,16 @@ pub enum SemanticCommand {
         entries: Vec<BlockRequestQueueEntryRef>,
         note: String,
     },
+    RecordBlockDmaBuffer {
+        block_dma_buffer: BlockDmaBufferId,
+        backend: ContractObjectRef,
+        block_request: BlockRequestObjectId,
+        block_request_generation: Generation,
+        dma_buffer: DmaBufferObjectId,
+        dma_buffer_generation: Generation,
+        buffer_digest: u64,
+        note: String,
+    },
     RecordVirtioNetBackendObject {
         virtio_net_backend: VirtioNetBackendObjectId,
         name: String,
@@ -1108,6 +1118,7 @@ impl SemanticCommand {
             Self::RecordBlockReadPath { .. } => "record-block-read-path",
             Self::RecordBlockWritePath { .. } => "record-block-write-path",
             Self::RecordBlockRequestQueue { .. } => "record-block-request-queue",
+            Self::RecordBlockDmaBuffer { .. } => "record-block-dma-buffer",
             Self::RecordVirtioNetBackendObject { .. } => "record-virtio-net-backend-object",
             Self::RecordNetworkRxInterrupt { .. } => "record-network-rx-interrupt",
             Self::ResolveNetworkRxWait { .. } => "resolve-network-rx-wait",
@@ -2519,6 +2530,26 @@ impl SemanticGraph {
                     entries,
                 )
                 .map(|_| ())
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordBlockDmaBuffer {
+                block_dma_buffer,
+                backend,
+                block_request,
+                block_request_generation,
+                dma_buffer,
+                dma_buffer_generation,
+                buffer_digest,
+                ..
+            } => self
+                .validate_block_dma_buffer(
+                    *block_dma_buffer,
+                    *backend,
+                    *block_request,
+                    *block_request_generation,
+                    *dma_buffer,
+                    *dma_buffer_generation,
+                    *buffer_digest,
+                )
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordVirtioNetBackendObject {
                 virtio_net_backend,
@@ -4809,6 +4840,25 @@ impl SemanticGraph {
                 block_device_generation,
                 depth,
                 &entries,
+                &note,
+            ),
+            SemanticCommand::RecordBlockDmaBuffer {
+                block_dma_buffer,
+                backend,
+                block_request,
+                block_request_generation,
+                dma_buffer,
+                dma_buffer_generation,
+                buffer_digest,
+                note,
+            } => self.record_block_dma_buffer_with_id(
+                block_dma_buffer,
+                backend,
+                block_request,
+                block_request_generation,
+                dma_buffer,
+                dma_buffer_generation,
+                buffer_digest,
                 &note,
             ),
             SemanticCommand::RecordVirtioNetBackendObject {

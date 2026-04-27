@@ -62,6 +62,7 @@ pub type VirtioBlkBackendObjectId = u64;
 pub type BlockReadPathId = u64;
 pub type BlockWritePathId = u64;
 pub type BlockRequestQueueId = u64;
+pub type BlockDmaBufferId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

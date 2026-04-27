@@ -9,15 +9,15 @@ use artifact_manifest::{
     ActivationCleanupManifest, ActivationContextManifest, ActivationMigrationManifest,
     ActivationRecordManifest, ActivationResumeManifest, ActivationWaitManifest,
     ArtifactBundleManifest, BlockCompletionObjectManifest, BlockDeviceObjectManifest,
-    BlockRangeObjectManifest, BlockReadPathManifest, BlockRequestObjectManifest,
-    BlockRequestQueueManifest, BlockWaitManifest, BlockWritePathManifest,
-    BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
-    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest,
-    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
-    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
-    EndpointObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    BlockDmaBufferManifest, BlockRangeObjectManifest, BlockReadPathManifest,
+    BlockRequestObjectManifest, BlockRequestQueueManifest, BlockWaitManifest,
+    BlockWritePathManifest, BoundaryValidationReportManifest, CapabilityRecordManifest,
+    CleanupTransactionManifest, CodeObjectManifest, CommandResultManifest,
+    ContractObjectRefManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
+    DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
+    DriverStoreBindingManifest, EndpointObjectManifest, FakeBlockBackendObjectManifest,
+    FakeNetBackendObjectManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
@@ -361,6 +361,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-write"
         | "block-request-queue"
         | "block-queue"
+        | "block-dma-buffer"
+        | "block-buffer"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -531,7 +533,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -792,6 +794,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "block-read-path" | "block-read" => "block-read-path",
         "block-write-path" | "block-write" => "block-write-path",
         "block-request-queue" | "block-queue" => "block-request-queue",
+        "block-dma-buffer" | "block-buffer" => "block-dma-buffer",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2991,6 +2994,78 @@ fn block_request_queue_view_v1(queue: &BlockRequestQueueManifest) -> serde_json:
             "recorded_at_event": queue.recorded_at_event,
             "backend_generation": queue.backend_generation,
             "block_device_generation": queue.block_device_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn block_dma_buffer_view_v1(buffer: &BlockDmaBufferManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "block-dma-buffer",
+        "id": buffer.id,
+        "generation": buffer.generation,
+        "state": buffer.state,
+        "owner": {
+            "backend": object_ref_json(
+                osctl_kind_from_contract_kind(&buffer.backend_kind),
+                buffer.backend,
+                buffer.backend_generation,
+            ),
+            "block_request": object_ref_json(
+                "block-request",
+                buffer.block_request,
+                buffer.block_request_generation,
+            ),
+        },
+        "references": {
+            "backend": object_ref_json(
+                osctl_kind_from_contract_kind(&buffer.backend_kind),
+                buffer.backend,
+                buffer.backend_generation,
+            ),
+            "block_request": object_ref_json(
+                "block-request",
+                buffer.block_request,
+                buffer.block_request_generation,
+            ),
+            "dma_buffer": object_ref_json(
+                "dma-buffer",
+                buffer.dma_buffer,
+                buffer.dma_buffer_generation,
+            ),
+            "block_device": object_ref_json(
+                "block-device",
+                buffer.block_device,
+                buffer.block_device_generation,
+            ),
+            "block_range": object_ref_json(
+                "block-range",
+                buffer.block_range,
+                buffer.block_range_generation,
+            ),
+            "descriptor": object_ref_json(
+                "descriptor",
+                buffer.descriptor,
+                buffer.descriptor_generation,
+            ),
+            "queue": object_ref_json("queue", buffer.queue, buffer.queue_generation),
+            "event": {
+                "id": buffer.recorded_at_event,
+            },
+        },
+        "buffer": {
+            "operation": buffer.operation,
+            "access": buffer.access,
+            "byte_len": buffer.byte_len,
+            "buffer_len": buffer.buffer_len,
+            "buffer_digest": buffer.buffer_digest,
+        },
+        "note": buffer.note,
+        "last_transition": {
+            "recorded_at_event": buffer.recorded_at_event,
+            "block_request_generation": buffer.block_request_generation,
+            "dma_buffer_generation": buffer.dma_buffer_generation,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -5640,6 +5715,12 @@ fn stable_views_for_kind(
             .iter()
             .map(block_request_queue_view_v1)
             .collect()),
+        "block-dma-buffer" | "block-buffer" => Ok(package
+            .semantic
+            .block_dma_buffers
+            .iter()
+            .map(block_dma_buffer_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -6733,6 +6814,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.block_request_queue_roots,
     );
     print_roots(
+        "block-dma-buffer",
+        &package.semantic.roots.block_dma_buffer_roots,
+    );
+    print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
     );
@@ -7197,6 +7282,85 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
                 ));
             }
         }
+    }
+    for buffer in &package.semantic.block_dma_buffers {
+        if buffer.state != "bound" {
+            continue;
+        }
+        let from = object_ref_json("block-dma-buffer", buffer.id, buffer.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                osctl_kind_from_contract_kind(&buffer.backend_kind),
+                buffer.backend,
+                buffer.backend_generation,
+            ),
+            "block-dma-buffer->backend",
+            "historical",
+            Some(buffer.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-request",
+                buffer.block_request,
+                buffer.block_request_generation,
+            ),
+            "block-dma-buffer->block-request",
+            "historical",
+            Some(buffer.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "dma-buffer",
+                buffer.dma_buffer,
+                buffer.dma_buffer_generation,
+            ),
+            "block-dma-buffer->dma-buffer",
+            "historical",
+            Some(buffer.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-device",
+                buffer.block_device,
+                buffer.block_device_generation,
+            ),
+            "block-dma-buffer->block-device",
+            "historical",
+            Some(buffer.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-range",
+                buffer.block_range,
+                buffer.block_range_generation,
+            ),
+            "block-dma-buffer->block-range",
+            "historical",
+            Some(buffer.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "descriptor",
+                buffer.descriptor,
+                buffer.descriptor_generation,
+            ),
+            "block-dma-buffer->descriptor",
+            "historical",
+            Some(buffer.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json("queue", buffer.queue, buffer.queue_generation),
+            "block-dma-buffer->queue",
+            "historical",
+            Some(buffer.recorded_at_event),
+        ));
     }
     for packet_buffer in &package.semantic.packet_buffer_objects {
         if packet_buffer.state != "allocated" && packet_buffer.state != "filled" {
@@ -11215,7 +11379,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -11280,6 +11444,10 @@ fn replay_until(
         package.semantic.roots.block_wait_roots.len(),
         package.semantic.roots.fake_block_backend_object_roots.len(),
         package.semantic.roots.virtio_blk_backend_object_roots.len(),
+        package.semantic.roots.block_read_path_roots.len(),
+        package.semantic.roots.block_write_path_roots.len(),
+        package.semantic.roots.block_request_queue_roots.len(),
+        package.semantic.roots.block_dma_buffer_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -11395,6 +11563,18 @@ fn replay_until(
     }
     for backend in &package.semantic.roots.virtio_blk_backend_object_roots {
         println!("replay virtio-blk-backend {backend}");
+    }
+    for path in &package.semantic.roots.block_read_path_roots {
+        println!("replay block-read-path {path}");
+    }
+    for path in &package.semantic.roots.block_write_path_roots {
+        println!("replay block-write-path {path}");
+    }
+    for queue in &package.semantic.roots.block_request_queue_roots {
+        println!("replay block-request-queue {queue}");
+    }
+    for buffer in &package.semantic.roots.block_dma_buffer_roots {
+        println!("replay block-dma-buffer {buffer}");
     }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
@@ -11719,6 +11899,10 @@ fn print_replay_json(
     roots.insert(
         "block_request_queues".to_owned(),
         serde_json::json!(package.semantic.roots.block_request_queue_roots.len()),
+    );
+    roots.insert(
+        "block_dma_buffers".to_owned(),
+        serde_json::json!(package.semantic.roots.block_dma_buffer_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -12092,6 +12276,10 @@ fn print_replay_json(
         "block_request_queue_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.block_request_queue_roots),
     );
+    roots.insert(
+        "block_dma_buffer_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.block_dma_buffer_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -12136,7 +12324,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -12203,6 +12391,10 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.block_wait_count,
         package.semantic.fake_block_backend_object_count,
         package.semantic.virtio_blk_backend_object_count,
+        package.semantic.block_read_path_count,
+        package.semantic.block_write_path_count,
+        package.semantic.block_request_queue_count,
+        package.semantic.block_dma_buffer_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -13866,6 +14058,46 @@ mod tests {
         assert_eq!(view["queue"]["pending_count"], 1);
         assert_eq!(view["queue"]["completed_count"], 1);
         assert_eq!(view["last_transition"]["recorded_at_event"], 115);
+    }
+
+    #[test]
+    fn block_dma_buffer_view_v1_exposes_request_dma_and_buffer_contract() {
+        let view = block_dma_buffer_view_v1(&BlockDmaBufferManifest {
+            id: 116,
+            backend_kind: "fake-block-backend-object".to_owned(),
+            backend: 111,
+            backend_generation: 1,
+            block_request: 108,
+            block_request_generation: 1,
+            dma_buffer: 210,
+            dma_buffer_generation: 1,
+            block_device: 104,
+            block_device_generation: 1,
+            block_range: 105,
+            block_range_generation: 1,
+            descriptor: 209,
+            descriptor_generation: 1,
+            queue: 208,
+            queue_generation: 1,
+            operation: "write".to_owned(),
+            access: "read-write".to_owned(),
+            byte_len: 4096,
+            buffer_len: 4096,
+            buffer_digest: 0xb10,
+            generation: 1,
+            state: "bound".to_owned(),
+            recorded_at_event: 116,
+            note: "block dma buffer".to_owned(),
+        });
+        assert_eq!(view["kind"], "block-dma-buffer");
+        assert_eq!(view["owner"]["backend"]["kind"], "fake-block-backend");
+        assert_eq!(view["owner"]["block_request"]["generation"], 1);
+        assert_eq!(view["references"]["dma_buffer"]["kind"], "dma-buffer");
+        assert_eq!(view["references"]["descriptor"]["id"], 209);
+        assert_eq!(view["references"]["queue"]["generation"], 1);
+        assert_eq!(view["buffer"]["operation"], "write");
+        assert_eq!(view["buffer"]["buffer_digest"], 0xb10);
+        assert_eq!(view["last_transition"]["dma_buffer_generation"], 1);
     }
 
     #[test]

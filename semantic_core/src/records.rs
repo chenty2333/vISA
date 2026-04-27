@@ -1948,6 +1948,39 @@ impl BlockRequestQueueRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockDmaBufferRecord {
+    pub id: BlockDmaBufferId,
+    pub backend: ContractObjectRef,
+    pub block_request: BlockRequestObjectId,
+    pub block_request_generation: Generation,
+    pub dma_buffer: DmaBufferObjectId,
+    pub dma_buffer_generation: Generation,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub block_range: BlockRangeObjectId,
+    pub block_range_generation: Generation,
+    pub descriptor: DescriptorObjectId,
+    pub descriptor_generation: Generation,
+    pub queue: QueueObjectId,
+    pub queue_generation: Generation,
+    pub operation: BlockRequestOperation,
+    pub access: DmaBufferObjectAccess,
+    pub byte_len: u64,
+    pub buffer_len: u32,
+    pub buffer_digest: u64,
+    pub generation: Generation,
+    pub state: BlockDmaBufferState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl BlockDmaBufferRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::BlockDmaBuffer, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

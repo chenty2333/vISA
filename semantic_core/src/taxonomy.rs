@@ -1446,6 +1446,21 @@ impl NetworkRecoveryBenchmarkState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockDmaBufferState {
+    Bound,
+    Released,
+}
+
+impl BlockDmaBufferState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bound => "bound",
+            Self::Released => "released",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,
