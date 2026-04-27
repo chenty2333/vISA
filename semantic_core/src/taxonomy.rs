@@ -914,6 +914,21 @@ impl FakeBlockBackendObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VirtioBlkBackendObjectState {
+    SkeletonReady,
+    Retired,
+}
+
+impl VirtioBlkBackendObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SkeletonReady => "skeleton-ready",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PacketBufferDirection {
     Rx,
     Tx,

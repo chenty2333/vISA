@@ -1782,6 +1782,45 @@ impl FakeBlockBackendObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VirtioBlkBackendObjectRecord {
+    pub id: VirtioBlkBackendObjectId,
+    pub name: String,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub driver_binding: DriverStoreBindingId,
+    pub driver_binding_generation: Generation,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub provider: String,
+    pub profile: String,
+    pub model: String,
+    pub sector_size: u32,
+    pub sector_count: u64,
+    pub read_only: bool,
+    pub max_transfer_sectors: u32,
+    pub device_features: u64,
+    pub driver_features: u64,
+    pub negotiated_features: u64,
+    pub request_queue_index: u16,
+    pub queue_size: u16,
+    pub irq_vector: u16,
+    pub generation: Generation,
+    pub state: VirtioBlkBackendObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl VirtioBlkBackendObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::VirtioBlkBackendObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

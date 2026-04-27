@@ -42,7 +42,7 @@ use artifact_manifest::{
     SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
     TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
     TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
-    VirtioNetBackendObjectManifest, WaitRecordManifest,
+    VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -81,6 +81,10 @@ use service_core::net_contract::{
     PACKET_FRAME_FORMAT_VERSION, PACKET_MAX_PAYLOAD_LEN, VIRTIO_NET0_CONTRACT,
 };
 use substrate_api::{SubstrateEvent, SubstrateRequester};
+use substrate_virtio::block::{
+    VIRTIO_BLK_BACKEND_MODEL, VIRTIO_BLK_BACKEND_PROFILE, VIRTIO_BLK_BACKEND_PROVIDER,
+    VirtioBlkBackendConfig,
+};
 use substrate_virtio::net::{
     VIRTIO_NET_BACKEND_MODEL, VIRTIO_NET_BACKEND_PROFILE, VIRTIO_NET_BACKEND_PROVIDER,
     VirtioNetBackendConfig,
@@ -91,8 +95,11 @@ use target_abi::{
 };
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
-const SEMANTIC_EVIDENCE_CAPABILITY_SOURCES: &[&str] =
-    &["i7-device-capability", "n17-dma-generation-capability"];
+const SEMANTIC_EVIDENCE_CAPABILITY_SOURCES: &[&str] = &[
+    "i7-device-capability",
+    "n17-dma-generation-capability",
+    "b6-virtio-blk-device-capability",
+];
 
 #[derive(Clone, Debug, Default)]
 struct TargetExecutorV1Report {
@@ -200,6 +207,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b3_evidence(&mut semantic)?;
     record_block_runtime_b4_evidence(&mut semantic)?;
     record_block_runtime_b5_evidence(&mut semantic)?;
+    record_block_runtime_b6_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -3155,6 +3163,318 @@ fn record_block_runtime_b5_evidence(semantic: &mut SemanticGraph) -> Result<(), 
     Ok(())
 }
 
+fn record_block_runtime_b6_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let config = VirtioBlkBackendConfig::blk0();
+    let block_resource =
+        semantic.register_resource(ResourceKind::BlockDevice, None, "block-device:virtio-blk0");
+    let block_resource_generation = semantic
+        .resource_handle(block_resource)
+        .map(|handle| handle.generation)
+        .ok_or("b6 virtio block device resource handle is missing")?;
+    if !semantic.record_device_object_with_id(
+        20_030,
+        "virtio-blk0",
+        "block-device",
+        block_resource,
+        block_resource_generation,
+        "virtio-blk-backend-skeleton",
+        "virtio-mmio",
+        "virtio",
+        VIRTIO_BLK_BACKEND_MODEL,
+        "b6-record-virtio-block-backing-device",
+    ) {
+        return Err("b6 virtio block backing device could not be recorded".into());
+    }
+
+    let block_device = semantic.apply_envelope(CommandEnvelope::new(
+        226,
+        "target-executor-b6",
+        SemanticCommand::RecordBlockDeviceObject {
+            block_device: 20_031,
+            name: "vblk0".to_owned(),
+            device: 20_030,
+            device_generation: 1,
+            sector_size: config.sector_size,
+            sector_count: config.sector_count,
+            read_only: config.read_only,
+            max_transfer_sectors: config.max_transfer_sectors,
+            note: "b6-record-virtio-block-device-object".to_owned(),
+        },
+    ));
+    if block_device.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b6 block device command {} ({}) failed: status={} violations={:?}",
+            block_device.command_id,
+            block_device.command,
+            block_device.status.as_str(),
+            block_device.violations
+        )
+        .into());
+    }
+
+    let block_driver_store = semantic
+        .store_id("driver_virtio_net")
+        .ok_or("driver_virtio_net store is missing for b6 evidence")?;
+    let block_driver_store_generation = semantic
+        .store_handle(block_driver_store)
+        .map(|handle| handle.generation)
+        .ok_or("b6 block driver store handle is missing")?;
+    let virtio_device_ref = ContractObjectRef::new(ContractObjectKind::DeviceObject, 20_030, 1);
+    let virtio_device_capability = semantic.grant_capability_with_authority_ref(
+        "driver_virtio_net",
+        "device.virtio-blk0",
+        AuthorityObjectRef::internal(CapabilityClass::Device, virtio_device_ref),
+        &["probe"],
+        "store",
+        "b6-virtio-blk-device-capability",
+        true,
+    );
+    let virtio_device_handle = semantic
+        .capabilities()
+        .record(virtio_device_capability)
+        .and_then(|record| record.store_local_handle(vec!["probe".to_owned()]))
+        .ok_or("b6 virtio block device capability handle is missing")?;
+
+    let commands = [
+        CommandEnvelope::new(
+            227,
+            "target-executor-b6",
+            SemanticCommand::RecordDeviceCapability {
+                device_capability: 20_032,
+                driver_store: block_driver_store,
+                driver_store_generation: block_driver_store_generation,
+                target: virtio_device_ref,
+                class: CapabilityClass::Device,
+                operation: "probe".to_owned(),
+                handle: virtio_device_handle,
+                note: "b6-record-virtio-block-device-capability-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            228,
+            "target-executor-b6",
+            SemanticCommand::BindDriverStore {
+                binding: 20_033,
+                driver_store: block_driver_store,
+                driver_store_generation: block_driver_store_generation,
+                device: 20_030,
+                device_generation: 1,
+                device_capability: 20_032,
+                device_capability_generation: 1,
+                note: "b6-bind-virtio-block-driver-store-harness".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            229,
+            "target-executor-b6",
+            SemanticCommand::RecordVirtioBlkBackendObject {
+                virtio_blk_backend: 20_034,
+                name: "virtio-blk0-backend".to_owned(),
+                block_device: 20_031,
+                block_device_generation: 1,
+                driver_binding: 20_033,
+                driver_binding_generation: 1,
+                provider: VIRTIO_BLK_BACKEND_PROVIDER.to_owned(),
+                profile: VIRTIO_BLK_BACKEND_PROFILE.to_owned(),
+                model: VIRTIO_BLK_BACKEND_MODEL.to_owned(),
+                sector_size: config.sector_size,
+                sector_count: config.sector_count,
+                read_only: config.read_only,
+                max_transfer_sectors: config.max_transfer_sectors,
+                device_features: config.device_features,
+                driver_features: config.driver_features,
+                negotiated_features: config.negotiated_features,
+                request_queue_index: config.request_queue_index,
+                queue_size: config.queue_size,
+                irq_vector: config.irq_vector,
+                note: "b6-bind-virtio-block-backend-skeleton-harness".to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "block runtime b6 evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+
+    let duplicate_backend = semantic.apply_envelope(CommandEnvelope::new(
+        230,
+        "target-executor-b6",
+        SemanticCommand::RecordVirtioBlkBackendObject {
+            virtio_blk_backend: 20_035,
+            name: "virtio-blk0-backend-duplicate".to_owned(),
+            block_device: 20_031,
+            block_device_generation: 1,
+            driver_binding: 20_033,
+            driver_binding_generation: 1,
+            provider: VIRTIO_BLK_BACKEND_PROVIDER.to_owned(),
+            profile: VIRTIO_BLK_BACKEND_PROFILE.to_owned(),
+            model: VIRTIO_BLK_BACKEND_MODEL.to_owned(),
+            sector_size: config.sector_size,
+            sector_count: config.sector_count,
+            read_only: config.read_only,
+            max_transfer_sectors: config.max_transfer_sectors,
+            device_features: config.device_features,
+            driver_features: config.driver_features,
+            negotiated_features: config.negotiated_features,
+            request_queue_index: config.request_queue_index,
+            queue_size: config.queue_size,
+            irq_vector: config.irq_vector,
+            note: "b6-reject-duplicate-virtio-block-backend".to_owned(),
+        },
+    ));
+    if duplicate_backend.status != CommandStatus::Rejected
+        || !duplicate_backend
+            .violations
+            .iter()
+            .any(|violation| violation.contains("already bound"))
+    {
+        return Err(format!(
+            "block runtime b6 duplicate backend command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate_backend.command_id,
+            duplicate_backend.command,
+            duplicate_backend.status.as_str(),
+            duplicate_backend.violations
+        )
+        .into());
+    }
+
+    let stale_backend = semantic.apply_envelope(CommandEnvelope::new(
+        231,
+        "target-executor-b6",
+        SemanticCommand::RecordVirtioBlkBackendObject {
+            virtio_blk_backend: 20_036,
+            name: "virtio-blk0-backend-stale".to_owned(),
+            block_device: 20_031,
+            block_device_generation: 2,
+            driver_binding: 20_033,
+            driver_binding_generation: 1,
+            provider: VIRTIO_BLK_BACKEND_PROVIDER.to_owned(),
+            profile: VIRTIO_BLK_BACKEND_PROFILE.to_owned(),
+            model: VIRTIO_BLK_BACKEND_MODEL.to_owned(),
+            sector_size: config.sector_size,
+            sector_count: config.sector_count,
+            read_only: config.read_only,
+            max_transfer_sectors: config.max_transfer_sectors,
+            device_features: config.device_features,
+            driver_features: config.driver_features,
+            negotiated_features: config.negotiated_features,
+            request_queue_index: config.request_queue_index,
+            queue_size: config.queue_size,
+            irq_vector: config.irq_vector,
+            note: "b6-reject-stale-block-device-generation".to_owned(),
+        },
+    ));
+    if stale_backend.status != CommandStatus::Rejected
+        || !stale_backend.violations.iter().any(|violation| {
+            violation.contains("block device generation") || violation.contains("missing")
+        })
+    {
+        return Err(format!(
+            "block runtime b6 stale backend command {} ({}) was not rejected: status={} violations={:?}",
+            stale_backend.command_id,
+            stale_backend.command,
+            stale_backend.status.as_str(),
+            stale_backend.violations
+        )
+        .into());
+    }
+
+    let stale_binding = semantic.apply_envelope(CommandEnvelope::new(
+        232,
+        "target-executor-b6",
+        SemanticCommand::RecordVirtioBlkBackendObject {
+            virtio_blk_backend: 20_037,
+            name: "virtio-blk0-backend-stale-binding".to_owned(),
+            block_device: 20_031,
+            block_device_generation: 1,
+            driver_binding: 20_033,
+            driver_binding_generation: 2,
+            provider: VIRTIO_BLK_BACKEND_PROVIDER.to_owned(),
+            profile: VIRTIO_BLK_BACKEND_PROFILE.to_owned(),
+            model: VIRTIO_BLK_BACKEND_MODEL.to_owned(),
+            sector_size: config.sector_size,
+            sector_count: config.sector_count,
+            read_only: config.read_only,
+            max_transfer_sectors: config.max_transfer_sectors,
+            device_features: config.device_features,
+            driver_features: config.driver_features,
+            negotiated_features: config.negotiated_features,
+            request_queue_index: config.request_queue_index,
+            queue_size: config.queue_size,
+            irq_vector: config.irq_vector,
+            note: "b6-reject-stale-driver-binding-generation".to_owned(),
+        },
+    ));
+    if stale_binding.status != CommandStatus::Rejected
+        || !stale_binding
+            .violations
+            .iter()
+            .any(|violation| violation.contains("driver binding generation"))
+    {
+        return Err(format!(
+            "block runtime b6 stale binding command {} ({}) was not rejected: status={} violations={:?}",
+            stale_binding.command_id,
+            stale_binding.command,
+            stale_binding.status.as_str(),
+            stale_binding.violations
+        )
+        .into());
+    }
+
+    let feature_mismatch = semantic.apply_envelope(CommandEnvelope::new(
+        233,
+        "target-executor-b6",
+        SemanticCommand::RecordVirtioBlkBackendObject {
+            virtio_blk_backend: 20_038,
+            name: "virtio-blk0-backend-feature-mismatch".to_owned(),
+            block_device: 20_031,
+            block_device_generation: 1,
+            driver_binding: 20_033,
+            driver_binding_generation: 1,
+            provider: VIRTIO_BLK_BACKEND_PROVIDER.to_owned(),
+            profile: VIRTIO_BLK_BACKEND_PROFILE.to_owned(),
+            model: VIRTIO_BLK_BACKEND_MODEL.to_owned(),
+            sector_size: config.sector_size,
+            sector_count: config.sector_count,
+            read_only: config.read_only,
+            max_transfer_sectors: config.max_transfer_sectors,
+            device_features: config.device_features,
+            driver_features: config.driver_features,
+            negotiated_features: config.device_features | (1 << 63),
+            request_queue_index: config.request_queue_index,
+            queue_size: config.queue_size,
+            irq_vector: config.irq_vector,
+            note: "b6-reject-feature-negotiation-mismatch".to_owned(),
+        },
+    ));
+    if feature_mismatch.status != CommandStatus::Rejected
+        || !feature_mismatch
+            .violations
+            .iter()
+            .any(|violation| violation.contains("negotiated features"))
+    {
+        return Err(format!(
+            "block runtime b6 feature mismatch command {} ({}) was not rejected: status={} violations={:?}",
+            feature_mismatch.command_id,
+            feature_mismatch.command,
+            feature_mismatch.status.as_str(),
+            feature_mismatch.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -5551,6 +5871,7 @@ fn demo_migration_package(
             block_completion_object_count: semantic.block_completion_object_count(),
             block_wait_count: semantic.block_wait_count(),
             fake_block_backend_object_count: semantic.fake_block_backend_object_count(),
+            virtio_blk_backend_object_count: semantic.virtio_blk_backend_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -5882,6 +6203,11 @@ fn demo_migration_package(
                 .fake_block_backends()
                 .iter()
                 .map(fake_block_backend_object_manifest)
+                .collect(),
+            virtio_blk_backends: semantic
+                .virtio_blk_backends()
+                .iter()
+                .map(virtio_blk_backend_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -7318,6 +7644,38 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        virtio_blk_backend_object_roots: semantic
+            .virtio_blk_backends()
+            .iter()
+            .map(|backend| {
+                format!(
+                    "virtio-blk-backend-object id={} name={} block_device={}@{} driver_binding={}@{} device={}@{} provider={} profile={} model={} sector_size={} sector_count={} read_only={} max_transfer_sectors={} device_features={} driver_features={} negotiated_features={} request_queue_index={} queue_size={} irq_vector={} state={} generation={}",
+                    backend.id,
+                    backend.name,
+                    backend.block_device,
+                    backend.block_device_generation,
+                    backend.driver_binding,
+                    backend.driver_binding_generation,
+                    backend.device,
+                    backend.device_generation,
+                    backend.provider,
+                    backend.profile,
+                    backend.model,
+                    backend.sector_size,
+                    backend.sector_count,
+                    backend.read_only,
+                    backend.max_transfer_sectors,
+                    backend.device_features,
+                    backend.driver_features,
+                    backend.negotiated_features,
+                    backend.request_queue_index,
+                    backend.queue_size,
+                    backend.irq_vector,
+                    backend.state.as_str(),
+                    backend.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -8568,6 +8926,38 @@ fn fake_block_backend_object_manifest(
         read_only: backend.read_only,
         max_transfer_sectors: backend.max_transfer_sectors,
         deterministic_seed: backend.deterministic_seed,
+        generation: backend.generation,
+        state: backend.state.as_str().to_owned(),
+        recorded_at_event: backend.recorded_at_event,
+        note: backend.note.clone(),
+    }
+}
+
+fn virtio_blk_backend_object_manifest(
+    backend: &semantic_core::VirtioBlkBackendObjectRecord,
+) -> VirtioBlkBackendObjectManifest {
+    VirtioBlkBackendObjectManifest {
+        id: backend.id,
+        name: backend.name.clone(),
+        block_device: backend.block_device,
+        block_device_generation: backend.block_device_generation,
+        driver_binding: backend.driver_binding,
+        driver_binding_generation: backend.driver_binding_generation,
+        device: backend.device,
+        device_generation: backend.device_generation,
+        provider: backend.provider.clone(),
+        profile: backend.profile.clone(),
+        model: backend.model.clone(),
+        sector_size: backend.sector_size,
+        sector_count: backend.sector_count,
+        read_only: backend.read_only,
+        max_transfer_sectors: backend.max_transfer_sectors,
+        device_features: backend.device_features,
+        driver_features: backend.driver_features,
+        negotiated_features: backend.negotiated_features,
+        request_queue_index: backend.request_queue_index,
+        queue_size: backend.queue_size,
+        irq_vector: backend.irq_vector,
         generation: backend.generation,
         state: backend.state.as_str().to_owned(),
         recorded_at_event: backend.recorded_at_event,

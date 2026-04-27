@@ -1107,6 +1107,28 @@ pub enum SemanticInvariantError {
     FakeBlockBackendObjectMissingEvent {
         fake_block_backend: FakeBlockBackendObjectId,
     },
+    VirtioBlkBackendObjectInvalid {
+        virtio_blk_backend: VirtioBlkBackendObjectId,
+    },
+    VirtioBlkBackendObjectMissingBlockDevice {
+        virtio_blk_backend: VirtioBlkBackendObjectId,
+        block_device: BlockDeviceObjectId,
+    },
+    VirtioBlkBackendObjectMissingDriverBinding {
+        virtio_blk_backend: VirtioBlkBackendObjectId,
+        driver_binding: DriverStoreBindingId,
+    },
+    VirtioBlkBackendObjectDuplicateBinding {
+        virtio_blk_backend: VirtioBlkBackendObjectId,
+        block_device: BlockDeviceObjectId,
+    },
+    VirtioBlkBackendObjectDuplicateDriverBinding {
+        virtio_blk_backend: VirtioBlkBackendObjectId,
+        driver_binding: DriverStoreBindingId,
+    },
+    VirtioBlkBackendObjectMissingEvent {
+        virtio_blk_backend: VirtioBlkBackendObjectId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

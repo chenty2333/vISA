@@ -67,6 +67,7 @@ pub struct SemanticGraph {
     block_completion_objects: Vec<BlockCompletionObjectRecord>,
     block_waits: Vec<BlockWaitRecord>,
     fake_block_backends: Vec<FakeBlockBackendObjectRecord>,
+    virtio_blk_backends: Vec<VirtioBlkBackendObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -145,6 +146,7 @@ pub struct SemanticGraph {
     next_block_completion_object_id: BlockCompletionObjectId,
     next_block_wait_id: BlockWaitId,
     next_fake_block_backend_object_id: FakeBlockBackendObjectId,
+    next_virtio_blk_backend_object_id: VirtioBlkBackendObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -231,6 +233,7 @@ mod substrate;
 mod task;
 mod timer;
 mod transaction;
+mod virtio_blk_backend_object;
 mod virtio_net_backend_object;
 mod wait;
 
@@ -303,6 +306,7 @@ impl SemanticGraph {
             block_completion_objects: Vec::new(),
             block_waits: Vec::new(),
             fake_block_backends: Vec::new(),
+            virtio_blk_backends: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -381,6 +385,7 @@ impl SemanticGraph {
             next_block_completion_object_id: 1,
             next_block_wait_id: 1,
             next_fake_block_backend_object_id: 1,
+            next_virtio_blk_backend_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

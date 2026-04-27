@@ -1,0 +1,177 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "B6-virtio-blk-backend-skeleton",
+  "name": "golden_b6_virtio_blk_backend_skeleton",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md"
+  ],
+  "no_goals": [
+    "real virtio-drivers integration",
+    "real virtio MMIO/DMA/IRQ datapath",
+    "block read/write execution",
+    "request queue scheduling",
+    "DMA-backed block buffer",
+    "filesystem adapters",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "B6 records a separate virtio BlockDeviceObject 20031@1 backed by DeviceObject 20030@1",
+      "Device capability evidence is object_ref-bound to DeviceObject 20030@1",
+      "substrate_virtio::block owns the backend skeleton profile evidence",
+      "semantic_core records only VirtioBlkBackendObject binding/evidence"
+    ],
+    "commands": [
+      {
+        "id": 226,
+        "command": "record-block-device-object",
+        "block_device": "block-device:20031@1",
+        "device": "device:20030@1",
+        "expected": "applied"
+      },
+      {
+        "id": 227,
+        "command": "record-device-capability",
+        "target": "device:20030@1",
+        "expected": "applied"
+      },
+      {
+        "id": 228,
+        "command": "bind-driver-store",
+        "driver_binding": "driver-store-binding:20033@1",
+        "device": "device:20030@1",
+        "expected": "applied"
+      },
+      {
+        "id": 229,
+        "command": "record-virtio-blk-backend-object",
+        "virtio_blk_backend": "virtio-blk-backend:20034@1",
+        "block_device": "block-device:20031@1",
+        "driver_binding": "driver-store-binding:20033@1",
+        "provider": "substrate_virtio",
+        "profile": "virtio-blk-backend-skeleton-v1",
+        "model": "virtio-blk",
+        "expected": "applied"
+      },
+      {
+        "id": 230,
+        "command": "record-virtio-blk-backend-object",
+        "scenario": "duplicate live backend binding",
+        "expected": "rejected",
+        "violation": "virtio block backend object already bound to block device generation"
+      },
+      {
+        "id": 231,
+        "command": "record-virtio-blk-backend-object",
+        "scenario": "stale block device generation",
+        "expected": "rejected",
+        "violation": "virtio block backend object block device generation is missing or inactive"
+      },
+      {
+        "id": 232,
+        "command": "record-virtio-blk-backend-object",
+        "scenario": "stale driver binding generation",
+        "expected": "rejected",
+        "violation": "virtio block backend object driver binding generation is missing or inactive"
+      },
+      {
+        "id": 233,
+        "command": "record-virtio-blk-backend-object",
+        "scenario": "unsupported negotiated features",
+        "expected": "rejected",
+        "violation": "virtio block backend negotiated features exceed device features"
+      }
+    ],
+    "adapter": {
+      "crate": "substrate_virtio",
+      "module": "block",
+      "profile": "virtio-blk-backend-skeleton-v1",
+      "note": "virtio backend skeleton evidence is not semantic truth"
+    }
+  },
+  "events": [
+    {
+      "id": 408,
+      "kind": "BlockDeviceObjectRecorded",
+      "block_device": "block-device:20031@1",
+      "device": "device:20030@1"
+    },
+    {
+      "id": 412,
+      "kind": "VirtioBlkBackendSkeletonBound",
+      "virtio_blk_backend": "virtio-blk-backend:20034@1",
+      "block_device": "block-device:20031@1",
+      "driver_binding": "driver-store-binding:20033@1",
+      "device": "device:20030@1"
+    }
+  ],
+  "expected": {
+    "views": {
+      "virtio-blk-backend": {
+        "count": 1,
+        "virtio_blk_backend": "virtio-blk-backend:20034@1",
+        "block_device": "block-device:20031@1",
+        "driver_binding": "driver-store-binding:20033@1",
+        "device": "device:20030@1",
+        "provider": "substrate_virtio",
+        "profile": "virtio-blk-backend-skeleton-v1",
+        "model": "virtio-blk",
+        "sector_size": 512,
+        "sector_count": 4096,
+        "read_only": false,
+        "max_transfer_sectors": 128,
+        "queue_size": 8,
+        "irq_vector": 6
+      },
+      "command": {
+        "block_device_applied": "command-result:226:record-block-device-object:applied",
+        "device_capability_applied": "command-result:227:record-device-capability:applied",
+        "driver_binding_applied": "command-result:228:bind-driver-store:applied",
+        "bind_backend_applied": "command-result:229:record-virtio-blk-backend-object:applied",
+        "duplicate_backend_rejected": "command-result:230:record-virtio-blk-backend-object:rejected",
+        "stale_backend_rejected": "command-result:231:record-virtio-blk-backend-object:rejected",
+        "stale_binding_rejected": "command-result:232:record-virtio-blk-backend-object:rejected",
+        "feature_mismatch_rejected": "command-result:233:record-virtio-blk-backend-object:rejected"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "live_edges": [
+          "virtio-blk-backend->block-device",
+          "virtio-blk-backend->driver-binding"
+        ]
+      }
+    },
+    "invariants": [
+      "VirtioBlkBackend skeleton state lives in substrate_virtio, not semantic_core",
+      "VirtioBlkBackendObject is a semantic binding/evidence object",
+      "VirtioBlkBackendObject references exact BlockDeviceObject and DriverStoreBinding generations",
+      "VirtioBlkBackendObject contract must match BlockDeviceObject contract",
+      "VirtioBlkBackendObject provider/profile/model are fixed to substrate_virtio virtio-blk skeleton v1",
+      "Negotiated features must be subsets of device and driver features",
+      "Only one live virtio block backend may bind one BlockDeviceObject generation"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "virtio_block_skeleton_reports_stable_profile_evidence",
+      "virtio_block_skeleton_rejects_invalid_geometry_queue_and_features",
+      "block_runtime_b6_virtio_blk_backend_skeleton_binds_driver_and_block_device",
+      "block_runtime_b6_rejects_stale_duplicate_and_invalid_virtio_blk_backends",
+      "block_runtime_b6_invariants_reject_virtio_blk_generation_and_irq_leaks",
+      "virtio_blk_backend_view_v1_exposes_driver_binding_and_profile_contract",
+      "semantic_roots_reject_virtio_blk_backend_object_root_mismatch"
+    ],
+    "osctl_json_view": "virtio-blk-backend list --json",
+    "target_executor_event_cursor": 414
+  }
+}

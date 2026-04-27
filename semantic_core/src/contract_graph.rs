@@ -1420,6 +1420,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::PacketDescriptorObject
             | ContractObjectKind::FakeNetBackendObject
             | ContractObjectKind::FakeBlockBackendObject
+            | ContractObjectKind::VirtioBlkBackendObject
             | ContractObjectKind::VirtioNetBackendObject
             | ContractObjectKind::NetworkRxInterrupt
             | ContractObjectKind::NetworkRxWaitResolution

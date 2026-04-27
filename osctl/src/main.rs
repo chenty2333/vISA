@@ -32,7 +32,7 @@ use artifact_manifest::{
     SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
     StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
     TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
-    VirtioNetBackendObjectManifest, WaitRecordManifest,
+    VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -352,6 +352,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-wait-token"
         | "fake-block-backend"
         | "fake-block-backend-object"
+        | "virtio-blk-backend"
+        | "virtio-blk-backend-object"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -522,7 +524,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -779,6 +781,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "block-completion" | "block-completion-object" => "block-completion",
         "block-wait" | "block-wait-token" => "block-wait",
         "fake-block-backend" | "fake-block-backend-object" => "fake-block-backend",
+        "virtio-blk-backend" | "virtio-blk-backend-object" => "virtio-blk-backend",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2710,6 +2713,76 @@ fn fake_block_backend_object_view_v1(
         "last_transition": {
             "recorded_at_event": backend.recorded_at_event,
             "block_device_generation": backend.block_device_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn virtio_blk_backend_object_view_v1(
+    backend: &VirtioBlkBackendObjectManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "virtio-blk-backend",
+        "id": backend.id,
+        "generation": backend.generation,
+        "state": backend.state,
+        "owner": {
+            "block_device": object_ref_json(
+                "block-device",
+                backend.block_device,
+                backend.block_device_generation,
+            ),
+            "driver_binding": object_ref_json(
+                "driver-store-binding",
+                backend.driver_binding,
+                backend.driver_binding_generation,
+            ),
+        },
+        "references": {
+            "block_device": object_ref_json(
+                "block-device",
+                backend.block_device,
+                backend.block_device_generation,
+            ),
+            "driver_binding": object_ref_json(
+                "driver-store-binding",
+                backend.driver_binding,
+                backend.driver_binding_generation,
+            ),
+            "device": object_ref_json(
+                "device",
+                backend.device,
+                backend.device_generation,
+            ),
+            "event": {
+                "id": backend.recorded_at_event,
+            },
+        },
+        "identity": {
+            "name": backend.name,
+            "provider": backend.provider,
+            "profile": backend.profile,
+            "model": backend.model,
+        },
+        "contract": {
+            "sector_size": backend.sector_size,
+            "sector_count": backend.sector_count,
+            "read_only": backend.read_only,
+            "max_transfer_sectors": backend.max_transfer_sectors,
+            "device_features": backend.device_features,
+            "driver_features": backend.driver_features,
+            "negotiated_features": backend.negotiated_features,
+            "request_queue_index": backend.request_queue_index,
+            "queue_size": backend.queue_size,
+            "irq_vector": backend.irq_vector,
+        },
+        "note": backend.note,
+        "last_transition": {
+            "recorded_at_event": backend.recorded_at_event,
+            "block_device_generation": backend.block_device_generation,
+            "driver_binding_generation": backend.driver_binding_generation,
+            "device_generation": backend.device_generation,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -5335,6 +5408,12 @@ fn stable_views_for_kind(
             .iter()
             .map(fake_block_backend_object_view_v1)
             .collect()),
+        "virtio-blk-backend" | "virtio-blk-backend-object" => Ok(package
+            .semantic
+            .virtio_blk_backends
+            .iter()
+            .map(virtio_blk_backend_object_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -5981,7 +6060,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -6024,6 +6103,13 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.packet_descriptor_object_count,
             package.semantic.fake_net_backend_object_count,
             package.semantic.virtio_net_backend_object_count,
+            package.semantic.block_device_object_count,
+            package.semantic.block_range_object_count,
+            package.semantic.block_request_object_count,
+            package.semantic.block_completion_object_count,
+            package.semantic.block_wait_count,
+            package.semantic.fake_block_backend_object_count,
+            package.semantic.virtio_blk_backend_object_count,
             package.semantic.activation_resume_count,
             package.semantic.activation_wait_count,
             package.semantic.activation_cleanup_count,
@@ -6405,6 +6491,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.fake_block_backend_object_roots,
     );
     print_roots(
+        "virtio-blk-backend",
+        &package.semantic.roots.virtio_blk_backend_object_roots,
+    );
+    print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
     );
@@ -6713,6 +6803,33 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
                 backend.block_device_generation,
             ),
             "fake-block-backend->block-device",
+            "live",
+            Some(backend.recorded_at_event),
+        ));
+    }
+    for backend in &package.semantic.virtio_blk_backends {
+        if backend.state != "skeleton-ready" {
+            continue;
+        }
+        edges.push(graph_edge(
+            object_ref_json("virtio-blk-backend", backend.id, backend.generation),
+            object_ref_json(
+                "block-device",
+                backend.block_device,
+                backend.block_device_generation,
+            ),
+            "virtio-blk-backend->block-device",
+            "live",
+            Some(backend.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            object_ref_json("virtio-blk-backend", backend.id, backend.generation),
+            object_ref_json(
+                "driver-store-binding",
+                backend.driver_binding,
+                backend.driver_binding_generation,
+            ),
+            "virtio-blk-backend->driver-binding",
             "live",
             Some(backend.recorded_at_event),
         ));
@@ -9701,6 +9818,7 @@ fn osctl_kind_from_contract_kind(kind: &str) -> &str {
     match kind {
         "fake-block-backend-object" => "fake-block-backend",
         "fake-net-backend-object" => "fake-net-backend",
+        "virtio-blk-backend-object" => "virtio-blk-backend",
         "virtio-net-backend-object" => "virtio-net-backend",
         other => other,
     }
@@ -10733,7 +10851,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -10797,6 +10915,7 @@ fn replay_until(
         package.semantic.roots.block_completion_object_roots.len(),
         package.semantic.roots.block_wait_roots.len(),
         package.semantic.roots.fake_block_backend_object_roots.len(),
+        package.semantic.roots.virtio_blk_backend_object_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -10909,6 +11028,9 @@ fn replay_until(
     }
     for backend in &package.semantic.roots.fake_block_backend_object_roots {
         println!("replay fake-block-backend {backend}");
+    }
+    for backend in &package.semantic.roots.virtio_blk_backend_object_roots {
+        println!("replay virtio-blk-backend {backend}");
     }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
@@ -11217,6 +11339,10 @@ fn print_replay_json(
     roots.insert(
         "fake_block_backends".to_owned(),
         serde_json::json!(package.semantic.roots.fake_block_backend_object_roots.len()),
+    );
+    roots.insert(
+        "virtio_blk_backends".to_owned(),
+        serde_json::json!(package.semantic.roots.virtio_blk_backend_object_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -11574,6 +11700,10 @@ fn print_replay_json(
         "fake_block_backend_object_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.fake_block_backend_object_roots),
     );
+    roots.insert(
+        "virtio_blk_backend_object_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.virtio_blk_backend_object_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -11618,7 +11748,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -11684,6 +11814,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.block_completion_object_count,
         package.semantic.block_wait_count,
         package.semantic.fake_block_backend_object_count,
+        package.semantic.virtio_blk_backend_object_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -13166,6 +13297,54 @@ mod tests {
         assert_eq!(view["contract"]["sector_count"], 4096);
         assert_eq!(view["contract"]["max_transfer_sectors"], 128);
         assert_eq!(view["last_transition"]["recorded_at_event"], 111);
+    }
+
+    #[test]
+    fn virtio_blk_backend_view_v1_exposes_driver_binding_and_profile_contract() {
+        let view = virtio_blk_backend_object_view_v1(&VirtioBlkBackendObjectManifest {
+            id: 112,
+            name: "virtio-blk0-backend".to_owned(),
+            block_device: 104,
+            block_device_generation: 1,
+            driver_binding: 130,
+            driver_binding_generation: 1,
+            device: 35,
+            device_generation: 1,
+            provider: "substrate_virtio".to_owned(),
+            profile: "virtio-blk-backend-skeleton-v1".to_owned(),
+            model: "virtio-blk".to_owned(),
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            device_features: 0x40,
+            driver_features: 0x40,
+            negotiated_features: 0x40,
+            request_queue_index: 0,
+            queue_size: 8,
+            irq_vector: 6,
+            generation: 1,
+            state: "skeleton-ready".to_owned(),
+            recorded_at_event: 112,
+            note: "virtio block backend".to_owned(),
+        });
+        assert_eq!(view["kind"], "virtio-blk-backend");
+        assert_eq!(view["owner"]["block_device"]["kind"], "block-device");
+        assert_eq!(
+            view["owner"]["driver_binding"]["kind"],
+            "driver-store-binding"
+        );
+        assert_eq!(view["references"]["device"]["kind"], "device");
+        assert_eq!(view["identity"]["provider"], "substrate_virtio");
+        assert_eq!(
+            view["identity"]["profile"],
+            "virtio-blk-backend-skeleton-v1"
+        );
+        assert_eq!(view["identity"]["model"], "virtio-blk");
+        assert_eq!(view["contract"]["sector_size"], 512);
+        assert_eq!(view["contract"]["queue_size"], 8);
+        assert_eq!(view["contract"]["irq_vector"], 6);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 112);
     }
 
     #[test]
@@ -16165,6 +16344,36 @@ mod tests {
                 recorded_at_event: 45,
                 note: "fake block backend graph".to_owned(),
             });
+        package
+            .semantic
+            .virtio_blk_backends
+            .push(VirtioBlkBackendObjectManifest {
+                id: 112,
+                name: "virtio-blk0-backend".to_owned(),
+                block_device: 105,
+                block_device_generation: 1,
+                driver_binding: 113,
+                driver_binding_generation: 1,
+                device: 103,
+                device_generation: 1,
+                provider: "substrate_virtio".to_owned(),
+                profile: "virtio-blk-backend-skeleton-v1".to_owned(),
+                model: "virtio-blk".to_owned(),
+                sector_size: 512,
+                sector_count: 4096,
+                read_only: false,
+                max_transfer_sectors: 128,
+                device_features: 0x40,
+                driver_features: 0x40,
+                negotiated_features: 0x40,
+                request_queue_index: 0,
+                queue_size: 8,
+                irq_vector: 6,
+                generation: 1,
+                state: "skeleton-ready".to_owned(),
+                recorded_at_event: 46,
+                note: "virtio block backend graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -16198,6 +16407,15 @@ mod tests {
             && edge["from"]["kind"] == "fake-block-backend"
             && edge["to"]["kind"] == "block-device"
             && edge["to"]["generation"] == 1));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "virtio-blk-backend->block-device"
+            && edge["from"]["kind"] == "virtio-blk-backend"
+            && edge["to"]["kind"] == "block-device"
+            && edge["to"]["generation"] == 1));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "virtio-blk-backend->driver-binding"
+            && edge["from"]["kind"] == "virtio-blk-backend"
+            && edge["to"]["kind"] == "driver-store-binding"));
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
             && edge["relation"] == "block-completion->block-request"

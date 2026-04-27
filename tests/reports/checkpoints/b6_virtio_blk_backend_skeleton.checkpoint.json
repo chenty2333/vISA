@@ -1,0 +1,243 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "B6-virtio-blk-backend-skeleton",
+  "phase": "Phase 5 Block / Disk Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add substrate_virtio::block as a no_std virtio-blk skeleton evidence layer",
+    "Add VirtioBlkBackendObject as a stable semantic backend binding/evidence object",
+    "Record VirtioBlkBackendObject through SemanticCommand::RecordVirtioBlkBackendObject",
+    "Require exact BlockDeviceObject and DriverStoreBinding generations before binding",
+    "Require virtio-blk skeleton provider/profile/model and feature-negotiation subset checks",
+    "Expose virtio block backend roots/counts through semantic package, osctl ViewV1, graph, replay roots, and roots JSON",
+    "Reject stale block device generations, stale driver binding generations, duplicate live backend binding, and unsupported feature negotiation before mutation"
+  ],
+  "no_goals": [
+    "real virtio-drivers integration",
+    "real virtio MMIO/DMA/IRQ datapath",
+    "block read/write execution",
+    "request queue scheduling",
+    "DMA-backed block buffer",
+    "filesystem adapters",
+    "target-side cwasm execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/graph/virtio_blk_backend_object.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "substrate_virtio/src/block.rs",
+    "substrate_virtio/src/lib.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/block/golden_b6_virtio_blk_backend_skeleton.trace.json",
+    "tests/reports/checkpoints/b6_virtio_blk_backend_skeleton.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/block/golden_b6_virtio_blk_backend_skeleton.trace.json",
+    "tests/reports/checkpoints/b6_virtio_blk_backend_skeleton.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "VirtioBlkBackend skeleton state is kept in substrate_virtio and does not become semantic truth",
+      "VirtioBlkBackendObject validates exact BlockDeviceObject and DriverStoreBinding generations before recording",
+      "VirtioBlkBackendObject rejects contract mismatch, unsupported provider/profile/model, duplicate live binding, stale generations, invalid queue/irq values, and feature negotiation mismatches",
+      "VirtioBlkBackendSkeletonBound event captures block device, driver binding, device generations, queue index, queue size, and negotiated features",
+      "osctl exposes VirtioBlkBackendObject through stable ViewV1 rather than dumping internal structs",
+      "Root/count validation covers virtio_blk_backends so package tampering is rejected",
+      "B6 semantic evidence capability is explicitly classified as semantic evidence and is not treated as a target manifest capability requirement"
+    ],
+    "bad_smells_checked": [
+      "No virtio-drivers dependency or adapter internals were introduced into semantic_core",
+      "No fatfs, ext4, request queue backend, real DMA/MMIO/IRQ behavior, or filesystem adapter was added",
+      "Capability authorization uses AuthorityObjectRef for the device object; debug labels remain display/manifest metadata only",
+      "The new graph module is domain-scoped and mirrors the existing virtio-net backend boundary shape",
+      "Target executor evidence remains a host-side semantic harness and does not run real block IO"
+    ],
+    "residual_notes": [
+      "B7/B8 still need block read/write paths through semantic commands",
+      "B9/B10 still need request queueing and DMA-backed block buffers",
+      "B15/B16 still need FAT/ext4 adapter boundaries outside semantic_core"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo check -p semantic_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl virtio-blk-backend list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p substrate_virtio virtio_block",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core virtio_blk_backend_object",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core block_runtime_b6",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl virtio_blk_backend_view_v1_exposes_driver_binding_and_profile_contract",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 226",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 227",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 228",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 229",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 230",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 231",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 232",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 233",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --live --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl replay --until 414 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/block/golden_b6_virtio_blk_backend_skeleton.trace.json",
+    "osctl_views": [
+      "osctl virtio-blk-backend list --json <migration.json>",
+      "osctl command show --json <migration.json> 226",
+      "osctl command show --json <migration.json> 227",
+      "osctl command show --json <migration.json> 228",
+      "osctl command show --json <migration.json> 229",
+      "osctl command show --json <migration.json> 230",
+      "osctl command show --json <migration.json> 231",
+      "osctl command show --json <migration.json> 232",
+      "osctl command show --json <migration.json> 233",
+      "osctl graph --live --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "virtio_blk_backend_object_roots",
+      "block_device_object_roots",
+      "driver_store_binding_roots",
+      "device_capability_roots",
+      "command_result_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 414,
+      "virtio_blk_backend_object_count": 1,
+      "virtio_blk_backend": "virtio-blk-backend:20034@1",
+      "block_device": "block-device:20031@1",
+      "driver_binding": "driver-store-binding:20033@1",
+      "device": "device:20030@1",
+      "provider": "substrate_virtio",
+      "profile": "virtio-blk-backend-skeleton-v1",
+      "model": "virtio-blk",
+      "recorded_event": 412,
+      "block_device_applied_command": "command-result:226:record-block-device-object:applied",
+      "device_capability_applied_command": "command-result:227:record-device-capability:applied",
+      "driver_binding_applied_command": "command-result:228:bind-driver-store:applied",
+      "bind_backend_applied_command": "command-result:229:record-virtio-blk-backend-object:applied",
+      "duplicate_backend_rejected_command": "command-result:230:record-virtio-blk-backend-object:rejected",
+      "stale_backend_rejected_command": "command-result:231:record-virtio-blk-backend-object:rejected",
+      "stale_binding_rejected_command": "command-result:232:record-virtio-blk-backend-object:rejected",
+      "feature_mismatch_rejected_command": "command-result:233:record-virtio-blk-backend-object:rejected"
+    }
+  },
+  "residual_gaps": [
+    "B7/B8 still need block read/write paths through semantic commands",
+    "B9/B10 still need request queueing and DMA-backed block buffers",
+    "B15/B16 still need FAT/ext4 adapter boundaries outside semantic_core"
+  ],
+  "next_checkpoint": "B7-block-read-path"
+}

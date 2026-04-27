@@ -126,6 +126,7 @@ pub enum ObjectKind {
     BlockCompletionObject,
     BlockWait,
     FakeBlockBackendObject,
+    VirtioBlkBackendObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -217,6 +218,7 @@ impl ObjectKind {
             Self::BlockCompletionObject => "block-completion-object",
             Self::BlockWait => "block-wait",
             Self::FakeBlockBackendObject => "fake-block-backend-object",
+            Self::VirtioBlkBackendObject => "virtio-blk-backend-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -488,6 +490,10 @@ typed_ref!(BlockWaitRef, ObjectKind::BlockWait);
 typed_ref!(
     FakeBlockBackendObjectRef,
     ObjectKind::FakeBlockBackendObject
+);
+typed_ref!(
+    VirtioBlkBackendObjectRef,
+    ObjectKind::VirtioBlkBackendObject
 );
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
@@ -2013,6 +2019,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "fake block backend object root/count mismatch",
         ));
     }
+    if roots.virtio_blk_backend_object_roots.len()
+        != package.semantic.virtio_blk_backend_object_count
+        || package.semantic.virtio_blk_backends.len()
+            != package.semantic.virtio_blk_backend_object_count
+    {
+        return Err(ContractError::new(
+            "virtio block backend object root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2595,6 +2610,7 @@ mod tests {
                 block_completion_object_count: 0,
                 block_wait_count: 0,
                 fake_block_backend_object_count: 0,
+                virtio_blk_backend_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2695,6 +2711,7 @@ mod tests {
                 block_completion_objects: Vec::new(),
                 block_waits: Vec::new(),
                 fake_block_backends: Vec::new(),
+                virtio_blk_backends: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4000,6 +4017,47 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_virtio_blk_backend_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.virtio_blk_backend_object_count = 1;
+        package.semantic.virtio_blk_backends.push(
+            artifact_manifest::VirtioBlkBackendObjectManifest {
+                id: 37,
+                name: "virtio-blk0".to_owned(),
+                block_device: 32,
+                block_device_generation: 1,
+                driver_binding: 1203,
+                driver_binding_generation: 1,
+                device: 30,
+                device_generation: 1,
+                provider: "substrate_virtio".to_owned(),
+                profile: "virtio-blk-backend-skeleton-v1".to_owned(),
+                model: "virtio-blk".to_owned(),
+                sector_size: 512,
+                sector_count: 4096,
+                read_only: false,
+                max_transfer_sectors: 128,
+                device_features: 0x40,
+                driver_features: 0x40,
+                negotiated_features: 0x40,
+                request_queue_index: 0,
+                queue_size: 8,
+                irq_vector: 6,
+                generation: 1,
+                state: "skeleton-ready".to_owned(),
+                recorded_at_event: 73,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "virtio block backend object root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -5270,6 +5328,9 @@ mod tests {
         let fake_block_backend_object =
             ObjectRef::new(ObjectKind::FakeBlockBackendObject, 56, 1).unwrap();
         assert!(FakeBlockBackendObjectRef::try_from_ref(fake_block_backend_object).is_ok());
+        let virtio_blk_backend_object =
+            ObjectRef::new(ObjectKind::VirtioBlkBackendObject, 57, 1).unwrap();
+        assert!(VirtioBlkBackendObjectRef::try_from_ref(virtio_blk_backend_object).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

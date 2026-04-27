@@ -58,6 +58,7 @@ pub type BlockRequestObjectId = u64;
 pub type BlockCompletionObjectId = u64;
 pub type BlockWaitId = u64;
 pub type FakeBlockBackendObjectId = u64;
+pub type VirtioBlkBackendObjectId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

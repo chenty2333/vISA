@@ -524,6 +524,19 @@ pub enum EventKind {
         deterministic_seed: u64,
         generation: Generation,
     },
+    VirtioBlkBackendSkeletonBound {
+        virtio_blk_backend: VirtioBlkBackendObjectId,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        driver_binding: DriverStoreBindingId,
+        driver_binding_generation: Generation,
+        device: DeviceObjectId,
+        device_generation: Generation,
+        queue_size: u16,
+        request_queue_index: u16,
+        negotiated_features: u64,
+        generation: Generation,
+    },
     PacketBufferObjectRecorded {
         packet_buffer: PacketBufferObjectId,
         packet_device: PacketDeviceObjectId,
@@ -1935,6 +1948,21 @@ impl EventKind {
                 generation,
             } => format!(
                 "FakeBlockBackendObjectBound fake_block_backend={fake_block_backend} block_device={block_device}@{block_device_generation} sector_size={sector_size} sector_count={sector_count} read_only={read_only} max_transfer_sectors={max_transfer_sectors} deterministic_seed={deterministic_seed} generation={generation}"
+            ),
+            Self::VirtioBlkBackendSkeletonBound {
+                virtio_blk_backend,
+                block_device,
+                block_device_generation,
+                driver_binding,
+                driver_binding_generation,
+                device,
+                device_generation,
+                queue_size,
+                request_queue_index,
+                negotiated_features,
+                generation,
+            } => format!(
+                "VirtioBlkBackendSkeletonBound virtio_blk_backend={virtio_blk_backend} block_device={block_device}@{block_device_generation} driver_binding={driver_binding}@{driver_binding_generation} device={device}@{device_generation} queue_size={queue_size} request_queue_index={request_queue_index} negotiated_features={negotiated_features} generation={generation}"
             ),
             Self::PacketBufferObjectRecorded {
                 packet_buffer,
