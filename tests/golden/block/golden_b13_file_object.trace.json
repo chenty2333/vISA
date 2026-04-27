@@ -1,0 +1,154 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "B13-file-object",
+  "name": "golden_b13_file_object",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/12-guest-memory-object-model.md"
+  ],
+  "no_goals": [
+    "directory hierarchy",
+    "file descriptor table",
+    "file handle capability gate",
+    "FAT/ext4 adapter",
+    "real page cache eviction",
+    "writeback worker",
+    "adapter-local file state as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "B12 already recorded BufferCacheObject 20069@1 for BlockRangeObject 20005@1 and PageObject 30003@1",
+      "FileObject 20073@1 materializes the cache entry as a semantic file range under a stable namespace/key/path label",
+      "The file object stores exact cache, block, page, range, size, digest, and state evidence without depending on FAT/ext4 internals"
+    ],
+    "commands": [
+      {
+        "id": 268,
+        "command": "record-file-object",
+        "file_object": "file-object:20073@1",
+        "buffer_cache_object": "buffer-cache-object:20069@1",
+        "block_device": "block-device:20002@1",
+        "block_range": "block-range:20005@1",
+        "page": "page-object:30003@1",
+        "namespace": "rootfs",
+        "file_key": "demo-file",
+        "path": "/demo/file.txt",
+        "file_offset": 0,
+        "byte_len": 4096,
+        "file_size": 4096,
+        "content_digest": 2835,
+        "cache_state": "dirty",
+        "state": "dirty",
+        "expected": "applied"
+      },
+      {
+        "id": 269,
+        "command": "record-file-object",
+        "scenario": "stale buffer cache generation",
+        "expected": "rejected",
+        "violation": "file object buffer cache generation is missing"
+      },
+      {
+        "id": 270,
+        "command": "record-file-object",
+        "scenario": "file range larger than source cache range",
+        "expected": "rejected",
+        "violation": "file object byte range exceeds file or cache"
+      },
+      {
+        "id": 271,
+        "command": "record-file-object",
+        "scenario": "overlapping live file range",
+        "expected": "rejected",
+        "violation": "file object range already materialized"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 427,
+      "kind": "FileObjectRecorded",
+      "file_object": "file-object:20073@1",
+      "buffer_cache_object": "buffer-cache-object:20069@1",
+      "block_device": "block-device:20002@1",
+      "block_range": "block-range:20005@1",
+      "page": "page-object:30003@1",
+      "page_dirty_generation": 1,
+      "namespace": "rootfs",
+      "file_key": "demo-file",
+      "path": "/demo/file.txt",
+      "file_offset": 0,
+      "byte_len": 4096,
+      "file_size": 4096,
+      "content_digest": 2835,
+      "cache_state": "dirty",
+      "state": "dirty"
+    }
+  ],
+  "expected": {
+    "views": {
+      "file-object": {
+        "count": 1,
+        "file_object": "file-object:20073@1",
+        "buffer_cache_object": "buffer-cache-object:20069@1",
+        "block_device": "block-device:20002@1",
+        "block_range": "block-range:20005@1",
+        "page": "page-object:30003@1",
+        "page_dirty_generation": 1,
+        "namespace": "rootfs",
+        "file_key": "demo-file",
+        "path": "/demo/file.txt",
+        "file_offset": 0,
+        "byte_len": 4096,
+        "file_size": 4096,
+        "content_digest": 2835,
+        "cache_state": "dirty",
+        "state": "dirty",
+        "recorded_event": 427
+      },
+      "command": {
+        "file_recorded": "command-result:268:record-file-object:applied",
+        "stale_cache_generation_rejected": "command-result:269:record-file-object:rejected",
+        "oversized_file_range_rejected": "command-result:270:record-file-object:rejected",
+        "duplicate_file_range_rejected": "command-result:271:record-file-object:rejected"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "historical_edges": [
+          "file-object->buffer-cache-object",
+          "file-object->block-device",
+          "file-object->block-range",
+          "file-object->page-object"
+        ]
+      }
+    },
+    "invariants": [
+      "FileObject records exact BufferCacheObject, BlockDeviceObject, BlockRangeObject, and PageObject generations",
+      "The source BufferCacheObject must exist, match the requested generation, and remain non-invalidated",
+      "The materialized file byte range must fit both the file size and the source buffer cache byte range",
+      "Live FileObjects cannot own overlapping ranges for the same namespace/file_key",
+      "Stale cache generation, oversized file ranges, invalid initial state, and overlapping file ranges are rejected before mutation",
+      "The semantic object stores file identity labels and digest evidence only; directory hierarchy, file handles, FAT/ext4 adapter state, and writeback workers remain outside this checkpoint"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "block_runtime_b13_file_object_records_cache_backed_file_contract",
+      "block_runtime_b13_rejects_stale_oversized_duplicate_and_invalid_file",
+      "block_runtime_b13_invariants_reject_file_page_generation_leak",
+      "file_object_view_v1_exposes_cache_file_and_page_contract",
+      "semantic_roots_reject_file_object_root_mismatch"
+    ],
+    "osctl_json_view": "file-object list --json",
+    "target_executor_event_cursor": 429
+  }
+}

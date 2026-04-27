@@ -19,15 +19,15 @@ use artifact_manifest::{
     ContractObjectRefManifest, ContractViolationManifest, CrossHartSchedulerDecisionManifest,
     DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
     DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, GuestStateManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FileObjectManifest,
+    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
+    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
+    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
     NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
     PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
@@ -61,10 +61,10 @@ use semantic_core::{
     CodePublishState, CodePublisher, CommandEnvelope, CommandResult, CommandStatus,
     ContractGraphSnapshot, ContractObjectKind, ContractObjectRef, ContractViolation, CowState,
     DescriptorObjectAccess, DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord,
-    ExpectedTargetArtifact, ExternalObjectDeclaration, FrontendKind, HartState, HostcallCategory,
-    HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind,
-    IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
-    MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
+    ExpectedTargetArtifact, ExternalObjectDeclaration, FileObjectState, FrontendKind, HartState,
+    HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
+    IpiEventKind, IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy,
+    MemoryLayoutState, MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
     NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
     PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
     PageBacking, PageObjectState, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
@@ -218,6 +218,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b10_evidence(&mut semantic)?;
     record_block_runtime_b11_evidence(&mut semantic)?;
     record_block_runtime_b12_evidence(&mut semantic)?;
+    record_block_runtime_b13_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -4554,6 +4555,141 @@ fn record_block_runtime_b12_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_block_runtime_b13_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let file = semantic.apply_envelope(CommandEnvelope::new(
+        268,
+        "target-executor-b13",
+        SemanticCommand::RecordFileObject {
+            file_object: 20_073,
+            buffer_cache_object: 20_069,
+            buffer_cache_object_generation: 1,
+            namespace: "rootfs".to_owned(),
+            file_key: "demo-file".to_owned(),
+            path: "/demo/file.txt".to_owned(),
+            file_offset: 0,
+            byte_len: 4096,
+            file_size: 4096,
+            content_digest: 0xB13,
+            state: FileObjectState::Dirty,
+            note: "b13-materialize-file-object-from-buffer-cache".to_owned(),
+        },
+    ));
+    if file.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b13 file object command {} ({}) failed: status={} violations={:?}",
+            file.command_id,
+            file.command,
+            file.status.as_str(),
+            file.violations
+        )
+        .into());
+    }
+
+    let stale_cache = semantic.apply_envelope(CommandEnvelope::new(
+        269,
+        "target-executor-b13",
+        SemanticCommand::RecordFileObject {
+            file_object: 20_074,
+            buffer_cache_object: 20_069,
+            buffer_cache_object_generation: 2,
+            namespace: "rootfs".to_owned(),
+            file_key: "demo-file".to_owned(),
+            path: "/demo/file.txt".to_owned(),
+            file_offset: 0,
+            byte_len: 4096,
+            file_size: 4096,
+            content_digest: 0xB13,
+            state: FileObjectState::Dirty,
+            note: "b13-reject-stale-buffer-cache-generation".to_owned(),
+        },
+    ));
+    if stale_cache.status != CommandStatus::Rejected
+        || !stale_cache
+            .violations
+            .iter()
+            .any(|violation| violation.contains("buffer cache generation"))
+    {
+        return Err(format!(
+            "block runtime b13 stale cache command {} ({}) was not rejected: status={} violations={:?}",
+            stale_cache.command_id,
+            stale_cache.command,
+            stale_cache.status.as_str(),
+            stale_cache.violations
+        )
+        .into());
+    }
+
+    let oversized = semantic.apply_envelope(CommandEnvelope::new(
+        270,
+        "target-executor-b13",
+        SemanticCommand::RecordFileObject {
+            file_object: 20_075,
+            buffer_cache_object: 20_069,
+            buffer_cache_object_generation: 1,
+            namespace: "rootfs".to_owned(),
+            file_key: "demo-file".to_owned(),
+            path: "/demo/file.txt".to_owned(),
+            file_offset: 0,
+            byte_len: 4097,
+            file_size: 4097,
+            content_digest: 0xB13,
+            state: FileObjectState::Dirty,
+            note: "b13-reject-oversized-cache-range".to_owned(),
+        },
+    ));
+    if oversized.status != CommandStatus::Rejected
+        || !oversized
+            .violations
+            .iter()
+            .any(|violation| violation.contains("byte range exceeds"))
+    {
+        return Err(format!(
+            "block runtime b13 oversized command {} ({}) was not rejected: status={} violations={:?}",
+            oversized.command_id,
+            oversized.command,
+            oversized.status.as_str(),
+            oversized.violations
+        )
+        .into());
+    }
+
+    let duplicate = semantic.apply_envelope(CommandEnvelope::new(
+        271,
+        "target-executor-b13",
+        SemanticCommand::RecordFileObject {
+            file_object: 20_076,
+            buffer_cache_object: 20_069,
+            buffer_cache_object_generation: 1,
+            namespace: "rootfs".to_owned(),
+            file_key: "demo-file".to_owned(),
+            path: "/demo/file.txt".to_owned(),
+            file_offset: 1024,
+            byte_len: 1024,
+            file_size: 4096,
+            content_digest: 0xB13,
+            state: FileObjectState::Dirty,
+            note: "b13-reject-overlapping-file-range".to_owned(),
+        },
+    ));
+    if duplicate.status != CommandStatus::Rejected
+        || !duplicate
+            .violations
+            .iter()
+            .any(|violation| violation.contains("range already materialized"))
+    {
+        return Err(format!(
+            "block runtime b13 duplicate command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate.command_id,
+            duplicate.command,
+            duplicate.status.as_str(),
+            duplicate.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -6957,6 +7093,7 @@ fn demo_migration_package(
             block_dma_buffer_count: semantic.block_dma_buffer_count(),
             block_page_object_count: semantic.block_page_object_count(),
             buffer_cache_object_count: semantic.buffer_cache_object_count(),
+            file_object_count: semantic.file_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -7323,6 +7460,11 @@ fn demo_migration_package(
                 .buffer_cache_objects()
                 .iter()
                 .map(buffer_cache_object_manifest)
+                .collect(),
+            file_objects: semantic
+                .file_objects()
+                .iter()
+                .map(file_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -8954,6 +9096,34 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        file_object_roots: semantic
+            .file_objects()
+            .iter()
+            .map(|file| {
+                format!(
+                    "file-object id={} buffer_cache_object={}@{} block_device={}@{} block_range={}@{} page={} page_dirty_generation={} namespace={} file_key={} path={} file_offset={} byte_len={} file_size={} content_digest={} cache_state={} state={} generation={}",
+                    file.id,
+                    file.buffer_cache_object,
+                    file.buffer_cache_object_generation,
+                    file.block_device,
+                    file.block_device_generation,
+                    file.block_range,
+                    file.block_range_generation,
+                    file.page.summary(),
+                    file.page_dirty_generation,
+                    file.namespace,
+                    file.file_key,
+                    file.path,
+                    file.file_offset,
+                    file.byte_len,
+                    file.file_size,
+                    file.content_digest,
+                    file.cache_state.as_str(),
+                    file.state.as_str(),
+                    file.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -10424,6 +10594,32 @@ fn buffer_cache_object_manifest(
         state: cache.state.as_str().to_owned(),
         recorded_at_event: cache.recorded_at_event,
         note: cache.note.clone(),
+    }
+}
+
+fn file_object_manifest(file: &semantic_core::FileObjectRecord) -> FileObjectManifest {
+    FileObjectManifest {
+        id: file.id,
+        buffer_cache_object: file.buffer_cache_object,
+        buffer_cache_object_generation: file.buffer_cache_object_generation,
+        block_device: file.block_device,
+        block_device_generation: file.block_device_generation,
+        block_range: file.block_range,
+        block_range_generation: file.block_range_generation,
+        page: contract_object_ref_manifest(file.page),
+        page_dirty_generation: file.page_dirty_generation,
+        namespace: file.namespace.clone(),
+        file_key: file.file_key.clone(),
+        path: file.path.clone(),
+        file_offset: file.file_offset,
+        byte_len: file.byte_len,
+        file_size: file.file_size,
+        content_digest: file.content_digest,
+        cache_state: file.cache_state.as_str().to_owned(),
+        generation: file.generation,
+        state: file.state.as_str().to_owned(),
+        recorded_at_event: file.recorded_at_event,
+        note: file.note.clone(),
     }
 }
 

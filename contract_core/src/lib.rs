@@ -133,6 +133,7 @@ pub enum ObjectKind {
     BlockDmaBuffer,
     BlockPageObject,
     BufferCacheObject,
+    FileObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -231,6 +232,7 @@ impl ObjectKind {
             Self::BlockDmaBuffer => "block-dma-buffer",
             Self::BlockPageObject => "block-page-object",
             Self::BufferCacheObject => "buffer-cache-object",
+            Self::FileObject => "file-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -512,6 +514,7 @@ typed_ref!(BlockWritePathRef, ObjectKind::BlockWritePath);
 typed_ref!(BlockRequestQueueRef, ObjectKind::BlockRequestQueue);
 typed_ref!(BlockDmaBufferRef, ObjectKind::BlockDmaBuffer);
 typed_ref!(BufferCacheObjectRef, ObjectKind::BufferCacheObject);
+typed_ref!(FileObjectRef, ObjectKind::FileObject);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2080,6 +2083,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "buffer cache object root/count mismatch",
         ));
     }
+    if roots.file_object_roots.len() != package.semantic.file_object_count
+        || package.semantic.file_objects.len() != package.semantic.file_object_count
+    {
+        return Err(ContractError::new("file object root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2669,6 +2677,7 @@ mod tests {
                 block_dma_buffer_count: 0,
                 block_page_object_count: 0,
                 buffer_cache_object_count: 0,
+                file_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2776,6 +2785,7 @@ mod tests {
                 block_dma_buffers: Vec::new(),
                 block_page_objects: Vec::new(),
                 buffer_cache_objects: Vec::new(),
+                file_objects: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4368,6 +4378,45 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_file_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.file_object_count = 1;
+        package
+            .semantic
+            .file_objects
+            .push(artifact_manifest::FileObjectManifest {
+                id: 64,
+                buffer_cache_object: 63,
+                buffer_cache_object_generation: 1,
+                block_device: 51,
+                block_device_generation: 1,
+                block_range: 52,
+                block_range_generation: 1,
+                page: artifact_manifest::ContractObjectRefManifest {
+                    kind: "page-object".to_owned(),
+                    id: 72,
+                    generation: 1,
+                },
+                page_dirty_generation: 1,
+                namespace: "rootfs".to_owned(),
+                file_key: "demo-file".to_owned(),
+                path: "/demo/file.txt".to_owned(),
+                file_offset: 0,
+                byte_len: 4096,
+                file_size: 4096,
+                content_digest: 1,
+                cache_state: "dirty".to_owned(),
+                generation: 1,
+                state: "dirty".to_owned(),
+                recorded_at_event: 80,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "file object root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -5653,6 +5702,8 @@ mod tests {
         assert!(BlockPageObjectRef::try_from_ref(block_page_object).is_ok());
         let buffer_cache_object = ObjectRef::new(ObjectKind::BufferCacheObject, 63, 1).unwrap();
         assert!(BufferCacheObjectRef::try_from_ref(buffer_cache_object).is_ok());
+        let file_object = ObjectRef::new(ObjectKind::FileObject, 64, 1).unwrap();
+        assert!(FileObjectRef::try_from_ref(file_object).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

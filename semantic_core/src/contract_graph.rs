@@ -1448,6 +1448,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::BlockDmaBuffer
             | ContractObjectKind::BlockPageObject
             | ContractObjectKind::BufferCacheObject
+            | ContractObjectKind::FileObject
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

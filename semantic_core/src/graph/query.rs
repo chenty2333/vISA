@@ -135,6 +135,7 @@ impl SemanticGraph {
         self.check_block_dma_buffer_invariants()?;
         self.check_block_page_object_invariants()?;
         self.check_buffer_cache_object_invariants()?;
+        self.check_file_object_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;

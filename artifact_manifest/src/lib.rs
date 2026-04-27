@@ -359,6 +359,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub buffer_cache_object_count: usize,
     #[serde(default)]
+    pub file_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -569,6 +571,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub buffer_cache_objects: Vec<BufferCacheObjectManifest>,
     #[serde(default)]
+    pub file_objects: Vec<FileObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -758,6 +762,8 @@ pub struct SemanticRootSetManifest {
     pub block_page_object_roots: Vec<String>,
     #[serde(default)]
     pub buffer_cache_object_roots: Vec<String>,
+    #[serde(default)]
+    pub file_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2478,6 +2484,31 @@ pub struct BufferCacheObjectManifest {
     pub operation: String,
     pub cache_state: String,
     pub coherency_epoch: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct FileObjectManifest {
+    pub id: u64,
+    pub buffer_cache_object: u64,
+    pub buffer_cache_object_generation: u64,
+    pub block_device: u64,
+    pub block_device_generation: u64,
+    pub block_range: u64,
+    pub block_range_generation: u64,
+    pub page: ContractObjectRefManifest,
+    pub page_dirty_generation: u64,
+    pub namespace: String,
+    pub file_key: String,
+    pub path: String,
+    pub file_offset: u64,
+    pub byte_len: u64,
+    pub file_size: u64,
+    pub content_digest: u64,
+    pub cache_state: String,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

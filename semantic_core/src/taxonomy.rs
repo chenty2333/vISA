@@ -1013,6 +1013,25 @@ impl BufferCacheObjectState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileObjectState {
+    Clean,
+    Dirty,
+    Cached,
+    Invalidated,
+}
+
+impl FileObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Clean => "clean",
+            Self::Dirty => "dirty",
+            Self::Cached => "cached",
+            Self::Invalidated => "invalidated",
+        }
+    }
+}
+
 impl BlockRequestQueueEntryState {
     pub const fn as_str(self) -> &'static str {
         match self {

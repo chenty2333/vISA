@@ -780,6 +780,10 @@ impl SemanticGraph {
                 .buffer_cache_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::FileObject => self
+                .file_objects
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

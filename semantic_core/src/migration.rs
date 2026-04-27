@@ -1269,6 +1269,19 @@ pub enum SemanticInvariantError {
     BufferCacheObjectMissingEvent {
         buffer_cache_object: BufferCacheObjectId,
     },
+    FileObjectInvalid {
+        file_object: FileObjectId,
+    },
+    FileObjectMissingBufferCacheObject {
+        file_object: FileObjectId,
+        buffer_cache_object: BufferCacheObjectId,
+    },
+    FileObjectDuplicateFileRange {
+        file_object: FileObjectId,
+    },
+    FileObjectMissingEvent {
+        file_object: FileObjectId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

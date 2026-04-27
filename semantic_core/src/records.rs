@@ -2059,6 +2059,37 @@ impl BufferCacheObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileObjectRecord {
+    pub id: FileObjectId,
+    pub buffer_cache_object: BufferCacheObjectId,
+    pub buffer_cache_object_generation: Generation,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub block_range: BlockRangeObjectId,
+    pub block_range_generation: Generation,
+    pub page: ContractObjectRef,
+    pub page_dirty_generation: Generation,
+    pub namespace: String,
+    pub file_key: String,
+    pub path: String,
+    pub file_offset: u64,
+    pub byte_len: u64,
+    pub file_size: u64,
+    pub content_digest: u64,
+    pub cache_state: BufferCacheObjectState,
+    pub generation: Generation,
+    pub state: FileObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl FileObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::FileObject, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,
