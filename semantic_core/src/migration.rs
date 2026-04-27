@@ -1173,6 +1173,36 @@ pub enum SemanticInvariantError {
     BlockWritePathMissingEvent {
         write_path: BlockWritePathId,
     },
+    BlockRequestQueueInvalid {
+        queue: BlockRequestQueueId,
+    },
+    BlockRequestQueueMissingBackend {
+        queue: BlockRequestQueueId,
+        backend: ContractObjectRef,
+    },
+    BlockRequestQueueMissingBlockDevice {
+        queue: BlockRequestQueueId,
+        block_device: BlockDeviceObjectId,
+    },
+    BlockRequestQueueMissingRequest {
+        queue: BlockRequestQueueId,
+        block_request: BlockRequestObjectId,
+    },
+    BlockRequestQueueMissingCompletion {
+        queue: BlockRequestQueueId,
+        block_completion: BlockCompletionObjectId,
+    },
+    BlockRequestQueueDuplicateRequest {
+        queue: BlockRequestQueueId,
+        block_request: BlockRequestObjectId,
+    },
+    BlockRequestQueueDuplicateSequence {
+        queue: BlockRequestQueueId,
+        sequence: u64,
+    },
+    BlockRequestQueueMissingEvent {
+        queue: BlockRequestQueueId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

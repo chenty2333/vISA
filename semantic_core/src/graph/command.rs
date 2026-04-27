@@ -367,6 +367,15 @@ pub enum SemanticCommand {
         payload_digest: u64,
         note: String,
     },
+    RecordBlockRequestQueue {
+        queue: BlockRequestQueueId,
+        backend: ContractObjectRef,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        depth: u32,
+        entries: Vec<BlockRequestQueueEntryRef>,
+        note: String,
+    },
     RecordVirtioNetBackendObject {
         virtio_net_backend: VirtioNetBackendObjectId,
         name: String,
@@ -1098,6 +1107,7 @@ impl SemanticCommand {
             Self::RecordVirtioBlkBackendObject { .. } => "record-virtio-blk-backend-object",
             Self::RecordBlockReadPath { .. } => "record-block-read-path",
             Self::RecordBlockWritePath { .. } => "record-block-write-path",
+            Self::RecordBlockRequestQueue { .. } => "record-block-request-queue",
             Self::RecordVirtioNetBackendObject { .. } => "record-virtio-net-backend-object",
             Self::RecordNetworkRxInterrupt { .. } => "record-network-rx-interrupt",
             Self::ResolveNetworkRxWait { .. } => "resolve-network-rx-wait",
@@ -2490,6 +2500,25 @@ impl SemanticGraph {
                     *block_completion_generation,
                     *payload_digest,
                 )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordBlockRequestQueue {
+                queue,
+                backend,
+                block_device,
+                block_device_generation,
+                depth,
+                entries,
+                ..
+            } => self
+                .validate_block_request_queue(
+                    *queue,
+                    *backend,
+                    *block_device,
+                    *block_device_generation,
+                    *depth,
+                    entries,
+                )
+                .map(|_| ())
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordVirtioNetBackendObject {
                 virtio_net_backend,
@@ -4763,6 +4792,23 @@ impl SemanticGraph {
                 block_completion,
                 block_completion_generation,
                 payload_digest,
+                &note,
+            ),
+            SemanticCommand::RecordBlockRequestQueue {
+                queue,
+                backend,
+                block_device,
+                block_device_generation,
+                depth,
+                entries,
+                note,
+            } => self.record_block_request_queue_with_id(
+                queue,
+                backend,
+                block_device,
+                block_device_generation,
+                depth,
+                &entries,
                 &note,
             ),
             SemanticCommand::RecordVirtioNetBackendObject {

@@ -9,14 +9,15 @@ use artifact_manifest::{
     ActivationCleanupManifest, ActivationContextManifest, ActivationMigrationManifest,
     ActivationRecordManifest, ActivationResumeManifest, ActivationWaitManifest,
     ArtifactBundleManifest, BlockCompletionObjectManifest, BlockDeviceObjectManifest,
-    BlockRangeObjectManifest, BlockReadPathManifest, BlockRequestObjectManifest, BlockWaitManifest,
-    BlockWritePathManifest, BoundaryValidationReportManifest, CapabilityRecordManifest,
-    CleanupTransactionManifest, CodeObjectManifest, CommandResultManifest,
-    ContractObjectRefManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
-    DriverStoreBindingManifest, EndpointObjectManifest, FakeBlockBackendObjectManifest,
-    FakeNetBackendObjectManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    BlockRangeObjectManifest, BlockReadPathManifest, BlockRequestObjectManifest,
+    BlockRequestQueueManifest, BlockWaitManifest, BlockWritePathManifest,
+    BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
+    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest,
+    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
+    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
@@ -358,6 +359,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-read"
         | "block-write-path"
         | "block-write"
+        | "block-request-queue"
+        | "block-queue"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -528,7 +531,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -788,6 +791,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "virtio-blk-backend" | "virtio-blk-backend-object" => "virtio-blk-backend",
         "block-read-path" | "block-read" => "block-read-path",
         "block-write-path" | "block-write" => "block-write-path",
+        "block-request-queue" | "block-queue" => "block-request-queue",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2913,6 +2917,80 @@ fn block_write_path_view_v1(write_path: &BlockWritePathManifest) -> serde_json::
             "block_completion_generation": write_path.block_completion_generation,
             "block_device_generation": write_path.block_device_generation,
             "block_range_generation": write_path.block_range_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn block_request_queue_view_v1(queue: &BlockRequestQueueManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "block-request-queue",
+        "id": queue.id,
+        "generation": queue.generation,
+        "state": queue.state,
+        "owner": {
+            "backend": object_ref_json(
+                osctl_kind_from_contract_kind(&queue.backend_kind),
+                queue.backend,
+                queue.backend_generation,
+            ),
+            "block_device": object_ref_json(
+                "block-device",
+                queue.block_device,
+                queue.block_device_generation,
+            ),
+        },
+        "references": {
+            "backend": object_ref_json(
+                osctl_kind_from_contract_kind(&queue.backend_kind),
+                queue.backend,
+                queue.backend_generation,
+            ),
+            "block_device": object_ref_json(
+                "block-device",
+                queue.block_device,
+                queue.block_device_generation,
+            ),
+            "entries": queue
+                .entries
+                .iter()
+                .map(|entry| {
+                    serde_json::json!({
+                        "request": object_ref_json(
+                            "block-request",
+                            entry.request,
+                            entry.request_generation,
+                        ),
+                        "completion": optional_object_ref_json(
+                            "block-completion",
+                            entry.completion,
+                            entry.completion_generation,
+                        ),
+                        "sequence": entry.sequence,
+                        "operation": entry.operation,
+                        "byte_len": entry.byte_len,
+                        "state": entry.state,
+                    })
+                })
+                .collect::<Vec<_>>(),
+            "event": {
+                "id": queue.recorded_at_event,
+            },
+        },
+        "queue": {
+            "depth": queue.depth,
+            "entry_count": queue.entries.len(),
+            "pending_count": queue.pending_count,
+            "completed_count": queue.completed_count,
+            "first_sequence": queue.first_sequence,
+            "last_sequence": queue.last_sequence,
+        },
+        "note": queue.note,
+        "last_transition": {
+            "recorded_at_event": queue.recorded_at_event,
+            "backend_generation": queue.backend_generation,
+            "block_device_generation": queue.block_device_generation,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -5556,6 +5634,12 @@ fn stable_views_for_kind(
             .iter()
             .map(block_write_path_view_v1)
             .collect()),
+        "block-request-queue" | "block-queue" => Ok(package
+            .semantic
+            .block_request_queues
+            .iter()
+            .map(block_request_queue_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -6645,6 +6729,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         &package.semantic.roots.block_write_path_roots,
     );
     print_roots(
+        "block-request-queue",
+        &package.semantic.roots.block_request_queue_roots,
+    );
+    print_roots(
         "activation-resume",
         &package.semantic.roots.activation_resume_roots,
     );
@@ -7061,6 +7149,54 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "historical",
             Some(write_path.recorded_at_event),
         ));
+    }
+    for queue in &package.semantic.block_request_queues {
+        if queue.state != "active" {
+            continue;
+        }
+        let from = object_ref_json("block-request-queue", queue.id, queue.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                osctl_kind_from_contract_kind(&queue.backend_kind),
+                queue.backend,
+                queue.backend_generation,
+            ),
+            "block-request-queue->backend",
+            "historical",
+            Some(queue.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-device",
+                queue.block_device,
+                queue.block_device_generation,
+            ),
+            "block-request-queue->block-device",
+            "historical",
+            Some(queue.recorded_at_event),
+        ));
+        for entry in &queue.entries {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("block-request", entry.request, entry.request_generation),
+                "block-request-queue->block-request",
+                "historical",
+                Some(queue.recorded_at_event),
+            ));
+            if let (Some(completion), Some(generation)) =
+                (entry.completion, entry.completion_generation)
+            {
+                edges.push(graph_edge(
+                    from.clone(),
+                    object_ref_json("block-completion", completion, generation),
+                    "block-request-queue->block-completion",
+                    "historical",
+                    Some(queue.recorded_at_event),
+                ));
+            }
+        }
     }
     for packet_buffer in &package.semantic.packet_buffer_objects {
         if packet_buffer.state != "allocated" && packet_buffer.state != "filled" {
@@ -11581,6 +11717,10 @@ fn print_replay_json(
         serde_json::json!(package.semantic.roots.block_write_path_roots.len()),
     );
     roots.insert(
+        "block_request_queues".to_owned(),
+        serde_json::json!(package.semantic.roots.block_request_queue_roots.len()),
+    );
+    roots.insert(
         "resources".to_owned(),
         serde_json::json!(package.semantic.roots.resource_roots.len()),
     );
@@ -11947,6 +12087,10 @@ fn print_replay_json(
     roots.insert(
         "block_write_path_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.block_write_path_roots),
+    );
+    roots.insert(
+        "block_request_queue_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.block_request_queue_roots),
     );
 
     let value = serde_json::json!({
@@ -13661,6 +13805,67 @@ mod tests {
         assert_eq!(view["write"]["completed_bytes"], 4096);
         assert_eq!(view["write"]["payload_digest"], 0xbeef);
         assert_eq!(view["last_transition"]["recorded_at_event"], 114);
+    }
+
+    #[test]
+    fn block_request_queue_view_v1_exposes_entries_depth_and_generations() {
+        let view = block_request_queue_view_v1(&BlockRequestQueueManifest {
+            id: 115,
+            backend_kind: "fake-block-backend-object".to_owned(),
+            backend: 111,
+            backend_generation: 1,
+            block_device: 104,
+            block_device_generation: 1,
+            depth: 4,
+            entries: vec![
+                artifact_manifest::BlockRequestQueueEntryManifest {
+                    request: 106,
+                    request_generation: 1,
+                    completion: Some(107),
+                    completion_generation: Some(1),
+                    sequence: 1,
+                    operation: "read".to_owned(),
+                    byte_len: 4096,
+                    state: "completed".to_owned(),
+                },
+                artifact_manifest::BlockRequestQueueEntryManifest {
+                    request: 108,
+                    request_generation: 1,
+                    completion: None,
+                    completion_generation: None,
+                    sequence: 2,
+                    operation: "write".to_owned(),
+                    byte_len: 4096,
+                    state: "pending".to_owned(),
+                },
+            ],
+            pending_count: 1,
+            completed_count: 1,
+            first_sequence: 1,
+            last_sequence: 2,
+            generation: 1,
+            state: "active".to_owned(),
+            recorded_at_event: 115,
+            note: "block request queue".to_owned(),
+        });
+        assert_eq!(view["kind"], "block-request-queue");
+        assert_eq!(view["owner"]["backend"]["kind"], "fake-block-backend");
+        assert_eq!(
+            view["references"]["entries"][0]["request"]["kind"],
+            "block-request"
+        );
+        assert_eq!(
+            view["references"]["entries"][0]["completion"]["kind"],
+            "block-completion"
+        );
+        assert_eq!(
+            view["references"]["entries"][1]["completion"],
+            serde_json::Value::Null
+        );
+        assert_eq!(view["queue"]["depth"], 4);
+        assert_eq!(view["queue"]["pending_count"], 1);
+        assert_eq!(view["queue"]["completed_count"], 1);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 115);
     }
 
     #[test]

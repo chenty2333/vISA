@@ -12446,6 +12446,312 @@ fn block_runtime_b8_invariants_reject_backend_generation_and_payload_digest_leak
     );
 }
 
+fn setup_b9_block_request_queue_graph() -> SemanticGraph {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk9");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1823,
+        "fake-block9",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b9 backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1824,
+        "blk9",
+        1823,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b9 block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1825, 1824, 1, 128, 8, "b9 range"));
+    assert!(graph.record_block_request_object_with_id(
+        1826,
+        1824,
+        1,
+        1825,
+        1,
+        BlockRequestOperation::Read,
+        1,
+        "b9 completed read request",
+    ));
+    assert!(graph.record_block_completion_object_with_id(
+        1827,
+        1826,
+        1,
+        1,
+        4096,
+        BlockCompletionStatus::Success,
+        "b9 read completion",
+    ));
+    assert!(graph.record_block_request_object_with_id(
+        1828,
+        1824,
+        1,
+        1825,
+        1,
+        BlockRequestOperation::Write,
+        2,
+        "b9 pending write request",
+    ));
+    assert!(graph.record_fake_block_backend_object_with_id(
+        1829,
+        "fake-block9",
+        1824,
+        1,
+        "service_core",
+        "fake-block-v1",
+        512,
+        4096,
+        false,
+        128,
+        0x766d_6f73_626c_6b39,
+        "b9 backend",
+    ));
+    graph
+}
+
+#[test]
+fn block_runtime_b9_request_queue_records_backend_device_request_order() {
+    let mut graph = setup_b9_block_request_queue_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b9-test",
+        SemanticCommand::RecordBlockRequestQueue {
+            queue: 1830,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1),
+            block_device: 1824,
+            block_device_generation: 1,
+            depth: 4,
+            entries: vec![
+                BlockRequestQueueEntryRef::completed(1826, 1, 1827, 1),
+                BlockRequestQueueEntryRef::pending(1828, 1),
+            ],
+            note: "b9 record request queue".to_string(),
+        },
+    ));
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.block_request_queue_count(), 1);
+    let queue = &graph.block_request_queues()[0];
+    assert_eq!(
+        queue.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BlockRequestQueue, 1830, 1)
+    );
+    assert_eq!(
+        queue.backend,
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1)
+    );
+    assert_eq!(queue.block_device, 1824);
+    assert_eq!(queue.depth, 4);
+    assert_eq!(queue.entries.len(), 2);
+    assert_eq!(queue.pending_count, 1);
+    assert_eq!(queue.completed_count, 1);
+    assert_eq!(queue.first_sequence, 1);
+    assert_eq!(queue.last_sequence, 2);
+    assert_eq!(
+        queue.entries[0].state,
+        BlockRequestQueueEntryState::Completed
+    );
+    assert_eq!(queue.entries[1].state, BlockRequestQueueEntryState::Pending);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BlockRequestQueueRecorded queue=1830 backend=fake-block-backend-object:1829@1 block_device=1824@1 depth=4 request_count=2 pending_count=1 completed_count=1 first_sequence=1 last_sequence=2 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b9_rejects_duplicate_stale_overdepth_and_bad_completion_queues() {
+    let mut graph = setup_b9_block_request_queue_graph();
+    assert!(graph.record_block_request_queue_with_id(
+        1830,
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1),
+        1824,
+        1,
+        4,
+        &[
+            BlockRequestQueueEntryRef::completed(1826, 1, 1827, 1),
+            BlockRequestQueueEntryRef::pending(1828, 1),
+        ],
+        "b9 existing queue",
+    ));
+
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b9-test",
+        SemanticCommand::RecordBlockRequestQueue {
+            queue: 1831,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1),
+            block_device: 1824,
+            block_device_generation: 1,
+            depth: 4,
+            entries: vec![BlockRequestQueueEntryRef::completed(1826, 1, 1827, 1)],
+            note: "b9 duplicate request".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["block request queue request already belongs to an active queue".to_string()]
+    );
+
+    let stale_backend = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b9-test",
+        SemanticCommand::RecordBlockRequestQueue {
+            queue: 1832,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 2),
+            block_device: 1824,
+            block_device_generation: 1,
+            depth: 4,
+            entries: vec![BlockRequestQueueEntryRef::completed(1826, 1, 1827, 1)],
+            note: "b9 stale backend".to_string(),
+        },
+    ));
+    assert_eq!(stale_backend.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_backend.violations,
+        vec!["block request queue backend generation is missing or inactive".to_string()]
+    );
+
+    let over_depth = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b9-test",
+        SemanticCommand::RecordBlockRequestQueue {
+            queue: 1833,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1),
+            block_device: 1824,
+            block_device_generation: 1,
+            depth: 1,
+            entries: vec![
+                BlockRequestQueueEntryRef::completed(1826, 1, 1827, 1),
+                BlockRequestQueueEntryRef::pending(1828, 1),
+            ],
+            note: "b9 over depth".to_string(),
+        },
+    ));
+    assert_eq!(over_depth.status, CommandStatus::Rejected);
+    assert_eq!(
+        over_depth.violations,
+        vec!["block request queue depth exceeded".to_string()]
+    );
+
+    assert!(graph.record_block_request_object_with_id(
+        1834,
+        1824,
+        1,
+        1825,
+        1,
+        BlockRequestOperation::Read,
+        3,
+        "b9 second completed request",
+    ));
+    assert!(graph.record_block_completion_object_with_id(
+        1835,
+        1834,
+        1,
+        3,
+        4096,
+        BlockCompletionStatus::Success,
+        "b9 second completion",
+    ));
+    let bad_completion = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "b9-test",
+        SemanticCommand::RecordBlockRequestQueue {
+            queue: 1836,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1),
+            block_device: 1824,
+            block_device_generation: 1,
+            depth: 4,
+            entries: vec![BlockRequestQueueEntryRef::completed(1834, 1, 1827, 1)],
+            note: "b9 bad completion".to_string(),
+        },
+    ));
+    assert_eq!(bad_completion.status, CommandStatus::Rejected);
+    assert_eq!(
+        bad_completion.violations,
+        vec!["block request queue completion does not match request".to_string()]
+    );
+}
+
+#[test]
+fn block_runtime_b9_invariants_reject_backend_generation_and_count_leaks() {
+    let mut graph = setup_b9_block_request_queue_graph();
+    assert!(graph.record_block_request_queue_with_id(
+        1830,
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1),
+        1824,
+        1,
+        4,
+        &[
+            BlockRequestQueueEntryRef::completed(1826, 1, 1827, 1),
+            BlockRequestQueueEntryRef::pending(1828, 1),
+        ],
+        "b9 invariant queue",
+    ));
+    graph.corrupt_block_request_queue_backend_generation_for_test(1830, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::BlockRequestQueueMissingBackend {
+            queue: 1830,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 2),
+        })
+    );
+
+    let mut graph = setup_b9_block_request_queue_graph();
+    assert!(graph.record_block_request_queue_with_id(
+        1830,
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1),
+        1824,
+        1,
+        4,
+        &[
+            BlockRequestQueueEntryRef::completed(1826, 1, 1827, 1),
+            BlockRequestQueueEntryRef::pending(1828, 1),
+        ],
+        "b9 invariant queue",
+    ));
+    graph.corrupt_block_request_queue_block_device_generation_for_test(1830, 2);
+    assert_eq!(
+        graph.check_block_request_queue_invariants(),
+        Err(
+            SemanticInvariantError::BlockRequestQueueMissingBlockDevice {
+                queue: 1830,
+                block_device: 1824,
+            }
+        )
+    );
+
+    let mut graph = setup_b9_block_request_queue_graph();
+    assert!(graph.record_block_request_queue_with_id(
+        1830,
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1),
+        1824,
+        1,
+        4,
+        &[
+            BlockRequestQueueEntryRef::completed(1826, 1, 1827, 1),
+            BlockRequestQueueEntryRef::pending(1828, 1),
+        ],
+        "b9 invariant queue",
+    ));
+    graph.corrupt_block_request_queue_pending_count_for_test(1830, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::BlockRequestQueueInvalid { queue: 1830 })
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

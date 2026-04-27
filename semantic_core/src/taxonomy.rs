@@ -959,6 +959,36 @@ impl BlockWritePathState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockRequestQueueState {
+    Active,
+    Retired,
+}
+
+impl BlockRequestQueueState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockRequestQueueEntryState {
+    Pending,
+    Completed,
+}
+
+impl BlockRequestQueueEntryState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Completed => "completed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PacketBufferDirection {
     Rx,
     Tx,

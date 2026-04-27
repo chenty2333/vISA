@@ -10,7 +10,8 @@ use artifact_manifest::{
     ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
     BlockCompletionObjectManifest, BlockDeviceObjectManifest, BlockRangeObjectManifest,
-    BlockReadPathManifest, BlockRequestObjectManifest, BlockWaitManifest, BlockWritePathManifest,
+    BlockReadPathManifest, BlockRequestObjectManifest, BlockRequestQueueEntryManifest,
+    BlockRequestQueueManifest, BlockWaitManifest, BlockWritePathManifest,
     BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
     CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
     CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
@@ -53,21 +54,22 @@ use net_stack_adapter::{SmoltcpAdapterConfig, build_smoltcp_adapter_evidence};
 use runtime::{HostValidationSmokeTrace, RuntimeOnlyExecutor};
 use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, AuthorityObjectRef,
-    BlockCompletionStatus, BlockRequestOperation, BoundaryKind, BoundaryStatus,
-    BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass, CapabilityHandleArg,
-    CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState, CodePublisher,
-    CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot, ContractObjectKind,
-    ContractObjectRef, ContractViolation, DescriptorObjectAccess, DmaBufferObjectAccess,
-    EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration,
-    FrontendKind, HartState, HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec,
-    HostcallTraceRecord, IpiEventKind, IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord,
-    MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord, MmioRegionObjectAccess,
-    NetworkBackpressureAction, NetworkBackpressureReason, NetworkFaultInjectionEffect,
-    NetworkFaultInjectionKind, PackageReplayValidator, PacketBufferDirection,
-    PacketBufferObjectState, PacketQueueRole, QueueObjectRole, ReplayPackageValidationState,
-    ResourceKind, RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
-    SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
-    StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    BlockCompletionStatus, BlockRequestOperation, BlockRequestQueueEntryRef, BoundaryKind,
+    BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, CapabilityClass,
+    CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
+    CodePublisher, CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot,
+    ContractObjectKind, ContractObjectRef, ContractViolation, DescriptorObjectAccess,
+    DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact,
+    ExternalObjectDeclaration, FrontendKind, HartState, HostcallCategory, HostcallFrame,
+    HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind, IrqLinePolarity,
+    IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
+    MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
+    NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
+    PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
+    QueueObjectRole, ReplayPackageValidationState, ResourceKind, RestartPolicy, RuntimeMode,
+    SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind,
+    SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState,
+    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
     TombstoneRecord, TrapSurfaceState, VerifiedArtifact, WaitCancelReason, memory_class_policies,
     validate_contract_graph,
@@ -211,6 +213,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b6_evidence(&mut semantic)?;
     record_block_runtime_b7_evidence(&mut semantic)?;
     record_block_runtime_b8_evidence(&mut semantic)?;
+    record_block_runtime_b9_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -3896,6 +3899,155 @@ fn record_block_runtime_b8_evidence(semantic: &mut SemanticGraph) -> Result<(), 
     Ok(())
 }
 
+fn record_block_runtime_b9_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let backend = ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 20_026, 1);
+    let entries = vec![
+        BlockRequestQueueEntryRef::completed(20_009, 1, 20_013, 1),
+        BlockRequestQueueEntryRef::completed(20_046, 1, 20_047, 1),
+    ];
+    let queue = semantic.apply_envelope(CommandEnvelope::new(
+        248,
+        "target-executor-b9",
+        SemanticCommand::RecordBlockRequestQueue {
+            queue: 20_053,
+            backend,
+            block_device: 20_002,
+            block_device_generation: 1,
+            depth: 8,
+            entries: entries.clone(),
+            note: "b9-record-block-request-queue-through-fake-backend".to_owned(),
+        },
+    ));
+    if queue.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b9 queue command {} ({}) failed: status={} violations={:?}",
+            queue.command_id,
+            queue.command,
+            queue.status.as_str(),
+            queue.violations
+        )
+        .into());
+    }
+
+    let duplicate = semantic.apply_envelope(CommandEnvelope::new(
+        249,
+        "target-executor-b9",
+        SemanticCommand::RecordBlockRequestQueue {
+            queue: 20_054,
+            backend,
+            block_device: 20_002,
+            block_device_generation: 1,
+            depth: 8,
+            entries: entries.clone(),
+            note: "b9-reject-request-already-queued".to_owned(),
+        },
+    ));
+    if duplicate.status != CommandStatus::Rejected
+        || !duplicate
+            .violations
+            .iter()
+            .any(|violation| violation.contains("already belongs to an active queue"))
+    {
+        return Err(format!(
+            "block runtime b9 duplicate request queue command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate.command_id,
+            duplicate.command,
+            duplicate.status.as_str(),
+            duplicate.violations
+        )
+        .into());
+    }
+
+    let stale_backend = semantic.apply_envelope(CommandEnvelope::new(
+        250,
+        "target-executor-b9",
+        SemanticCommand::RecordBlockRequestQueue {
+            queue: 20_055,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 20_026, 2),
+            block_device: 20_002,
+            block_device_generation: 1,
+            depth: 8,
+            entries: vec![BlockRequestQueueEntryRef::completed(20_009, 1, 20_013, 1)],
+            note: "b9-reject-stale-backend-generation".to_owned(),
+        },
+    ));
+    if stale_backend.status != CommandStatus::Rejected
+        || !stale_backend
+            .violations
+            .iter()
+            .any(|violation| violation.contains("backend generation"))
+    {
+        return Err(format!(
+            "block runtime b9 stale backend queue command {} ({}) was not rejected: status={} violations={:?}",
+            stale_backend.command_id,
+            stale_backend.command,
+            stale_backend.status.as_str(),
+            stale_backend.violations
+        )
+        .into());
+    }
+
+    let over_depth = semantic.apply_envelope(CommandEnvelope::new(
+        251,
+        "target-executor-b9",
+        SemanticCommand::RecordBlockRequestQueue {
+            queue: 20_056,
+            backend,
+            block_device: 20_002,
+            block_device_generation: 1,
+            depth: 1,
+            entries: entries.clone(),
+            note: "b9-reject-depth-exceeded".to_owned(),
+        },
+    ));
+    if over_depth.status != CommandStatus::Rejected
+        || !over_depth
+            .violations
+            .iter()
+            .any(|violation| violation.contains("depth exceeded"))
+    {
+        return Err(format!(
+            "block runtime b9 over-depth queue command {} ({}) was not rejected: status={} violations={:?}",
+            over_depth.command_id,
+            over_depth.command,
+            over_depth.status.as_str(),
+            over_depth.violations
+        )
+        .into());
+    }
+
+    let stale_request = semantic.apply_envelope(CommandEnvelope::new(
+        252,
+        "target-executor-b9",
+        SemanticCommand::RecordBlockRequestQueue {
+            queue: 20_057,
+            backend,
+            block_device: 20_002,
+            block_device_generation: 1,
+            depth: 8,
+            entries: vec![BlockRequestQueueEntryRef::completed(20_046, 2, 20_047, 1)],
+            note: "b9-reject-stale-request-generation".to_owned(),
+        },
+    ));
+    if stale_request.status != CommandStatus::Rejected
+        || !stale_request
+            .violations
+            .iter()
+            .any(|violation| violation.contains("request generation"))
+    {
+        return Err(format!(
+            "block runtime b9 stale request queue command {} ({}) was not rejected: status={} violations={:?}",
+            stale_request.command_id,
+            stale_request.command,
+            stale_request.status.as_str(),
+            stale_request.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -6295,6 +6447,7 @@ fn demo_migration_package(
             virtio_blk_backend_object_count: semantic.virtio_blk_backend_object_count(),
             block_read_path_count: semantic.block_read_path_count(),
             block_write_path_count: semantic.block_write_path_count(),
+            block_request_queue_count: semantic.block_request_queue_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -6641,6 +6794,11 @@ fn demo_migration_package(
                 .block_write_paths()
                 .iter()
                 .map(block_write_path_manifest)
+                .collect(),
+            block_request_queues: semantic
+                .block_request_queues()
+                .iter()
+                .map(block_request_queue_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -8157,6 +8315,27 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        block_request_queue_roots: semantic
+            .block_request_queues()
+            .iter()
+            .map(|queue| {
+                format!(
+                    "block-request-queue id={} backend={} block_device={}@{} depth={} entries={} pending={} completed={} first_sequence={} last_sequence={} state={} generation={}",
+                    queue.id,
+                    queue.backend.summary(),
+                    queue.block_device,
+                    queue.block_device_generation,
+                    queue.depth,
+                    queue.entries.len(),
+                    queue.pending_count,
+                    queue.completed_count,
+                    queue.first_sequence,
+                    queue.last_sequence,
+                    queue.state.as_str(),
+                    queue.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -9495,6 +9674,42 @@ fn block_write_path_manifest(
         state: write_path.state.as_str().to_owned(),
         recorded_at_event: write_path.recorded_at_event,
         note: write_path.note.clone(),
+    }
+}
+
+fn block_request_queue_manifest(
+    queue: &semantic_core::BlockRequestQueueRecord,
+) -> BlockRequestQueueManifest {
+    BlockRequestQueueManifest {
+        id: queue.id,
+        backend_kind: queue.backend.kind.as_str().to_owned(),
+        backend: queue.backend.id,
+        backend_generation: queue.backend.generation,
+        block_device: queue.block_device,
+        block_device_generation: queue.block_device_generation,
+        depth: queue.depth,
+        entries: queue
+            .entries
+            .iter()
+            .map(|entry| BlockRequestQueueEntryManifest {
+                request: entry.request,
+                request_generation: entry.request_generation,
+                completion: entry.completion,
+                completion_generation: entry.completion_generation,
+                sequence: entry.sequence,
+                operation: entry.operation.as_str().to_owned(),
+                byte_len: entry.byte_len,
+                state: entry.state.as_str().to_owned(),
+            })
+            .collect(),
+        pending_count: queue.pending_count,
+        completed_count: queue.completed_count,
+        first_sequence: queue.first_sequence,
+        last_sequence: queue.last_sequence,
+        generation: queue.generation,
+        state: queue.state.as_str().to_owned(),
+        recorded_at_event: queue.recorded_at_event,
+        note: queue.note.clone(),
     }
 }
 

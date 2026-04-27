@@ -764,6 +764,10 @@ impl SemanticGraph {
                 .block_write_paths
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::BlockRequestQueue => self
+                .block_request_queues
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

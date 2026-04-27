@@ -129,6 +129,7 @@ pub enum ObjectKind {
     VirtioBlkBackendObject,
     BlockReadPath,
     BlockWritePath,
+    BlockRequestQueue,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -223,6 +224,7 @@ impl ObjectKind {
             Self::VirtioBlkBackendObject => "virtio-blk-backend-object",
             Self::BlockReadPath => "block-read-path",
             Self::BlockWritePath => "block-write-path",
+            Self::BlockRequestQueue => "block-request-queue",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -501,6 +503,7 @@ typed_ref!(
 );
 typed_ref!(BlockReadPathRef, ObjectKind::BlockReadPath);
 typed_ref!(BlockWritePathRef, ObjectKind::BlockWritePath);
+typed_ref!(BlockRequestQueueRef, ObjectKind::BlockRequestQueue);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2044,6 +2047,13 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("block write path root/count mismatch"));
     }
+    if roots.block_request_queue_roots.len() != package.semantic.block_request_queue_count
+        || package.semantic.block_request_queues.len() != package.semantic.block_request_queue_count
+    {
+        return Err(ContractError::new(
+            "block request queue root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2629,6 +2639,7 @@ mod tests {
                 virtio_blk_backend_object_count: 0,
                 block_read_path_count: 0,
                 block_write_path_count: 0,
+                block_request_queue_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2732,6 +2743,7 @@ mod tests {
                 virtio_blk_backends: Vec::new(),
                 block_read_paths: Vec::new(),
                 block_write_paths: Vec::new(),
+                block_request_queues: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4144,6 +4156,45 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_block_request_queue_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.block_request_queue_count = 1;
+        package
+            .semantic
+            .block_request_queues
+            .push(artifact_manifest::BlockRequestQueueManifest {
+                id: 60,
+                backend_kind: "fake-block-backend-object".to_owned(),
+                backend: 56,
+                backend_generation: 1,
+                block_device: 51,
+                block_device_generation: 1,
+                depth: 4,
+                entries: vec![artifact_manifest::BlockRequestQueueEntryManifest {
+                    request: 53,
+                    request_generation: 1,
+                    completion: Some(54),
+                    completion_generation: Some(1),
+                    sequence: 2,
+                    operation: "write".to_owned(),
+                    byte_len: 4096,
+                    state: "completed".to_owned(),
+                }],
+                pending_count: 0,
+                completed_count: 1,
+                first_sequence: 2,
+                last_sequence: 2,
+                generation: 1,
+                state: "active".to_owned(),
+                recorded_at_event: 76,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "block request queue root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -5421,6 +5472,8 @@ mod tests {
         assert!(BlockReadPathRef::try_from_ref(block_read_path).is_ok());
         let block_write_path = ObjectRef::new(ObjectKind::BlockWritePath, 59, 1).unwrap();
         assert!(BlockWritePathRef::try_from_ref(block_write_path).is_ok());
+        let block_request_queue = ObjectRef::new(ObjectKind::BlockRequestQueue, 60, 1).unwrap();
+        assert!(BlockRequestQueueRef::try_from_ref(block_request_queue).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

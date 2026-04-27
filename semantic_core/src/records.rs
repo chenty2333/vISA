@@ -1875,6 +1875,79 @@ impl BlockWritePathRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockRequestQueueEntryRef {
+    pub request: BlockRequestObjectId,
+    pub request_generation: Generation,
+    pub completion: Option<BlockCompletionObjectId>,
+    pub completion_generation: Option<Generation>,
+}
+
+impl BlockRequestQueueEntryRef {
+    pub const fn pending(request: BlockRequestObjectId, request_generation: Generation) -> Self {
+        Self {
+            request,
+            request_generation,
+            completion: None,
+            completion_generation: None,
+        }
+    }
+
+    pub const fn completed(
+        request: BlockRequestObjectId,
+        request_generation: Generation,
+        completion: BlockCompletionObjectId,
+        completion_generation: Generation,
+    ) -> Self {
+        Self {
+            request,
+            request_generation,
+            completion: Some(completion),
+            completion_generation: Some(completion_generation),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockRequestQueueEntryRecord {
+    pub request: BlockRequestObjectId,
+    pub request_generation: Generation,
+    pub completion: Option<BlockCompletionObjectId>,
+    pub completion_generation: Option<Generation>,
+    pub sequence: u64,
+    pub operation: BlockRequestOperation,
+    pub byte_len: u64,
+    pub state: BlockRequestQueueEntryState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockRequestQueueRecord {
+    pub id: BlockRequestQueueId,
+    pub backend: ContractObjectRef,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub depth: u32,
+    pub entries: Vec<BlockRequestQueueEntryRecord>,
+    pub pending_count: u32,
+    pub completed_count: u32,
+    pub first_sequence: u64,
+    pub last_sequence: u64,
+    pub generation: Generation,
+    pub state: BlockRequestQueueState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl BlockRequestQueueRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::BlockRequestQueue,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

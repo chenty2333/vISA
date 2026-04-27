@@ -569,6 +569,19 @@ pub enum EventKind {
         payload_digest: u64,
         generation: Generation,
     },
+    BlockRequestQueueRecorded {
+        queue: BlockRequestQueueId,
+        backend: ContractObjectRef,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        depth: u32,
+        request_count: u32,
+        pending_count: u32,
+        completed_count: u32,
+        first_sequence: u64,
+        last_sequence: u64,
+        generation: Generation,
+    },
     PacketBufferObjectRecorded {
         packet_buffer: PacketBufferObjectId,
         packet_device: PacketDeviceObjectId,
@@ -2032,6 +2045,22 @@ impl EventKind {
                 generation,
             } => format!(
                 "BlockWritePathRecorded write_path={write_path} backend={} block_request={block_request}@{block_request_generation} block_completion={block_completion}@{block_completion_generation} block_device={block_device}@{block_device_generation} block_range={block_range}@{block_range_generation} sequence={sequence} completed_bytes={completed_bytes} payload_digest={payload_digest} generation={generation}",
+                backend.summary()
+            ),
+            Self::BlockRequestQueueRecorded {
+                queue,
+                backend,
+                block_device,
+                block_device_generation,
+                depth,
+                request_count,
+                pending_count,
+                completed_count,
+                first_sequence,
+                last_sequence,
+                generation,
+            } => format!(
+                "BlockRequestQueueRecorded queue={queue} backend={} block_device={block_device}@{block_device_generation} depth={depth} request_count={request_count} pending_count={pending_count} completed_count={completed_count} first_sequence={first_sequence} last_sequence={last_sequence} generation={generation}",
                 backend.summary()
             ),
             Self::PacketBufferObjectRecorded {
