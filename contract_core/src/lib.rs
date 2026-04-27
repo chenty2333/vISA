@@ -134,6 +134,7 @@ pub enum ObjectKind {
     BlockPageObject,
     BufferCacheObject,
     FileObject,
+    DirectoryObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -233,6 +234,7 @@ impl ObjectKind {
             Self::BlockPageObject => "block-page-object",
             Self::BufferCacheObject => "buffer-cache-object",
             Self::FileObject => "file-object",
+            Self::DirectoryObject => "directory-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -515,6 +517,7 @@ typed_ref!(BlockRequestQueueRef, ObjectKind::BlockRequestQueue);
 typed_ref!(BlockDmaBufferRef, ObjectKind::BlockDmaBuffer);
 typed_ref!(BufferCacheObjectRef, ObjectKind::BufferCacheObject);
 typed_ref!(FileObjectRef, ObjectKind::FileObject);
+typed_ref!(DirectoryObjectRef, ObjectKind::DirectoryObject);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2088,6 +2091,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("file object root/count mismatch"));
     }
+    if roots.directory_object_roots.len() != package.semantic.directory_object_count
+        || package.semantic.directory_objects.len() != package.semantic.directory_object_count
+    {
+        return Err(ContractError::new("directory object root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2678,6 +2686,7 @@ mod tests {
                 block_page_object_count: 0,
                 buffer_cache_object_count: 0,
                 file_object_count: 0,
+                directory_object_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2786,6 +2795,7 @@ mod tests {
                 block_page_objects: Vec::new(),
                 buffer_cache_objects: Vec::new(),
                 file_objects: Vec::new(),
+                directory_objects: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4417,6 +4427,36 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_directory_object_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.directory_object_count = 1;
+        package
+            .semantic
+            .directory_objects
+            .push(artifact_manifest::DirectoryObjectManifest {
+                id: 65,
+                file_object: 64,
+                file_object_generation: 1,
+                namespace: "rootfs".to_owned(),
+                directory_key: "demo-dir".to_owned(),
+                directory_path: "/demo".to_owned(),
+                entry_name: "file.txt".to_owned(),
+                child_file_key: "demo-file".to_owned(),
+                child_path: "/demo/file.txt".to_owned(),
+                entry_kind: "file".to_owned(),
+                file_size: 4096,
+                content_digest: 1,
+                generation: 1,
+                state: "cached".to_owned(),
+                recorded_at_event: 81,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "directory object root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -5704,6 +5744,8 @@ mod tests {
         assert!(BufferCacheObjectRef::try_from_ref(buffer_cache_object).is_ok());
         let file_object = ObjectRef::new(ObjectKind::FileObject, 64, 1).unwrap();
         assert!(FileObjectRef::try_from_ref(file_object).is_ok());
+        let directory_object = ObjectRef::new(ObjectKind::DirectoryObject, 65, 1).unwrap();
+        assert!(DirectoryObjectRef::try_from_ref(directory_object).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

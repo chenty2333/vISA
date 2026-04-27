@@ -1282,6 +1282,19 @@ pub enum SemanticInvariantError {
     FileObjectMissingEvent {
         file_object: FileObjectId,
     },
+    DirectoryObjectInvalid {
+        directory_object: DirectoryObjectId,
+    },
+    DirectoryObjectMissingFileObject {
+        directory_object: DirectoryObjectId,
+        file_object: FileObjectId,
+    },
+    DirectoryObjectDuplicateEntry {
+        directory_object: DirectoryObjectId,
+    },
+    DirectoryObjectMissingEvent {
+        directory_object: DirectoryObjectId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

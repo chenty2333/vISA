@@ -784,6 +784,10 @@ impl SemanticGraph {
                 .file_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::DirectoryObject => self
+                .directory_objects
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

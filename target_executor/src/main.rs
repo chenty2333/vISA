@@ -18,21 +18,21 @@ use artifact_manifest::{
     CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest, CommandResultManifest,
     ContractObjectRefManifest, ContractViolationManifest, CrossHartSchedulerDecisionManifest,
     DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FileObjectManifest,
-    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
-    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
-    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    FileObjectManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -60,17 +60,18 @@ use semantic_core::{
     CapabilityClass, CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject,
     CodePublishState, CodePublisher, CommandEnvelope, CommandResult, CommandStatus,
     ContractGraphSnapshot, ContractObjectKind, ContractObjectRef, ContractViolation, CowState,
-    DescriptorObjectAccess, DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord,
-    ExpectedTargetArtifact, ExternalObjectDeclaration, FileObjectState, FrontendKind, HartState,
-    HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
-    IpiEventKind, IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy,
-    MemoryLayoutState, MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
-    NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
-    PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
-    PageBacking, PageObjectState, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
-    RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
-    SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
-    StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    DescriptorObjectAccess, DirectoryEntryKind, DirectoryObjectState, DmaBufferObjectAccess,
+    EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact, ExternalObjectDeclaration,
+    FileObjectState, FrontendKind, HartState, HostcallCategory, HostcallFrame, HostcallLinkState,
+    HostcallSpec, HostcallTraceRecord, IpiEventKind, IrqLinePolarity, IrqLineTrigger,
+    ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord,
+    MmioRegionObjectAccess, NetworkBackpressureAction, NetworkBackpressureReason,
+    NetworkFaultInjectionEffect, NetworkFaultInjectionKind, PackageReplayValidator,
+    PacketBufferDirection, PacketBufferObjectState, PacketQueueRole, PageBacking, PageObjectState,
+    QueueObjectRole, ReplayPackageValidationState, ResourceKind, RestartPolicy, RuntimeMode,
+    SavedContextReason, SemanticCommand, SemanticGraph, SemanticWaitKind,
+    SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState,
+    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
     TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
     TombstoneRecord, TrapSurfaceState, VerifiedArtifact, WaitCancelReason, memory_class_policies,
     validate_contract_graph,
@@ -219,6 +220,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b11_evidence(&mut semantic)?;
     record_block_runtime_b12_evidence(&mut semantic)?;
     record_block_runtime_b13_evidence(&mut semantic)?;
+    record_block_runtime_b14_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -4690,6 +4692,149 @@ fn record_block_runtime_b13_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_block_runtime_b14_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let directory = semantic.apply_envelope(CommandEnvelope::new(
+        272,
+        "target-executor-b14",
+        SemanticCommand::RecordDirectoryObject {
+            directory_object: 20_077,
+            file_object: 20_073,
+            file_object_generation: 1,
+            namespace: "rootfs".to_owned(),
+            directory_key: "demo-dir".to_owned(),
+            directory_path: "/demo".to_owned(),
+            entry_name: "file.txt".to_owned(),
+            child_file_key: "demo-file".to_owned(),
+            child_path: "/demo/file.txt".to_owned(),
+            entry_kind: DirectoryEntryKind::File,
+            file_size: 4096,
+            content_digest: 0xB13,
+            state: DirectoryObjectState::Cached,
+            note: "b14-record-directory-entry-for-file-object".to_owned(),
+        },
+    ));
+    if directory.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b14 directory object command {} ({}) failed: status={} violations={:?}",
+            directory.command_id,
+            directory.command,
+            directory.status.as_str(),
+            directory.violations
+        )
+        .into());
+    }
+
+    let stale_file = semantic.apply_envelope(CommandEnvelope::new(
+        273,
+        "target-executor-b14",
+        SemanticCommand::RecordDirectoryObject {
+            directory_object: 20_078,
+            file_object: 20_073,
+            file_object_generation: 2,
+            namespace: "rootfs".to_owned(),
+            directory_key: "demo-dir".to_owned(),
+            directory_path: "/demo".to_owned(),
+            entry_name: "stale.txt".to_owned(),
+            child_file_key: "demo-file".to_owned(),
+            child_path: "/demo/file.txt".to_owned(),
+            entry_kind: DirectoryEntryKind::File,
+            file_size: 4096,
+            content_digest: 0xB13,
+            state: DirectoryObjectState::Cached,
+            note: "b14-reject-stale-file-object-generation".to_owned(),
+        },
+    ));
+    if stale_file.status != CommandStatus::Rejected
+        || !stale_file
+            .violations
+            .iter()
+            .any(|violation| violation.contains("file generation"))
+    {
+        return Err(format!(
+            "block runtime b14 stale file command {} ({}) was not rejected: status={} violations={:?}",
+            stale_file.command_id,
+            stale_file.command,
+            stale_file.status.as_str(),
+            stale_file.violations
+        )
+        .into());
+    }
+
+    let mismatch = semantic.apply_envelope(CommandEnvelope::new(
+        274,
+        "target-executor-b14",
+        SemanticCommand::RecordDirectoryObject {
+            directory_object: 20_079,
+            file_object: 20_073,
+            file_object_generation: 1,
+            namespace: "rootfs".to_owned(),
+            directory_key: "demo-dir".to_owned(),
+            directory_path: "/demo".to_owned(),
+            entry_name: "wrong.txt".to_owned(),
+            child_file_key: "demo-file".to_owned(),
+            child_path: "/demo/wrong.txt".to_owned(),
+            entry_kind: DirectoryEntryKind::File,
+            file_size: 4096,
+            content_digest: 0xB13,
+            state: DirectoryObjectState::Cached,
+            note: "b14-reject-directory-file-identity-mismatch".to_owned(),
+        },
+    ));
+    if mismatch.status != CommandStatus::Rejected
+        || !mismatch
+            .violations
+            .iter()
+            .any(|violation| violation.contains("file identity mismatch"))
+    {
+        return Err(format!(
+            "block runtime b14 mismatch command {} ({}) was not rejected: status={} violations={:?}",
+            mismatch.command_id,
+            mismatch.command,
+            mismatch.status.as_str(),
+            mismatch.violations
+        )
+        .into());
+    }
+
+    let duplicate = semantic.apply_envelope(CommandEnvelope::new(
+        275,
+        "target-executor-b14",
+        SemanticCommand::RecordDirectoryObject {
+            directory_object: 20_080,
+            file_object: 20_073,
+            file_object_generation: 1,
+            namespace: "rootfs".to_owned(),
+            directory_key: "demo-dir".to_owned(),
+            directory_path: "/demo".to_owned(),
+            entry_name: "file.txt".to_owned(),
+            child_file_key: "demo-file".to_owned(),
+            child_path: "/demo/file.txt".to_owned(),
+            entry_kind: DirectoryEntryKind::File,
+            file_size: 4096,
+            content_digest: 0xB13,
+            state: DirectoryObjectState::Cached,
+            note: "b14-reject-duplicate-directory-entry".to_owned(),
+        },
+    ));
+    if duplicate.status != CommandStatus::Rejected
+        || !duplicate
+            .violations
+            .iter()
+            .any(|violation| violation.contains("entry already materialized"))
+    {
+        return Err(format!(
+            "block runtime b14 duplicate command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate.command_id,
+            duplicate.command,
+            duplicate.status.as_str(),
+            duplicate.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -7094,6 +7239,7 @@ fn demo_migration_package(
             block_page_object_count: semantic.block_page_object_count(),
             buffer_cache_object_count: semantic.buffer_cache_object_count(),
             file_object_count: semantic.file_object_count(),
+            directory_object_count: semantic.directory_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -7465,6 +7611,11 @@ fn demo_migration_package(
                 .file_objects()
                 .iter()
                 .map(file_object_manifest)
+                .collect(),
+            directory_objects: semantic
+                .directory_objects()
+                .iter()
+                .map(directory_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -9124,6 +9275,29 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        directory_object_roots: semantic
+            .directory_objects()
+            .iter()
+            .map(|directory| {
+                format!(
+                    "directory-object id={} file_object={}@{} namespace={} directory_key={} directory_path={} entry_name={} child_file_key={} child_path={} entry_kind={} file_size={} content_digest={} state={} generation={}",
+                    directory.id,
+                    directory.file_object,
+                    directory.file_object_generation,
+                    directory.namespace,
+                    directory.directory_key,
+                    directory.directory_path,
+                    directory.entry_name,
+                    directory.child_file_key,
+                    directory.child_path,
+                    directory.entry_kind.as_str(),
+                    directory.file_size,
+                    directory.content_digest,
+                    directory.state.as_str(),
+                    directory.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -10620,6 +10794,29 @@ fn file_object_manifest(file: &semantic_core::FileObjectRecord) -> FileObjectMan
         state: file.state.as_str().to_owned(),
         recorded_at_event: file.recorded_at_event,
         note: file.note.clone(),
+    }
+}
+
+fn directory_object_manifest(
+    directory: &semantic_core::DirectoryObjectRecord,
+) -> DirectoryObjectManifest {
+    DirectoryObjectManifest {
+        id: directory.id,
+        file_object: directory.file_object,
+        file_object_generation: directory.file_object_generation,
+        namespace: directory.namespace.clone(),
+        directory_key: directory.directory_key.clone(),
+        directory_path: directory.directory_path.clone(),
+        entry_name: directory.entry_name.clone(),
+        child_file_key: directory.child_file_key.clone(),
+        child_path: directory.child_path.clone(),
+        entry_kind: directory.entry_kind.as_str().to_owned(),
+        file_size: directory.file_size,
+        content_digest: directory.content_digest,
+        generation: directory.generation,
+        state: directory.state.as_str().to_owned(),
+        recorded_at_event: directory.recorded_at_event,
+        note: directory.note.clone(),
     }
 }
 

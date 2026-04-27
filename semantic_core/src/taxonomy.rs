@@ -1032,6 +1032,36 @@ impl FileObjectState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirectoryEntryKind {
+    File,
+}
+
+impl DirectoryEntryKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirectoryObjectState {
+    Cached,
+    Dirty,
+    Invalidated,
+}
+
+impl DirectoryObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cached => "cached",
+            Self::Dirty => "dirty",
+            Self::Invalidated => "invalidated",
+        }
+    }
+}
+
 impl BlockRequestQueueEntryState {
     pub const fn as_str(self) -> &'static str {
         match self {

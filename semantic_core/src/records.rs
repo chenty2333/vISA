@@ -2090,6 +2090,36 @@ impl FileObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirectoryObjectRecord {
+    pub id: DirectoryObjectId,
+    pub file_object: FileObjectId,
+    pub file_object_generation: Generation,
+    pub namespace: String,
+    pub directory_key: String,
+    pub directory_path: String,
+    pub entry_name: String,
+    pub child_file_key: String,
+    pub child_path: String,
+    pub entry_kind: DirectoryEntryKind,
+    pub file_size: u64,
+    pub content_digest: u64,
+    pub generation: Generation,
+    pub state: DirectoryObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl DirectoryObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::DirectoryObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,
