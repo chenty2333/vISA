@@ -127,6 +127,7 @@ pub enum ObjectKind {
     BlockWait,
     FakeBlockBackendObject,
     VirtioBlkBackendObject,
+    BlockReadPath,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -219,6 +220,7 @@ impl ObjectKind {
             Self::BlockWait => "block-wait",
             Self::FakeBlockBackendObject => "fake-block-backend-object",
             Self::VirtioBlkBackendObject => "virtio-blk-backend-object",
+            Self::BlockReadPath => "block-read-path",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -495,6 +497,7 @@ typed_ref!(
     VirtioBlkBackendObjectRef,
     ObjectKind::VirtioBlkBackendObject
 );
+typed_ref!(BlockReadPathRef, ObjectKind::BlockReadPath);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2028,6 +2031,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "virtio block backend object root/count mismatch",
         ));
     }
+    if roots.block_read_path_roots.len() != package.semantic.block_read_path_count
+        || package.semantic.block_read_paths.len() != package.semantic.block_read_path_count
+    {
+        return Err(ContractError::new("block read path root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2611,6 +2619,7 @@ mod tests {
                 block_wait_count: 0,
                 fake_block_backend_object_count: 0,
                 virtio_blk_backend_object_count: 0,
+                block_read_path_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2712,6 +2721,7 @@ mod tests {
                 block_waits: Vec::new(),
                 fake_block_backends: Vec::new(),
                 virtio_blk_backends: Vec::new(),
+                block_read_paths: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4058,6 +4068,39 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_block_read_path_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.block_read_path_count = 1;
+        package
+            .semantic
+            .block_read_paths
+            .push(artifact_manifest::BlockReadPathManifest {
+                id: 58,
+                backend_kind: "fake-block-backend-object".to_owned(),
+                backend: 56,
+                backend_generation: 1,
+                block_request: 53,
+                block_request_generation: 1,
+                block_completion: 54,
+                block_completion_generation: 1,
+                block_device: 51,
+                block_device_generation: 1,
+                block_range: 52,
+                block_range_generation: 1,
+                sequence: 1,
+                completed_bytes: 4096,
+                data_digest: 1,
+                generation: 1,
+                state: "completed".to_owned(),
+                recorded_at_event: 74,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "block read path root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -5331,6 +5374,8 @@ mod tests {
         let virtio_blk_backend_object =
             ObjectRef::new(ObjectKind::VirtioBlkBackendObject, 57, 1).unwrap();
         assert!(VirtioBlkBackendObjectRef::try_from_ref(virtio_blk_backend_object).is_ok());
+        let block_read_path = ObjectRef::new(ObjectKind::BlockReadPath, 58, 1).unwrap();
+        assert!(BlockReadPathRef::try_from_ref(block_read_path).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

@@ -1,0 +1,247 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "B7-block-read-path",
+  "phase": "Phase 5 Block / Disk Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add BlockReadPath as a stable semantic read path evidence object",
+    "Record BlockReadPath through SemanticCommand::RecordBlockReadPath",
+    "Require exact FakeBlockBackendObject, BlockRequestObject, BlockCompletionObject, BlockDeviceObject, and BlockRangeObject generations",
+    "Require completed successful read requests and full-byte completions before read path evidence is accepted",
+    "Record deterministic data_digest evidence without treating fake backend storage as semantic truth",
+    "Expose block read path roots/counts through semantic package, osctl ViewV1, graph, replay roots, and roots JSON",
+    "Reject duplicate read paths, stale backend generations, write requests, unsupported backend kinds, incomplete completions, and digest tampering before mutation"
+  ],
+  "no_goals": [
+    "real virtio block read execution",
+    "request queue scheduling",
+    "DMA-backed block buffer",
+    "page cache or filesystem adapter",
+    "FAT/ext4 integration",
+    "target-side cwasm execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/block_read_path.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/block/golden_b7_block_read_path.trace.json",
+    "tests/reports/checkpoints/b7_block_read_path.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/block/golden_b7_block_read_path.trace.json",
+    "tests/reports/checkpoints/b7_block_read_path.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "BlockReadPath uses exact ObjectRef-style generations for backend, request, completion, block device, and range",
+      "BlockReadPath is historical read evidence and does not keep backend-local data as semantic truth",
+      "BlockReadPath refuses write requests, stale backend generations, duplicate read paths, and data digest mismatches before mutation",
+      "osctl exposes BlockReadPath through stable ViewV1 and normalizes backend kind to the public osctl object kind",
+      "Root/count validation covers block_read_paths so package tampering is rejected"
+    ],
+    "bad_smells_checked": [
+      "No virtio-drivers dependency or adapter internals were introduced into semantic_core",
+      "No fatfs, ext4, page cache, request queue scheduler, real DMA/MMIO/IRQ behavior, or filesystem adapter was added",
+      "The fake backend remains an adapter/evidence source; BlockReadPath stores stable semantic references and a deterministic digest only",
+      "The new graph module is domain-scoped and mirrors existing block object boundary shape",
+      "Target executor evidence remains a host-side semantic harness and does not run real block IO"
+    ],
+    "residual_notes": [
+      "B8 still needs block write path semantics",
+      "B9/B10 still need request queueing and DMA-backed block buffers",
+      "B15/B16 still need FAT/ext4 adapter boundaries outside semantic_core"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo check -p semantic_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p contract_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core block_runtime_b7",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core block_read_path",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl block_read_path_view_v1_exposes_backend_request_completion_and_digest",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl block-read-path list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 234",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 235",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 236",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 237",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 238",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 239",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 240",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --live --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl replay --until 417 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    },
+    {
+      "command": "rg \"smoltcp::|virtio_drivers|fatfs|ext4|ext4_view|std::net|tokio::|async_std\" semantic_core contract_core target_executor osctl artifact_manifest -g '*.rs' (no matches)",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/block/golden_b7_block_read_path.trace.json",
+    "osctl_views": [
+      "osctl block-read-path list --json <migration.json>",
+      "osctl command show --json <migration.json> 234",
+      "osctl command show --json <migration.json> 235",
+      "osctl command show --json <migration.json> 236",
+      "osctl command show --json <migration.json> 237",
+      "osctl command show --json <migration.json> 238",
+      "osctl command show --json <migration.json> 239",
+      "osctl command show --json <migration.json> 240",
+      "osctl graph --live --json <migration.json>",
+      "osctl contract validate --json <migration.json>"
+    ],
+    "semantic_roots": [
+      "block_read_path_roots",
+      "block_device_object_roots",
+      "block_range_object_roots",
+      "block_request_object_roots",
+      "block_completion_object_roots",
+      "fake_block_backend_object_roots",
+      "command_result_roots"
+    ],
+    "target_executor_package": {
+      "event_cursor": 417,
+      "block_read_path_count": 1,
+      "block_read_path": "block-read-path:20039@1",
+      "backend": "fake-block-backend:20026@1",
+      "block_request": "block-request:20009@1",
+      "block_completion": "block-completion:20013@1",
+      "block_device": "block-device:20002@1",
+      "block_range": "block-range:20005@1",
+      "completed_bytes": 4096,
+      "data_digest": 2801141880014165438,
+      "recorded_event": 413,
+      "read_path_applied_command": "command-result:234:record-block-read-path:applied",
+      "duplicate_read_path_rejected_command": "command-result:235:record-block-read-path:rejected",
+      "stale_backend_rejected_command": "command-result:236:record-block-read-path:rejected",
+      "write_request_applied_command": "command-result:237:record-block-request-object:applied",
+      "write_completion_applied_command": "command-result:238:record-block-completion-object:applied",
+      "write_as_read_rejected_command": "command-result:239:record-block-read-path:rejected",
+      "bad_digest_rejected_command": "command-result:240:record-block-read-path:rejected"
+    }
+  },
+  "residual_gaps": [
+    "B8 still needs block write path semantics",
+    "B9/B10 still need request queueing and DMA-backed block buffers",
+    "B15/B16 still need FAT/ext4 adapter boundaries outside semantic_core"
+  ],
+  "next_checkpoint": "B8-block-write-path"
+}

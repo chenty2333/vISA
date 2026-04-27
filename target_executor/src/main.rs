@@ -10,26 +10,27 @@ use artifact_manifest::{
     ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
     BlockCompletionObjectManifest, BlockDeviceObjectManifest, BlockRangeObjectManifest,
-    BlockRequestObjectManifest, BlockWaitManifest, BoundaryValidationReportManifest,
-    BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
-    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
-    ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceCapabilityManifest, DeviceObjectManifest, DmaBufferObjectManifest,
-    DriverStoreBindingManifest, EndpointObjectManifest, FakeBlockBackendObjectManifest,
-    FakeNetBackendObjectManifest, GuestStateManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    BlockReadPathManifest, BlockRequestObjectManifest, BlockWaitManifest,
+    BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
+    CapabilityHandleArgManifest, CapabilityRecordManifest, CleanupEffectManifest,
+    CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest,
+    CommandResultManifest, ContractObjectRefManifest, ContractViolationManifest,
+    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
+    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
+    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
+    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -208,6 +209,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b4_evidence(&mut semantic)?;
     record_block_runtime_b5_evidence(&mut semantic)?;
     record_block_runtime_b6_evidence(&mut semantic)?;
+    record_block_runtime_b7_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -3475,6 +3477,215 @@ fn record_block_runtime_b6_evidence(semantic: &mut SemanticGraph) -> Result<(), 
     Ok(())
 }
 
+fn record_block_runtime_b7_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let config = FakeBlockBackendConfig::blk0();
+    let backend = ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 20_026, 1);
+    let data_digest = SemanticGraph::expected_block_read_digest_v1(
+        config.deterministic_seed,
+        20_002,
+        1,
+        20_005,
+        1,
+        64,
+        8,
+        1,
+        4096,
+    );
+    let read_path = semantic.apply_envelope(CommandEnvelope::new(
+        234,
+        "target-executor-b7",
+        SemanticCommand::RecordBlockReadPath {
+            read_path: 20_039,
+            backend,
+            block_request: 20_009,
+            block_request_generation: 1,
+            block_completion: 20_013,
+            block_completion_generation: 1,
+            data_digest,
+            note: "b7-record-block-read-path-through-fake-backend".to_owned(),
+        },
+    ));
+    if read_path.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b7 read path command {} ({}) failed: status={} violations={:?}",
+            read_path.command_id,
+            read_path.command,
+            read_path.status.as_str(),
+            read_path.violations
+        )
+        .into());
+    }
+
+    let duplicate = semantic.apply_envelope(CommandEnvelope::new(
+        235,
+        "target-executor-b7",
+        SemanticCommand::RecordBlockReadPath {
+            read_path: 20_040,
+            backend,
+            block_request: 20_009,
+            block_request_generation: 1,
+            block_completion: 20_013,
+            block_completion_generation: 1,
+            data_digest,
+            note: "b7-reject-duplicate-read-path".to_owned(),
+        },
+    ));
+    if duplicate.status != CommandStatus::Rejected
+        || !duplicate
+            .violations
+            .iter()
+            .any(|violation| violation.contains("already exists for request generation"))
+    {
+        return Err(format!(
+            "block runtime b7 duplicate read path command {} ({}) was not rejected: status={} violations={:?}",
+            duplicate.command_id,
+            duplicate.command,
+            duplicate.status.as_str(),
+            duplicate.violations
+        )
+        .into());
+    }
+
+    let stale_backend = semantic.apply_envelope(CommandEnvelope::new(
+        236,
+        "target-executor-b7",
+        SemanticCommand::RecordBlockReadPath {
+            read_path: 20_041,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 20_026, 2),
+            block_request: 20_009,
+            block_request_generation: 1,
+            block_completion: 20_013,
+            block_completion_generation: 1,
+            data_digest,
+            note: "b7-reject-stale-backend-generation".to_owned(),
+        },
+    ));
+    if stale_backend.status != CommandStatus::Rejected
+        || !stale_backend
+            .violations
+            .iter()
+            .any(|violation| violation.contains("backend generation"))
+    {
+        return Err(format!(
+            "block runtime b7 stale backend command {} ({}) was not rejected: status={} violations={:?}",
+            stale_backend.command_id,
+            stale_backend.command,
+            stale_backend.status.as_str(),
+            stale_backend.violations
+        )
+        .into());
+    }
+
+    let write_request = semantic.apply_envelope(CommandEnvelope::new(
+        237,
+        "target-executor-b7",
+        SemanticCommand::RecordBlockRequestObject {
+            block_request: 20_042,
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_range: 20_005,
+            block_range_generation: 1,
+            operation: BlockRequestOperation::Write,
+            sequence: 4,
+            note: "b7-record-write-request-for-read-path-negative".to_owned(),
+        },
+    ));
+    if write_request.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b7 write request command {} ({}) failed: status={} violations={:?}",
+            write_request.command_id,
+            write_request.command,
+            write_request.status.as_str(),
+            write_request.violations
+        )
+        .into());
+    }
+    let write_completion = semantic.apply_envelope(CommandEnvelope::new(
+        238,
+        "target-executor-b7",
+        SemanticCommand::RecordBlockCompletionObject {
+            block_completion: 20_043,
+            block_request: 20_042,
+            block_request_generation: 1,
+            sequence: 4,
+            completed_bytes: 4096,
+            status: BlockCompletionStatus::Success,
+            note: "b7-record-write-completion-for-read-path-negative".to_owned(),
+        },
+    ));
+    if write_completion.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b7 write completion command {} ({}) failed: status={} violations={:?}",
+            write_completion.command_id,
+            write_completion.command,
+            write_completion.status.as_str(),
+            write_completion.violations
+        )
+        .into());
+    }
+    let write_not_read = semantic.apply_envelope(CommandEnvelope::new(
+        239,
+        "target-executor-b7",
+        SemanticCommand::RecordBlockReadPath {
+            read_path: 20_044,
+            backend,
+            block_request: 20_042,
+            block_request_generation: 1,
+            block_completion: 20_043,
+            block_completion_generation: 1,
+            data_digest,
+            note: "b7-reject-write-request-as-read-path".to_owned(),
+        },
+    ));
+    if write_not_read.status != CommandStatus::Rejected
+        || !write_not_read
+            .violations
+            .iter()
+            .any(|violation| violation.contains("operation is not read"))
+    {
+        return Err(format!(
+            "block runtime b7 write-as-read command {} ({}) was not rejected: status={} violations={:?}",
+            write_not_read.command_id,
+            write_not_read.command,
+            write_not_read.status.as_str(),
+            write_not_read.violations
+        )
+        .into());
+    }
+
+    let bad_digest = semantic.apply_envelope(CommandEnvelope::new(
+        240,
+        "target-executor-b7",
+        SemanticCommand::RecordBlockReadPath {
+            read_path: 20_045,
+            backend,
+            block_request: 20_009,
+            block_request_generation: 1,
+            block_completion: 20_013,
+            block_completion_generation: 1,
+            data_digest: data_digest.wrapping_add(1),
+            note: "b7-reject-data-digest-mismatch".to_owned(),
+        },
+    ));
+    if bad_digest.status != CommandStatus::Rejected
+        || !bad_digest
+            .violations
+            .iter()
+            .any(|violation| violation.contains("data digest mismatch"))
+    {
+        return Err(format!(
+            "block runtime b7 bad digest command {} ({}) was not rejected: status={} violations={:?}",
+            bad_digest.command_id,
+            bad_digest.command,
+            bad_digest.status.as_str(),
+            bad_digest.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -5872,6 +6083,7 @@ fn demo_migration_package(
             block_wait_count: semantic.block_wait_count(),
             fake_block_backend_object_count: semantic.fake_block_backend_object_count(),
             virtio_blk_backend_object_count: semantic.virtio_blk_backend_object_count(),
+            block_read_path_count: semantic.block_read_path_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -6208,6 +6420,11 @@ fn demo_migration_package(
                 .virtio_blk_backends()
                 .iter()
                 .map(virtio_blk_backend_object_manifest)
+                .collect(),
+            block_read_paths: semantic
+                .block_read_paths()
+                .iter()
+                .map(block_read_path_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -7676,6 +7893,30 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        block_read_path_roots: semantic
+            .block_read_paths()
+            .iter()
+            .map(|read_path| {
+                format!(
+                    "block-read-path id={} backend={} block_request={}@{} block_completion={}@{} block_device={}@{} block_range={}@{} sequence={} completed_bytes={} data_digest={} state={} generation={}",
+                    read_path.id,
+                    read_path.backend.summary(),
+                    read_path.block_request,
+                    read_path.block_request_generation,
+                    read_path.block_completion,
+                    read_path.block_completion_generation,
+                    read_path.block_device,
+                    read_path.block_device_generation,
+                    read_path.block_range,
+                    read_path.block_range_generation,
+                    read_path.sequence,
+                    read_path.completed_bytes,
+                    read_path.data_digest,
+                    read_path.state.as_str(),
+                    read_path.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -8962,6 +9203,32 @@ fn virtio_blk_backend_object_manifest(
         state: backend.state.as_str().to_owned(),
         recorded_at_event: backend.recorded_at_event,
         note: backend.note.clone(),
+    }
+}
+
+fn block_read_path_manifest(
+    read_path: &semantic_core::BlockReadPathRecord,
+) -> BlockReadPathManifest {
+    BlockReadPathManifest {
+        id: read_path.id,
+        backend_kind: read_path.backend.kind.as_str().to_owned(),
+        backend: read_path.backend.id,
+        backend_generation: read_path.backend.generation,
+        block_request: read_path.block_request,
+        block_request_generation: read_path.block_request_generation,
+        block_completion: read_path.block_completion,
+        block_completion_generation: read_path.block_completion_generation,
+        block_device: read_path.block_device,
+        block_device_generation: read_path.block_device_generation,
+        block_range: read_path.block_range,
+        block_range_generation: read_path.block_range_generation,
+        sequence: read_path.sequence,
+        completed_bytes: read_path.completed_bytes,
+        data_digest: read_path.data_digest,
+        generation: read_path.generation,
+        state: read_path.state.as_str().to_owned(),
+        recorded_at_event: read_path.recorded_at_event,
+        note: read_path.note.clone(),
     }
 }
 

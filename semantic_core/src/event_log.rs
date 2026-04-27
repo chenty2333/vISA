@@ -537,6 +537,22 @@ pub enum EventKind {
         negotiated_features: u64,
         generation: Generation,
     },
+    BlockReadPathRecorded {
+        read_path: BlockReadPathId,
+        backend: ContractObjectRef,
+        block_request: BlockRequestObjectId,
+        block_request_generation: Generation,
+        block_completion: BlockCompletionObjectId,
+        block_completion_generation: Generation,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        block_range: BlockRangeObjectId,
+        block_range_generation: Generation,
+        sequence: u64,
+        completed_bytes: u64,
+        data_digest: u64,
+        generation: Generation,
+    },
     PacketBufferObjectRecorded {
         packet_buffer: PacketBufferObjectId,
         packet_device: PacketDeviceObjectId,
@@ -1963,6 +1979,25 @@ impl EventKind {
                 generation,
             } => format!(
                 "VirtioBlkBackendSkeletonBound virtio_blk_backend={virtio_blk_backend} block_device={block_device}@{block_device_generation} driver_binding={driver_binding}@{driver_binding_generation} device={device}@{device_generation} queue_size={queue_size} request_queue_index={request_queue_index} negotiated_features={negotiated_features} generation={generation}"
+            ),
+            Self::BlockReadPathRecorded {
+                read_path,
+                backend,
+                block_request,
+                block_request_generation,
+                block_completion,
+                block_completion_generation,
+                block_device,
+                block_device_generation,
+                block_range,
+                block_range_generation,
+                sequence,
+                completed_bytes,
+                data_digest,
+                generation,
+            } => format!(
+                "BlockReadPathRecorded read_path={read_path} backend={} block_request={block_request}@{block_request_generation} block_completion={block_completion}@{block_completion_generation} block_device={block_device}@{block_device_generation} block_range={block_range}@{block_range_generation} sequence={sequence} completed_bytes={completed_bytes} data_digest={data_digest} generation={generation}",
+                backend.summary()
             ),
             Self::PacketBufferObjectRecorded {
                 packet_buffer,

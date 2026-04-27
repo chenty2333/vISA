@@ -11904,6 +11904,277 @@ fn block_runtime_b6_invariants_reject_virtio_blk_generation_and_irq_leaks() {
     ));
 }
 
+fn setup_b7_block_read_graph() -> (SemanticGraph, u64) {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk7");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1796,
+        "fake-block7",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b7 backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1797,
+        "blk7",
+        1796,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b7 block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1798, 1797, 1, 64, 8, "b7 range"));
+    assert!(graph.record_block_request_object_with_id(
+        1799,
+        1797,
+        1,
+        1798,
+        1,
+        BlockRequestOperation::Read,
+        1,
+        "b7 read request",
+    ));
+    assert!(graph.record_block_completion_object_with_id(
+        1800,
+        1799,
+        1,
+        1,
+        4096,
+        BlockCompletionStatus::Success,
+        "b7 read completion",
+    ));
+    assert!(graph.record_fake_block_backend_object_with_id(
+        1801,
+        "fake-block7",
+        1797,
+        1,
+        "service_core",
+        "fake-block-v1",
+        512,
+        4096,
+        false,
+        128,
+        0x766d_6f73_626c_6b31,
+        "b7 backend",
+    ));
+    let digest = SemanticGraph::expected_block_read_digest_v1(
+        0x766d_6f73_626c_6b31,
+        1797,
+        1,
+        1798,
+        1,
+        64,
+        8,
+        1,
+        4096,
+    );
+    (graph, digest)
+}
+
+#[test]
+fn block_runtime_b7_read_path_records_backend_request_completion_and_digest() {
+    let (mut graph, digest) = setup_b7_block_read_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b7-test",
+        SemanticCommand::RecordBlockReadPath {
+            read_path: 1802,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1801, 1),
+            block_request: 1799,
+            block_request_generation: 1,
+            block_completion: 1800,
+            block_completion_generation: 1,
+            data_digest: digest,
+            note: "b7 record read path".to_string(),
+        },
+    ));
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.block_read_path_count(), 1);
+    let read_path = &graph.block_read_paths()[0];
+    assert_eq!(
+        read_path.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BlockReadPath, 1802, 1)
+    );
+    assert_eq!(
+        read_path.backend,
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1801, 1)
+    );
+    assert_eq!(read_path.block_request, 1799);
+    assert_eq!(read_path.block_completion, 1800);
+    assert_eq!(read_path.completed_bytes, 4096);
+    assert_eq!(read_path.data_digest, digest);
+    assert_eq!(read_path.state, BlockReadPathState::Completed);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "BlockReadPathRecorded read_path=1802 backend=fake-block-backend-object:1801@1 block_request=1799@1 block_completion=1800@1 block_device=1797@1 block_range=1798@1 sequence=1 completed_bytes=4096 data_digest={digest} generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b7_rejects_duplicate_stale_write_and_bad_digest_paths() {
+    let (mut graph, digest) = setup_b7_block_read_graph();
+    assert!(graph.record_block_read_path_with_id(
+        1802,
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1801, 1),
+        1799,
+        1,
+        1800,
+        1,
+        digest,
+        "b7 existing read path",
+    ));
+
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b7-test",
+        SemanticCommand::RecordBlockReadPath {
+            read_path: 1803,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1801, 1),
+            block_request: 1799,
+            block_request_generation: 1,
+            block_completion: 1800,
+            block_completion_generation: 1,
+            data_digest: digest,
+            note: "b7 duplicate".to_string(),
+        },
+    ));
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["block read path already exists for request generation".to_string()]
+    );
+
+    let stale_backend = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b7-test",
+        SemanticCommand::RecordBlockReadPath {
+            read_path: 1804,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1801, 2),
+            block_request: 1799,
+            block_request_generation: 1,
+            block_completion: 1800,
+            block_completion_generation: 1,
+            data_digest: digest,
+            note: "b7 stale backend".to_string(),
+        },
+    ));
+    assert_eq!(stale_backend.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_backend.violations,
+        vec!["block read path backend generation is missing or inactive".to_string()]
+    );
+
+    let bad_digest = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b7-test",
+        SemanticCommand::RecordBlockReadPath {
+            read_path: 1805,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1801, 1),
+            block_request: 1799,
+            block_request_generation: 1,
+            block_completion: 1800,
+            block_completion_generation: 1,
+            data_digest: digest.wrapping_add(1),
+            note: "b7 bad digest".to_string(),
+        },
+    ));
+    assert_eq!(bad_digest.status, CommandStatus::Rejected);
+    assert_eq!(
+        bad_digest.violations,
+        vec!["block read path data digest mismatch".to_string()]
+    );
+
+    assert!(graph.record_block_request_object_with_id(
+        1806,
+        1797,
+        1,
+        1798,
+        1,
+        BlockRequestOperation::Write,
+        2,
+        "b7 write request",
+    ));
+    assert!(graph.record_block_completion_object_with_id(
+        1807,
+        1806,
+        1,
+        2,
+        4096,
+        BlockCompletionStatus::Success,
+        "b7 write completion",
+    ));
+    let write_request = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "b7-test",
+        SemanticCommand::RecordBlockReadPath {
+            read_path: 1808,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1801, 1),
+            block_request: 1806,
+            block_request_generation: 1,
+            block_completion: 1807,
+            block_completion_generation: 1,
+            data_digest: digest,
+            note: "b7 write as read".to_string(),
+        },
+    ));
+    assert_eq!(write_request.status, CommandStatus::Rejected);
+    assert_eq!(
+        write_request.violations,
+        vec!["block read path request operation is not read".to_string()]
+    );
+}
+
+#[test]
+fn block_runtime_b7_invariants_reject_backend_generation_and_digest_leaks() {
+    let (mut graph, digest) = setup_b7_block_read_graph();
+    assert!(graph.record_block_read_path_with_id(
+        1802,
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1801, 1),
+        1799,
+        1,
+        1800,
+        1,
+        digest,
+        "b7 invariant read path",
+    ));
+    graph.corrupt_block_read_path_backend_generation_for_test(1802, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::BlockReadPathMissingBackend {
+            read_path: 1802,
+            backend: ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1801, 2),
+        })
+    );
+
+    let (mut graph, digest) = setup_b7_block_read_graph();
+    assert!(graph.record_block_read_path_with_id(
+        1802,
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1801, 1),
+        1799,
+        1,
+        1800,
+        1,
+        digest,
+        "b7 invariant read path",
+    ));
+    graph.corrupt_block_read_path_data_digest_for_test(1802, digest.wrapping_add(1));
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::BlockReadPathInvalid { read_path: 1802 })
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

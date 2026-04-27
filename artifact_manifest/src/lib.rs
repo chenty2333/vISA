@@ -347,6 +347,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub virtio_blk_backend_object_count: usize,
     #[serde(default)]
+    pub block_read_path_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -545,6 +547,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub virtio_blk_backends: Vec<VirtioBlkBackendObjectManifest>,
     #[serde(default)]
+    pub block_read_paths: Vec<BlockReadPathManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -722,6 +726,8 @@ pub struct SemanticRootSetManifest {
     pub fake_block_backend_object_roots: Vec<String>,
     #[serde(default)]
     pub virtio_blk_backend_object_roots: Vec<String>,
+    #[serde(default)]
+    pub block_read_path_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2274,6 +2280,29 @@ pub struct VirtioBlkBackendObjectManifest {
     pub request_queue_index: u16,
     pub queue_size: u16,
     pub irq_vector: u16,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct BlockReadPathManifest {
+    pub id: u64,
+    pub backend_kind: String,
+    pub backend: u64,
+    pub backend_generation: u64,
+    pub block_request: u64,
+    pub block_request_generation: u64,
+    pub block_completion: u64,
+    pub block_completion_generation: u64,
+    pub block_device: u64,
+    pub block_device_generation: u64,
+    pub block_range: u64,
+    pub block_range_generation: u64,
+    pub sequence: u64,
+    pub completed_bytes: u64,
+    pub data_digest: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

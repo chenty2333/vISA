@@ -756,6 +756,10 @@ impl SemanticGraph {
                 .block_waits
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::BlockReadPath => self
+                .block_read_paths
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

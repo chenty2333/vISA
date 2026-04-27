@@ -347,6 +347,16 @@ pub enum SemanticCommand {
         irq_vector: u16,
         note: String,
     },
+    RecordBlockReadPath {
+        read_path: BlockReadPathId,
+        backend: ContractObjectRef,
+        block_request: BlockRequestObjectId,
+        block_request_generation: Generation,
+        block_completion: BlockCompletionObjectId,
+        block_completion_generation: Generation,
+        data_digest: u64,
+        note: String,
+    },
     RecordVirtioNetBackendObject {
         virtio_net_backend: VirtioNetBackendObjectId,
         name: String,
@@ -1076,6 +1086,7 @@ impl SemanticCommand {
             Self::RecordFakeNetBackendObject { .. } => "record-fake-net-backend-object",
             Self::RecordFakeBlockBackendObject { .. } => "record-fake-block-backend-object",
             Self::RecordVirtioBlkBackendObject { .. } => "record-virtio-blk-backend-object",
+            Self::RecordBlockReadPath { .. } => "record-block-read-path",
             Self::RecordVirtioNetBackendObject { .. } => "record-virtio-net-backend-object",
             Self::RecordNetworkRxInterrupt { .. } => "record-network-rx-interrupt",
             Self::ResolveNetworkRxWait { .. } => "resolve-network-rx-wait",
@@ -2427,6 +2438,26 @@ impl SemanticGraph {
                     *request_queue_index,
                     *queue_size,
                     *irq_vector,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordBlockReadPath {
+                read_path,
+                backend,
+                block_request,
+                block_request_generation,
+                block_completion,
+                block_completion_generation,
+                data_digest,
+                ..
+            } => self
+                .validate_block_read_path(
+                    *read_path,
+                    *backend,
+                    *block_request,
+                    *block_request_generation,
+                    *block_completion,
+                    *block_completion_generation,
+                    *data_digest,
                 )
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordVirtioNetBackendObject {
@@ -4663,6 +4694,25 @@ impl SemanticGraph {
                 request_queue_index,
                 queue_size,
                 irq_vector,
+                &note,
+            ),
+            SemanticCommand::RecordBlockReadPath {
+                read_path,
+                backend,
+                block_request,
+                block_request_generation,
+                block_completion,
+                block_completion_generation,
+                data_digest,
+                note,
+            } => self.record_block_read_path_with_id(
+                read_path,
+                backend,
+                block_request,
+                block_request_generation,
+                block_completion,
+                block_completion_generation,
+                data_digest,
                 &note,
             ),
             SemanticCommand::RecordVirtioNetBackendObject {

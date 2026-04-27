@@ -1129,6 +1129,28 @@ pub enum SemanticInvariantError {
     VirtioBlkBackendObjectMissingEvent {
         virtio_blk_backend: VirtioBlkBackendObjectId,
     },
+    BlockReadPathInvalid {
+        read_path: BlockReadPathId,
+    },
+    BlockReadPathMissingBackend {
+        read_path: BlockReadPathId,
+        backend: ContractObjectRef,
+    },
+    BlockReadPathMissingRequest {
+        read_path: BlockReadPathId,
+        block_request: BlockRequestObjectId,
+    },
+    BlockReadPathMissingCompletion {
+        read_path: BlockReadPathId,
+        block_completion: BlockCompletionObjectId,
+    },
+    BlockReadPathDuplicateRequest {
+        read_path: BlockReadPathId,
+        block_request: BlockRequestObjectId,
+    },
+    BlockReadPathMissingEvent {
+        read_path: BlockReadPathId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },
