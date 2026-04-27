@@ -618,6 +618,14 @@ pub enum SemanticCommand {
         max_transfer_sectors: u32,
         note: String,
     },
+    RecordBlockRangeObject {
+        block_range: BlockRangeObjectId,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        start_sector: u64,
+        sector_count: u64,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -1012,6 +1020,7 @@ impl SemanticCommand {
             Self::RecordNetworkBenchmark { .. } => "record-network-benchmark",
             Self::RecordNetworkRecoveryBenchmark { .. } => "record-network-recovery-benchmark",
             Self::RecordBlockDeviceObject { .. } => "record-block-device-object",
+            Self::RecordBlockRangeObject { .. } => "record-block-range-object",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -2924,6 +2933,23 @@ impl SemanticGraph {
                     *sector_count,
                     *max_transfer_sectors,
                 )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordBlockRangeObject {
+                block_range,
+                block_device,
+                block_device_generation,
+                start_sector,
+                sector_count,
+                ..
+            } => self
+                .validate_block_range_object(
+                    *block_range,
+                    *block_device,
+                    *block_device_generation,
+                    *start_sector,
+                    *sector_count,
+                )
+                .map(|_| ())
                 .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
                 queue,
@@ -4886,6 +4912,21 @@ impl SemanticGraph {
                 sector_count,
                 read_only,
                 max_transfer_sectors,
+                &note,
+            ),
+            SemanticCommand::RecordBlockRangeObject {
+                block_range,
+                block_device,
+                block_device_generation,
+                start_sector,
+                sector_count,
+                note,
+            } => self.record_block_range_object_with_id(
+                block_range,
+                block_device,
+                block_device_generation,
+                start_sector,
+                sector_count,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

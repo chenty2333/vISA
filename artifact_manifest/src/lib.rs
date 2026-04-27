@@ -335,6 +335,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_device_object_count: usize,
     #[serde(default)]
+    pub block_range_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -521,6 +523,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_device_objects: Vec<BlockDeviceObjectManifest>,
     #[serde(default)]
+    pub block_range_objects: Vec<BlockRangeObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -686,6 +690,8 @@ pub struct SemanticRootSetManifest {
     pub network_recovery_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub block_device_object_roots: Vec<String>,
+    #[serde(default)]
+    pub block_range_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2113,6 +2119,21 @@ pub struct BlockDeviceObjectManifest {
     pub sector_count: u64,
     pub read_only: bool,
     pub max_transfer_sectors: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct BlockRangeObjectManifest {
+    pub id: u64,
+    pub block_device: u64,
+    pub block_device_generation: u64,
+    pub start_sector: u64,
+    pub sector_count: u64,
+    pub byte_offset: u64,
+    pub byte_len: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

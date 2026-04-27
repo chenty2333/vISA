@@ -9,7 +9,7 @@ use artifact_manifest::{
     ActivationCleanupManifest, ActivationCleanupStepManifest, ActivationContextManifest,
     ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
-    BlockDeviceObjectManifest, BoundaryValidationReportManifest,
+    BlockDeviceObjectManifest, BlockRangeObjectManifest, BoundaryValidationReportManifest,
     BoundaryValidationViolationManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
     CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
@@ -191,6 +191,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n19_evidence(&mut semantic)?;
     record_network_runtime_n20_evidence(&mut semantic)?;
     record_block_runtime_b0_evidence(&mut semantic)?;
+    record_block_runtime_b1_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -2371,6 +2372,117 @@ fn record_block_runtime_b0_evidence(semantic: &mut SemanticGraph) -> Result<(), 
             bad_contract.command,
             bad_contract.status.as_str(),
             bad_contract.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+fn record_block_runtime_b1_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let block_range = semantic.apply_envelope(CommandEnvelope::new(
+        199,
+        "target-executor-b1",
+        SemanticCommand::RecordBlockRangeObject {
+            block_range: 20_005,
+            block_device: 20_002,
+            block_device_generation: 1,
+            start_sector: 64,
+            sector_count: 8,
+            note: "b1-record-sector-range-with-derived-byte-bounds".to_owned(),
+        },
+    ));
+    if block_range.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b1 block range command {} ({}) failed: status={} violations={:?}",
+            block_range.command_id,
+            block_range.command,
+            block_range.status.as_str(),
+            block_range.violations
+        )
+        .into());
+    }
+
+    let stale_device = semantic.apply_envelope(CommandEnvelope::new(
+        200,
+        "target-executor-b1",
+        SemanticCommand::RecordBlockRangeObject {
+            block_range: 20_006,
+            block_device: 20_002,
+            block_device_generation: 2,
+            start_sector: 64,
+            sector_count: 8,
+            note: "b1-reject-stale-block-device-generation".to_owned(),
+        },
+    ));
+    if stale_device.status != CommandStatus::Rejected
+        || !stale_device
+            .violations
+            .iter()
+            .any(|violation| violation.contains("block device generation"))
+    {
+        return Err(format!(
+            "block runtime b1 stale device command {} ({}) was not rejected: status={} violations={:?}",
+            stale_device.command_id,
+            stale_device.command,
+            stale_device.status.as_str(),
+            stale_device.violations
+        )
+        .into());
+    }
+
+    let out_of_bounds = semantic.apply_envelope(CommandEnvelope::new(
+        201,
+        "target-executor-b1",
+        SemanticCommand::RecordBlockRangeObject {
+            block_range: 20_007,
+            block_device: 20_002,
+            block_device_generation: 1,
+            start_sector: 4090,
+            sector_count: 16,
+            note: "b1-reject-sector-range-beyond-device".to_owned(),
+        },
+    ));
+    if out_of_bounds.status != CommandStatus::Rejected
+        || !out_of_bounds
+            .violations
+            .iter()
+            .any(|violation| violation.contains("beyond block device"))
+    {
+        return Err(format!(
+            "block runtime b1 out-of-bounds command {} ({}) was not rejected: status={} violations={:?}",
+            out_of_bounds.command_id,
+            out_of_bounds.command,
+            out_of_bounds.status.as_str(),
+            out_of_bounds.violations
+        )
+        .into());
+    }
+
+    let over_transfer = semantic.apply_envelope(CommandEnvelope::new(
+        202,
+        "target-executor-b1",
+        SemanticCommand::RecordBlockRangeObject {
+            block_range: 20_008,
+            block_device: 20_002,
+            block_device_generation: 1,
+            start_sector: 128,
+            sector_count: 129,
+            note: "b1-reject-range-over-max-transfer".to_owned(),
+        },
+    ));
+    if over_transfer.status != CommandStatus::Rejected
+        || !over_transfer
+            .violations
+            .iter()
+            .any(|violation| violation.contains("max transfer"))
+    {
+        return Err(format!(
+            "block runtime b1 over-transfer command {} ({}) was not rejected: status={} violations={:?}",
+            over_transfer.command_id,
+            over_transfer.command,
+            over_transfer.status.as_str(),
+            over_transfer.violations
         )
         .into());
     }
@@ -4769,6 +4881,7 @@ fn demo_migration_package(
             network_benchmark_count: semantic.network_benchmark_count(),
             network_recovery_benchmark_count: semantic.network_recovery_benchmark_count(),
             block_device_object_count: semantic.block_device_object_count(),
+            block_range_object_count: semantic.block_range_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -5075,6 +5188,11 @@ fn demo_migration_package(
                 .block_device_objects()
                 .iter()
                 .map(block_device_object_manifest)
+                .collect(),
+            block_range_objects: semantic
+                .block_range_objects()
+                .iter()
+                .map(block_range_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -6408,6 +6526,24 @@ fn semantic_roots(
                 )
             })
             .collect(),
+        block_range_object_roots: semantic
+            .block_range_objects()
+            .iter()
+            .map(|block_range| {
+                format!(
+                    "block-range-object id={} block_device={}@{} start_sector={} sector_count={} byte_offset={} byte_len={} state={} generation={}",
+                    block_range.id,
+                    block_range.block_device,
+                    block_range.block_device_generation,
+                    block_range.start_sector,
+                    block_range.sector_count,
+                    block_range.byte_offset,
+                    block_range.byte_len,
+                    block_range.state.as_str(),
+                    block_range.generation
+                )
+            })
+            .collect(),
         activation_resume_roots: semantic
             .activation_resumes()
             .iter()
@@ -7557,6 +7693,24 @@ fn block_device_object_manifest(
         state: block_device.state.as_str().to_owned(),
         recorded_at_event: block_device.recorded_at_event,
         note: block_device.note.clone(),
+    }
+}
+
+fn block_range_object_manifest(
+    block_range: &semantic_core::BlockRangeObjectRecord,
+) -> BlockRangeObjectManifest {
+    BlockRangeObjectManifest {
+        id: block_range.id,
+        block_device: block_range.block_device,
+        block_device_generation: block_range.block_device_generation,
+        start_sector: block_range.start_sector,
+        sector_count: block_range.sector_count,
+        byte_offset: block_range.byte_offset,
+        byte_len: block_range.byte_len,
+        generation: block_range.generation,
+        state: block_range.state.as_str().to_owned(),
+        recorded_at_event: block_range.recorded_at_event,
+        note: block_range.note.clone(),
     }
 }
 

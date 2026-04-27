@@ -8,15 +8,15 @@ use std::path::Path;
 use artifact_manifest::{
     ActivationCleanupManifest, ActivationContextManifest, ActivationMigrationManifest,
     ActivationRecordManifest, ActivationResumeManifest, ActivationWaitManifest,
-    ArtifactBundleManifest, BlockDeviceObjectManifest, BoundaryValidationReportManifest,
-    CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandResultManifest, ContractObjectRefManifest, CrossHartSchedulerDecisionManifest,
-    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    FakeNetBackendObjectManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    ArtifactBundleManifest, BlockDeviceObjectManifest, BlockRangeObjectManifest,
+    BoundaryValidationReportManifest, CapabilityRecordManifest, CleanupTransactionManifest,
+    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest,
+    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
+    DeviceObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, FakeNetBackendObjectManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -339,6 +339,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-device"
         | "block-device-object"
         | "block"
+        | "block-range"
+        | "block-range-object"
+        | "sector-range"
         | "activation-resume"
         | "activation-wait"
         | "activation-cleanup"
@@ -509,7 +512,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -761,6 +764,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "network-benchmark" | "network-throughput" | "network-latency" => "network-benchmark",
         "network-recovery-benchmark" | "network-recovery" => "network-recovery-benchmark",
         "block-device" | "block-device-object" | "block" => "block-device",
+        "block-range" | "block-range-object" | "sector-range" => "block-range",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2447,6 +2451,47 @@ fn block_device_object_view_v1(block_device: &BlockDeviceObjectManifest) -> serd
         "last_transition": {
             "recorded_at_event": block_device.recorded_at_event,
             "device_generation": block_device.device_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn block_range_object_view_v1(block_range: &BlockRangeObjectManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "block-range",
+        "id": block_range.id,
+        "generation": block_range.generation,
+        "state": block_range.state,
+        "owner": {
+            "block_device": object_ref_json(
+                "block-device",
+                block_range.block_device,
+                block_range.block_device_generation,
+            ),
+        },
+        "references": {
+            "block_device": object_ref_json(
+                "block-device",
+                block_range.block_device,
+                block_range.block_device_generation,
+            ),
+            "event": {
+                "id": block_range.recorded_at_event,
+            },
+        },
+        "sector_range": {
+            "start_sector": block_range.start_sector,
+            "sector_count": block_range.sector_count,
+        },
+        "byte_range": {
+            "byte_offset": block_range.byte_offset,
+            "byte_len": block_range.byte_len,
+        },
+        "note": block_range.note,
+        "last_transition": {
+            "recorded_at_event": block_range.recorded_at_event,
+            "block_device_generation": block_range.block_device_generation,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -5042,6 +5087,12 @@ fn stable_views_for_kind(
             .iter()
             .map(block_device_object_view_v1)
             .collect()),
+        "block-range" | "block-range-object" | "sector-range" => Ok(package
+            .semantic
+            .block_range_objects
+            .iter()
+            .map(block_range_object_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -6311,6 +6362,22 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             "block-device->device",
             "live",
             Some(block_device.recorded_at_event),
+        ));
+    }
+    for block_range in &package.semantic.block_range_objects {
+        if block_range.state != "registered" {
+            continue;
+        }
+        edges.push(graph_edge(
+            object_ref_json("block-range", block_range.id, block_range.generation),
+            object_ref_json(
+                "block-device",
+                block_range.block_device,
+                block_range.block_device_generation,
+            ),
+            "block-range->block-device",
+            "live",
+            Some(block_range.recorded_at_event),
         ));
     }
     for packet_buffer in &package.semantic.packet_buffer_objects {
@@ -10408,6 +10475,9 @@ fn replay_until(
     for block_device in &package.semantic.roots.block_device_object_roots {
         println!("replay block-device {block_device}");
     }
+    for block_range in &package.semantic.roots.block_range_object_roots {
+        println!("replay block-range {block_range}");
+    }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
     }
@@ -10695,6 +10765,10 @@ fn print_replay_json(
     roots.insert(
         "block_devices".to_owned(),
         serde_json::json!(package.semantic.roots.block_device_object_roots.len()),
+    );
+    roots.insert(
+        "block_ranges".to_owned(),
+        serde_json::json!(package.semantic.roots.block_range_object_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -11031,6 +11105,10 @@ fn print_replay_json(
     roots.insert(
         "block_device_object_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.block_device_object_roots),
+    );
+    roots.insert(
+        "block_range_object_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.block_range_object_roots),
     );
 
     let value = serde_json::json!({
@@ -12476,6 +12554,31 @@ mod tests {
         assert_eq!(view["contract"]["read_only"], false);
         assert_eq!(view["contract"]["max_transfer_sectors"], 128);
         assert_eq!(view["last_transition"]["recorded_at_event"], 104);
+    }
+
+    #[test]
+    fn block_range_view_v1_exposes_sector_and_byte_ranges() {
+        let view = block_range_object_view_v1(&BlockRangeObjectManifest {
+            id: 105,
+            block_device: 104,
+            block_device_generation: 1,
+            start_sector: 64,
+            sector_count: 8,
+            byte_offset: 32768,
+            byte_len: 4096,
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 105,
+            note: "block range".to_owned(),
+        });
+        assert_eq!(view["kind"], "block-range");
+        assert_eq!(view["owner"]["block_device"]["kind"], "block-device");
+        assert_eq!(view["references"]["block_device"]["generation"], 1);
+        assert_eq!(view["sector_range"]["start_sector"], 64);
+        assert_eq!(view["sector_range"]["sector_count"], 8);
+        assert_eq!(view["byte_range"]["byte_offset"], 32768);
+        assert_eq!(view["byte_range"]["byte_len"], 4096);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 105);
     }
 
     #[test]
@@ -15381,6 +15484,22 @@ mod tests {
                 recorded_at_event: 39,
                 note: "block device graph".to_owned(),
             });
+        package
+            .semantic
+            .block_range_objects
+            .push(BlockRangeObjectManifest {
+                id: 106,
+                block_device: 105,
+                block_device_generation: 1,
+                start_sector: 64,
+                sector_count: 8,
+                byte_offset: 32768,
+                byte_len: 4096,
+                generation: 1,
+                state: "registered".to_owned(),
+                recorded_at_event: 40,
+                note: "block range graph".to_owned(),
+            });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -15401,6 +15520,10 @@ mod tests {
             && edge["relation"] == "block-device->device"
             && edge["from"]["kind"] == "block-device"
             && edge["to"]["kind"] == "device"));
+        assert!(live.iter().any(|edge| edge["mode"] == "live"
+            && edge["relation"] == "block-range->block-device"
+            && edge["from"]["kind"] == "block-range"
+            && edge["to"]["kind"] == "block-device"));
         assert!(live.iter().any(|edge| edge["mode"] == "live"
             && edge["relation"] == "fake-net-backend->packet-device"
             && edge["from"]["kind"] == "fake-net-backend"

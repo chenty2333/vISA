@@ -53,6 +53,7 @@ pub type NetworkFaultInjectionId = u64;
 pub type NetworkBenchmarkId = u64;
 pub type NetworkRecoveryBenchmarkId = u64;
 pub type BlockDeviceObjectId = u64;
+pub type BlockRangeObjectId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

@@ -10265,6 +10265,180 @@ fn block_runtime_b0_invariants_reject_block_device_generation_leak() {
 }
 
 #[test]
+fn block_runtime_b1_block_range_records_sector_and_byte_bounds() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1710,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b1 backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1711,
+        "blk0",
+        1710,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b1 block device",
+    ));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b1-test",
+        SemanticCommand::RecordBlockRangeObject {
+            block_range: 1712,
+            block_device: 1711,
+            block_device_generation: 1,
+            start_sector: 64,
+            sector_count: 8,
+            note: "b1 range".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.block_range_object_count(), 1);
+    let block_range = &graph.block_range_objects()[0];
+    assert_eq!(
+        block_range.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BlockRangeObject, 1712, 1)
+    );
+    assert_eq!(block_range.block_device, 1711);
+    assert_eq!(block_range.block_device_generation, 1);
+    assert_eq!(block_range.start_sector, 64);
+    assert_eq!(block_range.sector_count, 8);
+    assert_eq!(block_range.byte_offset, 32768);
+    assert_eq!(block_range.byte_len, 4096);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BlockRangeObjectRecorded block_range=1712 block_device=1711@1 start_sector=64 sector_count=8 byte_offset=32768 byte_len=4096 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b1_rejects_stale_out_of_bounds_and_over_transfer_ranges() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1713,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b1 backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1714,
+        "blk0",
+        1713,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b1 block device",
+    ));
+
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b1-test",
+        SemanticCommand::RecordBlockRangeObject {
+            block_range: 1715,
+            block_device: 1714,
+            block_device_generation: 2,
+            start_sector: 64,
+            sector_count: 8,
+            note: "b1 stale device generation".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+
+    let out_of_bounds = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b1-test",
+        SemanticCommand::RecordBlockRangeObject {
+            block_range: 1716,
+            block_device: 1714,
+            block_device_generation: 1,
+            start_sector: 4090,
+            sector_count: 16,
+            note: "b1 out of bounds".to_string(),
+        },
+    ));
+    assert_eq!(out_of_bounds.status, CommandStatus::Rejected);
+
+    let over_transfer = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b1-test",
+        SemanticCommand::RecordBlockRangeObject {
+            block_range: 1717,
+            block_device: 1714,
+            block_device_generation: 1,
+            start_sector: 128,
+            sector_count: 129,
+            note: "b1 over transfer".to_string(),
+        },
+    ));
+    assert_eq!(over_transfer.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn block_runtime_b1_invariants_reject_block_range_generation_leak() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1718,
+        "fake-block0",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "b1 invariant backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1719,
+        "blk0",
+        1718,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "b1 invariant block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1720, 1719, 1, 64, 8, "b1 invariant range",));
+    graph.corrupt_block_range_object_device_generation_for_test(1720, 2);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::BlockRangeObjectMissingDevice {
+            block_range: 1720,
+            block_device: 1719,
+        })
+    );
+}
+
+#[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();
     let hart_generation = register_idle_test_hart(&mut graph);
