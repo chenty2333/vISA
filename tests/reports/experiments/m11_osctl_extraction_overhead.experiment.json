@@ -1,0 +1,98 @@
+{
+  "schema": "vmos-experiment-report",
+  "schema_version": 1,
+  "name": "m11_osctl_extraction_overhead_host_validation",
+  "checkpoint": "M11-osctl-extraction-overhead",
+  "commands": [
+    {
+      "command": "cargo run -p target_executor",
+      "purpose": "generate semantic package containing IntegratedOsctlTraceReplay osctl extraction evidence"
+    },
+    {
+      "command": "cargo run -p osctl -- integrated-osctl-trace-replay list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "extract stable IntegratedOsctlTraceReplay ViewV1 JSON from the semantic package"
+    },
+    {
+      "command": "cargo run -p osctl -- graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "extract historical exact-generation graph evidence without mutating semantic state"
+    },
+    {
+      "command": "cargo run -p osctl -- experiment report --json tests/reports/experiments/m11_osctl_extraction_overhead.experiment.json",
+      "purpose": "validate M11 stable experiment-report JSON view"
+    }
+  ],
+  "events": [
+    {
+      "kind": "IntegratedOsctlTraceReplayRecorded",
+      "source": "SemanticGraph::record_integrated_osctl_trace_replay_with_id",
+      "event": 580,
+      "object": "integrated-osctl-trace-replay:26901@1"
+    }
+  ],
+  "final_views": {
+    "integrated_osctl_trace_replay": {
+      "schema": 1,
+      "kind": "integrated-osctl-trace-replay",
+      "id": 26901,
+      "generation": 1,
+      "state": "recorded",
+      "replay": {
+        "event_cursor": 579,
+        "integrated_scenario_count": 9,
+        "stable_view_count": 9,
+        "historical_edge_count": 9,
+        "golden_trace_count": 9,
+        "replayed_root_count": 9,
+        "roots_match_counts": true,
+        "graph_history_ok": true,
+        "contract_validation_ok": true,
+        "replay_validation_ok": true
+      }
+    },
+    "graph_history": {
+      "schema": "vmos-osctl-json-v1",
+      "kind": "contract-graph-history",
+      "historical_edge_count": 9,
+      "exact_generation_edges": true,
+      "read_only": true
+    },
+    "osctl_extraction": {
+      "schema": "vmos-osctl-json-v1",
+      "stable_views": [
+        "integrated-osctl-trace-replay.list",
+        "graph.history",
+        "experiment.report"
+      ],
+      "read_only": true,
+      "leaks_adapter_internal_state": false,
+      "uses_substrate_mapping_as_truth": false
+    }
+  },
+  "metrics": {
+    "extraction_workload_count": 1,
+    "integrated_scenario_count": 9,
+    "stable_view_count": 9,
+    "replayed_root_count": 9,
+    "golden_trace_count": 9,
+    "historical_edge_count": 9,
+    "replay_event_cursor": 579,
+    "recorded_at_event": 580,
+    "extraction_event_delta": 1,
+    "osctl_command_count": 3,
+    "osctl_is_read_only_control_plane": true,
+    "adapter_internal_state_leaked": false,
+    "substrate_mapping_as_semantic_truth": false,
+    "measurement_source": "integrated-osctl-trace-replay:26901@1",
+    "measurement_unit": "osctl-extraction-work-unit",
+    "hardware_dependency": "none"
+  },
+  "validation": {
+    "contract_ok": true,
+    "golden_replay_ok": true,
+    "osctl_view_ok": true,
+    "semantic_object": "IntegratedOsctlTraceReplay",
+    "semantic_command": "RecordIntegratedOsctlTraceReplay",
+    "semantic_event": "IntegratedOsctlTraceReplayRecorded",
+    "semantic_invariant": "osctl extraction is read-only, uses stable ViewV1 JSON, preserves exact-generation historical graph evidence, and does not expose adapter internals or substrate mappings as semantic truth"
+  }
+}
