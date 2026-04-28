@@ -778,6 +778,16 @@ pub enum SemanticInvariantError {
     SmpScalingBenchmarkMissingEvent {
         benchmark: SmpScalingBenchmarkId,
     },
+    IntegratedSmpPreemptionCleanupInvalid {
+        integrated: IntegratedSmpPreemptionCleanupId,
+    },
+    IntegratedSmpPreemptionCleanupMissingEvidence {
+        integrated: IntegratedSmpPreemptionCleanupId,
+        evidence: &'static str,
+    },
+    IntegratedSmpPreemptionCleanupMissingEvent {
+        integrated: IntegratedSmpPreemptionCleanupId,
+    },
     DeviceObjectInvalid {
         device: DeviceObjectId,
     },

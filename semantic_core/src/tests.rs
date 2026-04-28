@@ -23940,6 +23940,13 @@ fn display_runtime_g12_contract_graph_rejects_metric_drift() {
         display_event_logs: graph.display_event_logs().to_vec(),
         display_snapshot_barriers: graph.display_snapshot_barriers().to_vec(),
         framebuffer_benchmarks: benchmarks,
+        integrated_smp_preemption_cleanups: graph.integrated_smp_preemption_cleanups().to_vec(),
+        saved_contexts: graph.saved_contexts().to_vec(),
+        timer_interrupts: graph.timer_interrupts().to_vec(),
+        remote_preempts: graph.remote_preempts().to_vec(),
+        activation_cleanups: graph.activation_cleanups().to_vec(),
+        smp_cleanup_quiescence: graph.smp_cleanup_quiescence().to_vec(),
+        smp_stress_runs: graph.smp_stress_runs().to_vec(),
         stores: graph.stores().to_vec(),
         ..ContractGraphSnapshot::default()
     };
@@ -25193,6 +25200,222 @@ fn smp_runtime_s16_rejects_unbacked_or_invalid_scaling_benchmark() {
         graph.check_invariants(),
         Err(SemanticInvariantError::SmpScalingBenchmarkInvalid { benchmark: 201 })
     );
+}
+
+fn x0_integrated_smp_preemption_cleanup_graph() -> SemanticGraph {
+    let mut graph = s15_stress_graph(true);
+    assert!(graph.record_smp_stress_run_with_id(
+        191,
+        "s15-smp-stress-property",
+        3,
+        6,
+        "smp-stress-property-tests",
+        "stress run",
+    ));
+    graph.ensure_task(88, FrontendKind::LinuxElf, "x0-preempted-thread");
+    let hart_generation = graph
+        .harts()
+        .iter()
+        .find(|hart| hart.id == 1)
+        .map(|hart| hart.generation)
+        .unwrap();
+    assert!(graph.create_runnable_queue_with_id(88, "x0-preempt-rq"));
+    assert!(graph.bind_runnable_queue_owner(
+        88,
+        1,
+        1,
+        hart_generation,
+        "x0 hart owns preempt queue",
+    ));
+    assert!(graph.create_runtime_activation_with_id(88, 88, 1, None, None, None,));
+    assert!(graph.enqueue_runnable_activation(88, 88, 1));
+    assert!(graph.dequeue_runnable_activation(88, 88));
+    assert!(graph.record_timer_interrupt_with_id(
+        88,
+        10,
+        1,
+        hart_generation,
+        Some(88),
+        Some(3),
+        "x0 timer preemption",
+    ));
+    assert!(graph.preempt_running_activation_with_id(
+        88,
+        88,
+        3,
+        88,
+        1,
+        88,
+        "x0 preempt activation",
+    ));
+    assert!(graph.save_preempted_context_with_ids(
+        88,
+        89,
+        88,
+        1,
+        0x4000,
+        0xa000,
+        0,
+        "x0 save timer frame",
+    ));
+    graph
+}
+
+#[test]
+fn integrated_runtime_x0_records_smp_preemption_cleanup_closure() {
+    let mut graph = x0_integrated_smp_preemption_cleanup_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "x0-test",
+        SemanticCommand::RecordIntegratedSmpPreemptionCleanup {
+            integrated: 301,
+            scenario: "x0-smp-preemption-cleanup".to_string(),
+            stress_run: 191,
+            stress_run_generation: 1,
+            preemption: 88,
+            preemption_generation: 1,
+            timer_interrupt: 88,
+            timer_interrupt_generation: 1,
+            saved_context: 89,
+            saved_context_generation: 1,
+            remote_preempt: 31,
+            remote_preempt_generation: 1,
+            activation_cleanup: 170,
+            activation_cleanup_generation: 1,
+            smp_cleanup_quiescence: 171,
+            smp_cleanup_quiescence_generation: 1,
+            invariant_checks: 7,
+            note: "integrate scheduler preemption with SMP cleanup quiescence".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.integrated_smp_preemption_cleanups().len(), 1);
+    let record = &graph.integrated_smp_preemption_cleanups()[0];
+    assert_eq!(record.id, 301);
+    assert_eq!(record.hart_count, 2);
+    assert_eq!(record.cleanup_store, graph.activation_cleanups()[0].store);
+    assert_eq!(
+        record.target_store_generation,
+        graph.activation_cleanups()[0].target_store_generation
+    );
+    assert_eq!(
+        record.result_store_generation,
+        graph.activation_cleanups()[0].result_store_generation
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "IntegratedSmpPreemptionCleanupRecorded integrated=301 scenario=x0-smp-preemption-cleanup stress_run=191@1 preemption=88@1 remote_preempt=31@1 activation_cleanup=170@1 smp_cleanup_quiescence=171@1 cleanup_store={}@{}->{} harts=2 invariant_checks=7 generation=1",
+            record.cleanup_store, record.target_store_generation, record.result_store_generation
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn integrated_runtime_x0_rejects_stale_or_incomplete_evidence() {
+    let mut graph = x0_integrated_smp_preemption_cleanup_graph();
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "x0-test",
+        SemanticCommand::RecordIntegratedSmpPreemptionCleanup {
+            integrated: 301,
+            scenario: "x0-smp-preemption-cleanup".to_string(),
+            stress_run: 191,
+            stress_run_generation: 1,
+            preemption: 88,
+            preemption_generation: 1,
+            timer_interrupt: 88,
+            timer_interrupt_generation: 1,
+            saved_context: 89,
+            saved_context_generation: 2,
+            remote_preempt: 31,
+            remote_preempt_generation: 1,
+            activation_cleanup: 170,
+            activation_cleanup_generation: 1,
+            smp_cleanup_quiescence: 171,
+            smp_cleanup_quiescence_generation: 1,
+            invariant_checks: 7,
+            note: "stale saved context must reject".to_string(),
+        },
+    ));
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["integrated smp/preemption/cleanup missing saved context evidence".to_string()]
+    );
+
+    assert!(graph.record_integrated_smp_preemption_cleanup_with_id(
+        301,
+        "x0-smp-preemption-cleanup",
+        191,
+        1,
+        88,
+        1,
+        88,
+        1,
+        89,
+        1,
+        31,
+        1,
+        170,
+        1,
+        171,
+        1,
+        7,
+        "integrated closure",
+    ));
+    graph.corrupt_integrated_smp_cleanup_hart_count_for_test(301, 1);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::IntegratedSmpPreemptionCleanupInvalid { integrated: 301 })
+    );
+}
+
+#[test]
+fn integrated_runtime_x0_contract_graph_rejects_generation_drift() {
+    let mut graph = x0_integrated_smp_preemption_cleanup_graph();
+    assert!(graph.record_integrated_smp_preemption_cleanup_with_id(
+        301,
+        "x0-smp-preemption-cleanup",
+        191,
+        1,
+        88,
+        1,
+        88,
+        1,
+        89,
+        1,
+        31,
+        1,
+        170,
+        1,
+        171,
+        1,
+        7,
+        "integrated closure",
+    ));
+    let mut integrated = graph.integrated_smp_preemption_cleanups().to_vec();
+    integrated[0].remote_preempt_generation = 99;
+    let snapshot = ContractGraphSnapshot {
+        integrated_smp_preemption_cleanups: integrated,
+        saved_contexts: graph.saved_contexts().to_vec(),
+        timer_interrupts: graph.timer_interrupts().to_vec(),
+        remote_preempts: graph.remote_preempts().to_vec(),
+        activation_cleanups: graph.activation_cleanups().to_vec(),
+        smp_cleanup_quiescence: graph.smp_cleanup_quiescence().to_vec(),
+        smp_stress_runs: graph.smp_stress_runs().to_vec(),
+        preemptions: graph.preemptions().to_vec(),
+        stores: graph.stores().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "integrated-smp-preemption-cleanup->remote-preempt"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
 }
 
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {

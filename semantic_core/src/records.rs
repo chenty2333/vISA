@@ -676,6 +676,47 @@ impl SmpScalingBenchmarkRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntegratedSmpPreemptionCleanupRecord {
+    pub id: IntegratedSmpPreemptionCleanupId,
+    pub scenario: String,
+    pub stress_run: SmpStressRunId,
+    pub stress_run_generation: Generation,
+    pub preemption: PreemptionId,
+    pub preemption_generation: Generation,
+    pub timer_interrupt: TimerInterruptId,
+    pub timer_interrupt_generation: Generation,
+    pub saved_context: SavedContextId,
+    pub saved_context_generation: Generation,
+    pub remote_preempt: RemotePreemptId,
+    pub remote_preempt_generation: Generation,
+    pub activation_cleanup: ActivationCleanupId,
+    pub activation_cleanup_generation: Generation,
+    pub smp_cleanup_quiescence: SmpCleanupQuiescenceId,
+    pub smp_cleanup_quiescence_generation: Generation,
+    pub cleanup_store: StoreId,
+    pub target_store_generation: Generation,
+    pub result_store_generation: Generation,
+    pub cleanup_activation: ActivationId,
+    pub cleanup_activation_generation_after: Generation,
+    pub hart_count: u32,
+    pub invariant_checks: u32,
+    pub generation: Generation,
+    pub state: IntegratedSmpPreemptionCleanupState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl IntegratedSmpPreemptionCleanupRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::IntegratedSmpPreemptionCleanup,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceObjectRecord {
     pub id: DeviceObjectId,
     pub name: String,

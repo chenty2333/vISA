@@ -86,6 +86,7 @@ pub enum ObjectKind {
     SmpSnapshotBarrier,
     SmpStressRun,
     SmpScalingBenchmark,
+    IntegratedSmpPreemptionCleanup,
     DeviceObject,
     QueueObject,
     DescriptorObject,
@@ -213,6 +214,7 @@ impl ObjectKind {
             Self::SmpSnapshotBarrier => "smp-snapshot-barrier",
             Self::SmpStressRun => "smp-stress-run",
             Self::SmpScalingBenchmark => "smp-scaling-benchmark",
+            Self::IntegratedSmpPreemptionCleanup => "integrated-smp-preemption-cleanup",
             Self::DeviceObject => "device-object",
             Self::QueueObject => "queue-object",
             Self::DescriptorObject => "descriptor-object",
@@ -500,6 +502,10 @@ typed_ref!(SmpCleanupQuiescenceRef, ObjectKind::SmpCleanupQuiescence);
 typed_ref!(SmpSnapshotBarrierRef, ObjectKind::SmpSnapshotBarrier);
 typed_ref!(SmpStressRunRef, ObjectKind::SmpStressRun);
 typed_ref!(SmpScalingBenchmarkRef, ObjectKind::SmpScalingBenchmark);
+typed_ref!(
+    IntegratedSmpPreemptionCleanupRef,
+    ObjectKind::IntegratedSmpPreemptionCleanup
+);
 typed_ref!(DeviceObjectRef, ObjectKind::DeviceObject);
 typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
 typed_ref!(DescriptorObjectRef, ObjectKind::DescriptorObject);
@@ -1876,6 +1882,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "smp scaling benchmark root/count mismatch",
         ));
     }
+    if roots.integrated_smp_preemption_cleanup_roots.len()
+        != package.semantic.integrated_smp_preemption_cleanup_count
+        || package.semantic.integrated_smp_preemption_cleanups.len()
+            != package.semantic.integrated_smp_preemption_cleanup_count
+    {
+        return Err(ContractError::new(
+            "integrated smp preemption cleanup root/count mismatch",
+        ));
+    }
     if roots.device_object_roots.len() != package.semantic.device_object_count
         || package.semantic.device_objects.len() != package.semantic.device_object_count
     {
@@ -2920,6 +2935,7 @@ mod tests {
                 smp_snapshot_barrier_count: 0,
                 smp_stress_run_count: 0,
                 smp_scaling_benchmark_count: 0,
+                integrated_smp_preemption_cleanup_count: 0,
                 device_object_count: 0,
                 queue_object_count: 0,
                 descriptor_object_count: 0,
@@ -3056,6 +3072,7 @@ mod tests {
                 smp_snapshot_barriers: Vec::new(),
                 smp_stress_runs: Vec::new(),
                 smp_scaling_benchmarks: Vec::new(),
+                integrated_smp_preemption_cleanups: Vec::new(),
                 device_objects: Vec::new(),
                 queue_objects: Vec::new(),
                 descriptor_objects: Vec::new(),
@@ -3855,6 +3872,49 @@ mod tests {
 
         let err = validate_migration_package(&package).expect_err("root mismatch must fail");
         assert_eq!(err.to_string(), "smp scaling benchmark root/count mismatch");
+    }
+
+    #[test]
+    fn semantic_roots_reject_integrated_smp_preemption_cleanup_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.integrated_smp_preemption_cleanup_count = 1;
+        package.semantic.integrated_smp_preemption_cleanups.push(
+            artifact_manifest::IntegratedSmpPreemptionCleanupManifest {
+                id: 17,
+                scenario: "x0-smp-preemption-cleanup".to_owned(),
+                stress_run: 15,
+                stress_run_generation: 1,
+                preemption: 1,
+                preemption_generation: 1,
+                timer_interrupt: 1,
+                timer_interrupt_generation: 1,
+                saved_context: 1,
+                saved_context_generation: 1,
+                remote_preempt: 1,
+                remote_preempt_generation: 1,
+                activation_cleanup: 1,
+                activation_cleanup_generation: 1,
+                smp_cleanup_quiescence: 1,
+                smp_cleanup_quiescence_generation: 1,
+                cleanup_store: 1,
+                target_store_generation: 2,
+                result_store_generation: 4,
+                cleanup_activation: 1,
+                cleanup_activation_generation_after: 5,
+                hart_count: 2,
+                invariant_checks: 7,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 53,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "integrated smp preemption cleanup root/count mismatch"
+        );
     }
 
     #[test]
@@ -7078,6 +7138,9 @@ mod tests {
         assert!(SmpStressRunRef::try_from_ref(stress_run).is_ok());
         let scaling_benchmark = ObjectRef::new(ObjectKind::SmpScalingBenchmark, 16, 1).unwrap();
         assert!(SmpScalingBenchmarkRef::try_from_ref(scaling_benchmark).is_ok());
+        let integrated_smp =
+            ObjectRef::new(ObjectKind::IntegratedSmpPreemptionCleanup, 17, 1).unwrap();
+        assert!(IntegratedSmpPreemptionCleanupRef::try_from_ref(integrated_smp).is_ok());
         let device_object = ObjectRef::new(ObjectKind::DeviceObject, 17, 1).unwrap();
         assert!(DeviceObjectRef::try_from_ref(device_object).is_ok());
         let packet_device_object = ObjectRef::new(ObjectKind::PacketDeviceObject, 30, 1).unwrap();

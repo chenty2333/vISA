@@ -1,0 +1,180 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "X0-integrated-smp-preemption-cleanup",
+  "phase": "Phase 8 Integrated System Scenarios",
+  "status": "pass",
+  "scope": [
+    "Add IntegratedSmpPreemptionCleanupRecord as first-class integrated scenario evidence",
+    "Tie existing SMP stress, timer preemption, saved context, remote preempt, activation cleanup, and SMP cleanup quiescence evidence together",
+    "Require exact generations for every referenced object",
+    "Emit IntegratedSmpPreemptionCleanupRecorded event and stable osctl ViewV1 JSON",
+    "Expose historical graph edges without creating live ownership or target-executor Activation edges",
+    "Publish cleanup target-store tombstone evidence so historical store generation references validate"
+  ],
+  "no_goals": [
+    "real SMP scheduling",
+    "real cross-hart IPI or timer interrupt delivery",
+    "real substrate cleanup quiescence",
+    "new runtime-only executor behavior",
+    "third-party scheduler or SMP dependency"
+  ],
+  "implemented_contract_clauses": [
+    {
+      "spec": "references/roadmap.md",
+      "clause": "X0 SMP + preemption + cleanup integrated scenario"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+      "clause": "all integrated scenario references carry kind/id/generation"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+      "clause": "integrated scenario uses Historical graph edges and tombstones for dead store generations"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/06-store-fault-cleanup.md",
+      "clause": "completed cleanup proves wait cancellation, activation death, and store generation advance"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+      "clause": "osctl exposes stable ViewV1 JSON and contract validation output"
+    }
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/integrated_smp_preemption_cleanup.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/integrated/golden_x0_smp_preemption_cleanup.trace.json",
+    "tests/reports/checkpoints/x0_integrated_smp_preemption_cleanup.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/integrated/golden_x0_smp_preemption_cleanup.trace.json",
+    "tests/reports/checkpoints/x0_integrated_smp_preemption_cleanup.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "target_executor harness now references the restored saved-context generation that actually exists in the semantic graph",
+      "osctl ViewV1 no longer exposes runtime preemptive activation as target-executor Activation ObjectRef",
+      "history graph no longer creates integrated-cleanup-activation edge",
+      "cleanup target store generation is represented by tombstone evidence so historical edges validate",
+      "osctl command and inspect dispatch expose integrated-smp-preemption-cleanup JSON"
+    ],
+    "bad_smells_checked": [
+      "No real SMP execution is claimed by the integrated record",
+      "No substrate mapping or adapter state became semantic truth",
+      "No third-party scheduler or runtime dependency was introduced",
+      "osctl emits stable ViewV1 JSON rather than internal Rust structs",
+      "Integrated evidence remains a small closed X0 object instead of a broad runtime refactor"
+    ],
+    "residual_notes": [
+      "X1 owns network driver fault under SMP",
+      "Future real SMP runtime must replace semantic evidence with substrate-backed event sources without changing semantic object identity",
+      "A dedicated runtime activation ObjectKind can replace the metadata-only runtime_activation field if the contract language grows one"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core integrated_runtime_x0 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core integrated_smp_preemption_cleanup -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl integrated_smp_preemption_cleanup -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p semantic_core -p contract_core -p target_executor -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl integrated-smp-preemption-cleanup list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect integrated-smp-preemption-cleanup --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "./scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "integrated_smp_preemption_cleanup": "integrated-smp-preemption-cleanup:26001@1",
+    "smp_stress_run": "smp-stress-run:9501@1",
+    "preemption": "preemption:9001@1",
+    "timer_interrupt": "timer-interrupt:9001@1",
+    "saved_context": "saved-context:9002@2",
+    "remote_preempt": "remote-preempt:9001@1",
+    "activation_cleanup": "activation-cleanup:9001@1",
+    "smp_cleanup_quiescence": "smp-cleanup-quiescence:9301@1",
+    "cleanup_store": "store:1@2",
+    "cleanup_store_result_generation": 4,
+    "recorded_at_event": 570,
+    "contract_validation": "ok"
+  },
+  "no_goals_respected": {
+    "no_real_target_side_cwasm_execution": true,
+    "no_full_wasi_component_runtime": true,
+    "no_real_smp_dynamic_code_publish": true,
+    "no_global_object_id_authority": true,
+    "no_substrate_mapping_as_semantic_truth": true
+  },
+  "residual_gaps": [
+    "X1 owns network driver fault under SMP",
+    "X2 owns disk pending IO fault under preemption",
+    "Real SMP runtime must later provide substrate-backed timer/IPI event evidence"
+  ],
+  "next_checkpoint": "X1-integrated-network-driver-fault-under-smp"
+}

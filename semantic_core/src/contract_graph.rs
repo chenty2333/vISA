@@ -97,6 +97,13 @@ pub struct ContractGraphSnapshot {
     pub display_snapshot_barriers: Vec<DisplaySnapshotBarrierRecord>,
     pub display_panic_last_frames: Vec<DisplayPanicLastFrameRecord>,
     pub framebuffer_benchmarks: Vec<FramebufferBenchmarkRecord>,
+    pub integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
+    pub saved_contexts: Vec<SavedContextRecord>,
+    pub timer_interrupts: Vec<TimerInterruptRecord>,
+    pub remote_preempts: Vec<RemotePreemptRecord>,
+    pub activation_cleanups: Vec<ActivationCleanupRecord>,
+    pub smp_cleanup_quiescence: Vec<SmpCleanupQuiescenceRecord>,
+    pub smp_stress_runs: Vec<SmpStressRunRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -213,6 +220,7 @@ impl ContractGraphValidator {
         Self::validate_display_snapshot_barriers(snapshot, &mut violations);
         Self::validate_display_panic_last_frames(snapshot, &mut violations);
         Self::validate_framebuffer_benchmarks(snapshot, &mut violations);
+        Self::validate_integrated_smp_preemption_cleanups(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -2594,6 +2602,199 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_integrated_smp_preemption_cleanups(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for record in &snapshot.integrated_smp_preemption_cleanups {
+            let from = record.object_ref();
+            if record.id == 0
+                || record.generation == 0
+                || record.scenario.is_empty()
+                || record.state != IntegratedSmpPreemptionCleanupState::Recorded
+                || record.stress_run_generation == 0
+                || record.preemption_generation == 0
+                || record.timer_interrupt_generation == 0
+                || record.saved_context_generation == 0
+                || record.remote_preempt_generation == 0
+                || record.activation_cleanup_generation == 0
+                || record.smp_cleanup_quiescence_generation == 0
+                || record.target_store_generation == 0
+                || record.result_store_generation <= record.target_store_generation
+                || record.cleanup_activation_generation_after == 0
+                || record.hart_count < 2
+                || record.invariant_checks == 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "integrated-smp-preemption-cleanup->contract",
+                    from,
+                    None,
+                    "integrated SMP/preemption/cleanup evidence requires exact refs, 2+ harts, completed cleanup, and recorded state",
+                ));
+                continue;
+            }
+            for (label, kind, id, generation) in [
+                (
+                    "integrated-smp-preemption-cleanup->smp-stress-run",
+                    ContractObjectKind::SmpStressRun,
+                    record.stress_run,
+                    record.stress_run_generation,
+                ),
+                (
+                    "integrated-smp-preemption-cleanup->preemption",
+                    ContractObjectKind::Preemption,
+                    record.preemption,
+                    record.preemption_generation,
+                ),
+                (
+                    "integrated-smp-preemption-cleanup->timer-interrupt",
+                    ContractObjectKind::TimerInterrupt,
+                    record.timer_interrupt,
+                    record.timer_interrupt_generation,
+                ),
+                (
+                    "integrated-smp-preemption-cleanup->saved-context",
+                    ContractObjectKind::SavedContext,
+                    record.saved_context,
+                    record.saved_context_generation,
+                ),
+                (
+                    "integrated-smp-preemption-cleanup->remote-preempt",
+                    ContractObjectKind::RemotePreempt,
+                    record.remote_preempt,
+                    record.remote_preempt_generation,
+                ),
+                (
+                    "integrated-smp-preemption-cleanup->activation-cleanup",
+                    ContractObjectKind::ActivationCleanup,
+                    record.activation_cleanup,
+                    record.activation_cleanup_generation,
+                ),
+                (
+                    "integrated-smp-preemption-cleanup->smp-cleanup-quiescence",
+                    ContractObjectKind::SmpCleanupQuiescence,
+                    record.smp_cleanup_quiescence,
+                    record.smp_cleanup_quiescence_generation,
+                ),
+                (
+                    "integrated-smp-preemption-cleanup->cleanup-store",
+                    ContractObjectKind::Store,
+                    record.cleanup_store,
+                    record.target_store_generation,
+                ),
+            ] {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    kind,
+                    id,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            if let Some(preemption) = snapshot.preemptions.iter().find(|preemption| {
+                preemption.id == record.preemption
+                    && preemption.generation == record.preemption_generation
+            }) {
+                if preemption.state != PreemptionState::Applied
+                    || preemption.timer_interrupt != record.timer_interrupt
+                    || preemption.timer_interrupt_generation != record.timer_interrupt_generation
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-smp-preemption-cleanup->preemption-binding",
+                        from,
+                        Some(preemption.object_ref()),
+                        "integrated evidence preemption does not match timer attribution",
+                    ));
+                }
+            }
+            if let Some(saved) = snapshot.saved_contexts.iter().find(|saved| {
+                saved.id == record.saved_context
+                    && saved.generation == record.saved_context_generation
+            }) {
+                if saved.state == SavedContextState::Dropped
+                    || saved.source_preemption != Some(record.preemption)
+                    || saved.source_preemption_generation != Some(record.preemption_generation)
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-smp-preemption-cleanup->saved-context-binding",
+                        from,
+                        Some(saved.object_ref()),
+                        "integrated evidence saved context is not attributed to the preemption",
+                    ));
+                }
+            }
+            if let Some(remote) = snapshot.remote_preempts.iter().find(|remote| {
+                remote.id == record.remote_preempt
+                    && remote.generation == record.remote_preempt_generation
+            }) {
+                if remote.state != RemotePreemptState::Applied
+                    || remote.source_hart == remote.target_hart
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-smp-preemption-cleanup->remote-preempt-binding",
+                        from,
+                        Some(remote.object_ref()),
+                        "integrated evidence remote preempt is not cross-hart applied evidence",
+                    ));
+                }
+            }
+            if let Some(cleanup) = snapshot.activation_cleanups.iter().find(|cleanup| {
+                cleanup.id == record.activation_cleanup
+                    && cleanup.generation == record.activation_cleanup_generation
+            }) {
+                if cleanup.state != ActivationCleanupState::Completed
+                    || cleanup.store != record.cleanup_store
+                    || cleanup.target_store_generation != record.target_store_generation
+                    || cleanup.result_store_generation != record.result_store_generation
+                    || cleanup.activation != record.cleanup_activation
+                    || cleanup.activation_generation_after
+                        != record.cleanup_activation_generation_after
+                    || cleanup.wait.is_none()
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-smp-preemption-cleanup->cleanup-binding",
+                        from,
+                        Some(cleanup.object_ref()),
+                        "integrated evidence cleanup does not prove completed wait-cancelling store cleanup",
+                    ));
+                }
+            }
+            if let Some(quiescence) = snapshot.smp_cleanup_quiescence.iter().find(|quiescence| {
+                quiescence.id == record.smp_cleanup_quiescence
+                    && quiescence.generation == record.smp_cleanup_quiescence_generation
+            }) {
+                if quiescence.state != SmpCleanupQuiescenceState::Validated
+                    || quiescence.cleanup != record.activation_cleanup
+                    || quiescence.cleanup_generation != record.activation_cleanup_generation
+                    || quiescence.store != record.cleanup_store
+                    || quiescence.target_store_generation != record.target_store_generation
+                    || quiescence.result_store_generation != record.result_store_generation
+                    || quiescence.participants.len() < 2
+                    || !quiescence.no_running_activation
+                    || !quiescence.no_pending_wait
+                    || !quiescence.no_live_capability
+                    || !quiescence.no_live_resource
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-smp-preemption-cleanup->quiescence-binding",
+                        from,
+                        Some(quiescence.object_ref()),
+                        "integrated evidence quiescence does not close the cleanup boundary",
+                    ));
+                }
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -3757,6 +3958,36 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|benchmark| benchmark.id == id && benchmark.generation == generation)
                 .map(SimdContextSwitchBenchmarkRecord::object_ref),
+            ContractObjectKind::SmpStressRun => snapshot
+                .smp_stress_runs
+                .iter()
+                .find(|run| run.id == id && run.generation == generation)
+                .map(SmpStressRunRecord::object_ref),
+            ContractObjectKind::RemotePreempt => snapshot
+                .remote_preempts
+                .iter()
+                .find(|remote| remote.id == id && remote.generation == generation)
+                .map(RemotePreemptRecord::object_ref),
+            ContractObjectKind::SavedContext => snapshot
+                .saved_contexts
+                .iter()
+                .find(|context| context.id == id && context.generation == generation)
+                .map(SavedContextRecord::object_ref),
+            ContractObjectKind::TimerInterrupt => snapshot
+                .timer_interrupts
+                .iter()
+                .find(|timer| timer.id == id && timer.generation == generation)
+                .map(TimerInterruptRecord::object_ref),
+            ContractObjectKind::ActivationCleanup => snapshot
+                .activation_cleanups
+                .iter()
+                .find(|cleanup| cleanup.id == id && cleanup.generation == generation)
+                .map(ActivationCleanupRecord::object_ref),
+            ContractObjectKind::SmpCleanupQuiescence => snapshot
+                .smp_cleanup_quiescence
+                .iter()
+                .find(|quiescence| quiescence.id == id && quiescence.generation == generation)
+                .map(SmpCleanupQuiescenceRecord::object_ref),
             ContractObjectKind::FramebufferObject => snapshot
                 .framebuffer_objects
                 .iter()
@@ -3822,6 +4053,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|benchmark| benchmark.id == id && benchmark.generation == generation)
                 .map(FramebufferBenchmarkRecord::object_ref),
+            ContractObjectKind::IntegratedSmpPreemptionCleanup => snapshot
+                .integrated_smp_preemption_cleanups
+                .iter()
+                .find(|record| record.id == id && record.generation == generation)
+                .map(IntegratedSmpPreemptionCleanupRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -3947,6 +4183,36 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|benchmark| benchmark.id == id)
                 .map(SimdContextSwitchBenchmarkRecord::object_ref),
+            ContractObjectKind::SmpStressRun => snapshot
+                .smp_stress_runs
+                .iter()
+                .find(|run| run.id == id)
+                .map(SmpStressRunRecord::object_ref),
+            ContractObjectKind::RemotePreempt => snapshot
+                .remote_preempts
+                .iter()
+                .find(|remote| remote.id == id)
+                .map(RemotePreemptRecord::object_ref),
+            ContractObjectKind::SavedContext => snapshot
+                .saved_contexts
+                .iter()
+                .find(|context| context.id == id)
+                .map(SavedContextRecord::object_ref),
+            ContractObjectKind::TimerInterrupt => snapshot
+                .timer_interrupts
+                .iter()
+                .find(|timer| timer.id == id)
+                .map(TimerInterruptRecord::object_ref),
+            ContractObjectKind::ActivationCleanup => snapshot
+                .activation_cleanups
+                .iter()
+                .find(|cleanup| cleanup.id == id)
+                .map(ActivationCleanupRecord::object_ref),
+            ContractObjectKind::SmpCleanupQuiescence => snapshot
+                .smp_cleanup_quiescence
+                .iter()
+                .find(|quiescence| quiescence.id == id)
+                .map(SmpCleanupQuiescenceRecord::object_ref),
             ContractObjectKind::FramebufferObject => snapshot
                 .framebuffer_objects
                 .iter()
@@ -4012,6 +4278,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|benchmark| benchmark.id == id)
                 .map(FramebufferBenchmarkRecord::object_ref),
+            ContractObjectKind::IntegratedSmpPreemptionCleanup => snapshot
+                .integrated_smp_preemption_cleanups
+                .iter()
+                .find(|record| record.id == id)
+                .map(IntegratedSmpPreemptionCleanupRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -4066,10 +4337,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::Task
             | ContractObjectKind::RunnableQueue
             | ContractObjectKind::ActivationContext
-            | ContractObjectKind::SavedContext
-            | ContractObjectKind::TimerInterrupt
             | ContractObjectKind::IpiEvent
-            | ContractObjectKind::RemotePreempt
             | ContractObjectKind::RemotePark
             | ContractObjectKind::SchedulerDecision
             | ContractObjectKind::CrossHartSchedulerDecision
@@ -4077,9 +4345,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::SmpSafePoint
             | ContractObjectKind::StopTheWorldRendezvous
             | ContractObjectKind::SmpCodePublishBarrier
-            | ContractObjectKind::SmpCleanupQuiescence
             | ContractObjectKind::SmpSnapshotBarrier
-            | ContractObjectKind::SmpStressRun
             | ContractObjectKind::SmpScalingBenchmark
             | ContractObjectKind::DeviceObject
             | ContractObjectKind::QueueObject
@@ -4140,7 +4406,6 @@ impl ContractGraphValidator {
             | ContractObjectKind::BlockBenchmark
             | ContractObjectKind::BlockRecoveryBenchmark
             | ContractObjectKind::ActivationWait
-            | ContractObjectKind::ActivationCleanup
             | ContractObjectKind::PreemptionLatencySample
             | ContractObjectKind::HartEventAttribution
             | ContractObjectKind::Resource
@@ -4177,6 +4442,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::DisplaySnapshotBarrier
                 | ContractObjectKind::DisplayPanicLastFrame
                 | ContractObjectKind::FramebufferBenchmark
+                | ContractObjectKind::IntegratedSmpPreemptionCleanup
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -4380,6 +4646,15 @@ impl ContractGraphValidator {
                 .and_then(|benchmark| {
                     (benchmark.state != FramebufferBenchmarkState::Recorded)
                         .then_some("live edge references unrecorded framebuffer benchmark")
+                }),
+            ContractObjectKind::IntegratedSmpPreemptionCleanup => snapshot
+                .integrated_smp_preemption_cleanups
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != IntegratedSmpPreemptionCleanupState::Recorded).then_some(
+                        "live edge references unrecorded integrated SMP/preemption/cleanup evidence",
+                    )
                 }),
             _ => None,
         }

@@ -30,18 +30,18 @@ use artifact_manifest::{
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    IntegratedSmpPreemptionCleanupManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8392,6 +8392,7 @@ fn build_target_executor_v1(
     run_display_snapshot_barrier_harness(semantic)?;
     run_display_panic_last_frame_harness(semantic)?;
     run_framebuffer_benchmark_harness(semantic)?;
+    run_integrated_smp_preemption_cleanup_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8423,6 +8424,7 @@ fn build_target_executor_v1(
             .capability_records
             .push(capability_record_manifest(capability));
     }
+    let semantic_cleanup_tombstones = semantic_cleanup_tombstones(semantic);
     append_display_capability_contract_evidence(
         semantic,
         &mut report.store_records,
@@ -8454,6 +8456,7 @@ fn build_target_executor_v1(
         .iter()
         .chain(store_manager.tombstones().iter())
         .chain(executor.tombstones().iter())
+        .chain(semantic_cleanup_tombstones.iter())
     {
         report.tombstones.push(tombstone_manifest(tombstone));
     }
@@ -8481,6 +8484,13 @@ fn build_target_executor_v1(
         display_snapshot_barriers: semantic.display_snapshot_barriers().to_vec(),
         display_panic_last_frames: semantic.display_panic_last_frames().to_vec(),
         framebuffer_benchmarks: semantic.framebuffer_benchmarks().to_vec(),
+        integrated_smp_preemption_cleanups: semantic.integrated_smp_preemption_cleanups().to_vec(),
+        saved_contexts: semantic.saved_contexts().to_vec(),
+        timer_interrupts: semantic.timer_interrupts().to_vec(),
+        remote_preempts: semantic.remote_preempts().to_vec(),
+        activation_cleanups: semantic.activation_cleanups().to_vec(),
+        smp_cleanup_quiescence: semantic.smp_cleanup_quiescence().to_vec(),
+        smp_stress_runs: semantic.smp_stress_runs().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: contract_stores,
@@ -8495,6 +8505,7 @@ fn build_target_executor_v1(
             .iter()
             .chain(store_manager.tombstones().iter())
             .chain(executor.tombstones().iter())
+            .chain(semantic_cleanup_tombstones.iter())
             .cloned()
             .collect(),
         external_objects,
@@ -10711,6 +10722,46 @@ fn run_framebuffer_benchmark_harness(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn run_integrated_smp_preemption_cleanup_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        100_001,
+        "integrated-runtime-x0",
+        SemanticCommand::RecordIntegratedSmpPreemptionCleanup {
+            integrated: 26_001,
+            scenario: "x0-smp-preemption-cleanup".to_owned(),
+            stress_run: 9501,
+            stress_run_generation: 1,
+            preemption: 9001,
+            preemption_generation: 1,
+            timer_interrupt: 9001,
+            timer_interrupt_generation: 1,
+            saved_context: 9002,
+            saved_context_generation: 2,
+            remote_preempt: 9001,
+            remote_preempt_generation: 1,
+            activation_cleanup: 9001,
+            activation_cleanup_generation: 1,
+            smp_cleanup_quiescence: 9301,
+            smp_cleanup_quiescence_generation: 1,
+            invariant_checks: 7,
+            note: "x0 records integrated SMP preemption and cleanup closure".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "integrated runtime x0 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -10736,6 +10787,30 @@ fn append_display_capability_contract_evidence(
             capability_records.push(capability_record_manifest(capability));
         }
     }
+}
+
+fn semantic_cleanup_tombstones(semantic: &SemanticGraph) -> Vec<TombstoneRecord> {
+    let mut tombstones: Vec<TombstoneRecord> = Vec::new();
+    for cleanup in semantic.activation_cleanups() {
+        if cleanup.state != semantic_core::ActivationCleanupState::Completed {
+            continue;
+        }
+        let tombstone = TombstoneRecord::new(
+            ContractObjectKind::Store,
+            cleanup.store,
+            cleanup.target_store_generation,
+            cleanup.completed_at_event,
+            "activation-cleanup-target-store-generation",
+        );
+        if !tombstones.iter().any(|existing| {
+            existing.kind == tombstone.kind
+                && existing.id == tombstone.id
+                && existing.generation == tombstone.generation
+        }) {
+            tombstones.push(tombstone);
+        }
+    }
+    tombstones
 }
 
 fn contract_graph_store_records(
@@ -11482,6 +11557,8 @@ fn demo_migration_package(
             smp_snapshot_barrier_count: semantic.smp_snapshot_barrier_count(),
             smp_stress_run_count: semantic.smp_stress_run_count(),
             smp_scaling_benchmark_count: semantic.smp_scaling_benchmark_count(),
+            integrated_smp_preemption_cleanup_count: semantic
+                .integrated_smp_preemption_cleanup_count(),
             device_object_count: semantic.device_object_count(),
             queue_object_count: semantic.queue_object_count(),
             descriptor_object_count: semantic.descriptor_object_count(),
@@ -11693,6 +11770,11 @@ fn demo_migration_package(
                 .smp_scaling_benchmarks()
                 .iter()
                 .map(smp_scaling_benchmark_manifest)
+                .collect(),
+            integrated_smp_preemption_cleanups: semantic
+                .integrated_smp_preemption_cleanups()
+                .iter()
+                .map(integrated_smp_preemption_cleanup_manifest)
                 .collect(),
             device_objects: semantic
                 .device_objects()
@@ -12564,6 +12646,32 @@ fn semantic_roots(
                     benchmark.speedup_milli,
                     benchmark.efficiency_milli,
                     benchmark.generation
+                )
+            })
+            .collect(),
+        integrated_smp_preemption_cleanup_roots: semantic
+            .integrated_smp_preemption_cleanups()
+            .iter()
+            .map(|record| {
+                format!(
+                    "integrated-smp-preemption-cleanup id={} scenario={} stress_run={}@{} preemption={}@{} remote_preempt={}@{} activation_cleanup={}@{} smp_cleanup_quiescence={}@{} store={}@{}->{} harts={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.stress_run,
+                    record.stress_run_generation,
+                    record.preemption,
+                    record.preemption_generation,
+                    record.remote_preempt,
+                    record.remote_preempt_generation,
+                    record.activation_cleanup,
+                    record.activation_cleanup_generation,
+                    record.smp_cleanup_quiescence,
+                    record.smp_cleanup_quiescence_generation,
+                    record.cleanup_store,
+                    record.target_store_generation,
+                    record.result_store_generation,
+                    record.hart_count,
+                    record.generation
                 )
             })
             .collect(),
@@ -15690,6 +15798,40 @@ fn smp_scaling_benchmark_manifest(
         state: benchmark.state.as_str().to_owned(),
         recorded_at_event: benchmark.recorded_at_event,
         note: benchmark.note.clone(),
+    }
+}
+
+fn integrated_smp_preemption_cleanup_manifest(
+    record: &semantic_core::IntegratedSmpPreemptionCleanupRecord,
+) -> IntegratedSmpPreemptionCleanupManifest {
+    IntegratedSmpPreemptionCleanupManifest {
+        id: record.id,
+        scenario: record.scenario.clone(),
+        stress_run: record.stress_run,
+        stress_run_generation: record.stress_run_generation,
+        preemption: record.preemption,
+        preemption_generation: record.preemption_generation,
+        timer_interrupt: record.timer_interrupt,
+        timer_interrupt_generation: record.timer_interrupt_generation,
+        saved_context: record.saved_context,
+        saved_context_generation: record.saved_context_generation,
+        remote_preempt: record.remote_preempt,
+        remote_preempt_generation: record.remote_preempt_generation,
+        activation_cleanup: record.activation_cleanup,
+        activation_cleanup_generation: record.activation_cleanup_generation,
+        smp_cleanup_quiescence: record.smp_cleanup_quiescence,
+        smp_cleanup_quiescence_generation: record.smp_cleanup_quiescence_generation,
+        cleanup_store: record.cleanup_store,
+        target_store_generation: record.target_store_generation,
+        result_store_generation: record.result_store_generation,
+        cleanup_activation: record.cleanup_activation,
+        cleanup_activation_generation_after: record.cleanup_activation_generation_after,
+        hart_count: record.hart_count,
+        invariant_checks: record.invariant_checks,
+        generation: record.generation,
+        state: record.state.as_str().to_owned(),
+        recorded_at_event: record.recorded_at_event,
+        note: record.note.clone(),
     }
 }
 

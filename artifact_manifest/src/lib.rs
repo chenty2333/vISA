@@ -265,6 +265,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub smp_scaling_benchmark_count: usize,
     #[serde(default)]
+    pub integrated_smp_preemption_cleanup_count: usize,
+    #[serde(default)]
     pub device_object_count: usize,
     #[serde(default)]
     pub queue_object_count: usize,
@@ -533,6 +535,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub smp_scaling_benchmarks: Vec<SmpScalingBenchmarkManifest>,
     #[serde(default)]
+    pub integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupManifest>,
+    #[serde(default)]
     pub device_objects: Vec<DeviceObjectManifest>,
     #[serde(default)]
     pub queue_objects: Vec<QueueObjectManifest>,
@@ -780,6 +784,8 @@ pub struct SemanticRootSetManifest {
     pub smp_stress_run_roots: Vec<String>,
     #[serde(default)]
     pub smp_scaling_benchmark_roots: Vec<String>,
+    #[serde(default)]
+    pub integrated_smp_preemption_cleanup_roots: Vec<String>,
     #[serde(default)]
     pub device_object_roots: Vec<String>,
     #[serde(default)]
@@ -1582,6 +1588,37 @@ pub struct SmpScalingBenchmarkManifest {
     pub stress_safe_point_count: u32,
     pub stress_rendezvous_count: u32,
     pub stress_property_failures: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IntegratedSmpPreemptionCleanupManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub stress_run: u64,
+    pub stress_run_generation: u64,
+    pub preemption: u64,
+    pub preemption_generation: u64,
+    pub timer_interrupt: u64,
+    pub timer_interrupt_generation: u64,
+    pub saved_context: u64,
+    pub saved_context_generation: u64,
+    pub remote_preempt: u64,
+    pub remote_preempt_generation: u64,
+    pub activation_cleanup: u64,
+    pub activation_cleanup_generation: u64,
+    pub smp_cleanup_quiescence: u64,
+    pub smp_cleanup_quiescence_generation: u64,
+    pub cleanup_store: u64,
+    pub target_store_generation: u64,
+    pub result_store_generation: u64,
+    pub cleanup_activation: u64,
+    pub cleanup_activation_generation_after: u64,
+    pub hart_count: u32,
+    pub invariant_checks: u32,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

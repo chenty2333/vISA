@@ -1,0 +1,177 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "X0-integrated-smp-preemption-cleanup",
+  "name": "golden_x0_smp_preemption_cleanup",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/06-store-fault-cleanup.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real SMP scheduling or timer interrupt delivery",
+    "real cross-hart IPI execution",
+    "real substrate cleanup quiescence",
+    "new third-party runtime dependency"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "P3 produced preemption:9001@1 from timer-interrupt:9001@1",
+      "P4 produced saved-context:9002@2 after resume consumed saved-context:9002@1",
+      "S6 produced remote-preempt:9001@1",
+      "P8 produced activation-cleanup:9001@1 for store:1@2",
+      "S13 produced smp-cleanup-quiescence:9301@1",
+      "S15 produced smp-stress-run:9501@1"
+    ],
+    "command": {
+      "name": "record-integrated-smp-preemption-cleanup",
+      "integrated": "integrated-smp-preemption-cleanup:26001@1",
+      "stress_run": "smp-stress-run:9501@1",
+      "preemption": "preemption:9001@1",
+      "timer_interrupt": "timer-interrupt:9001@1",
+      "saved_context": "saved-context:9002@2",
+      "remote_preempt": "remote-preempt:9001@1",
+      "activation_cleanup": "activation-cleanup:9001@1",
+      "smp_cleanup_quiescence": "smp-cleanup-quiescence:9301@1",
+      "cleanup_store_target": "store:1@2",
+      "cleanup_store_result_generation": 4,
+      "result": "semantic evidence ties local preemption, remote preempt, cleanup, and SMP quiescence without claiming real SMP execution"
+    }
+  },
+  "events": [
+    {
+      "kind": "IntegratedSmpPreemptionCleanupRecorded",
+      "source": "SemanticGraph::record_integrated_smp_preemption_cleanup_with_id",
+      "visible_as": "osctl integrated-smp-preemption-cleanup list --json",
+      "event": 570
+    }
+  ],
+  "expected": {
+    "views": {
+      "integrated-smp-preemption-cleanup": {
+        "id": 26001,
+        "generation": 1,
+        "state": "recorded",
+        "owner": {
+          "scenario": "x0-smp-preemption-cleanup",
+          "cleanup_store": {
+            "kind": "store",
+            "id": 1,
+            "generation": 2
+          },
+          "runtime_activation": {
+            "id": 9003,
+            "generation_after_cleanup": 5,
+            "note": "runtime-preemptive-activation-not-target-executor-object"
+          }
+        },
+        "references": {
+          "smp_stress_run": {
+            "kind": "smp-stress-run",
+            "id": 9501,
+            "generation": 1
+          },
+          "preemption": {
+            "kind": "preemption",
+            "id": 9001,
+            "generation": 1
+          },
+          "timer_interrupt": {
+            "kind": "timer-interrupt",
+            "id": 9001,
+            "generation": 1
+          },
+          "saved_context": {
+            "kind": "saved-context",
+            "id": 9002,
+            "generation": 2
+          },
+          "remote_preempt": {
+            "kind": "remote-preempt",
+            "id": 9001,
+            "generation": 1
+          },
+          "activation_cleanup": {
+            "kind": "activation-cleanup",
+            "id": 9001,
+            "generation": 1
+          },
+          "smp_cleanup_quiescence": {
+            "kind": "smp-cleanup-quiescence",
+            "id": 9301,
+            "generation": 1
+          }
+        },
+        "closure": {
+          "hart_count": 2,
+          "invariant_checks": 7,
+          "target_store_generation": 2,
+          "result_store_generation": 4,
+          "cleanup_generation_safe": true,
+          "requires_no_resume_after_cleanup": true,
+          "requires_wait_cancelling_cleanup": true
+        },
+        "authority": {
+          "uses_semantic_preemption_cleanup_evidence": true,
+          "real_smp_preemption_executed": false,
+          "real_cross_hart_substrate_interrupt_executed": false
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "integrated-smp-preemption-cleanup:26001@1",
+          "relation": "integrated-stress-run",
+          "to": "smp-stress-run:9501@1",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-smp-preemption-cleanup:26001@1",
+          "relation": "integrated-saved-context",
+          "to": "saved-context:9002@2",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-smp-preemption-cleanup:26001@1",
+          "relation": "integrated-cleanup-store",
+          "to": "store:1@2",
+          "mode": "historical"
+        }
+      ],
+      "tombstones": [
+        {
+          "object": "store:1@2",
+          "reason": "activation-cleanup-target-store-generation"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "Integrated SMP/preemption/cleanup evidence is a first-class ObjectRef",
+      "all referenced evidence carries exact generation",
+      "cleanup target store generation is historical and tombstoned",
+      "saved-context history uses exact restored generation",
+      "runtime activation id is exposed as metadata, not target-executor Activation ObjectRef",
+      "no resume after cleanup is allowed for the cleanup activation"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "integrated_runtime_x0_records_smp_preemption_cleanup_closure",
+      "integrated_runtime_x0_rejects_stale_or_incomplete_evidence",
+      "integrated_runtime_x0_contract_graph_rejects_generation_drift",
+      "semantic_roots_reject_integrated_smp_preemption_cleanup_root_mismatch",
+      "integrated_smp_preemption_cleanup_view_v1_exposes_runtime_closure_refs"
+    ],
+    "osctl_json_view": "integrated-smp-preemption-cleanup list --json",
+    "integrated_smp_preemption_cleanup": "integrated-smp-preemption-cleanup:26001@1",
+    "cleanup_store": "store:1@2",
+    "event": 570
+  }
+}
