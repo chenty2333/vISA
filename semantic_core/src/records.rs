@@ -2679,6 +2679,40 @@ impl DisplayCapabilityRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FramebufferWindowLeaseRecord {
+    pub id: FramebufferWindowLeaseId,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub display_capability: DisplayCapabilityId,
+    pub display_capability_generation: Generation,
+    pub display: DisplayObjectId,
+    pub display_generation: Generation,
+    pub framebuffer: FramebufferObjectId,
+    pub framebuffer_generation: Generation,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub byte_offset: u64,
+    pub byte_len: u64,
+    pub access: String,
+    pub generation: Generation,
+    pub state: FramebufferWindowLeaseState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl FramebufferWindowLeaseRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::FramebufferWindowLease,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

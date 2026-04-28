@@ -87,6 +87,7 @@ pub struct ContractGraphSnapshot {
     pub framebuffer_objects: Vec<FramebufferObjectRecord>,
     pub display_objects: Vec<DisplayObjectRecord>,
     pub display_capabilities: Vec<DisplayCapabilityRecord>,
+    pub framebuffer_window_leases: Vec<FramebufferWindowLeaseRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -193,6 +194,7 @@ impl ContractGraphValidator {
         Self::validate_framebuffer_objects(snapshot, &mut violations);
         Self::validate_display_objects(snapshot, &mut violations);
         Self::validate_display_capabilities(snapshot, &mut violations);
+        Self::validate_framebuffer_window_leases(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -1025,6 +1027,164 @@ impl ContractGraphValidator {
                         from,
                         Some(display.object_ref()),
                         "display capability framebuffer edge does not match display object generation",
+                    ));
+                }
+            }
+        }
+    }
+
+    fn validate_framebuffer_window_leases(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for lease in &snapshot.framebuffer_window_leases {
+            let from = lease.object_ref();
+            if lease.id == 0
+                || lease.generation == 0
+                || lease.owner_store_generation == 0
+                || lease.display_capability_generation == 0
+                || lease.display_generation == 0
+                || lease.framebuffer_generation == 0
+                || lease.width == 0
+                || lease.height == 0
+                || lease.byte_len == 0
+                || lease.access.is_empty()
+                || lease.state != FramebufferWindowLeaseState::Active
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "framebuffer-window-lease->contract",
+                    from,
+                    None,
+                    "framebuffer window lease requires nonzero exact refs, window, byte range, access, and active state",
+                ));
+                continue;
+            }
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-window-lease->owner-store",
+                ContractObjectKind::Store,
+                lease.owner_store,
+                lease.owner_store_generation,
+                ContractEdgeMode::Live,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-window-lease->display-capability",
+                ContractObjectKind::DisplayCapability,
+                lease.display_capability,
+                lease.display_capability_generation,
+                ContractEdgeMode::Live,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-window-lease->display-object",
+                ContractObjectKind::DisplayObject,
+                lease.display,
+                lease.display_generation,
+                ContractEdgeMode::Live,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-window-lease->framebuffer-object",
+                ContractObjectKind::FramebufferObject,
+                lease.framebuffer,
+                lease.framebuffer_generation,
+                ContractEdgeMode::Live,
+            );
+
+            let display_capability = snapshot.display_capabilities.iter().find(|capability| {
+                capability.id == lease.display_capability
+                    && capability.generation == lease.display_capability_generation
+            });
+            if let Some(capability) = display_capability {
+                if capability.owner_store != lease.owner_store
+                    || capability.owner_store_generation != lease.owner_store_generation
+                    || capability.display != lease.display
+                    || capability.display_generation != lease.display_generation
+                    || capability.framebuffer != lease.framebuffer
+                    || capability.framebuffer_generation != lease.framebuffer_generation
+                    || !capability
+                        .operations
+                        .iter()
+                        .any(|operation| operation == "lease")
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "framebuffer-window-lease->display-capability-binding",
+                        from,
+                        Some(capability.object_ref()),
+                        "framebuffer window lease does not match display capability authority binding",
+                    ));
+                }
+            }
+            if let Some(display) = snapshot.display_objects.iter().find(|display| {
+                display.id == lease.display && display.generation == lease.display_generation
+            }) {
+                if display.framebuffer != lease.framebuffer
+                    || display.framebuffer_generation != lease.framebuffer_generation
+                    || lease
+                        .x
+                        .checked_add(lease.width)
+                        .is_none_or(|right| right > display.width)
+                    || lease
+                        .y
+                        .checked_add(lease.height)
+                        .is_none_or(|bottom| bottom > display.height)
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "framebuffer-window-lease->display-window",
+                        from,
+                        Some(display.object_ref()),
+                        "framebuffer window lease window is outside display mode or framebuffer binding",
+                    ));
+                }
+            }
+            if let Some(framebuffer) = snapshot.framebuffer_objects.iter().find(|framebuffer| {
+                framebuffer.id == lease.framebuffer
+                    && framebuffer.generation == lease.framebuffer_generation
+            }) {
+                let bytes_per_pixel = match framebuffer.pixel_format.as_str() {
+                    "xrgb8888" | "argb8888" | "rgba8888" | "bgra8888" => Some(4_u64),
+                    "rgb565" => Some(2_u64),
+                    _ => None,
+                };
+                let byte_window = bytes_per_pixel.and_then(|bytes_per_pixel| {
+                    let row_bytes = u64::from(lease.width).checked_mul(bytes_per_pixel)?;
+                    let expected_byte_offset = u64::from(lease.y)
+                        .checked_mul(u64::from(framebuffer.stride_bytes))
+                        .and_then(|base| {
+                            u64::from(lease.x)
+                                .checked_mul(bytes_per_pixel)
+                                .and_then(|x_bytes| base.checked_add(x_bytes))
+                        })?;
+                    let min_window_bytes = u64::from(lease.height.saturating_sub(1))
+                        .checked_mul(u64::from(framebuffer.stride_bytes))
+                        .and_then(|rows| rows.checked_add(row_bytes))?;
+                    Some((expected_byte_offset, min_window_bytes))
+                });
+                if byte_window.is_none_or(|(expected_byte_offset, min_window_bytes)| {
+                    lease.byte_offset != expected_byte_offset || lease.byte_len < min_window_bytes
+                }) || lease
+                    .byte_offset
+                    .checked_add(lease.byte_len)
+                    .is_none_or(|end| end > framebuffer.byte_len)
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "framebuffer-window-lease->byte-window",
+                        from,
+                        Some(framebuffer.object_ref()),
+                        "framebuffer window lease byte window does not match framebuffer geometry or exceeds framebuffer object",
                     ));
                 }
             }
@@ -2209,6 +2369,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|capability| capability.id == id && capability.generation == generation)
                 .map(DisplayCapabilityRecord::object_ref),
+            ContractObjectKind::FramebufferWindowLease => snapshot
+                .framebuffer_window_leases
+                .iter()
+                .find(|lease| lease.id == id && lease.generation == generation)
+                .map(FramebufferWindowLeaseRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2349,6 +2514,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|capability| capability.id == id)
                 .map(DisplayCapabilityRecord::object_ref),
+            ContractObjectKind::FramebufferWindowLease => snapshot
+                .framebuffer_window_leases
+                .iter()
+                .find(|lease| lease.id == id)
+                .map(FramebufferWindowLeaseRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2504,6 +2674,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::FramebufferObject
                 | ContractObjectKind::DisplayObject
                 | ContractObjectKind::DisplayCapability
+                | ContractObjectKind::FramebufferWindowLease
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -2625,6 +2796,14 @@ impl ContractGraphValidator {
                 .and_then(|capability| {
                     (capability.state != DisplayCapabilityState::Active)
                         .then_some("live edge references inactive display capability")
+                }),
+            ContractObjectKind::FramebufferWindowLease => snapshot
+                .framebuffer_window_leases
+                .iter()
+                .find(|lease| lease.id == object.id && lease.generation == object.generation)
+                .and_then(|lease| {
+                    (lease.state != FramebufferWindowLeaseState::Active)
+                        .then_some("live edge references inactive framebuffer window lease")
                 }),
             _ => None,
         }

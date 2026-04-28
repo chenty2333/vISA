@@ -24,15 +24,16 @@ use artifact_manifest::{
     DisplayCapabilityManifest, DisplayObjectManifest, DmaBufferObjectManifest,
     DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
     FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
-    FileHandleCapabilityManifest, FileObjectManifest, FramebufferObjectManifest, FsWaitManifest,
-    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
-    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
-    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    FileHandleCapabilityManifest, FileObjectManifest, FramebufferObjectManifest,
+    FramebufferWindowLeaseManifest, FsWaitManifest, GuestStateManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
     NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
     PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
@@ -8378,6 +8379,7 @@ fn build_target_executor_v1(
     run_framebuffer_object_harness(semantic)?;
     run_display_object_harness(semantic)?;
     run_display_capability_harness(semantic)?;
+    run_framebuffer_window_lease_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8457,6 +8459,7 @@ fn build_target_executor_v1(
         framebuffer_objects: semantic.framebuffer_objects().to_vec(),
         display_objects: semantic.display_objects().to_vec(),
         display_capabilities: semantic.display_capabilities().to_vec(),
+        framebuffer_window_leases: semantic.framebuffer_window_leases().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: contract_stores,
@@ -10121,6 +10124,71 @@ fn run_display_capability_harness(semantic: &mut SemanticGraph) -> Result<(), Bo
     Ok(())
 }
 
+fn run_framebuffer_window_lease_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let display_capability = semantic
+        .display_capabilities()
+        .iter()
+        .find(|record| record.id == 23_201)
+        .cloned()
+        .ok_or("display runtime g3 requires g2 display capability evidence")?;
+    let display = semantic
+        .display_objects()
+        .iter()
+        .find(|record| {
+            record.id == display_capability.display
+                && record.generation == display_capability.display_generation
+        })
+        .cloned()
+        .ok_or("display runtime g3 display generation missing")?;
+    let framebuffer = semantic
+        .framebuffer_objects()
+        .iter()
+        .find(|record| {
+            record.id == display_capability.framebuffer
+                && record.generation == display_capability.framebuffer_generation
+        })
+        .cloned()
+        .ok_or("display runtime g3 framebuffer generation missing")?;
+
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_023,
+        "display-runtime-g3",
+        SemanticCommand::RecordFramebufferWindowLease {
+            framebuffer_window_lease: 23_301,
+            owner_store: display_capability.owner_store,
+            owner_store_generation: display_capability.owner_store_generation,
+            display_capability: display_capability.id,
+            display_capability_generation: display_capability.generation,
+            display: display.id,
+            display_generation: display.generation,
+            framebuffer: framebuffer.id,
+            framebuffer_generation: framebuffer.generation,
+            x: 0,
+            y: 0,
+            width: display.width,
+            height: display.height,
+            byte_offset: 0,
+            byte_len: framebuffer.byte_len,
+            access: "write".to_owned(),
+            note: "g3 records framebuffer write-window lease without pixel writes or flush"
+                .to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g3 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -10958,6 +11026,7 @@ fn demo_migration_package(
             framebuffer_object_count: semantic.framebuffer_object_count(),
             display_object_count: semantic.display_object_count(),
             display_capability_count: semantic.display_capability_count(),
+            framebuffer_window_lease_count: semantic.framebuffer_window_lease_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11415,6 +11484,11 @@ fn demo_migration_package(
                 .display_capabilities()
                 .iter()
                 .map(display_capability_manifest)
+                .collect(),
+            framebuffer_window_leases: semantic
+                .framebuffer_window_leases()
+                .iter()
+                .map(framebuffer_window_lease_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -13565,6 +13639,33 @@ fn semantic_roots(
                     capability.operations.join("|"),
                     capability.state.as_str(),
                     capability.generation
+                )
+            })
+            .collect(),
+        framebuffer_window_lease_roots: semantic
+            .framebuffer_window_leases()
+            .iter()
+            .map(|lease| {
+                format!(
+                    "framebuffer-window-lease id={} owner_store={}@{} display_capability={}@{} display={}@{} framebuffer={}@{} window={},{} {}x{} byte_range={}+{} access={} state={} generation={}",
+                    lease.id,
+                    lease.owner_store,
+                    lease.owner_store_generation,
+                    lease.display_capability,
+                    lease.display_capability_generation,
+                    lease.display,
+                    lease.display_generation,
+                    lease.framebuffer,
+                    lease.framebuffer_generation,
+                    lease.x,
+                    lease.y,
+                    lease.width,
+                    lease.height,
+                    lease.byte_offset,
+                    lease.byte_len,
+                    lease.access,
+                    lease.state.as_str(),
+                    lease.generation
                 )
             })
             .collect(),
@@ -16481,6 +16582,33 @@ fn display_capability_manifest(
         state: capability.state.as_str().to_owned(),
         recorded_at_event: capability.recorded_at_event,
         note: capability.note.clone(),
+    }
+}
+
+fn framebuffer_window_lease_manifest(
+    lease: &semantic_core::FramebufferWindowLeaseRecord,
+) -> FramebufferWindowLeaseManifest {
+    FramebufferWindowLeaseManifest {
+        id: lease.id,
+        owner_store: lease.owner_store,
+        owner_store_generation: lease.owner_store_generation,
+        display_capability: lease.display_capability,
+        display_capability_generation: lease.display_capability_generation,
+        display: lease.display,
+        display_generation: lease.display_generation,
+        framebuffer: lease.framebuffer,
+        framebuffer_generation: lease.framebuffer_generation,
+        x: lease.x,
+        y: lease.y,
+        width: lease.width,
+        height: lease.height,
+        byte_offset: lease.byte_offset,
+        byte_len: lease.byte_len,
+        access: lease.access.clone(),
+        generation: lease.generation,
+        state: lease.state.as_str().to_owned(),
+        recorded_at_event: lease.recorded_at_event,
+        note: lease.note.clone(),
     }
 }
 

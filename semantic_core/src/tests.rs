@@ -21036,6 +21036,303 @@ fn display_runtime_g2_contract_graph_uses_exact_store_generation() {
     );
 }
 
+fn g3_framebuffer_window_lease_graph() -> (
+    SemanticGraph,
+    StoreId,
+    Generation,
+    DisplayCapabilityId,
+    Generation,
+) {
+    let (mut graph, owner_store, owner_store_generation, capability) =
+        g2_display_capability_graph();
+    let capability_record = graph.capabilities().record(capability).unwrap().clone();
+    let handle = handle_for(&capability_record, &["flush", "lease"]);
+    assert!(graph.record_display_capability_with_id(
+        23_201,
+        owner_store,
+        owner_store_generation,
+        23_101,
+        1,
+        capability,
+        capability_record.generation,
+        handle,
+        vec!["flush".to_string(), "lease".to_string()],
+        "g2 display capability for g3",
+    ));
+    (graph, owner_store, owner_store_generation, 23_201, 1)
+}
+
+#[test]
+fn display_runtime_g3_framebuffer_window_lease_records_exact_window() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        display_capability,
+        display_capability_generation,
+    ) = g3_framebuffer_window_lease_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "display-runtime-g3",
+        SemanticCommand::RecordFramebufferWindowLease {
+            framebuffer_window_lease: 23_301,
+            owner_store,
+            owner_store_generation,
+            display_capability,
+            display_capability_generation,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+            byte_offset: 0,
+            byte_len: 1_920_000,
+            access: "write".to_string(),
+            note: "g3 framebuffer window lease".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.framebuffer_window_lease_count(), 1);
+    assert_eq!(graph.active_framebuffer_window_lease_count(), 1);
+    let lease = &graph.framebuffer_window_leases()[0];
+    assert_eq!(
+        lease.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::FramebufferWindowLease, 23_301, 1)
+    );
+    assert_eq!(lease.display_capability, display_capability);
+    assert_eq!(
+        lease.display_capability_generation,
+        display_capability_generation
+    );
+    assert_eq!(lease.framebuffer, 23_001);
+    assert_eq!(lease.byte_len, 1_920_000);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "FramebufferWindowLeaseRecorded framebuffer_window_lease=23301 owner_store={owner_store}@{owner_store_generation} display_capability={display_capability}@{display_capability_generation} display=23101@1 framebuffer=23001@1 window=0,0 800x600 byte_range=0+1920000 access=write state=active generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g3_rejects_stale_capability_and_oversized_window() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        display_capability,
+        display_capability_generation,
+    ) = g3_framebuffer_window_lease_graph();
+
+    let stale_capability = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "display-runtime-g3",
+        SemanticCommand::RecordFramebufferWindowLease {
+            framebuffer_window_lease: 23_302,
+            owner_store,
+            owner_store_generation,
+            display_capability,
+            display_capability_generation: display_capability_generation + 1,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+            byte_offset: 0,
+            byte_len: 1_920_000,
+            access: "write".to_string(),
+            note: "g3 stale display capability".to_string(),
+        },
+    ));
+    assert_eq!(stale_capability.status, CommandStatus::Rejected);
+
+    let oversized_window = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "display-runtime-g3",
+        SemanticCommand::RecordFramebufferWindowLease {
+            framebuffer_window_lease: 23_303,
+            owner_store,
+            owner_store_generation,
+            display_capability,
+            display_capability_generation,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            x: 799,
+            y: 0,
+            width: 2,
+            height: 600,
+            byte_offset: 0,
+            byte_len: 1_920_000,
+            access: "write".to_string(),
+            note: "g3 oversized window".to_string(),
+        },
+    ));
+    assert_eq!(oversized_window.status, CommandStatus::Rejected);
+
+    let mismatched_byte_offset = graph.apply_envelope(CommandEnvelope::new(
+        6,
+        "display-runtime-g3",
+        SemanticCommand::RecordFramebufferWindowLease {
+            framebuffer_window_lease: 23_306,
+            owner_store,
+            owner_store_generation,
+            display_capability,
+            display_capability_generation,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            x: 1,
+            y: 0,
+            width: 16,
+            height: 16,
+            byte_offset: 0,
+            byte_len: 48_064,
+            access: "write".to_string(),
+            note: "g3 mismatched byte offset".to_string(),
+        },
+    ));
+    assert_eq!(mismatched_byte_offset.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn display_runtime_g3_invariants_reject_display_capability_generation_leak() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        display_capability,
+        display_capability_generation,
+    ) = g3_framebuffer_window_lease_graph();
+    assert!(graph.record_framebuffer_window_lease_with_id(
+        23_304,
+        owner_store,
+        owner_store_generation,
+        display_capability,
+        display_capability_generation,
+        23_101,
+        1,
+        23_001,
+        1,
+        0,
+        0,
+        800,
+        600,
+        0,
+        1_920_000,
+        "write",
+        "g3 invariant lease",
+    ));
+    graph.corrupt_framebuffer_window_lease_display_capability_generation_for_test(
+        23_304,
+        display_capability_generation + 1,
+    );
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::FramebufferWindowLeaseMissingDisplayCapability {
+                framebuffer_window_lease: 23_304,
+                display_capability,
+            }
+        )
+    );
+}
+
+#[test]
+fn display_runtime_g3_contract_graph_rejects_missing_display_capability_edge() {
+    let lease = FramebufferWindowLeaseRecord {
+        id: 23_305,
+        owner_store: 1,
+        owner_store_generation: 1,
+        display_capability: 23_201,
+        display_capability_generation: 7,
+        display: 23_101,
+        display_generation: 1,
+        framebuffer: 23_001,
+        framebuffer_generation: 1,
+        x: 0,
+        y: 0,
+        width: 16,
+        height: 16,
+        byte_offset: 0,
+        byte_len: 1024,
+        access: "write".to_string(),
+        generation: 1,
+        state: FramebufferWindowLeaseState::Active,
+        recorded_at_event: 1,
+        note: "g3 missing display capability".to_string(),
+    };
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_window_leases: Vec::from([lease]),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-window-lease->display-capability"
+            && violation.kind == ContractViolationKind::DanglingEdge
+    }));
+}
+
+#[test]
+fn display_runtime_g3_contract_graph_rejects_mismatched_byte_window() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        display_capability,
+        display_capability_generation,
+    ) = g3_framebuffer_window_lease_graph();
+    assert!(graph.record_framebuffer_window_lease_with_id(
+        23_306,
+        owner_store,
+        owner_store_generation,
+        display_capability,
+        display_capability_generation,
+        23_101,
+        1,
+        23_001,
+        1,
+        0,
+        0,
+        16,
+        16,
+        0,
+        48_064,
+        "write",
+        "g3 contract graph byte window",
+    ));
+    let mut framebuffer_window_leases = graph.framebuffer_window_leases().to_vec();
+    framebuffer_window_leases[0].x = 1;
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        display_capabilities: graph.display_capabilities().to_vec(),
+        framebuffer_window_leases,
+        stores: graph.stores().to_vec(),
+        capabilities: graph.capabilities().records().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-window-lease->byte-window"
+            && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+    }));
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();

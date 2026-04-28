@@ -21,8 +21,9 @@ use artifact_manifest::{
     DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
     Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
     FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest,
-    FramebufferObjectManifest, FsWaitManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    FramebufferObjectManifest, FramebufferWindowLeaseManifest, FsWaitManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
@@ -424,6 +425,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "display-mode"
         | "display-capability"
         | "display-cap"
+        | "framebuffer-window-lease"
+        | "fb-window-lease"
+        | "display-lease"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -595,7 +599,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -603,7 +607,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -888,6 +892,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "framebuffer-object" | "framebuffer" | "fb" => "framebuffer-object",
         "display-object" | "display" | "display-mode" => "display-object",
         "display-capability" | "display-cap" => "display-capability",
+        "framebuffer-window-lease" | "fb-window-lease" | "display-lease" => {
+            "framebuffer-window-lease"
+        }
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -5786,6 +5793,67 @@ fn display_capability_view_v1(capability: &DisplayCapabilityManifest) -> serde_j
     })
 }
 
+fn framebuffer_window_lease_view_v1(lease: &FramebufferWindowLeaseManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "framebuffer-window-lease",
+        "id": lease.id,
+        "generation": lease.generation,
+        "state": lease.state,
+        "owner": {
+            "store": object_ref_json(
+                "store",
+                lease.owner_store,
+                lease.owner_store_generation,
+            ),
+        },
+        "references": {
+            "display_capability": object_ref_json(
+                "display-capability",
+                lease.display_capability,
+                lease.display_capability_generation,
+            ),
+            "display": object_ref_json(
+                "display-object",
+                lease.display,
+                lease.display_generation,
+            ),
+            "framebuffer": object_ref_json(
+                "framebuffer-object",
+                lease.framebuffer,
+                lease.framebuffer_generation,
+            ),
+            "event": {
+                "id": lease.recorded_at_event,
+            },
+        },
+        "window": {
+            "x": lease.x,
+            "y": lease.y,
+            "width": lease.width,
+            "height": lease.height,
+            "byte_offset": lease.byte_offset,
+            "byte_len": lease.byte_len,
+            "access": lease.access,
+        },
+        "authority": {
+            "requires_display_capability_operation": "lease",
+            "write_requires_this_lease": true,
+            "raw_mapping_is_semantic_truth": false,
+            "snapshot_barrier_must_release": true,
+        },
+        "note": lease.note,
+        "last_transition": {
+            "recorded_at_event": lease.recorded_at_event,
+            "owner_store_generation": lease.owner_store_generation,
+            "display_capability_generation": lease.display_capability_generation,
+            "display_generation": lease.display_generation,
+            "framebuffer_generation": lease.framebuffer_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     let vector_status = if resume.vector_status.is_empty() {
         "absent"
@@ -7206,6 +7274,12 @@ fn stable_views_for_kind(
             .display_capabilities
             .iter()
             .map(display_capability_view_v1)
+            .collect()),
+        "framebuffer-window-lease" | "fb-window-lease" | "display-lease" => Ok(package
+            .semantic
+            .framebuffer_window_leases
+            .iter()
+            .map(framebuffer_window_lease_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -10730,6 +10804,53 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             event,
         ));
     }
+    for lease in &package.semantic.framebuffer_window_leases {
+        let event = Some(lease.recorded_at_event);
+        let from = object_ref_json("framebuffer-window-lease", lease.id, lease.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("store", lease.owner_store, lease.owner_store_generation),
+            "framebuffer-window-lease->owner-store",
+            "live",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "display-capability",
+                lease.display_capability,
+                lease.display_capability_generation,
+            ),
+            "framebuffer-window-lease->display-capability",
+            "live",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("display-object", lease.display, lease.display_generation),
+            "framebuffer-window-lease->display-object",
+            "live",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "framebuffer-object",
+                lease.framebuffer,
+                lease.framebuffer_generation,
+            ),
+            "framebuffer-window-lease->framebuffer-object",
+            "live",
+            event,
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json("event", lease.recorded_at_event, 1),
+            "framebuffer-window-lease->event",
+            "historical",
+            event,
+        ));
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -13993,6 +14114,43 @@ fn inspect_package_object(
                 );
             }
         }
+        "framebuffer-window-lease" | "fb-window-lease" | "display-lease" => {
+            println!(
+                "inspect framebuffer-window-lease package={} count={}",
+                package.package_id, package.semantic.framebuffer_window_lease_count
+            );
+            for lease in &package.semantic.framebuffer_window_leases {
+                let line = format!(
+                    "framebuffer-window-lease id={} owner_store={}@{} display_capability={}@{} display={}@{} framebuffer={}@{} window={},{} {}x{} byte_range={}+{} access={} state={} generation={}",
+                    lease.id,
+                    lease.owner_store,
+                    lease.owner_store_generation,
+                    lease.display_capability,
+                    lease.display_capability_generation,
+                    lease.display,
+                    lease.display_generation,
+                    lease.framebuffer,
+                    lease.framebuffer_generation,
+                    lease.x,
+                    lease.y,
+                    lease.width,
+                    lease.height,
+                    lease.byte_offset,
+                    lease.byte_len,
+                    lease.access,
+                    lease.state,
+                    lease.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.framebuffer_window_leases.is_empty() {
+                print_roots_filtered(
+                    "framebuffer-window-lease",
+                    &package.semantic.roots.framebuffer_window_lease_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -14345,6 +14503,19 @@ fn inspect_package_object_json(
                 .collect::<Vec<_>>(),
             serde_json::json!({
                 "root_count": package.semantic.roots.display_capability_roots.len()
+            }),
+        ),
+        "framebuffer-window-lease" | "fb-window-lease" | "display-lease" => (
+            "framebuffer-window-lease",
+            package.semantic.framebuffer_window_lease_count,
+            package
+                .semantic
+                .framebuffer_window_leases
+                .iter()
+                .map(framebuffer_window_lease_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package.semantic.roots.framebuffer_window_lease_roots.len()
             }),
         ),
         "command" => (
@@ -18624,6 +18795,48 @@ mod tests {
         );
         assert_eq!(view["authority"]["raw_mapping_is_semantic_truth"], false);
         assert_eq!(view["last_transition"]["recorded_at_event"], 496);
+    }
+
+    #[test]
+    fn framebuffer_window_lease_view_v1_exposes_window_and_authority_refs() {
+        let view = framebuffer_window_lease_view_v1(&FramebufferWindowLeaseManifest {
+            id: 23_301,
+            owner_store: 12,
+            owner_store_generation: 2,
+            display_capability: 23_201,
+            display_capability_generation: 1,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+            byte_offset: 0,
+            byte_len: 1_920_000,
+            access: "write".to_owned(),
+            generation: 1,
+            state: "active".to_owned(),
+            recorded_at_event: 497,
+            note: "g3 framebuffer window lease".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "framebuffer-window-lease");
+        assert_eq!(view["owner"]["store"]["generation"], 2);
+        assert_eq!(view["references"]["display_capability"]["id"], 23_201);
+        assert_eq!(view["references"]["display"]["generation"], 1);
+        assert_eq!(view["references"]["framebuffer"]["id"], 23_001);
+        assert_eq!(view["window"]["width"], 800);
+        assert_eq!(view["window"]["byte_len"], 1_920_000);
+        assert_eq!(
+            view["authority"]["requires_display_capability_operation"],
+            "lease"
+        );
+        assert_eq!(view["authority"]["write_requires_this_lease"], true);
+        assert_eq!(view["authority"]["raw_mapping_is_semantic_truth"], false);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 497);
     }
 
     #[test]

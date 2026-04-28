@@ -152,6 +152,7 @@ pub enum ObjectKind {
     FramebufferObject,
     DisplayObject,
     DisplayCapability,
+    FramebufferWindowLease,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -269,6 +270,7 @@ impl ObjectKind {
             Self::FramebufferObject => "framebuffer-object",
             Self::DisplayObject => "display-object",
             Self::DisplayCapability => "display-capability",
+            Self::FramebufferWindowLease => "framebuffer-window-lease",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -578,6 +580,10 @@ typed_ref!(
 typed_ref!(FramebufferObjectRef, ObjectKind::FramebufferObject);
 typed_ref!(DisplayObjectRef, ObjectKind::DisplayObject);
 typed_ref!(DisplayCapabilityRef, ObjectKind::DisplayCapability);
+typed_ref!(
+    FramebufferWindowLeaseRef,
+    ObjectKind::FramebufferWindowLease
+);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2266,6 +2272,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("display capability root/count mismatch"));
     }
+    if roots.framebuffer_window_lease_roots.len() != package.semantic.framebuffer_window_lease_count
+        || package.semantic.framebuffer_window_leases.len()
+            != package.semantic.framebuffer_window_lease_count
+    {
+        return Err(ContractError::new(
+            "framebuffer window lease root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2874,6 +2888,7 @@ mod tests {
                 framebuffer_object_count: 0,
                 display_object_count: 0,
                 display_capability_count: 0,
+                framebuffer_window_lease_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -3000,6 +3015,7 @@ mod tests {
                 framebuffer_objects: Vec::new(),
                 display_objects: Vec::new(),
                 display_capabilities: Vec::new(),
+                framebuffer_window_leases: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -5341,6 +5357,42 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_framebuffer_window_lease_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.framebuffer_window_lease_count = 1;
+        package.semantic.framebuffer_window_leases.push(
+            artifact_manifest::FramebufferWindowLeaseManifest {
+                id: 93,
+                owner_store: 7,
+                owner_store_generation: 1,
+                display_capability: 92,
+                display_capability_generation: 1,
+                display: 91,
+                display_generation: 1,
+                framebuffer: 90,
+                framebuffer_generation: 1,
+                x: 0,
+                y: 0,
+                width: 16,
+                height: 16,
+                byte_offset: 0,
+                byte_len: 1024,
+                access: "write".to_owned(),
+                generation: 1,
+                state: "active".to_owned(),
+                recorded_at_event: 104,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "framebuffer window lease root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -6675,6 +6727,9 @@ mod tests {
         assert!(DisplayObjectRef::try_from_ref(display_object).is_ok());
         let display_capability = ObjectRef::new(ObjectKind::DisplayCapability, 82, 1).unwrap();
         assert!(DisplayCapabilityRef::try_from_ref(display_capability).is_ok());
+        let framebuffer_window_lease =
+            ObjectRef::new(ObjectKind::FramebufferWindowLease, 83, 1).unwrap();
+        assert!(FramebufferWindowLeaseRef::try_from_ref(framebuffer_window_lease).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

@@ -98,6 +98,7 @@ pub enum ContractObjectKind {
     FramebufferObject,
     DisplayObject,
     DisplayCapability,
+    FramebufferWindowLease,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -212,6 +213,7 @@ impl ContractObjectKind {
             Self::FramebufferObject => "framebuffer-object",
             Self::DisplayObject => "display-object",
             Self::DisplayCapability => "display-capability",
+            Self::FramebufferWindowLease => "framebuffer-window-lease",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -5708,6 +5710,7 @@ mod tests {
             framebuffer_objects: Vec::new(),
             display_objects: Vec::new(),
             display_capabilities: Vec::new(),
+            framebuffer_window_leases: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -5811,6 +5814,7 @@ mod tests {
             framebuffer_objects: Vec::new(),
             display_objects: Vec::new(),
             display_capabilities: Vec::new(),
+            framebuffer_window_leases: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6048,6 +6052,7 @@ mod tests {
             framebuffer_objects: Vec::new(),
             display_objects: Vec::new(),
             display_capabilities: Vec::new(),
+            framebuffer_window_leases: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6155,6 +6160,7 @@ mod tests {
             framebuffer_objects: Vec::new(),
             display_objects: Vec::new(),
             display_capabilities: Vec::new(),
+            framebuffer_window_leases: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6349,6 +6355,7 @@ mod tests {
             framebuffer_objects: Vec::new(),
             display_objects: Vec::new(),
             display_capabilities: Vec::new(),
+            framebuffer_window_leases: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {

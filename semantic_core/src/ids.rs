@@ -84,6 +84,7 @@ pub type SimdContextSwitchBenchmarkId = u64;
 pub type FramebufferObjectId = u64;
 pub type DisplayObjectId = u64;
 pub type DisplayCapabilityId = u64;
+pub type FramebufferWindowLeaseId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

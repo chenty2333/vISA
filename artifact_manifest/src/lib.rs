@@ -397,6 +397,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub display_capability_count: usize,
     #[serde(default)]
+    pub framebuffer_window_lease_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -645,6 +647,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub display_capabilities: Vec<DisplayCapabilityManifest>,
     #[serde(default)]
+    pub framebuffer_window_leases: Vec<FramebufferWindowLeaseManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -872,6 +876,8 @@ pub struct SemanticRootSetManifest {
     pub display_object_roots: Vec<String>,
     #[serde(default)]
     pub display_capability_roots: Vec<String>,
+    #[serde(default)]
+    pub framebuffer_window_lease_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -3068,6 +3074,30 @@ pub struct DisplayCapabilityManifest {
     pub handle_generation: u32,
     pub handle_tag: u64,
     pub operations: Vec<String>,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct FramebufferWindowLeaseManifest {
+    pub id: u64,
+    pub owner_store: u64,
+    pub owner_store_generation: u64,
+    pub display_capability: u64,
+    pub display_capability_generation: u64,
+    pub display: u64,
+    pub display_generation: u64,
+    pub framebuffer: u64,
+    pub framebuffer_generation: u64,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub byte_offset: u64,
+    pub byte_len: u64,
+    pub access: String,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
