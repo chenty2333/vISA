@@ -17,25 +17,26 @@ use artifact_manifest::{
     BlockWaitManifest, BlockWritePathManifest, BoundaryValidationReportManifest,
     BoundaryValidationViolationManifest, BufferCacheObjectManifest, CapabilityHandleArgManifest,
     CapabilityRecordManifest, CleanupEffectManifest, CleanupStepManifest,
-    CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest, CommandResultManifest,
-    ContractObjectRefManifest, ContractViolationManifest, CrossHartSchedulerDecisionManifest,
-    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
-    DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
-    EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
-    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
-    FileObjectManifest, FsWaitManifest, GuestStateManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    CleanupTransactionManifest, CodeObjectManifest, CodeObjectSimdRequirementManifest,
+    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
+    ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
+    DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
+    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
+    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest, FsWaitManifest,
+    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
+    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
+    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -8380,6 +8381,7 @@ fn build_target_executor_v1(
     let contract_snapshot = ContractGraphSnapshot {
         artifacts: verified_artifacts,
         code_objects: publisher.objects().to_vec(),
+        target_feature_sets: semantic.target_feature_sets().to_vec(),
         stores: store_manager
             .records()
             .iter()
@@ -12125,6 +12127,19 @@ fn code_object_manifest(code: &CodeObject) -> CodeObjectManifest {
             .map(trap_metadata_manifest)
             .collect(),
         address_map: code.address_map.iter().map(address_map_manifest).collect(),
+        simd_requirement: CodeObjectSimdRequirementManifest {
+            uses_simd: code.simd_requirement.uses_simd,
+            declared: code.simd_requirement.declared,
+            required_abi: code.simd_requirement.required_abi.clone(),
+            min_vector_register_count: code.simd_requirement.min_vector_register_count,
+            min_vector_register_bits: code.simd_requirement.min_vector_register_bits,
+            target_feature_set: code
+                .simd_requirement
+                .target_feature_set
+                .map(contract_object_ref_manifest),
+            status: code.simd_requirement.status.as_str().to_owned(),
+            note: code.simd_requirement.note.clone(),
+        },
     }
 }
 

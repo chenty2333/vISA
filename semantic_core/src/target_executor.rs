@@ -1001,6 +1001,95 @@ impl CodeObjectState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodeObjectSimdRequirementStatus {
+    ScalarOnly,
+    Declared,
+    MissingDeclaration,
+}
+
+impl CodeObjectSimdRequirementStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ScalarOnly => "scalar-only",
+            Self::Declared => "declared",
+            Self::MissingDeclaration => "missing-declaration",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeObjectSimdRequirement {
+    pub uses_simd: bool,
+    pub declared: bool,
+    pub required_abi: String,
+    pub min_vector_register_count: u16,
+    pub min_vector_register_bits: u16,
+    pub target_feature_set: Option<ContractObjectRef>,
+    pub status: CodeObjectSimdRequirementStatus,
+    pub note: String,
+}
+
+impl CodeObjectSimdRequirement {
+    pub fn scalar_only(note: &str) -> Self {
+        Self {
+            uses_simd: false,
+            declared: true,
+            required_abi: String::new(),
+            min_vector_register_count: 0,
+            min_vector_register_bits: 0,
+            target_feature_set: None,
+            status: CodeObjectSimdRequirementStatus::ScalarOnly,
+            note: note.to_string(),
+        }
+    }
+
+    pub fn declared_simd(
+        required_abi: &str,
+        min_vector_register_count: u16,
+        min_vector_register_bits: u16,
+        target_feature_set: ContractObjectRef,
+        note: &str,
+    ) -> Self {
+        Self {
+            uses_simd: true,
+            declared: true,
+            required_abi: required_abi.to_string(),
+            min_vector_register_count,
+            min_vector_register_bits,
+            target_feature_set: Some(target_feature_set),
+            status: CodeObjectSimdRequirementStatus::Declared,
+            note: note.to_string(),
+        }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        match self.status {
+            CodeObjectSimdRequirementStatus::ScalarOnly => {
+                !self.uses_simd
+                    && self.declared
+                    && self.required_abi.is_empty()
+                    && self.min_vector_register_count == 0
+                    && self.min_vector_register_bits == 0
+                    && self.target_feature_set.is_none()
+            }
+            CodeObjectSimdRequirementStatus::Declared => {
+                self.uses_simd
+                    && self.declared
+                    && !self.required_abi.is_empty()
+                    && self.min_vector_register_count > 0
+                    && self.min_vector_register_bits > 0
+                    && self.target_feature_set.is_some_and(|feature| {
+                        feature.kind == ContractObjectKind::TargetFeatureSet
+                            && feature.id != 0
+                            && feature.generation != 0
+                    })
+            }
+            CodeObjectSimdRequirementStatus::MissingDeclaration => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeObject {
     pub id: CodeObjectId,
@@ -1018,6 +1107,7 @@ pub struct CodeObject {
     pub bound_store: Option<StoreId>,
     pub bound_store_generation: Option<Generation>,
     pub code_hash: String,
+    pub simd_requirement: CodeObjectSimdRequirement,
 }
 
 impl CodeObject {
@@ -1038,7 +1128,7 @@ impl CodeObject {
             .map(|table| table.to_string())
             .unwrap_or_else(|| "none".to_string());
         format!(
-            "code-object id={} artifact={} package={} state={} generation={} store={} hostcall_table={} text={:#x}-{:#x} rodata={:#x}-{:#x}",
+            "code-object id={} artifact={} package={} state={} generation={} store={} hostcall_table={} simd_requirement={} text={:#x}-{:#x} rodata={:#x}-{:#x}",
             self.id,
             self.artifact_id,
             self.package,
@@ -1046,6 +1136,7 @@ impl CodeObject {
             self.generation,
             store,
             hostcall_table,
+            self.simd_requirement.status.as_str(),
             self.text.start,
             self.text.end(),
             self.rodata.start,
@@ -1060,6 +1151,7 @@ pub enum CodePublisherError {
     InvalidTransition,
     ArtifactNotVerified,
     StoreMissing,
+    InvalidSimdRequirement,
 }
 
 impl CodePublisherError {
@@ -1069,6 +1161,7 @@ impl CodePublisherError {
             Self::InvalidTransition => "invalid code object transition",
             Self::ArtifactNotVerified => "artifact is not verified",
             Self::StoreMissing => "store is missing",
+            Self::InvalidSimdRequirement => "invalid code object SIMD requirement",
         }
     }
 }
@@ -1117,8 +1210,47 @@ impl CodePublisher {
             bound_store: None,
             bound_store_generation: None,
             code_hash: artifact.code_hash.clone(),
+            simd_requirement: CodeObjectSimdRequirement::scalar_only(
+                "default scalar-only code object",
+            ),
         });
         Ok(id)
+    }
+
+    pub fn declare_simd_requirement(
+        &mut self,
+        id: CodeObjectId,
+        target_feature_set: ContractObjectRef,
+        required_abi: &str,
+        min_vector_register_count: u16,
+        min_vector_register_bits: u16,
+        note: &str,
+    ) -> Result<(), CodePublisherError> {
+        if target_feature_set.kind != ContractObjectKind::TargetFeatureSet
+            || target_feature_set.id == 0
+            || target_feature_set.generation == 0
+            || required_abi.is_empty()
+            || min_vector_register_count == 0
+            || min_vector_register_bits == 0
+        {
+            return Err(CodePublisherError::InvalidSimdRequirement);
+        }
+        let object = self.object_mut(id)?;
+        if matches!(
+            object.state,
+            CodeObjectState::Faulted | CodeObjectState::Retired | CodeObjectState::Unpublished
+        ) {
+            return Err(CodePublisherError::InvalidTransition);
+        }
+        object.simd_requirement = CodeObjectSimdRequirement::declared_simd(
+            required_abi,
+            min_vector_register_count,
+            min_vector_register_bits,
+            target_feature_set,
+            note,
+        );
+        object.generation += 1;
+        Ok(())
     }
 
     pub fn fill(&mut self, id: CodeObjectId) -> Result<(), CodePublisherError> {
@@ -4773,6 +4905,102 @@ mod tests {
         )
     }
 
+    fn target_feature_set_record() -> TargetFeatureSetRecord {
+        TargetFeatureSetRecord {
+            id: 21_000,
+            name: "riscv64-qemu-virt-research-target".to_string(),
+            discovery_source: "target-runtime-default-profile".to_string(),
+            target_profile: "riscv64-qemu-virt-research".to_string(),
+            target_arch: "riscv64".to_string(),
+            base_isa: "rv64imac".to_string(),
+            simd_abi: "riscv-v".to_string(),
+            simd_supported: true,
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            scalar_fallback: true,
+            unsupported_reason: String::new(),
+            generation: 1,
+            state: TargetFeatureSetState::Discovered,
+            recorded_at_event: 1,
+            note: "test target feature set".to_string(),
+        }
+    }
+
+    #[test]
+    fn simd_runtime_v1_code_object_declares_requirement() {
+        let mut registry = ArtifactRegistry::new();
+        let verified = registry.verify(image()).unwrap();
+        let feature_set = target_feature_set_record();
+        let mut publisher = CodePublisher::new();
+        let code_id = publisher.allocate(&verified).unwrap();
+        publisher
+            .declare_simd_requirement(
+                code_id,
+                feature_set.object_ref(),
+                "riscv-v",
+                32,
+                128,
+                "requires RVV",
+            )
+            .unwrap();
+
+        let code = publisher.object(code_id).unwrap().clone();
+        assert!(code.simd_requirement.uses_simd);
+        assert_eq!(
+            code.simd_requirement.status,
+            CodeObjectSimdRequirementStatus::Declared
+        );
+        assert_eq!(code.generation, 2);
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([verified]),
+            code_objects: Vec::from([code]),
+            target_feature_sets: Vec::from([feature_set]),
+            ..ContractGraphSnapshot::default()
+        };
+        assert_eq!(validate_contract_graph(&snapshot), Vec::new());
+    }
+
+    #[test]
+    fn simd_runtime_v1_rejects_missing_or_bad_requirement() {
+        let mut registry = ArtifactRegistry::new();
+        let verified = registry.verify(image()).unwrap();
+        let mut publisher = CodePublisher::new();
+        let code_id = publisher.allocate(&verified).unwrap();
+        assert_eq!(
+            publisher.declare_simd_requirement(
+                code_id,
+                ContractObjectRef::new(ContractObjectKind::CodeObject, 99, 1),
+                "riscv-v",
+                32,
+                128,
+                "wrong object kind",
+            ),
+            Err(CodePublisherError::InvalidSimdRequirement)
+        );
+
+        let mut code = publisher.object(code_id).unwrap().clone();
+        code.simd_requirement = CodeObjectSimdRequirement {
+            uses_simd: true,
+            declared: false,
+            required_abi: String::new(),
+            min_vector_register_count: 0,
+            min_vector_register_bits: 0,
+            target_feature_set: None,
+            status: CodeObjectSimdRequirementStatus::MissingDeclaration,
+            note: "malformed test object".to_string(),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([verified]),
+            code_objects: Vec::from([code]),
+            ..ContractGraphSnapshot::default()
+        };
+        let violations = validate_contract_graph(&snapshot);
+        assert!(violations.iter().any(|violation| {
+            violation.edge == "code->simd-requirement"
+                && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+        }));
+    }
+
     fn cap_arg_for(
         capabilities: &CapabilityLedger,
         subject: &str,
@@ -5374,6 +5602,7 @@ mod tests {
                 objects.push(retired_code);
                 objects
             },
+            target_feature_sets: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(stale_store);
@@ -5467,6 +5696,7 @@ mod tests {
                 objects.push(code);
                 objects
             },
+            target_feature_sets: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(store.store);
@@ -5694,6 +5924,7 @@ mod tests {
                 objects.push(current_code);
                 objects
             },
+            target_feature_sets: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(store.store);
@@ -5791,6 +6022,7 @@ mod tests {
                 objects.push(code.clone());
                 objects
             },
+            target_feature_sets: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(dead_store.clone());
@@ -5974,6 +6206,7 @@ mod tests {
                 objects.push(code.clone());
                 objects
             },
+            target_feature_sets: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(current_store.clone());

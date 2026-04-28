@@ -1,0 +1,124 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "V1-codeobject-simd-requirement",
+  "phase": "Phase 6 SIMD Full Runtime Contract",
+  "status": "pass",
+  "scope": [
+    "Add CodeObjectSimdRequirement as a stable CodeObject sub-object",
+    "Default current host-validation CodeObjects to explicit scalar-only requirements",
+    "Allow CodePublisher to declare a SIMD requirement with an exact TargetFeatureSet ObjectRef",
+    "Reject malformed SIMD usage in ContractGraph validation",
+    "Expose CodeObject SIMD requirement through CodeObjectManifest and osctl code-object ViewV1"
+  ],
+  "no_goals": [
+    "artifact profile rejects unsupported SIMD",
+    "SIMD trap classification",
+    "VectorState object",
+    "lazy vector state enable",
+    "real vector register save or restore",
+    "real target-side cwasm execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/target_executor.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/simd/golden_v1_codeobject_simd_requirement.trace.json",
+    "tests/reports/checkpoints/v1_codeobject_simd_requirement.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/simd/golden_v1_codeobject_simd_requirement.trace.json",
+    "tests/reports/checkpoints/v1_codeobject_simd_requirement.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "MissingDeclaration is always invalid and cannot satisfy CodeObject SIMD requirement validation",
+      "A SIMD requirement must carry required_abi, vector register shape, and a TargetFeatureSet ObjectRef",
+      "Wrong object kind is rejected before mutating CodePublisher state",
+      "ContractGraph validation checks code->target-feature-set exact generation when present",
+      "Current package CodeObjects remain scalar-only instead of falsely claiming SIMD usage"
+    ],
+    "bad_smells_checked": [
+      "No artifact profile rejection was added in V1",
+      "No VectorState or scheduler vector context was introduced",
+      "No real SIMD execution or target-side cwasm execution path was added",
+      "osctl exposes a stable ViewV1 field instead of dumping internal CodeObject layout"
+    ],
+    "residual_notes": [
+      "V2 owns rejecting unsupported SIMD requirements against target profile",
+      "V3 owns SIMD trap classification and event attribution",
+      "V4-V9 own VectorState and preempt/resume/migration behavior"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core simd_runtime_v1 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl executor_object_views_do_not_dump_internal_schema -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect code --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "target_executor_event_cursor": 489,
+    "code_object_count": 13,
+    "current_package_simd_requirement_status": "scalar-only",
+    "synthetic_positive_test": "code-object requires riscv-v with target-feature-set:21000@1",
+    "synthetic_negative_test": "missing SIMD declaration produces code->simd-requirement violation"
+  },
+  "residual_gaps": [
+    "V2 owns artifact profile rejection for unsupported SIMD",
+    "V3 owns SIMD trap classification",
+    "V4-V9 own VectorState and preempt/resume/migration behavior"
+  ],
+  "next_checkpoint": "V2-artifact-profile-rejects-unsupported-simd"
+}

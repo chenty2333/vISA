@@ -79,6 +79,7 @@ impl ContractViolation {
 pub struct ContractGraphSnapshot {
     pub artifacts: Vec<VerifiedArtifact>,
     pub code_objects: Vec<CodeObject>,
+    pub target_feature_sets: Vec<TargetFeatureSetRecord>,
     pub stores: Vec<StoreRecord>,
     pub activations: Vec<ActivationRecord>,
     pub traps: Vec<TargetTrapRecord>,
@@ -218,6 +219,27 @@ impl ContractGraphValidator {
                     ContractObjectKind::Store,
                     store_id,
                     code.bound_store_generation.unwrap_or(0),
+                    ContractEdgeMode::Live,
+                );
+            }
+            if !code.simd_requirement.is_valid() {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "code->simd-requirement",
+                    from,
+                    code.simd_requirement.target_feature_set,
+                    "code object SIMD requirement is malformed or missing",
+                ));
+            }
+            if let Some(feature_set) = code.simd_requirement.target_feature_set {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "code->target-feature-set",
+                    ContractObjectKind::TargetFeatureSet,
+                    feature_set.id,
+                    feature_set.generation,
                     ContractEdgeMode::Live,
                 );
             }
@@ -1178,6 +1200,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|code| code.id == id)
                 .map(CodeObject::object_ref),
+            ContractObjectKind::TargetFeatureSet => snapshot
+                .target_feature_sets
+                .iter()
+                .find(|feature| feature.id == id)
+                .map(TargetFeatureSetRecord::object_ref),
             ContractObjectKind::Artifact => snapshot
                 .artifacts
                 .iter()
@@ -1341,6 +1368,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|code| code.id == id)
                 .map(CodeObject::object_ref),
+            ContractObjectKind::TargetFeatureSet => snapshot
+                .target_feature_sets
+                .iter()
+                .find(|feature| feature.id == id)
+                .map(TargetFeatureSetRecord::object_ref),
             ContractObjectKind::Store => snapshot
                 .stores
                 .iter()
@@ -1459,7 +1491,6 @@ impl ContractGraphValidator {
             | ContractObjectKind::BlockRequestGenerationAudit
             | ContractObjectKind::BlockBenchmark
             | ContractObjectKind::BlockRecoveryBenchmark
-            | ContractObjectKind::TargetFeatureSet
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

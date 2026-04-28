@@ -3075,6 +3075,20 @@ pub struct CodeObjectManifest {
     pub hostcalls: Vec<HostcallSpecManifest>,
     pub trap_metadata: Vec<TargetTrapMetadataManifest>,
     pub address_map: Vec<TargetAddressMapEntryManifest>,
+    #[serde(default)]
+    pub simd_requirement: CodeObjectSimdRequirementManifest,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CodeObjectSimdRequirementManifest {
+    pub uses_simd: bool,
+    pub declared: bool,
+    pub required_abi: String,
+    pub min_vector_register_count: u16,
+    pub min_vector_register_bits: u16,
+    pub target_feature_set: Option<ContractObjectRefManifest>,
+    pub status: String,
+    pub note: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

@@ -1,0 +1,99 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "V1-codeobject-simd-requirement",
+  "name": "golden_v1_codeobject_simd_requirement",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md"
+  ],
+  "no_goals": [
+    "artifact profile rejects unsupported SIMD",
+    "SIMD trap classification",
+    "VectorState object",
+    "lazy vector state enable",
+    "real vector register save or restore",
+    "real target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "TargetFeatureSet discovery evidence exists from V0",
+      "CodeObject payloads produced by the current host-validation path are scalar-only unless an explicit SIMD requirement is declared",
+      "V1 records requirement declarations and validates malformed SIMD usage without rejecting artifacts for target support"
+    ],
+    "objects": [
+      {
+        "object": "code-object:*",
+        "simd_requirement": {
+          "status": "scalar-only",
+          "uses_simd": false,
+          "declared": true,
+          "target_feature_set": null
+        },
+        "expected": "osctl-visible"
+      },
+      {
+        "object": "code-object:synthetic@2",
+        "simd_requirement": {
+          "status": "declared",
+          "uses_simd": true,
+          "required_abi": "riscv-v",
+          "min_vector_register_count": 32,
+          "min_vector_register_bits": 128,
+          "target_feature_set": "target-feature-set:21000@1"
+        },
+        "expected": "contract-graph-ok-when-target-feature-set-ref-is-exact"
+      },
+      {
+        "object": "code-object:synthetic-bad@1",
+        "simd_requirement": {
+          "status": "missing-declaration",
+          "uses_simd": true,
+          "declared": false
+        },
+        "expected": "contract-graph-violation",
+        "violation": "code object SIMD requirement is malformed or missing"
+      }
+    ]
+  },
+  "events": [],
+  "expected": {
+    "views": {
+      "code-object": {
+        "count": 13,
+        "simd_requirement": {
+          "status": "scalar-only",
+          "uses_simd": false,
+          "declared": true,
+          "required_abi": "",
+          "min_vector_register_count": 0,
+          "min_vector_register_bits": 0
+        }
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "CodeObject always exposes a stable simd_requirement view",
+      "scalar-only CodeObject has declared=true and uses_simd=false",
+      "SIMD CodeObject must declare required ABI, vector shape, and exact TargetFeatureSet ObjectRef",
+      "missing SIMD declaration is a ContractGraph violation",
+      "wrong target feature object kind cannot be used as SIMD requirement authority"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "simd_runtime_v1_code_object_declares_requirement",
+      "simd_runtime_v1_rejects_missing_or_bad_requirement",
+      "executor_object_views_do_not_dump_internal_schema"
+    ],
+    "osctl_json_view": "inspect code --json",
+    "target_executor_event_cursor": 489
+  }
+}

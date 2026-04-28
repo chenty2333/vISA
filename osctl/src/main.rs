@@ -5987,6 +5987,20 @@ fn code_object_view_v1(code: &CodeObjectManifest) -> serde_json::Value {
         "hostcall_count": code.hostcalls.len(),
         "trap_metadata_count": code.trap_metadata.len(),
         "address_map_count": code.address_map.len(),
+        "simd_requirement": {
+            "uses_simd": code.simd_requirement.uses_simd,
+            "declared": code.simd_requirement.declared,
+            "required_abi": code.simd_requirement.required_abi,
+            "min_vector_register_count": code.simd_requirement.min_vector_register_count,
+            "min_vector_register_bits": code.simd_requirement.min_vector_register_bits,
+            "target_feature_set": code.simd_requirement.target_feature_set.as_ref().map(|feature| serde_json::json!({
+                "kind": feature.kind,
+                "id": feature.id,
+                "generation": feature.generation,
+            })),
+            "status": code.simd_requirement.status,
+            "note": code.simd_requirement.note,
+        },
         "last_transition": serde_json::Value::Null,
         "last_error": serde_json::Value::Null,
     })
@@ -19076,12 +19090,32 @@ mod tests {
             text_len: 128,
             text_permission: "rx".to_owned(),
             code_hash: "code".to_owned(),
+            simd_requirement: artifact_manifest::CodeObjectSimdRequirementManifest {
+                uses_simd: true,
+                declared: true,
+                required_abi: "riscv-v".to_owned(),
+                min_vector_register_count: 32,
+                min_vector_register_bits: 128,
+                target_feature_set: Some(ContractObjectRefManifest {
+                    kind: "target-feature-set".to_owned(),
+                    id: 21_000,
+                    generation: 1,
+                }),
+                status: "declared".to_owned(),
+                note: "requires RVV".to_owned(),
+            },
             ..CodeObjectManifest::default()
         });
         assert_eq!(code["kind"], "code-object");
         assert_eq!(code["generation"], 4);
         assert_eq!(code["references"]["bound_store"]["generation"], 7);
         assert_eq!(code["memory"]["text"]["permission"], "rx");
+        assert_eq!(code["simd_requirement"]["uses_simd"], true);
+        assert_eq!(code["simd_requirement"]["required_abi"], "riscv-v");
+        assert_eq!(
+            code["simd_requirement"]["target_feature_set"]["kind"],
+            "target-feature-set"
+        );
     }
 
     #[test]
