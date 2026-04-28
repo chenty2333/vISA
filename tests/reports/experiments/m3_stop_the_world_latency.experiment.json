@@ -1,0 +1,98 @@
+{
+  "schema": "vmos-experiment-report",
+  "schema_version": 1,
+  "name": "m3_stop_the_world_latency_host_validation",
+  "checkpoint": "M3-stop-the-world-latency",
+  "commands": [
+    {
+      "command": "cargo run -p target_executor",
+      "purpose": "generate semantic package containing SmpSafePoint and StopTheWorldRendezvous evidence"
+    },
+    {
+      "command": "cargo run -p osctl -- smp-safe-point list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "inspect stable SMP safe point ViewV1 JSON"
+    },
+    {
+      "command": "cargo run -p osctl -- stop-the-world-rendezvous list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "inspect stable stop-the-world rendezvous ViewV1 JSON"
+    },
+    {
+      "command": "cargo run -p osctl -- graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "prove rendezvous to safe point attribution is historical exact-generation graph evidence"
+    }
+  ],
+  "events": [
+    {
+      "kind": "SmpSafePointRecorded",
+      "source": "SemanticGraph::record_smp_safe_point_with_id",
+      "event": 47,
+      "object": "smp-safe-point:9001@1"
+    },
+    {
+      "kind": "StopTheWorldRendezvousCompleted",
+      "source": "SemanticGraph::complete_stop_the_world_rendezvous_with_id",
+      "event": 48,
+      "object": "stop-the-world-rendezvous:9101@1"
+    }
+  ],
+  "final_views": {
+    "smp_safe_point": {
+      "schema": 1,
+      "kind": "smp-safe-point",
+      "id": 9001,
+      "generation": 1,
+      "state": "recorded",
+      "recorded_at_event": 47,
+      "participant_count": 2
+    },
+    "stop_the_world_rendezvous": {
+      "schema": 1,
+      "kind": "stop-the-world-rendezvous",
+      "id": 9101,
+      "generation": 1,
+      "state": "completed",
+      "epoch": 1,
+      "safe_point": {
+        "kind": "smp-safe-point",
+        "id": 9001,
+        "generation": 1
+      },
+      "completed_at_event": 48,
+      "participant_count": 2,
+      "stop_new_activations": true
+    },
+    "contract_validation": {
+      "ok": true,
+      "violation_count": 0
+    },
+    "osctl": {
+      "schema": "vmos-osctl-json-v1",
+      "stable_views": [
+        "smp-safe-point.list",
+        "stop-the-world-rendezvous.list"
+      ],
+      "read_only": true
+    }
+  },
+  "metrics": {
+    "rendezvous_count": 1,
+    "participant_count": 2,
+    "safe_point_recorded_event": 47,
+    "rendezvous_completed_event": 48,
+    "latency_event_delta": 1,
+    "budget_event_delta": 1,
+    "within_budget": true,
+    "measurement_source": "stop-the-world-rendezvous:9101@1",
+    "measurement_unit": "semantic-event-log-delta",
+    "hardware_dependency": "none"
+  },
+  "validation": {
+    "contract_ok": true,
+    "golden_replay_ok": true,
+    "osctl_view_ok": true,
+    "semantic_object": "StopTheWorldRendezvous",
+    "semantic_command": "CompleteStopTheWorldRendezvous",
+    "semantic_event": "StopTheWorldRendezvousCompleted",
+    "semantic_invariant": "exact safe point generation, stop-new-activations gate, participant generation stability, and completed rendezvous event"
+  }
+}

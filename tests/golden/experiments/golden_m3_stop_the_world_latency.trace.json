@@ -1,0 +1,130 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "M3-stop-the-world-latency",
+  "name": "golden_m3_stop_the_world_latency",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "calibrated hardware stop-the-world latency measurement",
+    "real interrupt masking",
+    "real trap-gate forced parking",
+    "real target-side runtime execution",
+    "SMP scheduler fairness tuning"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "S10 recorded smp-safe-point:9001@1 with two exact participant hart generations",
+      "S11 completed stop-the-world-rendezvous:9101@1 from the exact safe point generation",
+      "osctl smp-safe-point and stop-the-world-rendezvous list --json expose stable ViewV1 output"
+    ],
+    "commands": [
+      {
+        "command": "record-smp-safe-point",
+        "safe_point": "smp-safe-point:9001@1",
+        "recorded_at_event": 47,
+        "participant_count": 2
+      },
+      {
+        "command": "complete-stop-the-world-rendezvous",
+        "rendezvous": "stop-the-world-rendezvous:9101@1",
+        "safe_point": "smp-safe-point:9001@1",
+        "completed_at_event": 48,
+        "stop_new_activations": true
+      },
+      {
+        "command": "complete-stop-the-world-rendezvous",
+        "safe_point": "smp-safe-point:9001@2",
+        "expected": "rejected",
+        "violation": "stop-the-world rendezvous safe point is missing"
+      },
+      {
+        "command": "complete-stop-the-world-rendezvous",
+        "stop_new_activations": false,
+        "expected": "rejected",
+        "violation": "stop-the-world rendezvous must stop new activations"
+      },
+      {
+        "command": "osctl experiment report --json tests/reports/experiments/m3_stop_the_world_latency.experiment.json",
+        "result": "experiment report validates as vmos-experiment-report"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "SmpSafePointRecorded",
+      "safe_point": "smp-safe-point:9001@1",
+      "event": 47,
+      "participant_count": 2
+    },
+    {
+      "kind": "StopTheWorldRendezvousCompleted",
+      "rendezvous": "stop-the-world-rendezvous:9101@1",
+      "event": 48,
+      "safe_point": "smp-safe-point:9001@1",
+      "participant_count": 2
+    }
+  ],
+  "expected": {
+    "views": {
+      "stop-the-world-rendezvous": {
+        "kind": "stop-the-world-rendezvous",
+        "id": 9101,
+        "generation": 1,
+        "state": "completed",
+        "epoch": 1,
+        "safe_point": "smp-safe-point:9001@1",
+        "stop_new_activations": true,
+        "participant_count": 2,
+        "completed_at_event": 48
+      },
+      "experiment_report": {
+        "schema": "vmos-experiment-report",
+        "name": "m3_stop_the_world_latency_host_validation",
+        "checkpoint": "M3-stop-the-world-latency",
+        "contract_ok": true,
+        "golden_replay_ok": true
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "metrics": {
+      "safe_point_recorded_event": 47,
+      "rendezvous_completed_event": 48,
+      "latency_event_delta": 1,
+      "budget_event_delta": 1,
+      "within_budget": true,
+      "measurement_unit": "semantic-event-log-delta"
+    },
+    "invariants": [
+      "M3 experiment evidence is backed by first-class SmpSafePoint and StopTheWorldRendezvous ObjectRefs",
+      "M3 does not invent calibrated nanosecond latency when only event-log timing exists",
+      "rendezvous references the exact safe point generation",
+      "stop_new_activations must be true before rendezvous completion",
+      "participant hart generations remain exact and quiesced"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "smp_runtime_s11_stop_the_world_rendezvous_completes_from_safe_point",
+      "smp_runtime_s11_rejects_missing_stop_flag_stale_safe_point_and_hart",
+      "smp_runtime_s11_history_survives_later_hart_transition",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "semantic_roots_reject_stop_the_world_rendezvous_root_mismatch"
+    ],
+    "experiment_report": "tests/reports/experiments/m3_stop_the_world_latency.experiment.json",
+    "osctl_json_views": [
+      "smp-safe-point list --json",
+      "stop-the-world-rendezvous list --json"
+    ],
+    "stop_the_world_rendezvous": "stop-the-world-rendezvous:9101@1"
+  }
+}
