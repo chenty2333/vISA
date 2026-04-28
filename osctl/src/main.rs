@@ -11,17 +11,17 @@ use artifact_manifest::{
     ArtifactBundleManifest, BlockBenchmarkManifest, BlockCompletionObjectManifest,
     BlockDeviceObjectManifest, BlockDmaBufferManifest, BlockDriverCleanupManifest,
     BlockPageObjectManifest, BlockPendingIoPolicyManifest, BlockRangeObjectManifest,
-    BlockReadPathManifest, BlockRequestGenerationAuditManifest, BlockRequestObjectManifest,
-    BlockRequestQueueManifest, BlockWaitManifest, BlockWritePathManifest,
-    BoundaryValidationReportManifest, BufferCacheObjectManifest, CapabilityRecordManifest,
-    CleanupTransactionManifest, CodeObjectManifest, CommandResultManifest,
-    ContractObjectRefManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest, FsWaitManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    BlockReadPathManifest, BlockRecoveryBenchmarkManifest, BlockRequestGenerationAuditManifest,
+    BlockRequestObjectManifest, BlockRequestQueueManifest, BlockWaitManifest,
+    BlockWritePathManifest, BoundaryValidationReportManifest, BufferCacheObjectManifest,
+    CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
+    CommandResultManifest, ContractObjectRefManifest, CrossHartSchedulerDecisionManifest,
+    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
+    DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
+    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
+    FileObjectManifest, FsWaitManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
@@ -397,6 +397,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-benchmark"
         | "disk-benchmark"
         | "block-iops"
+        | "block-recovery-benchmark"
+        | "disk-recovery-benchmark"
+        | "disk-recovery"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -568,7 +571,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -576,7 +579,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -846,6 +849,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         | "stale-block-request-generation"
         | "block-generation-audit" => "block-request-generation-audit",
         "block-benchmark" | "disk-benchmark" | "block-iops" => "block-benchmark",
+        "block-recovery-benchmark" | "disk-recovery-benchmark" | "disk-recovery" => {
+            "block-recovery-benchmark"
+        }
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3883,6 +3889,86 @@ fn block_benchmark_view_v1(benchmark: &BlockBenchmarkManifest) -> serde_json::Va
     })
 }
 
+fn block_recovery_benchmark_view_v1(
+    benchmark: &BlockRecoveryBenchmarkManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "block-recovery-benchmark",
+        "id": benchmark.id,
+        "generation": benchmark.generation,
+        "state": benchmark.state,
+        "owner": {
+            "backend": object_ref_manifest_json(&benchmark.backend),
+            "block_device": object_ref_json(
+                "block-device",
+                benchmark.block_device,
+                benchmark.block_device_generation,
+            ),
+            "driver_store": object_ref_json(
+                "store",
+                benchmark.driver_store,
+                benchmark.driver_store_generation,
+            ),
+        },
+        "references": {
+            "cleanup": object_ref_json(
+                "block-driver-cleanup",
+                benchmark.cleanup,
+                benchmark.cleanup_generation,
+            ),
+            "io_cleanup": object_ref_json(
+                "io-cleanup",
+                benchmark.io_cleanup,
+                benchmark.io_cleanup_generation,
+            ),
+            "backend": object_ref_manifest_json(&benchmark.backend),
+            "block_device": object_ref_json(
+                "block-device",
+                benchmark.block_device,
+                benchmark.block_device_generation,
+            ),
+            "driver_store": object_ref_json(
+                "store",
+                benchmark.driver_store,
+                benchmark.driver_store_generation,
+            ),
+            "device": object_ref_json("device", benchmark.device, benchmark.device_generation),
+            "driver_binding": object_ref_json(
+                "driver-store-binding",
+                benchmark.driver_binding,
+                benchmark.driver_binding_generation,
+            ),
+            "event": {
+                "id": benchmark.recorded_at_event,
+            },
+        },
+        "benchmark": {
+            "scenario": benchmark.scenario,
+            "recovery_start_event": benchmark.recovery_start_event,
+            "recovery_complete_event": benchmark.recovery_complete_event,
+            "cancelled_block_waits": benchmark.cancelled_block_waits,
+            "cancelled_wait_tokens": benchmark.cancelled_wait_tokens,
+            "released_dma_buffers": benchmark.released_dma_buffers,
+            "revoked_device_capabilities": benchmark.revoked_device_capabilities,
+            "recovery_nanos": benchmark.recovery_nanos,
+            "budget_nanos": benchmark.budget_nanos,
+        },
+        "note": benchmark.note,
+        "last_transition": {
+            "recorded_at_event": benchmark.recorded_at_event,
+            "cleanup_generation": benchmark.cleanup_generation,
+            "io_cleanup_generation": benchmark.io_cleanup_generation,
+            "backend_generation": benchmark.backend.generation,
+            "block_device_generation": benchmark.block_device_generation,
+            "driver_store_generation": benchmark.driver_store_generation,
+            "device_generation": benchmark.device_generation,
+            "driver_binding_generation": benchmark.driver_binding_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn packet_buffer_object_view_v1(packet_buffer: &PacketBufferObjectManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -6606,6 +6692,12 @@ fn stable_views_for_kind(
             .block_benchmarks
             .iter()
             .map(block_benchmark_view_v1)
+            .collect()),
+        "block-recovery-benchmark" | "disk-recovery-benchmark" | "disk-recovery" => Ok(package
+            .semantic
+            .block_recovery_benchmarks
+            .iter()
+            .map(block_recovery_benchmark_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -9758,6 +9850,83 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             event,
         ));
     }
+    for benchmark in &package.semantic.block_recovery_benchmarks {
+        let event = Some(benchmark.recorded_at_event);
+        let from = object_ref_json(
+            "block-recovery-benchmark",
+            benchmark.id,
+            benchmark.generation,
+        );
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-driver-cleanup",
+                benchmark.cleanup,
+                benchmark.cleanup_generation,
+            ),
+            "block-recovery-benchmark->block-driver-cleanup",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "io-cleanup",
+                benchmark.io_cleanup,
+                benchmark.io_cleanup_generation,
+            ),
+            "block-recovery-benchmark->io-cleanup",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_manifest_json(&benchmark.backend),
+            "block-recovery-benchmark->backend",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-device",
+                benchmark.block_device,
+                benchmark.block_device_generation,
+            ),
+            "block-recovery-benchmark->block-device",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "store",
+                benchmark.driver_store,
+                benchmark.driver_store_generation,
+            ),
+            "block-recovery-benchmark->driver-store",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("device", benchmark.device, benchmark.device_generation),
+            "block-recovery-benchmark->device",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "driver-store-binding",
+                benchmark.driver_binding,
+                benchmark.driver_binding_generation,
+            ),
+            "block-recovery-benchmark->driver-binding",
+            "historical",
+            event,
+        ));
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -12615,6 +12784,52 @@ fn inspect_package_object(
                 );
             }
         }
+        "block-recovery-benchmark" | "disk-recovery-benchmark" | "disk-recovery" => {
+            println!(
+                "inspect block-recovery-benchmark package={} count={}",
+                package.package_id, package.semantic.block_recovery_benchmark_count
+            );
+            for benchmark in &package.semantic.block_recovery_benchmarks {
+                let line = format!(
+                    "block-recovery-benchmark id={} scenario={} cleanup={}@{} io_cleanup={}@{} backend={}:{}@{} block_device={}@{} driver_store={}@{} device={}@{} driver_binding={}@{} recovery_start_event={} recovery_complete_event={} cancelled_block_waits={} cancelled_wait_tokens={} released_dma_buffers={} revoked_device_capabilities={} recovery_nanos={} budget_nanos={} state={} generation={}",
+                    benchmark.id,
+                    benchmark.scenario,
+                    benchmark.cleanup,
+                    benchmark.cleanup_generation,
+                    benchmark.io_cleanup,
+                    benchmark.io_cleanup_generation,
+                    benchmark.backend.kind,
+                    benchmark.backend.id,
+                    benchmark.backend.generation,
+                    benchmark.block_device,
+                    benchmark.block_device_generation,
+                    benchmark.driver_store,
+                    benchmark.driver_store_generation,
+                    benchmark.device,
+                    benchmark.device_generation,
+                    benchmark.driver_binding,
+                    benchmark.driver_binding_generation,
+                    benchmark.recovery_start_event,
+                    benchmark.recovery_complete_event,
+                    benchmark.cancelled_block_waits,
+                    benchmark.cancelled_wait_tokens,
+                    benchmark.released_dma_buffers,
+                    benchmark.revoked_device_capabilities,
+                    benchmark.recovery_nanos,
+                    benchmark.budget_nanos,
+                    benchmark.state,
+                    benchmark.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.block_recovery_benchmarks.is_empty() {
+                print_roots_filtered(
+                    "block-recovery-benchmark",
+                    &package.semantic.roots.block_recovery_benchmark_roots,
+                    filter,
+                );
+            }
+        }
         "command" => {
             println!(
                 "inspect command package={} count={}",
@@ -12883,6 +13098,17 @@ fn inspect_package_object_json(
                 .map(block_benchmark_view_v1)
                 .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.block_benchmark_roots.len() }),
+        ),
+        "block-recovery-benchmark" | "disk-recovery-benchmark" | "disk-recovery" => (
+            "block-recovery-benchmark",
+            package.semantic.block_recovery_benchmark_count,
+            package
+                .semantic
+                .block_recovery_benchmarks
+                .iter()
+                .map(block_recovery_benchmark_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "root_count": package.semantic.roots.block_recovery_benchmark_roots.len() }),
         ),
         "command" => (
             "command",
@@ -13246,7 +13472,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} fs_waits={} block_driver_cleanups={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} fs_waits={} block_driver_cleanups={} block_recovery_benchmarks={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -13324,6 +13550,7 @@ fn replay_until(
         package.semantic.roots.file_handle_capability_roots.len(),
         package.semantic.roots.fs_wait_roots.len(),
         package.semantic.roots.block_driver_cleanup_roots.len(),
+        package.semantic.roots.block_recovery_benchmark_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -13487,6 +13714,9 @@ fn replay_until(
     }
     for benchmark in &package.semantic.roots.block_benchmark_roots {
         println!("replay block-benchmark {benchmark}");
+    }
+    for benchmark in &package.semantic.roots.block_recovery_benchmark_roots {
+        println!("replay block-recovery-benchmark {benchmark}");
     }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
@@ -13869,6 +14099,10 @@ fn print_replay_json(
     roots.insert(
         "block_benchmarks".to_owned(),
         serde_json::json!(package.semantic.roots.block_benchmark_roots.len()),
+    );
+    roots.insert(
+        "block_recovery_benchmarks".to_owned(),
+        serde_json::json!(package.semantic.roots.block_recovery_benchmark_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -14294,6 +14528,10 @@ fn print_replay_json(
         "block_benchmark_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.block_benchmark_roots),
     );
+    roots.insert(
+        "block_recovery_benchmark_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.block_recovery_benchmark_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -14338,7 +14576,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} fs_waits={} block_driver_cleanups={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} fs_waits={} block_driver_cleanups={} block_recovery_benchmarks={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -14418,6 +14656,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.file_handle_capability_count,
         package.semantic.fs_wait_count,
         package.semantic.block_driver_cleanup_count,
+        package.semantic.block_recovery_benchmark_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -14513,6 +14752,18 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
     print_roots(
         "block-pending-io-policy",
         &package.semantic.roots.block_pending_io_policy_roots,
+    );
+    print_roots(
+        "block-request-generation-audit",
+        &package.semantic.roots.block_request_generation_audit_roots,
+    );
+    print_roots(
+        "block-benchmark",
+        &package.semantic.roots.block_benchmark_roots,
+    );
+    print_roots(
+        "block-recovery-benchmark",
+        &package.semantic.roots.block_recovery_benchmark_roots,
     );
 }
 
@@ -16724,6 +16975,59 @@ mod tests {
         assert_eq!(view["benchmark"]["throughput_bytes_per_sec"], 204_800_000);
         assert_eq!(view["benchmark"]["p99_latency_nanos"], 35_000);
         assert_eq!(view["last_transition"]["recorded_at_event"], 487);
+    }
+
+    #[test]
+    fn block_recovery_benchmark_view_v1_exposes_cleanup_latency_and_effects() {
+        let view = block_recovery_benchmark_view_v1(&BlockRecoveryBenchmarkManifest {
+            id: 135,
+            scenario: "host-validation-disk-driver-recovery".to_owned(),
+            cleanup: 107,
+            cleanup_generation: 1,
+            io_cleanup: 108,
+            io_cleanup_generation: 1,
+            backend: ContractObjectRefManifest {
+                kind: "virtio-blk-backend-object".to_owned(),
+                id: 34,
+                generation: 1,
+            },
+            block_device: 31,
+            block_device_generation: 1,
+            driver_store: 7,
+            driver_store_generation: 3,
+            device: 30,
+            device_generation: 1,
+            driver_binding: 33,
+            driver_binding_generation: 1,
+            recovery_start_event: 125,
+            recovery_complete_event: 126,
+            cancelled_block_waits: 1,
+            cancelled_wait_tokens: 1,
+            released_dma_buffers: 1,
+            revoked_device_capabilities: 1,
+            recovery_nanos: 70_000,
+            budget_nanos: 150_000,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 488,
+            note: "disk recovery benchmark".to_owned(),
+        });
+        assert_eq!(view["kind"], "block-recovery-benchmark");
+        assert_eq!(
+            view["references"]["cleanup"]["kind"],
+            "block-driver-cleanup"
+        );
+        assert_eq!(view["references"]["io_cleanup"]["id"], 108);
+        assert_eq!(
+            view["references"]["backend"]["kind"],
+            "virtio-blk-backend-object"
+        );
+        assert_eq!(view["references"]["block_device"]["id"], 31);
+        assert_eq!(view["references"]["driver_store"]["generation"], 3);
+        assert_eq!(view["benchmark"]["cancelled_block_waits"], 1);
+        assert_eq!(view["benchmark"]["released_dma_buffers"], 1);
+        assert_eq!(view["benchmark"]["recovery_nanos"], 70_000);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 488);
     }
 
     #[test]

@@ -1,0 +1,190 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "B23-disk-recovery-benchmark",
+  "phase": "Phase 5 Block / Disk Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add BlockRecoveryBenchmark as stable semantic evidence for disk driver recovery timing",
+    "Bind recovery evidence to exact-generation BlockDriverCleanup, IoCleanup, VirtioBlkBackend, BlockDevice, DriverStore, Device, and DriverStoreBinding refs",
+    "Cross-check cleanup effect counts against completed BlockDriverCleanup evidence",
+    "Reject stale cleanup generations and recovery budget overruns before mutation",
+    "Expose BlockRecoveryBenchmark roots/counts through semantic package, osctl ViewV1, graph history, replay roots, inspect JSON, direct list JSON, and command evidence"
+  ],
+  "no_goals": [
+    "real virtio-blk MMIO/DMA/IRQ execution",
+    "real disk scheduler or calibrated recovery timing",
+    "adapter-local disk state as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/block_recovery_benchmark.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/block/golden_b23_disk_recovery_benchmark.trace.json",
+    "tests/reports/benchmarks/b23_disk_recovery.benchmark.json",
+    "tests/reports/checkpoints/b23_disk_recovery_benchmark.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/block/golden_b23_disk_recovery_benchmark.trace.json",
+    "tests/reports/benchmarks/b23_disk_recovery.benchmark.json",
+    "tests/reports/checkpoints/b23_disk_recovery_benchmark.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "BlockRecoveryBenchmark is historical evidence only and has no live graph ownership edges",
+      "Recovery timing is validated against a nonzero budget and rejects overrun before mutation",
+      "Cleanup effect counts are cross-checked against completed BlockDriverCleanup evidence",
+      "Recovery references use exact generations for cleanup, IO cleanup, backend, block device, driver store, device, and driver binding",
+      "Root/count validation covers block_recovery_benchmarks so package tampering is rejected",
+      "Stale cleanup generations and budget overruns are rejected before mutation",
+      "osctl summary, replay, graph, and stable ViewV1 expose recovery benchmark evidence"
+    ],
+    "bad_smells_checked": [
+      "No virtio-drivers internals were introduced into semantic_core",
+      "No adapter-local timing state is used as semantic truth",
+      "The new graph module is domain-scoped instead of expanding block cleanup or target executor logic",
+      "Target executor evidence remains a host-side semantic harness and does not run real target cwasm or hardware disk IO"
+    ],
+    "residual_notes": [
+      "real virtio-blk datapath remains adapter/backend work after semantic contract coverage",
+      "Final experiment matrix M7 owns calibrated disk recovery time reporting"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo check -p semantic_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p contract_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core block_runtime_b23 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl block_recovery_benchmark -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core block_recovery_benchmark -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl block-recovery-benchmark list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect block-recovery-benchmark --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 330",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 331",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 332",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl replay --until 488 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "target_executor_event_cursor": 488,
+    "block_recovery_benchmark_count": 1,
+    "block_recovery_benchmark_roots": [
+      "block-recovery-benchmark id=20135 scenario=host-validation-disk-driver-recovery cleanup=20107@1 io_cleanup=20108@1 backend=virtio-blk-backend-object:20034@1 block_device=20031@1 driver_store=7@3 device=20030@1 driver_binding=20033@1 recovery_start_event=452 recovery_complete_event=458 cancelled_block_waits=1 cancelled_wait_tokens=1 released_dma_buffers=1 revoked_device_capabilities=1 recovery_nanos=70000 budget_nanos=150000 state=recorded generation=1"
+    ],
+    "metrics": {
+      "cancelled_block_waits": 1,
+      "cancelled_wait_tokens": 1,
+      "released_dma_buffers": 1,
+      "revoked_device_capabilities": 1,
+      "recovery_nanos": 70000,
+      "budget_nanos": 150000
+    },
+    "command_results": {
+      "benchmark_applied": 330,
+      "stale_cleanup_rejected": 331,
+      "budget_overrun_rejected": 332
+    },
+    "historical_graph_edges": 7
+  },
+  "residual_gaps": [
+    "real virtio-blk datapath remains adapter/backend work after semantic contract coverage",
+    "Final experiment matrix M7 owns calibrated disk recovery time reporting"
+  ],
+  "next_checkpoint": "V0-target-feature-set-simd-discovery"
+}

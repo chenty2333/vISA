@@ -1458,6 +1458,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::BlockPendingIoPolicy
             | ContractObjectKind::BlockRequestGenerationAudit
             | ContractObjectKind::BlockBenchmark
+            | ContractObjectKind::BlockRecoveryBenchmark
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

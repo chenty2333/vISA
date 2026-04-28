@@ -15854,6 +15854,171 @@ fn block_runtime_b22_invariants_reject_iops_metric_drift() {
     );
 }
 
+fn setup_b23_disk_recovery_benchmark_graph() -> SemanticGraph {
+    let mut graph = setup_b19_block_driver_cleanup_graph();
+    let cleanup = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b23-test",
+        SemanticCommand::CleanupBlockDriver {
+            cleanup: 1888,
+            io_cleanup: 1889,
+            block_device: 1791,
+            block_device_generation: 1,
+            backend: ContractObjectRef::new(ContractObjectKind::VirtioBlkBackendObject, 1880, 1),
+            reason: "virtio-blk-device-fault".to_string(),
+            note: "b23 cleanup disk driver".to_string(),
+        },
+    ));
+    assert_eq!(cleanup.status, CommandStatus::Applied);
+    graph
+}
+
+#[test]
+fn block_runtime_b23_disk_recovery_benchmark_records_cleanup_latency_evidence() {
+    let mut graph = setup_b23_disk_recovery_benchmark_graph();
+    let cleanup = graph.block_driver_cleanups()[0].clone();
+    let completed_at_event = cleanup.completed_at_event.unwrap();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b23-test",
+        SemanticCommand::RecordBlockRecoveryBenchmark {
+            benchmark: 1852,
+            scenario: "disk driver recovery benchmark".to_string(),
+            cleanup: cleanup.id,
+            cleanup_generation: cleanup.generation,
+            io_cleanup: cleanup.io_cleanup,
+            io_cleanup_generation: cleanup.io_cleanup_generation,
+            recovery_start_event: cleanup.started_at_event,
+            recovery_complete_event: completed_at_event,
+            cancelled_block_waits: cleanup.cancelled_block_waits.len() as u32,
+            cancelled_wait_tokens: cleanup.cancelled_wait_tokens.len() as u32,
+            released_dma_buffers: cleanup.released_dma_buffers.len() as u32,
+            revoked_device_capabilities: cleanup.revoked_device_capabilities.len() as u32,
+            recovery_nanos: 70_000,
+            budget_nanos: 150_000,
+            note: "b23 disk recovery benchmark".to_string(),
+        },
+    ));
+    assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    assert_eq!(graph.block_recovery_benchmark_count(), 1);
+    let benchmark = &graph.block_recovery_benchmarks()[0];
+    assert_eq!(
+        benchmark.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BlockRecoveryBenchmark, 1852, 1)
+    );
+    assert_eq!(benchmark.cleanup, cleanup.id);
+    assert_eq!(benchmark.cleanup_generation, cleanup.generation);
+    assert_eq!(benchmark.backend, cleanup.backend);
+    assert_eq!(benchmark.block_device, cleanup.block_device);
+    assert_eq!(benchmark.driver_store, cleanup.driver_store);
+    assert_eq!(benchmark.cancelled_block_waits, 1);
+    assert_eq!(benchmark.cancelled_wait_tokens, 1);
+    assert_eq!(benchmark.released_dma_buffers, 1);
+    assert_eq!(benchmark.revoked_device_capabilities, 1);
+    assert_eq!(benchmark.recovery_nanos, 70_000);
+    assert!(
+        graph.event_log_tail(1)[0]
+            .kind
+            .summary()
+            .contains("BlockRecoveryBenchmarkRecorded benchmark=1852")
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b23_rejects_stale_cleanup_and_budget_overrun() {
+    let mut graph = setup_b23_disk_recovery_benchmark_graph();
+    let cleanup = graph.block_driver_cleanups()[0].clone();
+    let completed_at_event = cleanup.completed_at_event.unwrap();
+    let stale_cleanup = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b23-test",
+        SemanticCommand::RecordBlockRecoveryBenchmark {
+            benchmark: 1852,
+            scenario: "stale cleanup".to_string(),
+            cleanup: cleanup.id,
+            cleanup_generation: cleanup.generation + 1,
+            io_cleanup: cleanup.io_cleanup,
+            io_cleanup_generation: cleanup.io_cleanup_generation,
+            recovery_start_event: cleanup.started_at_event,
+            recovery_complete_event: completed_at_event,
+            cancelled_block_waits: cleanup.cancelled_block_waits.len() as u32,
+            cancelled_wait_tokens: cleanup.cancelled_wait_tokens.len() as u32,
+            released_dma_buffers: cleanup.released_dma_buffers.len() as u32,
+            revoked_device_capabilities: cleanup.revoked_device_capabilities.len() as u32,
+            recovery_nanos: 70_000,
+            budget_nanos: 150_000,
+            note: "b23 stale cleanup".to_string(),
+        },
+    ));
+    assert_eq!(stale_cleanup.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_cleanup.violations,
+        vec!["block recovery benchmark cleanup generation is missing or incomplete".to_string()]
+    );
+
+    let over_budget = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b23-test",
+        SemanticCommand::RecordBlockRecoveryBenchmark {
+            benchmark: 1853,
+            scenario: "over budget".to_string(),
+            cleanup: cleanup.id,
+            cleanup_generation: cleanup.generation,
+            io_cleanup: cleanup.io_cleanup,
+            io_cleanup_generation: cleanup.io_cleanup_generation,
+            recovery_start_event: cleanup.started_at_event,
+            recovery_complete_event: completed_at_event,
+            cancelled_block_waits: cleanup.cancelled_block_waits.len() as u32,
+            cancelled_wait_tokens: cleanup.cancelled_wait_tokens.len() as u32,
+            released_dma_buffers: cleanup.released_dma_buffers.len() as u32,
+            revoked_device_capabilities: cleanup.revoked_device_capabilities.len() as u32,
+            recovery_nanos: 160_000,
+            budget_nanos: 150_000,
+            note: "b23 over budget".to_string(),
+        },
+    ));
+    assert_eq!(over_budget.status, CommandStatus::Rejected);
+    assert_eq!(
+        over_budget.violations,
+        vec!["block recovery benchmark exceeds recovery budget".to_string()]
+    );
+}
+
+#[test]
+fn block_runtime_b23_invariants_reject_cleanup_generation_leak() {
+    let mut graph = setup_b23_disk_recovery_benchmark_graph();
+    let cleanup = graph.block_driver_cleanups()[0].clone();
+    let completed_at_event = cleanup.completed_at_event.unwrap();
+    assert!(graph.record_block_recovery_benchmark_with_id(
+        1852,
+        "b23 recovery benchmark",
+        cleanup.id,
+        cleanup.generation,
+        cleanup.io_cleanup,
+        cleanup.io_cleanup_generation,
+        cleanup.started_at_event,
+        completed_at_event,
+        cleanup.cancelled_block_waits.len() as u32,
+        cleanup.cancelled_wait_tokens.len() as u32,
+        cleanup.released_dma_buffers.len() as u32,
+        cleanup.revoked_device_capabilities.len() as u32,
+        70_000,
+        150_000,
+        "b23 invariant benchmark",
+    ));
+    graph.corrupt_block_recovery_benchmark_cleanup_generation_for_test(1852, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::BlockRecoveryBenchmarkMissingTarget {
+                benchmark: 1852,
+                target: ContractObjectRef::new(ContractObjectKind::BlockDriverCleanup, 1888, 2),
+            }
+        )
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

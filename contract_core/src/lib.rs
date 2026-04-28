@@ -143,6 +143,7 @@ pub enum ObjectKind {
     BlockPendingIoPolicy,
     BlockRequestGenerationAudit,
     BlockBenchmark,
+    BlockRecoveryBenchmark,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -251,6 +252,7 @@ impl ObjectKind {
             Self::BlockPendingIoPolicy => "block-pending-io-policy",
             Self::BlockRequestGenerationAudit => "block-request-generation-audit",
             Self::BlockBenchmark => "block-benchmark",
+            Self::BlockRecoveryBenchmark => "block-recovery-benchmark",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -545,6 +547,10 @@ typed_ref!(
     ObjectKind::BlockRequestGenerationAudit
 );
 typed_ref!(BlockBenchmarkRef, ObjectKind::BlockBenchmark);
+typed_ref!(
+    BlockRecoveryBenchmarkRef,
+    ObjectKind::BlockRecoveryBenchmark
+);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2178,6 +2184,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("block benchmark root/count mismatch"));
     }
+    if roots.block_recovery_benchmark_roots.len() != package.semantic.block_recovery_benchmark_count
+        || package.semantic.block_recovery_benchmarks.len()
+            != package.semantic.block_recovery_benchmark_count
+    {
+        return Err(ContractError::new(
+            "block recovery benchmark root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2777,6 +2791,7 @@ mod tests {
                 block_pending_io_policy_count: 0,
                 block_request_generation_audit_count: 0,
                 block_benchmark_count: 0,
+                block_recovery_benchmark_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2894,6 +2909,7 @@ mod tests {
                 block_pending_io_policies: Vec::new(),
                 block_request_generation_audits: Vec::new(),
                 block_benchmarks: Vec::new(),
+                block_recovery_benchmarks: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4880,6 +4896,53 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_block_recovery_benchmark_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.block_recovery_benchmark_count = 1;
+        package.semantic.block_recovery_benchmarks.push(
+            artifact_manifest::BlockRecoveryBenchmarkManifest {
+                id: 85,
+                scenario: "test".to_owned(),
+                cleanup: 86,
+                cleanup_generation: 1,
+                io_cleanup: 87,
+                io_cleanup_generation: 1,
+                backend: artifact_manifest::ContractObjectRefManifest {
+                    kind: "virtio-blk-backend-object".to_owned(),
+                    id: 88,
+                    generation: 1,
+                },
+                block_device: 89,
+                block_device_generation: 1,
+                driver_store: 90,
+                driver_store_generation: 1,
+                device: 91,
+                device_generation: 1,
+                driver_binding: 92,
+                driver_binding_generation: 1,
+                recovery_start_event: 93,
+                recovery_complete_event: 94,
+                cancelled_block_waits: 1,
+                cancelled_wait_tokens: 1,
+                released_dma_buffers: 1,
+                revoked_device_capabilities: 1,
+                recovery_nanos: 1000,
+                budget_nanos: 2000,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 95,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "block recovery benchmark root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -6190,6 +6253,9 @@ mod tests {
         );
         let block_benchmark = ObjectRef::new(ObjectKind::BlockBenchmark, 73, 1).unwrap();
         assert!(BlockBenchmarkRef::try_from_ref(block_benchmark).is_ok());
+        let block_recovery_benchmark =
+            ObjectRef::new(ObjectKind::BlockRecoveryBenchmark, 74, 1).unwrap();
+        assert!(BlockRecoveryBenchmarkRef::try_from_ref(block_recovery_benchmark).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

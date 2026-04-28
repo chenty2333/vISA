@@ -1666,6 +1666,19 @@ impl NetworkRecoveryBenchmarkState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockRecoveryBenchmarkState {
+    Recorded,
+}
+
+impl BlockRecoveryBenchmarkState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockDmaBufferState {
     Bound,
     Released,

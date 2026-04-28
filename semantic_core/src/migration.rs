@@ -1456,6 +1456,20 @@ pub enum SemanticInvariantError {
         benchmark: BlockBenchmarkId,
         event: EventId,
     },
+    BlockRecoveryBenchmarkInvalid {
+        benchmark: BlockRecoveryBenchmarkId,
+    },
+    BlockRecoveryBenchmarkMissingTarget {
+        benchmark: BlockRecoveryBenchmarkId,
+        target: ContractObjectRef,
+    },
+    BlockRecoveryBenchmarkMetricMismatch {
+        benchmark: BlockRecoveryBenchmarkId,
+    },
+    BlockRecoveryBenchmarkMissingEvent {
+        benchmark: BlockRecoveryBenchmarkId,
+        event: EventId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

@@ -816,6 +816,10 @@ impl SemanticGraph {
                 .block_benchmarks
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
+            ContractObjectKind::BlockRecoveryBenchmark => self
+                .block_recovery_benchmarks
+                .iter()
+                .any(|record| record.id == object.id && record.generation == object.generation),
             _ => false,
         }
     }

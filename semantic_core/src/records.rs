@@ -2404,6 +2404,47 @@ impl BlockBenchmarkRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockRecoveryBenchmarkRecord {
+    pub id: BlockRecoveryBenchmarkId,
+    pub scenario: String,
+    pub cleanup: BlockDriverCleanupId,
+    pub cleanup_generation: Generation,
+    pub io_cleanup: IoCleanupId,
+    pub io_cleanup_generation: Generation,
+    pub backend: ContractObjectRef,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub driver_binding: DriverStoreBindingId,
+    pub driver_binding_generation: Generation,
+    pub recovery_start_event: EventId,
+    pub recovery_complete_event: EventId,
+    pub cancelled_block_waits: u32,
+    pub cancelled_wait_tokens: u32,
+    pub released_dma_buffers: u32,
+    pub revoked_device_capabilities: u32,
+    pub recovery_nanos: u64,
+    pub budget_nanos: u64,
+    pub generation: Generation,
+    pub state: BlockRecoveryBenchmarkState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl BlockRecoveryBenchmarkRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::BlockRecoveryBenchmark,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

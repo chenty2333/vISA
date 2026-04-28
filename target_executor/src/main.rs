@@ -12,30 +12,30 @@ use artifact_manifest::{
     BlockBenchmarkManifest, BlockCompletionObjectManifest, BlockDeviceObjectManifest,
     BlockDmaBufferManifest, BlockDriverCleanupManifest, BlockPageObjectManifest,
     BlockPendingIoPolicyManifest, BlockRangeObjectManifest, BlockReadPathManifest,
-    BlockRequestGenerationAuditManifest, BlockRequestObjectManifest,
-    BlockRequestQueueEntryManifest, BlockRequestQueueManifest, BlockWaitManifest,
-    BlockWritePathManifest, BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
-    BufferCacheObjectManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
-    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
-    ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest, FsWaitManifest,
-    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
-    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
-    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    BlockRecoveryBenchmarkManifest, BlockRequestGenerationAuditManifest,
+    BlockRequestObjectManifest, BlockRequestQueueEntryManifest, BlockRequestQueueManifest,
+    BlockWaitManifest, BlockWritePathManifest, BoundaryValidationReportManifest,
+    BoundaryValidationViolationManifest, BufferCacheObjectManifest, CapabilityHandleArgManifest,
+    CapabilityRecordManifest, CleanupEffectManifest, CleanupStepManifest,
+    CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest, CommandResultManifest,
+    ContractObjectRefManifest, ContractViolationManifest, CrossHartSchedulerDecisionManifest,
+    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
+    DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
+    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
+    FileObjectManifest, FsWaitManifest, GuestStateManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -237,6 +237,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b20_evidence(&mut semantic)?;
     record_block_runtime_b21_evidence(&mut semantic)?;
     record_block_runtime_b22_evidence(&mut semantic)?;
+    record_block_runtime_b23_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -6525,6 +6526,130 @@ fn record_block_runtime_b22_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_block_runtime_b23_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let cleanup = semantic
+        .block_driver_cleanups()
+        .iter()
+        .find(|record| record.id == 20_107 && record.generation == 1)
+        .cloned()
+        .ok_or("block driver cleanup 20107@1 is missing for b23 evidence")?;
+    let cleanup_complete_event = cleanup
+        .completed_at_event
+        .ok_or("block driver cleanup completion event is missing for b23 evidence")?;
+    let cancelled_block_waits = cleanup.cancelled_block_waits.len() as u32;
+    let cancelled_wait_tokens = cleanup.cancelled_wait_tokens.len() as u32;
+    let released_dma_buffers = cleanup.released_dma_buffers.len() as u32;
+    let revoked_device_capabilities = cleanup.revoked_device_capabilities.len() as u32;
+
+    let benchmark = semantic.apply_envelope(CommandEnvelope::new(
+        330,
+        "target-executor-b23",
+        SemanticCommand::RecordBlockRecoveryBenchmark {
+            benchmark: 20_135,
+            scenario: "host-validation-disk-driver-recovery".to_owned(),
+            cleanup: cleanup.id,
+            cleanup_generation: cleanup.generation,
+            io_cleanup: cleanup.io_cleanup,
+            io_cleanup_generation: cleanup.io_cleanup_generation,
+            recovery_start_event: cleanup.started_at_event,
+            recovery_complete_event: cleanup_complete_event,
+            cancelled_block_waits,
+            cancelled_wait_tokens,
+            released_dma_buffers,
+            revoked_device_capabilities,
+            recovery_nanos: 70_000,
+            budget_nanos: 150_000,
+            note: "b23-record-host-validation-disk-recovery-benchmark".to_owned(),
+        },
+    ));
+    if benchmark.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b23 recovery benchmark command {} ({}) failed: status={} violations={:?}",
+            benchmark.command_id,
+            benchmark.command,
+            benchmark.status.as_str(),
+            benchmark.violations
+        )
+        .into());
+    }
+
+    let stale_cleanup = semantic.apply_envelope(CommandEnvelope::new(
+        331,
+        "target-executor-b23",
+        SemanticCommand::RecordBlockRecoveryBenchmark {
+            benchmark: 20_136,
+            scenario: "stale cleanup generation cannot record disk recovery benchmark".to_owned(),
+            cleanup: cleanup.id,
+            cleanup_generation: cleanup.generation.saturating_add(1),
+            io_cleanup: cleanup.io_cleanup,
+            io_cleanup_generation: cleanup.io_cleanup_generation,
+            recovery_start_event: cleanup.started_at_event,
+            recovery_complete_event: cleanup_complete_event,
+            cancelled_block_waits,
+            cancelled_wait_tokens,
+            released_dma_buffers,
+            revoked_device_capabilities,
+            recovery_nanos: 70_000,
+            budget_nanos: 150_000,
+            note: "b23-reject-stale-cleanup-generation".to_owned(),
+        },
+    ));
+    if stale_cleanup.status != CommandStatus::Rejected
+        || !stale_cleanup
+            .violations
+            .iter()
+            .any(|violation| violation.contains("cleanup generation"))
+    {
+        return Err(format!(
+            "block runtime b23 stale cleanup command {} ({}) was not rejected: status={} violations={:?}",
+            stale_cleanup.command_id,
+            stale_cleanup.command,
+            stale_cleanup.status.as_str(),
+            stale_cleanup.violations
+        )
+        .into());
+    }
+
+    let budget_overrun = semantic.apply_envelope(CommandEnvelope::new(
+        332,
+        "target-executor-b23",
+        SemanticCommand::RecordBlockRecoveryBenchmark {
+            benchmark: 20_136,
+            scenario: "disk recovery budget overrun cannot record benchmark".to_owned(),
+            cleanup: cleanup.id,
+            cleanup_generation: cleanup.generation,
+            io_cleanup: cleanup.io_cleanup,
+            io_cleanup_generation: cleanup.io_cleanup_generation,
+            recovery_start_event: cleanup.started_at_event,
+            recovery_complete_event: cleanup_complete_event,
+            cancelled_block_waits,
+            cancelled_wait_tokens,
+            released_dma_buffers,
+            revoked_device_capabilities,
+            recovery_nanos: 160_000,
+            budget_nanos: 150_000,
+            note: "b23-reject-disk-recovery-budget-overrun".to_owned(),
+        },
+    ));
+    if budget_overrun.status != CommandStatus::Rejected
+        || !budget_overrun
+            .violations
+            .iter()
+            .any(|violation| violation.contains("recovery budget"))
+    {
+        return Err(format!(
+            "block runtime b23 budget command {} ({}) was not rejected: status={} violations={:?}",
+            budget_overrun.command_id,
+            budget_overrun.command,
+            budget_overrun.status.as_str(),
+            budget_overrun.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -8938,6 +9063,7 @@ fn demo_migration_package(
             block_pending_io_policy_count: semantic.block_pending_io_policy_count(),
             block_request_generation_audit_count: semantic.block_request_generation_audit_count(),
             block_benchmark_count: semantic.block_benchmark_count(),
+            block_recovery_benchmark_count: semantic.block_recovery_benchmark_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -9350,6 +9476,11 @@ fn demo_migration_package(
                 .block_benchmarks()
                 .iter()
                 .map(block_benchmark_manifest)
+                .collect(),
+            block_recovery_benchmarks: semantic
+                .block_recovery_benchmarks()
+                .iter()
+                .map(block_recovery_benchmark_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -11261,6 +11392,42 @@ fn semantic_roots(
                     benchmark.throughput_bytes_per_sec,
                     benchmark.p50_latency_nanos,
                     benchmark.p99_latency_nanos,
+                    benchmark.state.as_str(),
+                    benchmark.generation
+                )
+            })
+            .collect(),
+        block_recovery_benchmark_roots: semantic
+            .block_recovery_benchmarks()
+            .iter()
+            .map(|benchmark| {
+                format!(
+                    "block-recovery-benchmark id={} scenario={} cleanup={}@{} io_cleanup={}@{} backend={}:{}@{} block_device={}@{} driver_store={}@{} device={}@{} driver_binding={}@{} recovery_start_event={} recovery_complete_event={} cancelled_block_waits={} cancelled_wait_tokens={} released_dma_buffers={} revoked_device_capabilities={} recovery_nanos={} budget_nanos={} state={} generation={}",
+                    benchmark.id,
+                    benchmark.scenario,
+                    benchmark.cleanup,
+                    benchmark.cleanup_generation,
+                    benchmark.io_cleanup,
+                    benchmark.io_cleanup_generation,
+                    benchmark.backend.kind.as_str(),
+                    benchmark.backend.id,
+                    benchmark.backend.generation,
+                    benchmark.block_device,
+                    benchmark.block_device_generation,
+                    benchmark.driver_store,
+                    benchmark.driver_store_generation,
+                    benchmark.device,
+                    benchmark.device_generation,
+                    benchmark.driver_binding,
+                    benchmark.driver_binding_generation,
+                    benchmark.recovery_start_event,
+                    benchmark.recovery_complete_event,
+                    benchmark.cancelled_block_waits,
+                    benchmark.cancelled_wait_tokens,
+                    benchmark.released_dma_buffers,
+                    benchmark.revoked_device_capabilities,
+                    benchmark.recovery_nanos,
+                    benchmark.budget_nanos,
                     benchmark.state.as_str(),
                     benchmark.generation
                 )
@@ -13923,6 +14090,40 @@ fn block_benchmark_manifest(
         throughput_bytes_per_sec: benchmark.throughput_bytes_per_sec,
         p50_latency_nanos: benchmark.p50_latency_nanos,
         p99_latency_nanos: benchmark.p99_latency_nanos,
+        generation: benchmark.generation,
+        state: benchmark.state.as_str().to_owned(),
+        recorded_at_event: benchmark.recorded_at_event,
+        note: benchmark.note.clone(),
+    }
+}
+
+fn block_recovery_benchmark_manifest(
+    benchmark: &semantic_core::BlockRecoveryBenchmarkRecord,
+) -> BlockRecoveryBenchmarkManifest {
+    BlockRecoveryBenchmarkManifest {
+        id: benchmark.id,
+        scenario: benchmark.scenario.clone(),
+        cleanup: benchmark.cleanup,
+        cleanup_generation: benchmark.cleanup_generation,
+        io_cleanup: benchmark.io_cleanup,
+        io_cleanup_generation: benchmark.io_cleanup_generation,
+        backend: contract_object_ref_manifest(benchmark.backend),
+        block_device: benchmark.block_device,
+        block_device_generation: benchmark.block_device_generation,
+        driver_store: benchmark.driver_store,
+        driver_store_generation: benchmark.driver_store_generation,
+        device: benchmark.device,
+        device_generation: benchmark.device_generation,
+        driver_binding: benchmark.driver_binding,
+        driver_binding_generation: benchmark.driver_binding_generation,
+        recovery_start_event: benchmark.recovery_start_event,
+        recovery_complete_event: benchmark.recovery_complete_event,
+        cancelled_block_waits: benchmark.cancelled_block_waits,
+        cancelled_wait_tokens: benchmark.cancelled_wait_tokens,
+        released_dma_buffers: benchmark.released_dma_buffers,
+        revoked_device_capabilities: benchmark.revoked_device_capabilities,
+        recovery_nanos: benchmark.recovery_nanos,
+        budget_nanos: benchmark.budget_nanos,
         generation: benchmark.generation,
         state: benchmark.state.as_str().to_owned(),
         recorded_at_event: benchmark.recorded_at_event,

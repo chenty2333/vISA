@@ -379,6 +379,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_benchmark_count: usize,
     #[serde(default)]
+    pub block_recovery_benchmark_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -609,6 +611,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_benchmarks: Vec<BlockBenchmarkManifest>,
     #[serde(default)]
+    pub block_recovery_benchmarks: Vec<BlockRecoveryBenchmarkManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -818,6 +822,8 @@ pub struct SemanticRootSetManifest {
     pub block_request_generation_audit_roots: Vec<String>,
     #[serde(default)]
     pub block_benchmark_roots: Vec<String>,
+    #[serde(default)]
+    pub block_recovery_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2804,6 +2810,37 @@ pub struct BlockBenchmarkManifest {
     pub throughput_bytes_per_sec: u64,
     pub p50_latency_nanos: u64,
     pub p99_latency_nanos: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct BlockRecoveryBenchmarkManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub cleanup: u64,
+    pub cleanup_generation: u64,
+    pub io_cleanup: u64,
+    pub io_cleanup_generation: u64,
+    pub backend: ContractObjectRefManifest,
+    pub block_device: u64,
+    pub block_device_generation: u64,
+    pub driver_store: u64,
+    pub driver_store_generation: u64,
+    pub device: u64,
+    pub device_generation: u64,
+    pub driver_binding: u64,
+    pub driver_binding_generation: u64,
+    pub recovery_start_event: u64,
+    pub recovery_complete_event: u64,
+    pub cancelled_block_waits: u32,
+    pub cancelled_wait_tokens: u32,
+    pub released_dma_buffers: u32,
+    pub revoked_device_capabilities: u32,
+    pub recovery_nanos: u64,
+    pub budget_nanos: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
