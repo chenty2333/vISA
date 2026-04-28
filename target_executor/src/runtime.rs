@@ -17,6 +17,8 @@ use supervisor_catalog::{
 use target_abi::{SectionKindV1, TargetArtifactImage};
 use wasmtime::{Config, Engine, Instance, Module, Precompiled, Store};
 
+const TARGET_SIMD_SUPPORTED: bool = false;
+
 pub struct RuntimeOnlyExecutor {
     engine: Engine,
     workspace_root: PathBuf,
@@ -346,6 +348,44 @@ fn validate_profile_requirements_payload(
     check_profile_bool(&profile, package, "memory64", false)?;
     check_profile_bool(&profile, package, "multi_memory", false)?;
     check_profile_bool(&profile, package, "component_model", false)?;
+    let simd_required = profile
+        .get("simd_required")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| {
+            format!("{package} ProfileRequirements missing bool field `simd_required`")
+        })?;
+    let simd_abi = profile
+        .get("simd_abi")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{package} ProfileRequirements missing string field `simd_abi`"))?;
+    let min_vector_register_count =
+        check_profile_u64(&profile, package, "min_vector_register_count")?;
+    let min_vector_register_bits =
+        check_profile_u64(&profile, package, "min_vector_register_bits")?;
+    if simd_required {
+        if simd_abi.is_empty()
+            || simd_abi == "none"
+            || min_vector_register_count == 0
+            || min_vector_register_bits == 0
+        {
+            return Err(format!(
+                "{package} ProfileRequirements invalid SIMD requirement declaration"
+            )
+            .into());
+        }
+        if !TARGET_SIMD_SUPPORTED {
+            return Err(format!(
+                "{package} ProfileRequirements SIMD requirement rejected by target profile: required_abi={simd_abi} target_simd_supported=false"
+            )
+            .into());
+        }
+    } else if simd_abi != "none" || min_vector_register_count != 0 || min_vector_register_bits != 0
+    {
+        return Err(format!(
+            "{package} ProfileRequirements scalar artifact cannot declare SIMD vector shape"
+        )
+        .into());
+    }
     check_profile_string(
         &profile,
         package,
@@ -391,6 +431,19 @@ fn check_profile_bool(
         .into());
     }
     Ok(())
+}
+
+fn check_profile_u64(
+    profile: &serde_json::Value,
+    package: &str,
+    field: &str,
+) -> Result<u64, Box<dyn Error>> {
+    profile
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            format!("{package} ProfileRequirements missing integer field `{field}`").into()
+        })
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -445,6 +498,32 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 
+    #[test]
+    fn simd_profile_rejects_unsupported_requirement_before_deserialize() {
+        let root = temp_test_dir("simd-profile-reject");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create temp dir");
+
+        let code_payload = b"not a real cwasm module";
+        let image = target_artifact_with_profile(code_payload, &simd_required_profile_payload());
+        let artifact_path = root.join("test_service.tart");
+        fs::write(&artifact_path, &image).expect("write test tart");
+        let entry = test_entry("test_service.tart", code_payload, &image);
+        let executor = RuntimeOnlyExecutor::host_validation(root.clone(), "host-validation")
+            .expect("executor");
+
+        let error = match executor.load_store(&entry) {
+            Ok(_) => panic!("unsupported SIMD requirement should reject before deserialize"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(message.contains("SIMD requirement rejected by target profile"));
+        assert!(message.contains("required_abi=riscv-v"));
+        assert!(!message.contains("not a precompiled artifact"));
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
     fn temp_test_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "vmos-target-executor-{name}-{}",
@@ -493,7 +572,39 @@ mod tests {
             "memory64": false,
             "multi_memory": false,
             "component_model": false,
+            "simd_required": false,
+            "simd_abi": "none",
+            "min_vector_register_count": 0,
+            "min_vector_register_bits": 0,
             "engine_config_fingerprint": fingerprint,
+        }))
+        .expect("profile json")
+    }
+
+    fn simd_required_profile_payload() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "vmos-target-profile-requirements-v1",
+            "artifact_profile": "host-validation",
+            "host_arch": std::env::consts::ARCH,
+            "target_arch": std::env::consts::ARCH,
+            "compiler_engine": SUPERVISOR_COMPILER_ENGINE,
+            "engine_version": WASMTIME_CRATE_VERSION,
+            "compilation_strategy": WASMTIME_COMPILATION_STRATEGY,
+            "execution_mode": SUPERVISOR_EXECUTION_MODE,
+            "target_artifact_format": TARGET_ARTIFACT_FORMAT_V1,
+            "code_payload_format": CODE_PAYLOAD_FORMAT_CWASM,
+            "wasm_feature_profile": WASM_FEATURE_PROFILE,
+            "memory64": false,
+            "multi_memory": false,
+            "component_model": false,
+            "simd_required": true,
+            "simd_abi": "riscv-v",
+            "min_vector_register_count": 32,
+            "min_vector_register_bits": 128,
+            "engine_config_fingerprint": canonical_wasmtime_config_fingerprint(
+                std::env::consts::ARCH,
+                std::env::consts::ARCH,
+            ),
         }))
         .expect("profile json")
     }

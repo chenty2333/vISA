@@ -469,6 +469,10 @@ fn build_target_artifact_image(
                 "memory64": false,
                 "multi_memory": false,
                 "component_model": false,
+                "simd_required": false,
+                "simd_abi": "none",
+                "min_vector_register_count": 0,
+                "min_vector_register_bits": 0,
                 "engine_config_fingerprint": canonical_wasmtime_config_fingerprint(
                     env::consts::ARCH,
                     env::consts::ARCH,

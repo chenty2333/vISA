@@ -1,0 +1,133 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "V2-artifact-profile-rejects-unsupported-simd",
+  "phase": "Phase 6 SIMD Full Runtime Contract",
+  "status": "pass",
+  "scope": [
+    "Extend TargetArtifactImage ProfileRequirements with SIMD requirement fields",
+    "Have aotc emit simd_required=false for current scalar-only artifacts",
+    "Reject simd_required=true artifacts before Wasmtime deserialize when the target profile has no SIMD support",
+    "Keep current generated .tart artifacts accepted and osctl-visible as scalar-only CodeObjects"
+  ],
+  "no_goals": [
+    "SIMD TrapRecord classification",
+    "VectorState object",
+    "lazy vector state enable",
+    "real vector register save or restore",
+    "real target-side cwasm execution"
+  ],
+  "changed_files": [
+    "aotc/src/main.rs",
+    "target_executor/src/runtime.rs",
+    "tests/golden/simd/golden_simd_unsupported_rejected.trace.json",
+    "tests/reports/checkpoints/v2_artifact_profile_rejects_unsupported_simd.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/simd/golden_simd_unsupported_rejected.trace.json",
+    "tests/reports/checkpoints/v2_artifact_profile_rejects_unsupported_simd.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "SIMD requirement rejection happens before Wasmtime Module::deserialize",
+      "Scalar-only artifacts must declare simd_required=false, simd_abi=none, and zero vector shape",
+      "SIMD-required artifacts must declare ABI and nonzero vector shape",
+      "The default target profile remains explicit about target_simd_supported=false"
+    ],
+    "bad_smells_checked": [
+      "No VectorState or scheduler vector context was introduced",
+      "No target-side cwasm execution path was added",
+      "No fake successful SIMD support was claimed for current generated artifacts",
+      "Profile compatibility stays in target_executor runtime validation, not in osctl"
+    ],
+    "residual_notes": [
+      "V3 owns SIMD trap classification and attribution",
+      "V4-V9 own VectorState and preempt/resume/migration behavior"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p target_executor simd_profile -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p target_executor profile -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p target_executor engine_config -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p aotc -- all",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect code --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "target_executor_event_cursor": 489,
+    "profile_requirements_fields": [
+      "simd_required",
+      "simd_abi",
+      "min_vector_register_count",
+      "min_vector_register_bits"
+    ],
+    "current_artifact_profile": {
+      "simd_required": false,
+      "simd_abi": "none",
+      "min_vector_register_count": 0,
+      "min_vector_register_bits": 0
+    },
+    "negative_test": "simd_required=true rejects before deserialize with SIMD requirement rejected by target profile"
+  },
+  "residual_gaps": [
+    "V3 owns SIMD trap classification",
+    "V4-V9 own VectorState and preempt/resume/migration behavior"
+  ],
+  "next_checkpoint": "V3-simd-trap-record-classification"
+}

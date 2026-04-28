@@ -1,0 +1,76 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "V2-artifact-profile-rejects-unsupported-simd",
+  "name": "golden_simd_unsupported_rejected",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/target-runtime-abi/05-target-profile-and-runtime-package.md",
+    "references/specs/target-runtime-abi/08-default-profile.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "SIMD TrapRecord classification",
+    "VectorState object",
+    "lazy vector state enable",
+    "real vector register save or restore",
+    "real target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "Default target profile does not support SIMD",
+      "ProfileRequirements is checked before Wasmtime Module::deserialize",
+      "Current real artifacts declare simd_required=false"
+    ],
+    "profile_requirements": {
+      "schema": "vmos-target-profile-requirements-v1",
+      "simd_required": true,
+      "simd_abi": "riscv-v",
+      "min_vector_register_count": 32,
+      "min_vector_register_bits": 128
+    },
+    "expected": "reject-before-deserialize"
+  },
+  "events": [
+    {
+      "kind": "ArtifactProfileRejected",
+      "source": "target_executor::RuntimeOnlyExecutor::validate_profile_requirements",
+      "visible_as": "host-side validation error",
+      "reason": "SIMD requirement rejected by target profile"
+    }
+  ],
+  "expected": {
+    "views": {
+      "artifact-profile": {
+        "target_simd_supported": false,
+        "rejected_required_abi": "riscv-v",
+        "deserialize_attempted": false
+      },
+      "code-object": {
+        "current_package_status": "scalar-only",
+        "simd_required": false
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "ProfileRequirements must declare SIMD requirement fields",
+      "simd_required=false must use simd_abi=none and zero vector shape",
+      "simd_required=true must declare ABI and nonzero vector shape",
+      "unsupported target profile rejects SIMD before deserialize",
+      "current scalar-only artifacts remain accepted"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "profile_requirements_accept_current_host_config",
+      "simd_profile_rejects_unsupported_requirement_before_deserialize",
+      "engine_config_mismatch_rejects_before_deserialize"
+    ],
+    "osctl_json_view": "inspect code --json",
+    "target_executor_event_cursor": 489
+  }
+}
