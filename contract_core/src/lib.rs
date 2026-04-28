@@ -153,6 +153,7 @@ pub enum ObjectKind {
     DisplayObject,
     DisplayCapability,
     FramebufferWindowLease,
+    FramebufferMapping,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -271,6 +272,7 @@ impl ObjectKind {
             Self::DisplayObject => "display-object",
             Self::DisplayCapability => "display-capability",
             Self::FramebufferWindowLease => "framebuffer-window-lease",
+            Self::FramebufferMapping => "framebuffer-mapping",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -584,6 +586,7 @@ typed_ref!(
     FramebufferWindowLeaseRef,
     ObjectKind::FramebufferWindowLease
 );
+typed_ref!(FramebufferMappingRef, ObjectKind::FramebufferMapping);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2280,6 +2283,13 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "framebuffer window lease root/count mismatch",
         ));
     }
+    if roots.framebuffer_mapping_roots.len() != package.semantic.framebuffer_mapping_count
+        || package.semantic.framebuffer_mappings.len() != package.semantic.framebuffer_mapping_count
+    {
+        return Err(ContractError::new(
+            "framebuffer mapping root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2889,6 +2899,7 @@ mod tests {
                 display_object_count: 0,
                 display_capability_count: 0,
                 framebuffer_window_lease_count: 0,
+                framebuffer_mapping_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -3016,6 +3027,7 @@ mod tests {
                 display_objects: Vec::new(),
                 display_capabilities: Vec::new(),
                 framebuffer_window_leases: Vec::new(),
+                framebuffer_mappings: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -5393,6 +5405,46 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_framebuffer_mapping_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.framebuffer_mapping_count = 1;
+        package
+            .semantic
+            .framebuffer_mappings
+            .push(artifact_manifest::FramebufferMappingManifest {
+                id: 94,
+                owner_store: 7,
+                owner_store_generation: 1,
+                framebuffer_window_lease: 93,
+                framebuffer_window_lease_generation: 1,
+                display_capability: 92,
+                display_capability_generation: 1,
+                display: 91,
+                display_generation: 1,
+                framebuffer: 90,
+                framebuffer_generation: 1,
+                map_handle_slot: 3,
+                map_handle_generation: 1,
+                map_handle_tag: 43,
+                x: 0,
+                y: 0,
+                width: 16,
+                height: 16,
+                byte_offset: 0,
+                byte_len: 1024,
+                access: "write".to_owned(),
+                mode: "handle-mode".to_owned(),
+                generation: 1,
+                state: "active".to_owned(),
+                recorded_at_event: 105,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "framebuffer mapping root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -6730,6 +6782,8 @@ mod tests {
         let framebuffer_window_lease =
             ObjectRef::new(ObjectKind::FramebufferWindowLease, 83, 1).unwrap();
         assert!(FramebufferWindowLeaseRef::try_from_ref(framebuffer_window_lease).is_ok());
+        let framebuffer_mapping = ObjectRef::new(ObjectKind::FramebufferMapping, 84, 1).unwrap();
+        assert!(FramebufferMappingRef::try_from_ref(framebuffer_mapping).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

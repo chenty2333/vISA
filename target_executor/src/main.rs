@@ -24,8 +24,8 @@ use artifact_manifest::{
     DisplayCapabilityManifest, DisplayObjectManifest, DmaBufferObjectManifest,
     DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
     FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
-    FileHandleCapabilityManifest, FileObjectManifest, FramebufferObjectManifest,
-    FramebufferWindowLeaseManifest, FsWaitManifest, GuestStateManifest,
+    FileHandleCapabilityManifest, FileObjectManifest, FramebufferMappingManifest,
+    FramebufferObjectManifest, FramebufferWindowLeaseManifest, FsWaitManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
     InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
@@ -8380,6 +8380,7 @@ fn build_target_executor_v1(
     run_display_object_harness(semantic)?;
     run_display_capability_harness(semantic)?;
     run_framebuffer_window_lease_harness(semantic)?;
+    run_framebuffer_mapping_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8460,6 +8461,7 @@ fn build_target_executor_v1(
         display_objects: semantic.display_objects().to_vec(),
         display_capabilities: semantic.display_capabilities().to_vec(),
         framebuffer_window_leases: semantic.framebuffer_window_leases().to_vec(),
+        framebuffer_mappings: semantic.framebuffer_mappings().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: contract_stores,
@@ -10189,6 +10191,51 @@ fn run_framebuffer_window_lease_harness(
     Ok(())
 }
 
+fn run_framebuffer_mapping_harness(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let lease = semantic
+        .framebuffer_window_leases()
+        .iter()
+        .find(|record| record.id == 23_301)
+        .cloned()
+        .ok_or("display runtime g4 requires g3 framebuffer window lease evidence")?;
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_024,
+        "display-runtime-g4",
+        SemanticCommand::RecordFramebufferMapping {
+            framebuffer_mapping: 23_401,
+            owner_store: lease.owner_store,
+            owner_store_generation: lease.owner_store_generation,
+            framebuffer_window_lease: lease.id,
+            framebuffer_window_lease_generation: lease.generation,
+            map_handle_slot: 3,
+            map_handle_generation: 1,
+            map_handle_tag: 0x4d41505f4642,
+            x: lease.x,
+            y: lease.y,
+            width: lease.width,
+            height: lease.height,
+            byte_offset: lease.byte_offset,
+            byte_len: lease.byte_len,
+            access: lease.access.clone(),
+            mode: "handle-mode".to_owned(),
+            note:
+                "g4 maps framebuffer through semantic handle-mode lease without raw pointer mapping"
+                    .to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g4 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11027,6 +11074,7 @@ fn demo_migration_package(
             display_object_count: semantic.display_object_count(),
             display_capability_count: semantic.display_capability_count(),
             framebuffer_window_lease_count: semantic.framebuffer_window_lease_count(),
+            framebuffer_mapping_count: semantic.framebuffer_mapping_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11489,6 +11537,11 @@ fn demo_migration_package(
                 .framebuffer_window_leases()
                 .iter()
                 .map(framebuffer_window_lease_manifest)
+                .collect(),
+            framebuffer_mappings: semantic
+                .framebuffer_mappings()
+                .iter()
+                .map(framebuffer_mapping_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -13666,6 +13719,38 @@ fn semantic_roots(
                     lease.access,
                     lease.state.as_str(),
                     lease.generation
+                )
+            })
+            .collect(),
+        framebuffer_mapping_roots: semantic
+            .framebuffer_mappings()
+            .iter()
+            .map(|mapping| {
+                format!(
+                    "framebuffer-mapping id={} owner_store={}@{} framebuffer_window_lease={}@{} display_capability={}@{} display={}@{} framebuffer={}@{} map_handle_slot={} map_handle_generation={} window={},{} {}x{} byte_range={}+{} access={} mode={} state={} generation={}",
+                    mapping.id,
+                    mapping.owner_store,
+                    mapping.owner_store_generation,
+                    mapping.framebuffer_window_lease,
+                    mapping.framebuffer_window_lease_generation,
+                    mapping.display_capability,
+                    mapping.display_capability_generation,
+                    mapping.display,
+                    mapping.display_generation,
+                    mapping.framebuffer,
+                    mapping.framebuffer_generation,
+                    mapping.map_handle_slot,
+                    mapping.map_handle_generation,
+                    mapping.x,
+                    mapping.y,
+                    mapping.width,
+                    mapping.height,
+                    mapping.byte_offset,
+                    mapping.byte_len,
+                    mapping.access,
+                    mapping.mode,
+                    mapping.state.as_str(),
+                    mapping.generation
                 )
             })
             .collect(),
@@ -16609,6 +16694,39 @@ fn framebuffer_window_lease_manifest(
         state: lease.state.as_str().to_owned(),
         recorded_at_event: lease.recorded_at_event,
         note: lease.note.clone(),
+    }
+}
+
+fn framebuffer_mapping_manifest(
+    mapping: &semantic_core::FramebufferMappingRecord,
+) -> FramebufferMappingManifest {
+    FramebufferMappingManifest {
+        id: mapping.id,
+        owner_store: mapping.owner_store,
+        owner_store_generation: mapping.owner_store_generation,
+        framebuffer_window_lease: mapping.framebuffer_window_lease,
+        framebuffer_window_lease_generation: mapping.framebuffer_window_lease_generation,
+        display_capability: mapping.display_capability,
+        display_capability_generation: mapping.display_capability_generation,
+        display: mapping.display,
+        display_generation: mapping.display_generation,
+        framebuffer: mapping.framebuffer,
+        framebuffer_generation: mapping.framebuffer_generation,
+        map_handle_slot: mapping.map_handle_slot,
+        map_handle_generation: mapping.map_handle_generation,
+        map_handle_tag: mapping.map_handle_tag,
+        x: mapping.x,
+        y: mapping.y,
+        width: mapping.width,
+        height: mapping.height,
+        byte_offset: mapping.byte_offset,
+        byte_len: mapping.byte_len,
+        access: mapping.access.clone(),
+        mode: mapping.mode.clone(),
+        generation: mapping.generation,
+        state: mapping.state.as_str().to_owned(),
+        recorded_at_event: mapping.recorded_at_event,
+        note: mapping.note.clone(),
     }
 }
 

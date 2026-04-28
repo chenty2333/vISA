@@ -1885,6 +1885,21 @@ impl FramebufferWindowLeaseState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FramebufferMappingState {
+    Active,
+    Unmapped,
+}
+
+impl FramebufferMappingState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Unmapped => "unmapped",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

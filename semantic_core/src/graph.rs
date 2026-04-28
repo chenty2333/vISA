@@ -94,6 +94,7 @@ pub struct SemanticGraph {
     display_objects: Vec<DisplayObjectRecord>,
     display_capabilities: Vec<DisplayCapabilityRecord>,
     framebuffer_window_leases: Vec<FramebufferWindowLeaseRecord>,
+    framebuffer_mappings: Vec<FramebufferMappingRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -199,6 +200,7 @@ pub struct SemanticGraph {
     next_display_object_id: DisplayObjectId,
     next_display_capability_id: DisplayCapabilityId,
     next_framebuffer_window_lease_id: FramebufferWindowLeaseId,
+    next_framebuffer_mapping_id: FramebufferMappingId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -253,6 +255,7 @@ mod fake_net_backend_object;
 mod fat_adapter_object;
 mod file_handle_capability;
 mod file_object;
+mod framebuffer_mapping;
 mod framebuffer_object;
 mod framebuffer_window_lease;
 mod fs_wait;
@@ -411,6 +414,7 @@ impl SemanticGraph {
             display_objects: Vec::new(),
             display_capabilities: Vec::new(),
             framebuffer_window_leases: Vec::new(),
+            framebuffer_mappings: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -516,6 +520,7 @@ impl SemanticGraph {
             next_display_object_id: 1,
             next_display_capability_id: 1,
             next_framebuffer_window_lease_id: 1,
+            next_framebuffer_mapping_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

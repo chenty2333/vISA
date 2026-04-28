@@ -1,0 +1,195 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "G4-framebuffer-mapping",
+  "name": "golden_g4_framebuffer_mapping",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/04-capability-authority.md",
+    "references/specs/semantic-contract-v0.1/10-command-transaction-surface.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "pixel writes or flush command execution",
+    "real framebuffer MMIO mapping",
+    "DMW pointer-mode framebuffer mapping",
+    "raw host pointer exposure",
+    "GPU or desktop graphics stack"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "G0 has recorded framebuffer-object:23001@1 backed by resource:27@1",
+      "G1 has recorded display-object:23101@1 bound to framebuffer-object:23001@1",
+      "G2 has recorded display-capability:23201@1 owned by store:14@3 with lease operation",
+      "G3 has recorded framebuffer-window-lease:23301@1 over the full 800x600 window"
+    ],
+    "command": {
+      "name": "record-framebuffer-mapping",
+      "framebuffer_mapping": "framebuffer-mapping:23401@1",
+      "owner_store": "store:14@3",
+      "framebuffer_window_lease": "framebuffer-window-lease:23301@1",
+      "display_capability": "display-capability:23201@1",
+      "display": "display-object:23101@1",
+      "framebuffer": "framebuffer-object:23001@1",
+      "map_handle": {
+        "slot": 3,
+        "generation": 1,
+        "tag": 84942916634178,
+        "mode": "handle-mode"
+      },
+      "window": {
+        "x": 0,
+        "y": 0,
+        "width": 800,
+        "height": 600,
+        "byte_offset": 0,
+        "byte_len": 1920000,
+        "access": "write"
+      },
+      "result": "active semantic framebuffer handle-mode mapping derived from an active window lease"
+    }
+  },
+  "events": [
+    {
+      "kind": "FramebufferMappingRecorded",
+      "source": "SemanticGraph::record_framebuffer_mapping_with_id",
+      "visible_as": "osctl framebuffer-mapping list --json",
+      "reason": "Framebuffer mapping is a store-local semantic handle derived from the active lease, not a raw pointer or hardware mapping"
+    }
+  ],
+  "expected": {
+    "views": {
+      "framebuffer-mapping": {
+        "id": 23401,
+        "generation": 1,
+        "state": "active",
+        "owner": {
+          "store": {
+            "kind": "store",
+            "id": 14,
+            "generation": 3
+          }
+        },
+        "references": {
+          "framebuffer_window_lease": {
+            "kind": "framebuffer-window-lease",
+            "id": 23301,
+            "generation": 1
+          },
+          "display_capability": {
+            "kind": "display-capability",
+            "id": 23201,
+            "generation": 1
+          },
+          "display": {
+            "kind": "display-object",
+            "id": 23101,
+            "generation": 1
+          },
+          "framebuffer": {
+            "kind": "framebuffer-object",
+            "id": 23001,
+            "generation": 1
+          },
+          "event": {
+            "id": 559
+          }
+        },
+        "map_handle": {
+          "slot": 3,
+          "generation": 1,
+          "tag": 84942916634178,
+          "mode": "handle-mode"
+        },
+        "window": {
+          "x": 0,
+          "y": 0,
+          "width": 800,
+          "height": 600,
+          "byte_offset": 0,
+          "byte_len": 1920000,
+          "access": "write"
+        },
+        "authority": {
+          "requires_framebuffer_window_lease": true,
+          "raw_pointer_exposed": false,
+          "raw_mapping_is_semantic_truth": false,
+          "pixel_write_allowed": false,
+          "flush_allowed": false,
+          "snapshot_barrier_must_release": true
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "framebuffer-mapping:23401@1",
+          "relation": "framebuffer-mapping->owner-store",
+          "to": "store:14@3",
+          "mode": "live"
+        },
+        {
+          "from": "framebuffer-mapping:23401@1",
+          "relation": "framebuffer-mapping->framebuffer-window-lease",
+          "to": "framebuffer-window-lease:23301@1",
+          "mode": "live"
+        },
+        {
+          "from": "framebuffer-mapping:23401@1",
+          "relation": "framebuffer-mapping->display-capability",
+          "to": "display-capability:23201@1",
+          "mode": "live"
+        },
+        {
+          "from": "framebuffer-mapping:23401@1",
+          "relation": "framebuffer-mapping->display-object",
+          "to": "display-object:23101@1",
+          "mode": "live"
+        },
+        {
+          "from": "framebuffer-mapping:23401@1",
+          "relation": "framebuffer-mapping->framebuffer-object",
+          "to": "framebuffer-object:23001@1",
+          "mode": "live"
+        },
+        {
+          "from": "framebuffer-mapping:23401@1",
+          "relation": "framebuffer-mapping->event",
+          "to": "event:559@1",
+          "mode": "historical"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "FramebufferMapping id/generation is a first-class ObjectRef",
+      "FramebufferMapping must reference an active FramebufferWindowLease with exact generation",
+      "FramebufferMapping must match the lease owner, window, byte range, access, display, and framebuffer refs",
+      "FramebufferMapping is handle-mode only and exposes no raw host pointer",
+      "pixel writes and flush remain disabled until later checkpoints"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "display_runtime_g4_framebuffer_mapping_records_handle_mode_mapping",
+      "display_runtime_g4_rejects_stale_lease_raw_mode_and_mismatched_window",
+      "display_runtime_g4_invariants_reject_lease_generation_leak",
+      "display_runtime_g4_contract_graph_rejects_missing_lease_edge",
+      "display_runtime_g4_contract_graph_rejects_mapping_lease_binding_drift",
+      "semantic_roots_reject_framebuffer_mapping_root_mismatch",
+      "framebuffer_mapping_view_v1_exposes_handle_mode_mapping_refs"
+    ],
+    "osctl_json_view": "framebuffer-mapping list --json",
+    "framebuffer_mapping": "framebuffer-mapping:23401@1",
+    "owner_store": "store:14@3",
+    "framebuffer_window_lease": "framebuffer-window-lease:23301@1",
+    "display_capability": "display-capability:23201@1",
+    "display_object": "display-object:23101@1",
+    "framebuffer_object": "framebuffer-object:23001@1",
+    "recorded_at_event": 559
+  }
+}

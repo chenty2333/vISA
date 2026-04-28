@@ -1601,6 +1601,24 @@ pub enum SemanticInvariantError {
     FramebufferWindowLeaseMissingEvent {
         framebuffer_window_lease: FramebufferWindowLeaseId,
     },
+    FramebufferMappingInvalid {
+        framebuffer_mapping: FramebufferMappingId,
+    },
+    FramebufferMappingMissingStore {
+        framebuffer_mapping: FramebufferMappingId,
+        store: StoreId,
+    },
+    FramebufferMappingMissingLease {
+        framebuffer_mapping: FramebufferMappingId,
+        framebuffer_window_lease: FramebufferWindowLeaseId,
+    },
+    FramebufferMappingDuplicateActive {
+        framebuffer_mapping: FramebufferMappingId,
+        framebuffer_window_lease: FramebufferWindowLeaseId,
+    },
+    FramebufferMappingMissingEvent {
+        framebuffer_mapping: FramebufferMappingId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

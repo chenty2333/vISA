@@ -88,6 +88,7 @@ pub struct ContractGraphSnapshot {
     pub display_objects: Vec<DisplayObjectRecord>,
     pub display_capabilities: Vec<DisplayCapabilityRecord>,
     pub framebuffer_window_leases: Vec<FramebufferWindowLeaseRecord>,
+    pub framebuffer_mappings: Vec<FramebufferMappingRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -195,6 +196,7 @@ impl ContractGraphValidator {
         Self::validate_display_objects(snapshot, &mut violations);
         Self::validate_display_capabilities(snapshot, &mut violations);
         Self::validate_framebuffer_window_leases(snapshot, &mut violations);
+        Self::validate_framebuffer_mappings(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -1185,6 +1187,117 @@ impl ContractGraphValidator {
                         from,
                         Some(framebuffer.object_ref()),
                         "framebuffer window lease byte window does not match framebuffer geometry or exceeds framebuffer object",
+                    ));
+                }
+            }
+        }
+    }
+
+    fn validate_framebuffer_mappings(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for mapping in &snapshot.framebuffer_mappings {
+            let from = mapping.object_ref();
+            if mapping.id == 0
+                || mapping.generation == 0
+                || mapping.owner_store_generation == 0
+                || mapping.framebuffer_window_lease_generation == 0
+                || mapping.map_handle_slot == 0
+                || mapping.map_handle_generation == 0
+                || mapping.map_handle_tag == 0
+                || mapping.width == 0
+                || mapping.height == 0
+                || mapping.byte_len == 0
+                || mapping.mode != "handle-mode"
+                || (mapping.access != "write" && mapping.access != "read")
+                || mapping.state != FramebufferMappingState::Active
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "framebuffer-mapping->contract",
+                    from,
+                    None,
+                    "framebuffer mapping requires exact refs, active handle-mode state, handle identity, and byte window",
+                ));
+                continue;
+            }
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-mapping->owner-store",
+                ContractObjectKind::Store,
+                mapping.owner_store,
+                mapping.owner_store_generation,
+                ContractEdgeMode::Live,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-mapping->framebuffer-window-lease",
+                ContractObjectKind::FramebufferWindowLease,
+                mapping.framebuffer_window_lease,
+                mapping.framebuffer_window_lease_generation,
+                ContractEdgeMode::Live,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-mapping->display-capability",
+                ContractObjectKind::DisplayCapability,
+                mapping.display_capability,
+                mapping.display_capability_generation,
+                ContractEdgeMode::Live,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-mapping->display-object",
+                ContractObjectKind::DisplayObject,
+                mapping.display,
+                mapping.display_generation,
+                ContractEdgeMode::Live,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-mapping->framebuffer-object",
+                ContractObjectKind::FramebufferObject,
+                mapping.framebuffer,
+                mapping.framebuffer_generation,
+                ContractEdgeMode::Live,
+            );
+            if let Some(lease) = snapshot.framebuffer_window_leases.iter().find(|lease| {
+                lease.id == mapping.framebuffer_window_lease
+                    && lease.generation == mapping.framebuffer_window_lease_generation
+            }) {
+                if lease.owner_store != mapping.owner_store
+                    || lease.owner_store_generation != mapping.owner_store_generation
+                    || lease.display_capability != mapping.display_capability
+                    || lease.display_capability_generation != mapping.display_capability_generation
+                    || lease.display != mapping.display
+                    || lease.display_generation != mapping.display_generation
+                    || lease.framebuffer != mapping.framebuffer
+                    || lease.framebuffer_generation != mapping.framebuffer_generation
+                    || lease.x != mapping.x
+                    || lease.y != mapping.y
+                    || lease.width != mapping.width
+                    || lease.height != mapping.height
+                    || lease.byte_offset != mapping.byte_offset
+                    || lease.byte_len != mapping.byte_len
+                    || lease.access != mapping.access
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "framebuffer-mapping->lease-binding",
+                        from,
+                        Some(lease.object_ref()),
+                        "framebuffer mapping does not match the active framebuffer window lease",
                     ));
                 }
             }
@@ -2374,6 +2487,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|lease| lease.id == id && lease.generation == generation)
                 .map(FramebufferWindowLeaseRecord::object_ref),
+            ContractObjectKind::FramebufferMapping => snapshot
+                .framebuffer_mappings
+                .iter()
+                .find(|mapping| mapping.id == id && mapping.generation == generation)
+                .map(FramebufferMappingRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2519,6 +2637,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|lease| lease.id == id)
                 .map(FramebufferWindowLeaseRecord::object_ref),
+            ContractObjectKind::FramebufferMapping => snapshot
+                .framebuffer_mappings
+                .iter()
+                .find(|mapping| mapping.id == id)
+                .map(FramebufferMappingRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2675,6 +2798,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::DisplayObject
                 | ContractObjectKind::DisplayCapability
                 | ContractObjectKind::FramebufferWindowLease
+                | ContractObjectKind::FramebufferMapping
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -2804,6 +2928,14 @@ impl ContractGraphValidator {
                 .and_then(|lease| {
                     (lease.state != FramebufferWindowLeaseState::Active)
                         .then_some("live edge references inactive framebuffer window lease")
+                }),
+            ContractObjectKind::FramebufferMapping => snapshot
+                .framebuffer_mappings
+                .iter()
+                .find(|mapping| mapping.id == object.id && mapping.generation == object.generation)
+                .and_then(|mapping| {
+                    (mapping.state != FramebufferMappingState::Active)
+                        .then_some("live edge references inactive framebuffer mapping")
                 }),
             _ => None,
         }

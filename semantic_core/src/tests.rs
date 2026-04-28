@@ -21333,6 +21333,296 @@ fn display_runtime_g3_contract_graph_rejects_mismatched_byte_window() {
     }));
 }
 
+fn g4_framebuffer_mapping_graph() -> (
+    SemanticGraph,
+    StoreId,
+    Generation,
+    FramebufferWindowLeaseId,
+    Generation,
+) {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        display_capability,
+        display_capability_generation,
+    ) = g3_framebuffer_window_lease_graph();
+    assert!(graph.record_framebuffer_window_lease_with_id(
+        23_301,
+        owner_store,
+        owner_store_generation,
+        display_capability,
+        display_capability_generation,
+        23_101,
+        1,
+        23_001,
+        1,
+        0,
+        0,
+        800,
+        600,
+        0,
+        1_920_000,
+        "write",
+        "g3 framebuffer window lease for g4",
+    ));
+    (graph, owner_store, owner_store_generation, 23_301, 1)
+}
+
+#[test]
+fn display_runtime_g4_framebuffer_mapping_records_handle_mode_mapping() {
+    let (mut graph, owner_store, owner_store_generation, lease, lease_generation) =
+        g4_framebuffer_mapping_graph();
+    let tag = 0x4d41505f4642;
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        6,
+        "display-runtime-g4",
+        SemanticCommand::RecordFramebufferMapping {
+            framebuffer_mapping: 23_401,
+            owner_store,
+            owner_store_generation,
+            framebuffer_window_lease: lease,
+            framebuffer_window_lease_generation: lease_generation,
+            map_handle_slot: 3,
+            map_handle_generation: 1,
+            map_handle_tag: tag,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+            byte_offset: 0,
+            byte_len: 1_920_000,
+            access: "write".to_string(),
+            mode: "handle-mode".to_string(),
+            note: "g4 framebuffer mapping".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.framebuffer_mapping_count(), 1);
+    assert_eq!(graph.active_framebuffer_mapping_count(), 1);
+    let mapping = &graph.framebuffer_mappings()[0];
+    assert_eq!(
+        mapping.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::FramebufferMapping, 23_401, 1)
+    );
+    assert_eq!(mapping.framebuffer_window_lease, lease);
+    assert_eq!(
+        mapping.framebuffer_window_lease_generation,
+        lease_generation
+    );
+    assert_eq!(mapping.map_handle_slot, 3);
+    assert_eq!(mapping.mode, "handle-mode");
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "FramebufferMappingRecorded framebuffer_mapping=23401 owner_store={owner_store}@{owner_store_generation} framebuffer_window_lease={lease}@{lease_generation} display_capability=23201@1 display=23101@1 framebuffer=23001@1 map_handle_slot=3 map_handle_generation=1 map_handle_tag={tag} window=0,0 800x600 byte_range=0+1920000 access=write mode=handle-mode state=active generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g4_rejects_stale_lease_raw_mode_and_mismatched_window() {
+    let (mut graph, owner_store, owner_store_generation, lease, lease_generation) =
+        g4_framebuffer_mapping_graph();
+
+    let stale_lease = graph.apply_envelope(CommandEnvelope::new(
+        6,
+        "display-runtime-g4",
+        SemanticCommand::RecordFramebufferMapping {
+            framebuffer_mapping: 23_402,
+            owner_store,
+            owner_store_generation,
+            framebuffer_window_lease: lease,
+            framebuffer_window_lease_generation: lease_generation + 1,
+            map_handle_slot: 3,
+            map_handle_generation: 1,
+            map_handle_tag: 0x4d41505f4642,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+            byte_offset: 0,
+            byte_len: 1_920_000,
+            access: "write".to_string(),
+            mode: "handle-mode".to_string(),
+            note: "g4 stale lease".to_string(),
+        },
+    ));
+    assert_eq!(stale_lease.status, CommandStatus::Rejected);
+
+    let raw_pointer_mode = graph.apply_envelope(CommandEnvelope::new(
+        7,
+        "display-runtime-g4",
+        SemanticCommand::RecordFramebufferMapping {
+            framebuffer_mapping: 23_403,
+            owner_store,
+            owner_store_generation,
+            framebuffer_window_lease: lease,
+            framebuffer_window_lease_generation: lease_generation,
+            map_handle_slot: 3,
+            map_handle_generation: 1,
+            map_handle_tag: 0x4d41505f4642,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+            byte_offset: 0,
+            byte_len: 1_920_000,
+            access: "write".to_string(),
+            mode: "raw-pointer".to_string(),
+            note: "g4 raw mode rejected".to_string(),
+        },
+    ));
+    assert_eq!(raw_pointer_mode.status, CommandStatus::Rejected);
+
+    let mismatched_window = graph.apply_envelope(CommandEnvelope::new(
+        8,
+        "display-runtime-g4",
+        SemanticCommand::RecordFramebufferMapping {
+            framebuffer_mapping: 23_404,
+            owner_store,
+            owner_store_generation,
+            framebuffer_window_lease: lease,
+            framebuffer_window_lease_generation: lease_generation,
+            map_handle_slot: 3,
+            map_handle_generation: 1,
+            map_handle_tag: 0x4d41505f4642,
+            x: 0,
+            y: 0,
+            width: 799,
+            height: 600,
+            byte_offset: 0,
+            byte_len: 1_920_000,
+            access: "write".to_string(),
+            mode: "handle-mode".to_string(),
+            note: "g4 mismatched window".to_string(),
+        },
+    ));
+    assert_eq!(mismatched_window.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn display_runtime_g4_invariants_reject_lease_generation_leak() {
+    let (mut graph, owner_store, owner_store_generation, lease, lease_generation) =
+        g4_framebuffer_mapping_graph();
+    assert!(graph.record_framebuffer_mapping_with_id(
+        23_405,
+        owner_store,
+        owner_store_generation,
+        lease,
+        lease_generation,
+        3,
+        1,
+        0x4d41505f4642,
+        0,
+        0,
+        800,
+        600,
+        0,
+        1_920_000,
+        "write",
+        "handle-mode",
+        "g4 invariant mapping",
+    ));
+    graph.corrupt_framebuffer_mapping_lease_generation_for_test(23_405, lease_generation + 1);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::FramebufferMappingMissingLease {
+            framebuffer_mapping: 23_405,
+            framebuffer_window_lease: lease,
+        })
+    );
+}
+
+#[test]
+fn display_runtime_g4_contract_graph_rejects_missing_lease_edge() {
+    let mapping = FramebufferMappingRecord {
+        id: 23_406,
+        owner_store: 1,
+        owner_store_generation: 1,
+        framebuffer_window_lease: 23_301,
+        framebuffer_window_lease_generation: 7,
+        display_capability: 23_201,
+        display_capability_generation: 1,
+        display: 23_101,
+        display_generation: 1,
+        framebuffer: 23_001,
+        framebuffer_generation: 1,
+        map_handle_slot: 3,
+        map_handle_generation: 1,
+        map_handle_tag: 0x4d41505f4642,
+        x: 0,
+        y: 0,
+        width: 16,
+        height: 16,
+        byte_offset: 0,
+        byte_len: 1024,
+        access: "write".to_string(),
+        mode: "handle-mode".to_string(),
+        generation: 1,
+        state: FramebufferMappingState::Active,
+        recorded_at_event: 1,
+        note: "g4 missing lease".to_string(),
+    };
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_mappings: Vec::from([mapping]),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-mapping->framebuffer-window-lease"
+            && violation.kind == ContractViolationKind::DanglingEdge
+    }));
+}
+
+#[test]
+fn display_runtime_g4_contract_graph_rejects_mapping_lease_binding_drift() {
+    let (mut graph, owner_store, owner_store_generation, lease, lease_generation) =
+        g4_framebuffer_mapping_graph();
+    assert!(graph.record_framebuffer_mapping_with_id(
+        23_407,
+        owner_store,
+        owner_store_generation,
+        lease,
+        lease_generation,
+        3,
+        1,
+        0x4d41505f4642,
+        0,
+        0,
+        800,
+        600,
+        0,
+        1_920_000,
+        "write",
+        "handle-mode",
+        "g4 contract graph mapping",
+    ));
+    let mut framebuffer_mappings = graph.framebuffer_mappings().to_vec();
+    framebuffer_mappings[0].width = 799;
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        display_capabilities: graph.display_capabilities().to_vec(),
+        framebuffer_window_leases: graph.framebuffer_window_leases().to_vec(),
+        framebuffer_mappings,
+        stores: graph.stores().to_vec(),
+        capabilities: graph.capabilities().records().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-mapping->lease-binding"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();
