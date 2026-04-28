@@ -26,11 +26,11 @@ use artifact_manifest::{
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    IntegratedDiskPreemptFaultManifest, IntegratedSimdMigrationManifest,
-    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    IntegratedDiskPreemptFaultManifest, IntegratedNetworkDiskIoManifest,
+    IntegratedSimdMigrationManifest, IntegratedSmpNetworkFaultManifest,
+    IntegratedSmpPreemptionCleanupManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -290,6 +290,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "integrated-simd-migration"
         | "simd-migration"
         | "integrated-vector-migration"
+        | "integrated-network-disk-io"
+        | "network-disk-io"
+        | "integrated-io-concurrency"
         | "device"
         | "device-object"
         | "queue"
@@ -638,7 +641,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -646,7 +649,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -954,6 +957,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         | "integrated-block-preempt-fault" => "integrated-disk-preempt-fault",
         "integrated-simd-migration" | "simd-migration" | "integrated-vector-migration" => {
             "integrated-simd-migration"
+        }
+        "integrated-network-disk-io" | "network-disk-io" | "integrated-io-concurrency" => {
+            "integrated-network-disk-io"
         }
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
@@ -2261,6 +2267,97 @@ fn integrated_simd_migration_view_v1(
             "uses_semantic_vector_state_refs": true,
             "real_vector_register_payload_migrated": false,
             "real_cross_hart_substrate_interrupt_executed": false,
+            "adapter_internal_state_is_not_semantic_truth": true,
+        },
+        "note": record.note,
+        "last_transition": {
+            "event": record.recorded_at_event,
+            "state": record.state,
+        },
+    })
+}
+
+fn integrated_network_disk_io_view_v1(
+    record: &IntegratedNetworkDiskIoManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "integrated-network-disk-io",
+        "id": record.id,
+        "generation": record.generation,
+        "state": record.state,
+        "owner": {
+            "network_owner_store": object_ref_json(
+                "store",
+                record.network_owner_store,
+                record.network_owner_store_generation,
+            ),
+            "packet_device": object_ref_json(
+                "packet-device-object",
+                record.packet_device,
+                record.packet_device_generation,
+            ),
+            "block_device": object_ref_json(
+                "block-device-object",
+                record.block_device,
+                record.block_device_generation,
+            ),
+        },
+        "references": {
+            "network_benchmark": object_ref_json(
+                "network-benchmark",
+                record.network_benchmark,
+                record.network_benchmark_generation,
+            ),
+            "block_benchmark": object_ref_json(
+                "block-benchmark",
+                record.block_benchmark,
+                record.block_benchmark_generation,
+            ),
+            "network_adapter": object_ref_json(
+                "network-stack-adapter",
+                record.network_adapter,
+                record.network_adapter_generation,
+            ),
+            "socket": object_ref_json(
+                "socket-object",
+                record.socket,
+                record.socket_generation,
+            ),
+            "block_backend": object_ref_manifest_json(&record.block_backend),
+            "block_request_queue": object_ref_json(
+                "block-request-queue",
+                record.block_request_queue,
+                record.block_request_queue_generation,
+            ),
+            "block_dma_buffer": object_ref_json(
+                "block-dma-buffer",
+                record.block_dma_buffer,
+                record.block_dma_buffer_generation,
+            ),
+            "event": {
+                "id": record.recorded_at_event,
+            },
+        },
+        "closure": {
+            "scenario": record.scenario,
+            "network_sample_packets": record.network_sample_packets,
+            "block_sample_requests": record.block_sample_requests,
+            "network_sample_bytes": record.network_sample_bytes,
+            "block_sample_bytes": record.block_sample_bytes,
+            "concurrent_window_nanos": record.concurrent_window_nanos,
+            "combined_throughput_bytes_per_sec": record.combined_throughput_bytes_per_sec,
+            "max_p99_latency_nanos": record.max_p99_latency_nanos,
+            "invariant_checks": record.invariant_checks,
+            "requires_recorded_network_benchmark": true,
+            "requires_recorded_block_benchmark": true,
+            "requires_exact_generation_refs": true,
+        },
+        "authority": {
+            "uses_semantic_network_benchmark": true,
+            "uses_semantic_block_benchmark": true,
+            "real_concurrent_hardware_io_executed": false,
+            "real_virtio_or_dma_execution": false,
             "adapter_internal_state_is_not_semantic_truth": true,
         },
         "note": record.note,
@@ -7959,6 +8056,14 @@ fn stable_views_for_kind(
                 .map(integrated_simd_migration_view_v1)
                 .collect())
         }
+        "integrated-network-disk-io" | "network-disk-io" | "integrated-io-concurrency" => {
+            Ok(package
+                .semantic
+                .integrated_network_disk_ios
+                .iter()
+                .map(integrated_network_disk_io_view_v1)
+                .collect())
+        }
         "device" | "device-object" => Ok(package
             .semantic
             .device_objects
@@ -9393,6 +9498,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "integrated-simd-migration",
         &package.semantic.roots.integrated_simd_migration_roots,
+    );
+    print_roots(
+        "integrated-network-disk-io",
+        &package.semantic.roots.integrated_network_disk_io_roots,
     );
     print_roots("device", &package.semantic.roots.device_object_roots);
     print_roots("queue", &package.semantic.roots.queue_object_roots);
@@ -11277,6 +11386,80 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 Some(record.recorded_at_event),
             ));
         }
+    }
+    for record in &package.semantic.integrated_network_disk_ios {
+        let from = object_ref_json("integrated-network-disk-io", record.id, record.generation);
+        for (label, kind, id, generation) in [
+            (
+                "integrated-network-benchmark",
+                "network-benchmark",
+                record.network_benchmark,
+                record.network_benchmark_generation,
+            ),
+            (
+                "integrated-block-benchmark",
+                "block-benchmark",
+                record.block_benchmark,
+                record.block_benchmark_generation,
+            ),
+            (
+                "integrated-network-owner-store",
+                "store",
+                record.network_owner_store,
+                record.network_owner_store_generation,
+            ),
+            (
+                "integrated-network-adapter",
+                "network-stack-adapter",
+                record.network_adapter,
+                record.network_adapter_generation,
+            ),
+            (
+                "integrated-packet-device",
+                "packet-device-object",
+                record.packet_device,
+                record.packet_device_generation,
+            ),
+            (
+                "integrated-socket",
+                "socket-object",
+                record.socket,
+                record.socket_generation,
+            ),
+            (
+                "integrated-block-device",
+                "block-device-object",
+                record.block_device,
+                record.block_device_generation,
+            ),
+            (
+                "integrated-block-request-queue",
+                "block-request-queue",
+                record.block_request_queue,
+                record.block_request_queue_generation,
+            ),
+            (
+                "integrated-block-dma-buffer",
+                "block-dma-buffer",
+                record.block_dma_buffer,
+                record.block_dma_buffer_generation,
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(kind, id, generation),
+                label,
+                "historical",
+                Some(record.recorded_at_event),
+            ));
+        }
+        edges.push(graph_edge(
+            from,
+            object_ref_manifest_json(&record.block_backend),
+            "integrated-block-backend",
+            "historical",
+            Some(record.recorded_at_event),
+        ));
     }
     for completion in &package.semantic.block_completion_objects {
         if completion.state != "recorded" {
@@ -16755,6 +16938,56 @@ fn inspect_package_object(
                 );
             }
         }
+        "integrated-network-disk-io" | "network-disk-io" | "integrated-io-concurrency" => {
+            println!(
+                "inspect integrated-network-disk-io package={} count={}",
+                package.package_id, package.semantic.integrated_network_disk_io_count
+            );
+            for record in &package.semantic.integrated_network_disk_ios {
+                let line = format!(
+                    "integrated-network-disk-io id={} scenario={} network_benchmark={}@{} block_benchmark={}@{} network_owner_store={}@{} network_adapter={}@{} packet_device={}@{} socket={}@{} block_backend={}:{}@{} block_device={}@{} block_request_queue={}@{} block_dma_buffer={}@{} network_bytes={} block_bytes={} window_nanos={} combined_throughput={} max_p99_latency={} invariants={} state={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.network_benchmark,
+                    record.network_benchmark_generation,
+                    record.block_benchmark,
+                    record.block_benchmark_generation,
+                    record.network_owner_store,
+                    record.network_owner_store_generation,
+                    record.network_adapter,
+                    record.network_adapter_generation,
+                    record.packet_device,
+                    record.packet_device_generation,
+                    record.socket,
+                    record.socket_generation,
+                    record.block_backend.kind,
+                    record.block_backend.id,
+                    record.block_backend.generation,
+                    record.block_device,
+                    record.block_device_generation,
+                    record.block_request_queue,
+                    record.block_request_queue_generation,
+                    record.block_dma_buffer,
+                    record.block_dma_buffer_generation,
+                    record.network_sample_bytes,
+                    record.block_sample_bytes,
+                    record.concurrent_window_nanos,
+                    record.combined_throughput_bytes_per_sec,
+                    record.max_p99_latency_nanos,
+                    record.invariant_checks,
+                    record.state,
+                    record.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.integrated_network_disk_ios.is_empty() {
+                print_roots_filtered(
+                    "integrated-network-disk-io",
+                    &package.semantic.roots.integrated_network_disk_io_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -17311,6 +17544,23 @@ fn inspect_package_object_json(
                     .len()
             }),
         ),
+        "integrated-network-disk-io" | "network-disk-io" | "integrated-io-concurrency" => (
+            "integrated-network-disk-io",
+            package.semantic.integrated_network_disk_io_count,
+            package
+                .semantic
+                .integrated_network_disk_ios
+                .iter()
+                .map(integrated_network_disk_io_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package
+                    .semantic
+                    .roots
+                    .integrated_network_disk_io_roots
+                    .len()
+            }),
+        ),
         "command" => (
             "command",
             package.semantic.command_result_count,
@@ -17821,6 +18071,9 @@ fn replay_until(
     }
     for integrated in &package.semantic.roots.integrated_simd_migration_roots {
         println!("replay integrated-simd-migration {integrated}");
+    }
+    for integrated in &package.semantic.roots.integrated_network_disk_io_roots {
+        println!("replay integrated-network-disk-io {integrated}");
     }
     for device in &package.semantic.roots.device_object_roots {
         println!("replay device {device}");
@@ -22398,6 +22651,142 @@ mod tests {
             && edge["from"]["kind"] == "integrated-simd-migration"
             && edge["relation"] == "integrated-activation-migration"
             && edge["to"]["kind"] == "activation-migration"
+            && edge["to"]["generation"] == 1));
+    }
+
+    #[test]
+    fn integrated_network_disk_io_view_v1_exposes_benchmark_refs() {
+        let view = integrated_network_disk_io_view_v1(&IntegratedNetworkDiskIoManifest {
+            id: 26_401,
+            scenario: "x4-network-disk-concurrent-io".to_owned(),
+            network_benchmark: 10_067,
+            network_benchmark_generation: 1,
+            block_benchmark: 20_132,
+            block_benchmark_generation: 1,
+            network_owner_store: 9,
+            network_owner_store_generation: 3,
+            network_adapter: 10_025,
+            network_adapter_generation: 1,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            socket: 10_031,
+            socket_generation: 1,
+            block_backend: ContractObjectRefManifest {
+                kind: "fake-block-backend-object".to_owned(),
+                id: 20_026,
+                generation: 1,
+            },
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_request_queue: 20_053,
+            block_request_queue_generation: 1,
+            block_dma_buffer: 20_061,
+            block_dma_buffer_generation: 1,
+            network_sample_bytes: 6_000,
+            block_sample_bytes: 8_192,
+            network_sample_packets: 3,
+            block_sample_requests: 2,
+            concurrent_window_nanos: 120_000,
+            combined_throughput_bytes_per_sec: 118_266_666,
+            max_p99_latency_nanos: 48_000,
+            invariant_checks: 6,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 574,
+            note: "x4 integrated IO concurrency".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "integrated-network-disk-io");
+        assert_eq!(view["owner"]["network_owner_store"]["generation"], 3);
+        assert_eq!(view["references"]["network_benchmark"]["id"], 10_067);
+        assert_eq!(view["references"]["block_benchmark"]["id"], 20_132);
+        assert_eq!(
+            view["references"]["block_backend"]["kind"],
+            "fake-block-backend-object"
+        );
+        assert_eq!(view["references"]["block_dma_buffer"]["id"], 20_061);
+        assert_eq!(view["closure"]["network_sample_bytes"], 6_000);
+        assert_eq!(view["closure"]["block_sample_bytes"], 8_192);
+        assert_eq!(view["closure"]["concurrent_window_nanos"], 120_000);
+        assert_eq!(
+            view["closure"]["combined_throughput_bytes_per_sec"],
+            118_266_666
+        );
+        assert_eq!(
+            view["authority"]["adapter_internal_state_is_not_semantic_truth"],
+            true
+        );
+        assert_eq!(
+            view["authority"]["real_concurrent_hardware_io_executed"],
+            false
+        );
+    }
+
+    #[test]
+    fn integrated_network_disk_io_graph_edges_are_history_only() {
+        let mut package = minimal_graph_package();
+        package.semantic.integrated_network_disk_io_count = 1;
+        package
+            .semantic
+            .integrated_network_disk_ios
+            .push(IntegratedNetworkDiskIoManifest {
+                id: 26_401,
+                scenario: "x4-network-disk-concurrent-io".to_owned(),
+                network_benchmark: 10_067,
+                network_benchmark_generation: 1,
+                block_benchmark: 20_132,
+                block_benchmark_generation: 1,
+                network_owner_store: 9,
+                network_owner_store_generation: 3,
+                network_adapter: 10_025,
+                network_adapter_generation: 1,
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                socket: 10_031,
+                socket_generation: 1,
+                block_backend: ContractObjectRefManifest {
+                    kind: "fake-block-backend-object".to_owned(),
+                    id: 20_026,
+                    generation: 1,
+                },
+                block_device: 20_002,
+                block_device_generation: 1,
+                block_request_queue: 20_053,
+                block_request_queue_generation: 1,
+                block_dma_buffer: 20_061,
+                block_dma_buffer_generation: 1,
+                network_sample_bytes: 6_000,
+                block_sample_bytes: 8_192,
+                network_sample_packets: 3,
+                block_sample_requests: 2,
+                concurrent_window_nanos: 120_000,
+                combined_throughput_bytes_per_sec: 118_266_666,
+                max_p99_latency_nanos: 48_000,
+                invariant_checks: 6,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 574,
+                note: "x4 integrated IO concurrency".to_owned(),
+            });
+
+        let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
+        assert!(
+            !live
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "integrated-network-disk-io")
+        );
+
+        let history = graph_edges_for_package(&package, GraphEdgeMode::History);
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-network-disk-io"
+            && edge["relation"] == "integrated-network-benchmark"
+            && edge["to"]["kind"] == "network-benchmark"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-network-disk-io"
+            && edge["relation"] == "integrated-block-dma-buffer"
+            && edge["to"]["kind"] == "block-dma-buffer"
             && edge["to"]["generation"] == 1));
     }
 

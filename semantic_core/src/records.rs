@@ -847,6 +847,53 @@ impl IntegratedSimdMigrationRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntegratedNetworkDiskIoRecord {
+    pub id: IntegratedNetworkDiskIoId,
+    pub scenario: String,
+    pub network_benchmark: NetworkBenchmarkId,
+    pub network_benchmark_generation: Generation,
+    pub block_benchmark: BlockBenchmarkId,
+    pub block_benchmark_generation: Generation,
+    pub network_owner_store: StoreId,
+    pub network_owner_store_generation: Generation,
+    pub network_adapter: NetworkStackAdapterId,
+    pub network_adapter_generation: Generation,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub socket: SocketObjectId,
+    pub socket_generation: Generation,
+    pub block_backend: ContractObjectRef,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub block_request_queue: BlockRequestQueueId,
+    pub block_request_queue_generation: Generation,
+    pub block_dma_buffer: BlockDmaBufferId,
+    pub block_dma_buffer_generation: Generation,
+    pub network_sample_bytes: u64,
+    pub block_sample_bytes: u64,
+    pub network_sample_packets: u32,
+    pub block_sample_requests: u32,
+    pub concurrent_window_nanos: u64,
+    pub combined_throughput_bytes_per_sec: u64,
+    pub max_p99_latency_nanos: u64,
+    pub invariant_checks: u32,
+    pub generation: Generation,
+    pub state: IntegratedNetworkDiskIoState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl IntegratedNetworkDiskIoRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::IntegratedNetworkDiskIo,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceObjectRecord {
     pub id: DeviceObjectId,
     pub name: String,

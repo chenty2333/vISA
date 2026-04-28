@@ -1,0 +1,179 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "X4-integrated-network-disk-concurrent-io",
+  "name": "golden_x4_network_disk_concurrent_io",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real concurrent hardware IO execution",
+    "real virtio or DMA execution",
+    "adapter-internal state as semantic truth",
+    "new third-party network or filesystem dependency",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "N19 produced network-benchmark:10067@1 with recorded packet throughput and latency evidence",
+      "B22 produced block-benchmark:20132@1 with recorded fake block IOPS and latency evidence",
+      "network benchmark carries exact PacketDevice, NetworkStackAdapter, Socket, and owner Store generations",
+      "block benchmark carries exact FakeBlockBackend, BlockDevice, BlockRequestQueue, and BlockDmaBuffer generations"
+    ],
+    "command": {
+      "name": "record-integrated-network-disk-io",
+      "integrated": "integrated-network-disk-io:26401@1",
+      "network_benchmark": "network-benchmark:10067@1",
+      "block_benchmark": "block-benchmark:20132@1",
+      "packet_device": "packet-device-object:10002@1",
+      "block_device": "block-device-object:20002@1",
+      "block_backend": "fake-block-backend-object:20026@1",
+      "result": "semantic evidence ties recorded network and disk IO windows without claiming real concurrent hardware execution"
+    }
+  },
+  "events": [
+    {
+      "kind": "IntegratedNetworkDiskIoRecorded",
+      "source": "SemanticGraph::record_integrated_network_disk_io_with_id",
+      "visible_as": "osctl integrated-network-disk-io list --json",
+      "event": 574
+    }
+  ],
+  "expected": {
+    "views": {
+      "integrated-network-disk-io": {
+        "id": 26401,
+        "generation": 1,
+        "state": "recorded",
+        "owner": {
+          "network_owner_store": {
+            "kind": "store",
+            "id": 9,
+            "generation": 3
+          },
+          "packet_device": {
+            "kind": "packet-device-object",
+            "id": 10002,
+            "generation": 1
+          },
+          "block_device": {
+            "kind": "block-device-object",
+            "id": 20002,
+            "generation": 1
+          }
+        },
+        "references": {
+          "network_benchmark": {
+            "kind": "network-benchmark",
+            "id": 10067,
+            "generation": 1
+          },
+          "block_benchmark": {
+            "kind": "block-benchmark",
+            "id": 20132,
+            "generation": 1
+          },
+          "network_adapter": {
+            "kind": "network-stack-adapter",
+            "id": 10025,
+            "generation": 1
+          },
+          "socket": {
+            "kind": "socket-object",
+            "id": 10031,
+            "generation": 1
+          },
+          "block_backend": {
+            "kind": "fake-block-backend-object",
+            "id": 20026,
+            "generation": 1
+          },
+          "block_request_queue": {
+            "kind": "block-request-queue",
+            "id": 20053,
+            "generation": 1
+          },
+          "block_dma_buffer": {
+            "kind": "block-dma-buffer",
+            "id": 20061,
+            "generation": 1
+          }
+        },
+        "closure": {
+          "scenario": "x4-network-disk-concurrent-io",
+          "network_sample_packets": 3,
+          "block_sample_requests": 2,
+          "network_sample_bytes": 6000,
+          "block_sample_bytes": 8192,
+          "concurrent_window_nanos": 120000,
+          "combined_throughput_bytes_per_sec": 118266666,
+          "max_p99_latency_nanos": 48000,
+          "invariant_checks": 6,
+          "requires_recorded_network_benchmark": true,
+          "requires_recorded_block_benchmark": true,
+          "requires_exact_generation_refs": true
+        },
+        "authority": {
+          "uses_semantic_network_benchmark": true,
+          "uses_semantic_block_benchmark": true,
+          "real_concurrent_hardware_io_executed": false,
+          "real_virtio_or_dma_execution": false,
+          "adapter_internal_state_is_not_semantic_truth": true
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "integrated-network-disk-io:26401@1",
+          "relation": "integrated-network-benchmark",
+          "to": "network-benchmark:10067@1",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-network-disk-io:26401@1",
+          "relation": "integrated-block-benchmark",
+          "to": "block-benchmark:20132@1",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-network-disk-io:26401@1",
+          "relation": "integrated-block-dma-buffer",
+          "to": "block-dma-buffer:20061@1",
+          "mode": "historical"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "Integrated network/disk IO evidence is a first-class ObjectRef",
+      "network and block benchmark references carry exact generations",
+      "derived concurrent window is max(network measured nanos, block measured nanos)",
+      "combined throughput is derived from semantic benchmark bytes and concurrent window",
+      "network packet/device/socket and block device/queue/DMA refs are generation-exact",
+      "history graph uses Historical edges only",
+      "adapter-internal state is not semantic truth"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "integrated_runtime_x4_records_network_disk_concurrent_io",
+      "integrated_runtime_x4_rejects_missing_or_stale_benchmark_refs",
+      "integrated_runtime_x4_contract_graph_rejects_block_dma_generation_drift",
+      "semantic_roots_reject_integrated_network_disk_io_root_mismatch",
+      "integrated_network_disk_io_view_v1_exposes_benchmark_refs",
+      "integrated_network_disk_io_graph_edges_are_history_only"
+    ],
+    "osctl_json_view": "integrated-network-disk-io list --json",
+    "integrated_network_disk_io": "integrated-network-disk-io:26401@1",
+    "network_benchmark": "network-benchmark:10067@1",
+    "block_benchmark": "block-benchmark:20132@1",
+    "event": 574
+  }
+}

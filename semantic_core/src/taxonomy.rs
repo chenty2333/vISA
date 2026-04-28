@@ -469,6 +469,21 @@ impl IntegratedSimdMigrationState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntegratedNetworkDiskIoState {
+    Recorded,
+    Rejected,
+}
+
+impl IntegratedNetworkDiskIoState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceObjectState {
     Registered,
     Removed,

@@ -101,9 +101,14 @@ pub struct ContractGraphSnapshot {
     pub integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
     pub integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultRecord>,
     pub integrated_simd_migrations: Vec<IntegratedSimdMigrationRecord>,
+    pub integrated_network_disk_ios: Vec<IntegratedNetworkDiskIoRecord>,
+    pub network_benchmarks: Vec<NetworkBenchmarkRecord>,
+    pub block_benchmarks: Vec<BlockBenchmarkRecord>,
+    pub fake_block_backends: Vec<FakeBlockBackendObjectRecord>,
     pub network_driver_cleanups: Vec<NetworkDriverCleanupRecord>,
     pub packet_device_objects: Vec<PacketDeviceObjectRecord>,
     pub network_stack_adapters: Vec<NetworkStackAdapterRecord>,
+    pub socket_objects: Vec<SocketObjectRecord>,
     pub virtio_net_backends: Vec<VirtioNetBackendObjectRecord>,
     pub io_cleanups: Vec<IoCleanupRecord>,
     pub block_pending_io_policies: Vec<BlockPendingIoPolicyRecord>,
@@ -111,6 +116,8 @@ pub struct ContractGraphSnapshot {
     pub block_request_objects: Vec<BlockRequestObjectRecord>,
     pub block_device_objects: Vec<BlockDeviceObjectRecord>,
     pub block_range_objects: Vec<BlockRangeObjectRecord>,
+    pub block_request_queues: Vec<BlockRequestQueueRecord>,
+    pub block_dma_buffers: Vec<BlockDmaBufferRecord>,
     pub harts: Vec<HartRecord>,
     pub runnable_queues: Vec<RunnableQueueRecord>,
     pub activation_contexts: Vec<ActivationContextRecord>,
@@ -241,6 +248,7 @@ impl ContractGraphValidator {
         Self::validate_integrated_smp_network_faults(snapshot, &mut violations);
         Self::validate_integrated_disk_preempt_faults(snapshot, &mut violations);
         Self::validate_integrated_simd_migrations(snapshot, &mut violations);
+        Self::validate_integrated_network_disk_ios(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -3537,6 +3545,181 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_integrated_network_disk_ios(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for record in &snapshot.integrated_network_disk_ios {
+            let from = record.object_ref();
+            if record.id == 0
+                || record.generation == 0
+                || record.scenario.is_empty()
+                || record.state != IntegratedNetworkDiskIoState::Recorded
+                || record.network_benchmark_generation == 0
+                || record.block_benchmark_generation == 0
+                || record.network_owner_store_generation == 0
+                || record.network_adapter_generation == 0
+                || record.packet_device_generation == 0
+                || record.socket_generation == 0
+                || record.block_backend.generation == 0
+                || record.block_device_generation == 0
+                || record.block_request_queue_generation == 0
+                || record.block_dma_buffer_generation == 0
+                || record.network_sample_bytes == 0
+                || record.block_sample_bytes == 0
+                || record.network_sample_packets == 0
+                || record.block_sample_requests == 0
+                || record.concurrent_window_nanos == 0
+                || record.combined_throughput_bytes_per_sec == 0
+                || record.max_p99_latency_nanos == 0
+                || record.invariant_checks == 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "integrated-network-disk-io->contract",
+                    from,
+                    None,
+                    "integrated network/disk IO requires exact benchmark refs and measured window evidence",
+                ));
+                continue;
+            }
+            for (label, kind, id, generation) in [
+                (
+                    "integrated-network-disk-io->network-benchmark",
+                    ContractObjectKind::NetworkBenchmark,
+                    record.network_benchmark,
+                    record.network_benchmark_generation,
+                ),
+                (
+                    "integrated-network-disk-io->block-benchmark",
+                    ContractObjectKind::BlockBenchmark,
+                    record.block_benchmark,
+                    record.block_benchmark_generation,
+                ),
+                (
+                    "integrated-network-disk-io->network-owner-store",
+                    ContractObjectKind::Store,
+                    record.network_owner_store,
+                    record.network_owner_store_generation,
+                ),
+                (
+                    "integrated-network-disk-io->network-adapter",
+                    ContractObjectKind::NetworkStackAdapter,
+                    record.network_adapter,
+                    record.network_adapter_generation,
+                ),
+                (
+                    "integrated-network-disk-io->packet-device",
+                    ContractObjectKind::PacketDeviceObject,
+                    record.packet_device,
+                    record.packet_device_generation,
+                ),
+                (
+                    "integrated-network-disk-io->socket",
+                    ContractObjectKind::SocketObject,
+                    record.socket,
+                    record.socket_generation,
+                ),
+                (
+                    "integrated-network-disk-io->block-device",
+                    ContractObjectKind::BlockDeviceObject,
+                    record.block_device,
+                    record.block_device_generation,
+                ),
+                (
+                    "integrated-network-disk-io->block-request-queue",
+                    ContractObjectKind::BlockRequestQueue,
+                    record.block_request_queue,
+                    record.block_request_queue_generation,
+                ),
+                (
+                    "integrated-network-disk-io->block-dma-buffer",
+                    ContractObjectKind::BlockDmaBuffer,
+                    record.block_dma_buffer,
+                    record.block_dma_buffer_generation,
+                ),
+            ] {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    kind,
+                    id,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "integrated-network-disk-io->block-backend",
+                record.block_backend.kind,
+                record.block_backend.id,
+                record.block_backend.generation,
+                ContractEdgeMode::Historical,
+            );
+            let network = snapshot.network_benchmarks.iter().find(|benchmark| {
+                benchmark.id == record.network_benchmark
+                    && benchmark.generation == record.network_benchmark_generation
+            });
+            let block = snapshot.block_benchmarks.iter().find(|benchmark| {
+                benchmark.id == record.block_benchmark
+                    && benchmark.generation == record.block_benchmark_generation
+            });
+            if let (Some(network), Some(block)) = (network, block) {
+                let total_bytes = network
+                    .sample_bytes
+                    .checked_add(block.sample_bytes)
+                    .unwrap_or_default();
+                let expected_window = network.measured_nanos.max(block.measured_nanos);
+                let expected_throughput = if expected_window == 0 {
+                    0
+                } else {
+                    total_bytes
+                        .checked_mul(1_000_000_000)
+                        .map(|scaled| scaled / expected_window)
+                        .unwrap_or_default()
+                };
+                if network.state != NetworkBenchmarkState::Recorded
+                    || block.state != BlockBenchmarkState::Recorded
+                    || network.owner_store != record.network_owner_store
+                    || network.owner_store_generation != record.network_owner_store_generation
+                    || network.adapter != record.network_adapter
+                    || network.adapter_generation != record.network_adapter_generation
+                    || network.packet_device != record.packet_device
+                    || network.packet_device_generation != record.packet_device_generation
+                    || network.socket != record.socket
+                    || network.socket_generation != record.socket_generation
+                    || block.backend != record.block_backend
+                    || block.block_device != record.block_device
+                    || block.block_device_generation != record.block_device_generation
+                    || block.request_queue != record.block_request_queue
+                    || block.request_queue_generation != record.block_request_queue_generation
+                    || block.block_dma_buffer != record.block_dma_buffer
+                    || block.block_dma_buffer_generation != record.block_dma_buffer_generation
+                    || network.sample_bytes != record.network_sample_bytes
+                    || block.sample_bytes != record.block_sample_bytes
+                    || network.sample_packets != record.network_sample_packets
+                    || block.sample_requests != record.block_sample_requests
+                    || record.concurrent_window_nanos != expected_window
+                    || record.combined_throughput_bytes_per_sec != expected_throughput
+                    || record.max_p99_latency_nanos
+                        != network.p99_latency_nanos.max(block.p99_latency_nanos)
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-network-disk-io->benchmark-binding",
+                        from,
+                        Some(network.object_ref()),
+                        "integrated network/disk IO record does not match benchmark evidence",
+                    ));
+                }
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -4815,6 +4998,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id && record.generation == generation)
                 .map(IntegratedSimdMigrationRecord::object_ref),
+            ContractObjectKind::IntegratedNetworkDiskIo => snapshot
+                .integrated_network_disk_ios
+                .iter()
+                .find(|record| record.id == id && record.generation == generation)
+                .map(IntegratedNetworkDiskIoRecord::object_ref),
             ContractObjectKind::NetworkDriverCleanup => snapshot
                 .network_driver_cleanups
                 .iter()
@@ -4832,6 +5020,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|adapter| adapter.id == id && adapter.generation == generation)
                 .map(NetworkStackAdapterRecord::object_ref),
+            ContractObjectKind::SocketObject => snapshot
+                .socket_objects
+                .iter()
+                .find(|socket| socket.id == id && socket.generation == generation)
+                .map(SocketObjectRecord::object_ref),
             ContractObjectKind::VirtioNetBackendObject => snapshot
                 .virtio_net_backends
                 .iter()
@@ -4867,6 +5060,31 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|range| range.id == id && range.generation == generation)
                 .map(BlockRangeObjectRecord::object_ref),
+            ContractObjectKind::BlockRequestQueue => snapshot
+                .block_request_queues
+                .iter()
+                .find(|queue| queue.id == id && queue.generation == generation)
+                .map(BlockRequestQueueRecord::object_ref),
+            ContractObjectKind::BlockDmaBuffer => snapshot
+                .block_dma_buffers
+                .iter()
+                .find(|buffer| buffer.id == id && buffer.generation == generation)
+                .map(BlockDmaBufferRecord::object_ref),
+            ContractObjectKind::FakeBlockBackendObject => snapshot
+                .fake_block_backends
+                .iter()
+                .find(|backend| backend.id == id && backend.generation == generation)
+                .map(FakeBlockBackendObjectRecord::object_ref),
+            ContractObjectKind::NetworkBenchmark => snapshot
+                .network_benchmarks
+                .iter()
+                .find(|benchmark| benchmark.id == id && benchmark.generation == generation)
+                .map(NetworkBenchmarkRecord::object_ref),
+            ContractObjectKind::BlockBenchmark => snapshot
+                .block_benchmarks
+                .iter()
+                .find(|benchmark| benchmark.id == id && benchmark.generation == generation)
+                .map(BlockBenchmarkRecord::object_ref),
             ContractObjectKind::Hart => snapshot
                 .harts
                 .iter()
@@ -5127,6 +5345,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id)
                 .map(IntegratedSimdMigrationRecord::object_ref),
+            ContractObjectKind::IntegratedNetworkDiskIo => snapshot
+                .integrated_network_disk_ios
+                .iter()
+                .find(|record| record.id == id)
+                .map(IntegratedNetworkDiskIoRecord::object_ref),
             ContractObjectKind::NetworkDriverCleanup => snapshot
                 .network_driver_cleanups
                 .iter()
@@ -5142,6 +5365,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|adapter| adapter.id == id)
                 .map(NetworkStackAdapterRecord::object_ref),
+            ContractObjectKind::SocketObject => snapshot
+                .socket_objects
+                .iter()
+                .find(|socket| socket.id == id)
+                .map(SocketObjectRecord::object_ref),
             ContractObjectKind::VirtioNetBackendObject => snapshot
                 .virtio_net_backends
                 .iter()
@@ -5177,6 +5405,31 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|range| range.id == id)
                 .map(BlockRangeObjectRecord::object_ref),
+            ContractObjectKind::BlockRequestQueue => snapshot
+                .block_request_queues
+                .iter()
+                .find(|queue| queue.id == id)
+                .map(BlockRequestQueueRecord::object_ref),
+            ContractObjectKind::BlockDmaBuffer => snapshot
+                .block_dma_buffers
+                .iter()
+                .find(|buffer| buffer.id == id)
+                .map(BlockDmaBufferRecord::object_ref),
+            ContractObjectKind::FakeBlockBackendObject => snapshot
+                .fake_block_backends
+                .iter()
+                .find(|backend| backend.id == id)
+                .map(FakeBlockBackendObjectRecord::object_ref),
+            ContractObjectKind::NetworkBenchmark => snapshot
+                .network_benchmarks
+                .iter()
+                .find(|benchmark| benchmark.id == id)
+                .map(NetworkBenchmarkRecord::object_ref),
+            ContractObjectKind::BlockBenchmark => snapshot
+                .block_benchmarks
+                .iter()
+                .find(|benchmark| benchmark.id == id)
+                .map(BlockBenchmarkRecord::object_ref),
             ContractObjectKind::Hart => snapshot
                 .harts
                 .iter()
@@ -5273,26 +5526,21 @@ impl ContractGraphValidator {
             | ContractObjectKind::PacketQueueObject
             | ContractObjectKind::PacketDescriptorObject
             | ContractObjectKind::FakeNetBackendObject
-            | ContractObjectKind::FakeBlockBackendObject
             | ContractObjectKind::VirtioBlkBackendObject
             | ContractObjectKind::NetworkRxInterrupt
             | ContractObjectKind::NetworkRxWaitResolution
             | ContractObjectKind::NetworkTxCapabilityGate
             | ContractObjectKind::NetworkTxCompletion
-            | ContractObjectKind::SocketObject
             | ContractObjectKind::EndpointObject
             | ContractObjectKind::SocketOperation
             | ContractObjectKind::SocketWait
             | ContractObjectKind::NetworkBackpressure
             | ContractObjectKind::NetworkGenerationAudit
             | ContractObjectKind::NetworkFaultInjection
-            | ContractObjectKind::NetworkBenchmark
             | ContractObjectKind::NetworkRecoveryBenchmark
             | ContractObjectKind::BlockCompletionObject
             | ContractObjectKind::BlockReadPath
             | ContractObjectKind::BlockWritePath
-            | ContractObjectKind::BlockRequestQueue
-            | ContractObjectKind::BlockDmaBuffer
             | ContractObjectKind::BlockPageObject
             | ContractObjectKind::BufferCacheObject
             | ContractObjectKind::FileObject
@@ -5303,7 +5551,6 @@ impl ContractGraphValidator {
             | ContractObjectKind::FsWait
             | ContractObjectKind::BlockDriverCleanup
             | ContractObjectKind::BlockRequestGenerationAudit
-            | ContractObjectKind::BlockBenchmark
             | ContractObjectKind::BlockRecoveryBenchmark
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::PreemptionLatencySample
@@ -5346,6 +5593,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::IntegratedSmpNetworkFault
                 | ContractObjectKind::IntegratedDiskPreemptFault
                 | ContractObjectKind::IntegratedSimdMigration
+                | ContractObjectKind::IntegratedNetworkDiskIo
                 | ContractObjectKind::BlockPendingIoPolicy
                 | ContractObjectKind::BlockWait
                 | ContractObjectKind::BlockRequestObject
@@ -5589,6 +5837,62 @@ impl ContractGraphValidator {
                 .and_then(|record| {
                     (record.state != IntegratedSimdMigrationState::Recorded)
                         .then_some("live edge references unrecorded integrated SIMD migration evidence")
+                }),
+            ContractObjectKind::IntegratedNetworkDiskIo => snapshot
+                .integrated_network_disk_ios
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != IntegratedNetworkDiskIoState::Recorded)
+                        .then_some("live edge references unrecorded integrated network/disk IO evidence")
+                }),
+            ContractObjectKind::SocketObject => snapshot
+                .socket_objects
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != SocketObjectState::Created)
+                        .then_some("live edge references inactive socket object")
+                }),
+            ContractObjectKind::BlockRequestQueue => snapshot
+                .block_request_queues
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != BlockRequestQueueState::Active)
+                        .then_some("live edge references inactive block request queue")
+                }),
+            ContractObjectKind::BlockDmaBuffer => snapshot
+                .block_dma_buffers
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != BlockDmaBufferState::Bound)
+                        .then_some("live edge references inactive block DMA buffer")
+                }),
+            ContractObjectKind::NetworkBenchmark => snapshot
+                .network_benchmarks
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != NetworkBenchmarkState::Recorded)
+                        .then_some("live edge references unrecorded network benchmark evidence")
+                }),
+            ContractObjectKind::BlockBenchmark => snapshot
+                .block_benchmarks
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != BlockBenchmarkState::Recorded)
+                        .then_some("live edge references unrecorded block benchmark evidence")
+                }),
+            ContractObjectKind::FakeBlockBackendObject => snapshot
+                .fake_block_backends
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != FakeBlockBackendObjectState::Bound)
+                        .then_some("live edge references inactive fake block backend evidence")
                 }),
             _ => None,
         }

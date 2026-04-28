@@ -30,20 +30,20 @@ use artifact_manifest::{
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    IntegratedDiskPreemptFaultManifest, IntegratedSimdMigrationManifest,
-    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    IntegratedDiskPreemptFaultManifest, IntegratedNetworkDiskIoManifest,
+    IntegratedSimdMigrationManifest, IntegratedSmpNetworkFaultManifest,
+    IntegratedSmpPreemptionCleanupManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8398,6 +8398,7 @@ fn build_target_executor_v1(
     run_integrated_smp_network_fault_harness(semantic)?;
     run_integrated_disk_preempt_fault_harness(semantic)?;
     run_integrated_simd_migration_harness(semantic)?;
+    run_integrated_network_disk_io_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8493,16 +8494,23 @@ fn build_target_executor_v1(
         integrated_smp_network_faults: semantic.integrated_smp_network_faults().to_vec(),
         integrated_disk_preempt_faults: semantic.integrated_disk_preempt_faults().to_vec(),
         integrated_simd_migrations: semantic.integrated_simd_migrations().to_vec(),
+        integrated_network_disk_ios: semantic.integrated_network_disk_ios().to_vec(),
+        network_benchmarks: semantic.network_benchmarks().to_vec(),
         network_driver_cleanups: semantic.network_driver_cleanups().to_vec(),
         packet_device_objects: semantic.packet_device_objects().to_vec(),
         network_stack_adapters: semantic.network_stack_adapters().to_vec(),
+        socket_objects: semantic.socket_objects().to_vec(),
         virtio_net_backends: semantic.virtio_net_backends().to_vec(),
+        fake_block_backends: semantic.fake_block_backends().to_vec(),
+        block_benchmarks: semantic.block_benchmarks().to_vec(),
         io_cleanups: semantic.io_cleanups().to_vec(),
         block_pending_io_policies: semantic.block_pending_io_policies().to_vec(),
         block_waits: semantic.block_waits().to_vec(),
         block_request_objects: semantic.block_request_objects().to_vec(),
         block_device_objects: semantic.block_device_objects().to_vec(),
         block_range_objects: semantic.block_range_objects().to_vec(),
+        block_request_queues: semantic.block_request_queues().to_vec(),
+        block_dma_buffers: semantic.block_dma_buffers().to_vec(),
         harts: semantic.harts().to_vec(),
         runnable_queues: semantic.runnable_queues().to_vec(),
         activation_contexts: semantic.activation_contexts().to_vec(),
@@ -10878,6 +10886,36 @@ fn run_integrated_simd_migration_harness(
     Ok(())
 }
 
+fn run_integrated_network_disk_io_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        100_005,
+        "integrated-runtime-x4",
+        SemanticCommand::RecordIntegratedNetworkDiskIo {
+            integrated: 26_401,
+            scenario: "x4-network-disk-concurrent-io".to_owned(),
+            network_benchmark: 10_067,
+            network_benchmark_generation: 1,
+            block_benchmark: 20_132,
+            block_benchmark_generation: 1,
+            invariant_checks: 6,
+            note: "x4 records network and disk concurrent IO semantic evidence".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "integrated runtime x4 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -10948,6 +10986,20 @@ fn contract_graph_store_records(
         if let Some(store) = semantic.stores().iter().find(|store| {
             store.id == display_capability.owner_store
                 && store.generation == display_capability.owner_store_generation
+        }) {
+            stores.push(store.clone());
+        }
+    }
+    for integrated in semantic.integrated_network_disk_ios() {
+        if stores.iter().any(|store| {
+            store.id == integrated.network_owner_store
+                && store.generation == integrated.network_owner_store_generation
+        }) {
+            continue;
+        }
+        if let Some(store) = semantic.stores().iter().find(|store| {
+            store.id == integrated.network_owner_store
+                && store.generation == integrated.network_owner_store_generation
         }) {
             stores.push(store.clone());
         }
@@ -11678,6 +11730,7 @@ fn demo_migration_package(
             integrated_smp_network_fault_count: semantic.integrated_smp_network_fault_count(),
             integrated_disk_preempt_fault_count: semantic.integrated_disk_preempt_fault_count(),
             integrated_simd_migration_count: semantic.integrated_simd_migration_count(),
+            integrated_network_disk_io_count: semantic.integrated_network_disk_io_count(),
             device_object_count: semantic.device_object_count(),
             queue_object_count: semantic.queue_object_count(),
             descriptor_object_count: semantic.descriptor_object_count(),
@@ -11909,6 +11962,11 @@ fn demo_migration_package(
                 .integrated_simd_migrations()
                 .iter()
                 .map(integrated_simd_migration_manifest)
+                .collect(),
+            integrated_network_disk_ios: semantic
+                .integrated_network_disk_ios()
+                .iter()
+                .map(integrated_network_disk_io_manifest)
                 .collect(),
             device_objects: semantic
                 .device_objects()
@@ -12892,6 +12950,30 @@ fn semantic_roots(
                     record.source_hart_generation,
                     record.target_hart,
                     record.target_hart_generation,
+                    record.generation
+                )
+            })
+            .collect(),
+        integrated_network_disk_io_roots: semantic
+            .integrated_network_disk_ios()
+            .iter()
+            .map(|record| {
+                format!(
+                    "integrated-network-disk-io id={} scenario={} network_benchmark={}@{} block_benchmark={}@{} packet_device={}@{} block_device={}@{} network_bytes={} block_bytes={} window_nanos={} combined_throughput={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.network_benchmark,
+                    record.network_benchmark_generation,
+                    record.block_benchmark,
+                    record.block_benchmark_generation,
+                    record.packet_device,
+                    record.packet_device_generation,
+                    record.block_device,
+                    record.block_device_generation,
+                    record.network_sample_bytes,
+                    record.block_sample_bytes,
+                    record.concurrent_window_nanos,
+                    record.combined_throughput_bytes_per_sec,
                     record.generation
                 )
             })
@@ -16157,6 +16239,46 @@ fn integrated_simd_migration_manifest(
         simd_abi: record.simd_abi.clone(),
         vector_register_count: record.vector_register_count,
         vector_register_bits: record.vector_register_bits,
+        invariant_checks: record.invariant_checks,
+        generation: record.generation,
+        state: record.state.as_str().to_owned(),
+        recorded_at_event: record.recorded_at_event,
+        note: record.note.clone(),
+    }
+}
+
+fn integrated_network_disk_io_manifest(
+    record: &semantic_core::IntegratedNetworkDiskIoRecord,
+) -> IntegratedNetworkDiskIoManifest {
+    IntegratedNetworkDiskIoManifest {
+        id: record.id,
+        scenario: record.scenario.clone(),
+        network_benchmark: record.network_benchmark,
+        network_benchmark_generation: record.network_benchmark_generation,
+        block_benchmark: record.block_benchmark,
+        block_benchmark_generation: record.block_benchmark_generation,
+        network_owner_store: record.network_owner_store,
+        network_owner_store_generation: record.network_owner_store_generation,
+        network_adapter: record.network_adapter,
+        network_adapter_generation: record.network_adapter_generation,
+        packet_device: record.packet_device,
+        packet_device_generation: record.packet_device_generation,
+        socket: record.socket,
+        socket_generation: record.socket_generation,
+        block_backend: contract_object_ref_manifest(record.block_backend),
+        block_device: record.block_device,
+        block_device_generation: record.block_device_generation,
+        block_request_queue: record.block_request_queue,
+        block_request_queue_generation: record.block_request_queue_generation,
+        block_dma_buffer: record.block_dma_buffer,
+        block_dma_buffer_generation: record.block_dma_buffer_generation,
+        network_sample_bytes: record.network_sample_bytes,
+        block_sample_bytes: record.block_sample_bytes,
+        network_sample_packets: record.network_sample_packets,
+        block_sample_requests: record.block_sample_requests,
+        concurrent_window_nanos: record.concurrent_window_nanos,
+        combined_throughput_bytes_per_sec: record.combined_throughput_bytes_per_sec,
+        max_p99_latency_nanos: record.max_p99_latency_nanos,
         invariant_checks: record.invariant_checks,
         generation: record.generation,
         state: record.state.as_str().to_owned(),

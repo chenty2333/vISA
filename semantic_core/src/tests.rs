@@ -26155,6 +26155,362 @@ fn integrated_runtime_x3_contract_graph_rejects_context_binding_drift() {
     }));
 }
 
+fn add_x4_block_benchmark_evidence(graph: &mut SemanticGraph) {
+    let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:x4-blk9");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        1823,
+        "fake-block9",
+        "block-device",
+        resource,
+        resource_generation,
+        "fake-block-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-block-v1",
+        "x4 backing device",
+    ));
+    assert!(graph.record_block_device_object_with_id(
+        1824,
+        "blk9",
+        1823,
+        1,
+        512,
+        4096,
+        false,
+        128,
+        "x4 block device",
+    ));
+    assert!(graph.record_block_range_object_with_id(1825, 1824, 1, 128, 8, "x4 block range"));
+    assert!(graph.record_block_request_object_with_id(
+        1826,
+        1824,
+        1,
+        1825,
+        1,
+        BlockRequestOperation::Read,
+        1,
+        "x4 completed read request",
+    ));
+    assert!(graph.record_block_completion_object_with_id(
+        1827,
+        1826,
+        1,
+        1,
+        4096,
+        BlockCompletionStatus::Success,
+        "x4 read completion",
+    ));
+    assert!(graph.record_block_request_object_with_id(
+        1828,
+        1824,
+        1,
+        1825,
+        1,
+        BlockRequestOperation::Write,
+        2,
+        "x4 completed write request",
+    ));
+    assert!(graph.record_fake_block_backend_object_with_id(
+        1829,
+        "fake-block9",
+        1824,
+        1,
+        "service_core",
+        "fake-block-v1",
+        512,
+        4096,
+        false,
+        128,
+        0x766d_6f73_626c_6b39,
+        "x4 fake block backend",
+    ));
+    assert!(graph.record_block_completion_object_with_id(
+        1830,
+        1828,
+        1,
+        2,
+        4096,
+        BlockCompletionStatus::Success,
+        "x4 write completion",
+    ));
+    assert!(graph.record_queue_object_with_id(
+        1831,
+        "fake-block9-submit",
+        QueueObjectRole::Submission,
+        0,
+        8,
+        1823,
+        1,
+        "x4 block submission queue",
+    ));
+    assert!(graph.record_descriptor_object_with_id(
+        1832,
+        1831,
+        1,
+        0,
+        DescriptorObjectAccess::ReadWrite,
+        4096,
+        "x4 block dma descriptor",
+    ));
+    let dma_resource = graph.register_resource(ResourceKind::DmaBuffer, None, "dma:x4-block9-buf0");
+    let dma_resource_generation = graph.resource_handle(dma_resource).unwrap().generation;
+    assert!(graph.record_dma_buffer_object_with_id(
+        1833,
+        1832,
+        1,
+        dma_resource,
+        dma_resource_generation,
+        DmaBufferObjectAccess::ReadWrite,
+        4096,
+        "x4 block dma buffer",
+    ));
+    let backend = ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1);
+    let read_digest = SemanticGraph::expected_block_read_digest_v1(
+        0x766d_6f73_626c_6b39,
+        1824,
+        1,
+        1825,
+        1,
+        128,
+        8,
+        1,
+        4096,
+    );
+    let write_digest = SemanticGraph::expected_block_write_payload_digest_v1(
+        0x766d_6f73_626c_6b39,
+        1824,
+        1,
+        1825,
+        1,
+        128,
+        8,
+        2,
+        4096,
+    );
+    assert!(graph.record_block_read_path_with_id(
+        1846,
+        backend,
+        1826,
+        1,
+        1827,
+        1,
+        read_digest,
+        "x4 benchmark read path",
+    ));
+    assert!(graph.record_block_write_path_with_id(
+        1847,
+        backend,
+        1828,
+        1,
+        1830,
+        1,
+        write_digest,
+        "x4 benchmark write path",
+    ));
+    assert!(graph.record_block_request_queue_with_id(
+        1848,
+        backend,
+        1824,
+        1,
+        4,
+        &[
+            BlockRequestQueueEntryRef::completed(1826, 1, 1827, 1),
+            BlockRequestQueueEntryRef::completed(1828, 1, 1830, 1),
+        ],
+        "x4 benchmark completed queue",
+    ));
+    assert!(graph.record_block_dma_buffer_with_id(
+        1849,
+        backend,
+        1828,
+        1,
+        1833,
+        1,
+        b10_expected_digest(DmaBufferObjectAccess::ReadWrite),
+        "x4 benchmark dma-backed write",
+    ));
+}
+
+fn x4_network_disk_concurrent_io_graph() -> SemanticGraph {
+    let (mut graph, connected_endpoint) = setup_n19_network_benchmark_graph();
+    assert!(graph.record_network_benchmark_with_id(
+        1614,
+        "host-validation-network-throughput-latency",
+        1575,
+        1,
+        1541,
+        1,
+        1545,
+        1,
+        1544,
+        1,
+        1572,
+        1,
+        1613,
+        1,
+        connected_endpoint,
+        1,
+        Some(1596),
+        Some(1),
+        3,
+        6000,
+        1,
+        1,
+        1,
+        120_000,
+        250_000,
+        18_000,
+        48_000,
+        "x4 network throughput latency benchmark",
+    ));
+    add_x4_block_benchmark_evidence(&mut graph);
+    assert!(graph.record_block_benchmark_with_id(
+        1850,
+        "fake block read/write benchmark",
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1),
+        1824,
+        1,
+        1825,
+        1,
+        1846,
+        1,
+        1847,
+        1,
+        1848,
+        1,
+        1849,
+        1,
+        2,
+        8192,
+        1,
+        1,
+        2,
+        40_000,
+        80_000,
+        18_000,
+        35_000,
+        "x4 block IOPS latency benchmark",
+    ));
+    graph
+}
+
+#[test]
+fn integrated_runtime_x4_records_network_disk_concurrent_io() {
+    let mut graph = x4_network_disk_concurrent_io_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "x4-test",
+        SemanticCommand::RecordIntegratedNetworkDiskIo {
+            integrated: 701,
+            scenario: "x4-network-disk-concurrent-io".to_string(),
+            network_benchmark: 1614,
+            network_benchmark_generation: 1,
+            block_benchmark: 1850,
+            block_benchmark_generation: 1,
+            invariant_checks: 6,
+            note: "integrate network and disk concurrent IO benchmark evidence".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    assert_eq!(graph.integrated_network_disk_io_count(), 1);
+    let record = &graph.integrated_network_disk_ios()[0];
+    assert_eq!(record.id, 701);
+    assert_eq!(record.network_benchmark, 1614);
+    assert_eq!(record.block_benchmark, 1850);
+    assert_eq!(record.network_sample_bytes, 6000);
+    assert_eq!(record.block_sample_bytes, 8192);
+    assert_eq!(record.concurrent_window_nanos, 120_000);
+    assert_eq!(record.combined_throughput_bytes_per_sec, 118_266_666);
+    assert_eq!(record.max_p99_latency_nanos, 48_000);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "IntegratedNetworkDiskIoRecorded integrated=701 scenario=x4-network-disk-concurrent-io network_benchmark=1614@1 block_benchmark=1850@1 network_owner_store=2@2 packet_device=1541@1 block_device=1824@1 network_bytes=6000 block_bytes=8192 window_nanos=120000 combined_throughput=118266666 max_p99_latency=48000 invariant_checks=6 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn integrated_runtime_x4_rejects_missing_or_stale_benchmark_refs() {
+    let missing = SemanticGraph::new().apply_envelope(CommandEnvelope::new(
+        1,
+        "x4-test",
+        SemanticCommand::RecordIntegratedNetworkDiskIo {
+            integrated: 701,
+            scenario: "x4-network-disk-concurrent-io".to_string(),
+            network_benchmark: 1614,
+            network_benchmark_generation: 1,
+            block_benchmark: 1850,
+            block_benchmark_generation: 1,
+            invariant_checks: 6,
+            note: "missing evidence rejects".to_string(),
+        },
+    ));
+    assert_eq!(missing.status, CommandStatus::Rejected);
+    assert_eq!(
+        missing.violations,
+        vec!["integrated network/disk IO missing network benchmark evidence".to_string()]
+    );
+
+    let stale = x4_network_disk_concurrent_io_graph().apply_envelope(CommandEnvelope::new(
+        2,
+        "x4-test",
+        SemanticCommand::RecordIntegratedNetworkDiskIo {
+            integrated: 701,
+            scenario: "x4-network-disk-concurrent-io".to_string(),
+            network_benchmark: 1614,
+            network_benchmark_generation: 1,
+            block_benchmark: 1850,
+            block_benchmark_generation: 2,
+            invariant_checks: 6,
+            note: "stale block benchmark rejects".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale.violations,
+        vec!["integrated network/disk IO missing block benchmark evidence".to_string()]
+    );
+}
+
+#[test]
+fn integrated_runtime_x4_contract_graph_rejects_block_dma_generation_drift() {
+    let mut graph = x4_network_disk_concurrent_io_graph();
+    assert!(graph.record_integrated_network_disk_io_with_id(
+        701,
+        "x4-network-disk-concurrent-io",
+        1614,
+        1,
+        1850,
+        1,
+        6,
+        "integrated network/disk IO",
+    ));
+    let mut integrated = graph.integrated_network_disk_ios().to_vec();
+    integrated[0].block_dma_buffer_generation = 99;
+    let snapshot = ContractGraphSnapshot {
+        integrated_network_disk_ios: integrated,
+        network_benchmarks: graph.network_benchmarks().to_vec(),
+        block_benchmarks: graph.block_benchmarks().to_vec(),
+        stores: graph.stores().to_vec(),
+        network_stack_adapters: graph.network_stack_adapters().to_vec(),
+        packet_device_objects: graph.packet_device_objects().to_vec(),
+        socket_objects: graph.socket_objects().to_vec(),
+        fake_block_backends: graph.fake_block_backends().to_vec(),
+        block_device_objects: graph.block_device_objects().to_vec(),
+        block_request_queues: graph.block_request_queues().to_vec(),
+        block_dma_buffers: graph.block_dma_buffers().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "integrated-network-disk-io->block-dma-buffer"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

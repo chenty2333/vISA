@@ -818,6 +818,16 @@ pub enum SemanticInvariantError {
     IntegratedSimdMigrationMissingEvent {
         integrated: IntegratedSimdMigrationId,
     },
+    IntegratedNetworkDiskIoInvalid {
+        integrated: IntegratedNetworkDiskIoId,
+    },
+    IntegratedNetworkDiskIoMissingEvidence {
+        integrated: IntegratedNetworkDiskIoId,
+        evidence: &'static str,
+    },
+    IntegratedNetworkDiskIoMissingEvent {
+        integrated: IntegratedNetworkDiskIoId,
+    },
     DeviceObjectInvalid {
         device: DeviceObjectId,
     },

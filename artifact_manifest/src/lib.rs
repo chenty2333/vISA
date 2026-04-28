@@ -273,6 +273,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_simd_migration_count: usize,
     #[serde(default)]
+    pub integrated_network_disk_io_count: usize,
+    #[serde(default)]
     pub device_object_count: usize,
     #[serde(default)]
     pub queue_object_count: usize,
@@ -549,6 +551,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_simd_migrations: Vec<IntegratedSimdMigrationManifest>,
     #[serde(default)]
+    pub integrated_network_disk_ios: Vec<IntegratedNetworkDiskIoManifest>,
+    #[serde(default)]
     pub device_objects: Vec<DeviceObjectManifest>,
     #[serde(default)]
     pub queue_objects: Vec<QueueObjectManifest>,
@@ -804,6 +808,8 @@ pub struct SemanticRootSetManifest {
     pub integrated_disk_preempt_fault_roots: Vec<String>,
     #[serde(default)]
     pub integrated_simd_migration_roots: Vec<String>,
+    #[serde(default)]
+    pub integrated_network_disk_io_roots: Vec<String>,
     #[serde(default)]
     pub device_object_roots: Vec<String>,
     #[serde(default)]
@@ -1736,6 +1742,43 @@ pub struct IntegratedSimdMigrationManifest {
     pub simd_abi: String,
     pub vector_register_count: u16,
     pub vector_register_bits: u16,
+    pub invariant_checks: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IntegratedNetworkDiskIoManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub network_benchmark: u64,
+    pub network_benchmark_generation: u64,
+    pub block_benchmark: u64,
+    pub block_benchmark_generation: u64,
+    pub network_owner_store: u64,
+    pub network_owner_store_generation: u64,
+    pub network_adapter: u64,
+    pub network_adapter_generation: u64,
+    pub packet_device: u64,
+    pub packet_device_generation: u64,
+    pub socket: u64,
+    pub socket_generation: u64,
+    pub block_backend: ContractObjectRefManifest,
+    pub block_device: u64,
+    pub block_device_generation: u64,
+    pub block_request_queue: u64,
+    pub block_request_queue_generation: u64,
+    pub block_dma_buffer: u64,
+    pub block_dma_buffer_generation: u64,
+    pub network_sample_bytes: u64,
+    pub block_sample_bytes: u64,
+    pub network_sample_packets: u32,
+    pub block_sample_requests: u32,
+    pub concurrent_window_nanos: u64,
+    pub combined_throughput_bytes_per_sec: u64,
+    pub max_p99_latency_nanos: u64,
     pub invariant_checks: u32,
     pub generation: u64,
     pub state: String,

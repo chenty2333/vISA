@@ -90,6 +90,7 @@ pub enum ObjectKind {
     IntegratedSmpNetworkFault,
     IntegratedDiskPreemptFault,
     IntegratedSimdMigration,
+    IntegratedNetworkDiskIo,
     DeviceObject,
     QueueObject,
     DescriptorObject,
@@ -221,6 +222,7 @@ impl ObjectKind {
             Self::IntegratedSmpNetworkFault => "integrated-smp-network-fault",
             Self::IntegratedDiskPreemptFault => "integrated-disk-preempt-fault",
             Self::IntegratedSimdMigration => "integrated-simd-migration",
+            Self::IntegratedNetworkDiskIo => "integrated-network-disk-io",
             Self::DeviceObject => "device-object",
             Self::QueueObject => "queue-object",
             Self::DescriptorObject => "descriptor-object",
@@ -523,6 +525,10 @@ typed_ref!(
 typed_ref!(
     IntegratedSimdMigrationRef,
     ObjectKind::IntegratedSimdMigration
+);
+typed_ref!(
+    IntegratedNetworkDiskIoRef,
+    ObjectKind::IntegratedNetworkDiskIo
 );
 typed_ref!(DeviceObjectRef, ObjectKind::DeviceObject);
 typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
@@ -1936,6 +1942,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "integrated simd migration root/count mismatch",
         ));
     }
+    if roots.integrated_network_disk_io_roots.len()
+        != package.semantic.integrated_network_disk_io_count
+        || package.semantic.integrated_network_disk_ios.len()
+            != package.semantic.integrated_network_disk_io_count
+    {
+        return Err(ContractError::new(
+            "integrated network disk io root/count mismatch",
+        ));
+    }
     if roots.device_object_roots.len() != package.semantic.device_object_count
         || package.semantic.device_objects.len() != package.semantic.device_object_count
     {
@@ -2984,6 +2999,7 @@ mod tests {
                 integrated_smp_network_fault_count: 0,
                 integrated_disk_preempt_fault_count: 0,
                 integrated_simd_migration_count: 0,
+                integrated_network_disk_io_count: 0,
                 device_object_count: 0,
                 queue_object_count: 0,
                 descriptor_object_count: 0,
@@ -3124,6 +3140,7 @@ mod tests {
                 integrated_smp_network_faults: Vec::new(),
                 integrated_disk_preempt_faults: Vec::new(),
                 integrated_simd_migrations: Vec::new(),
+                integrated_network_disk_ios: Vec::new(),
                 device_objects: Vec::new(),
                 queue_objects: Vec::new(),
                 descriptor_objects: Vec::new(),
@@ -4113,6 +4130,59 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "integrated simd migration root/count mismatch"
+        );
+    }
+
+    #[test]
+    fn semantic_roots_reject_integrated_network_disk_io_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.integrated_network_disk_io_count = 1;
+        package.semantic.integrated_network_disk_ios.push(
+            artifact_manifest::IntegratedNetworkDiskIoManifest {
+                id: 26_401,
+                scenario: "x4-network-disk-concurrent-io".to_owned(),
+                network_benchmark: 10_067,
+                network_benchmark_generation: 1,
+                block_benchmark: 20_132,
+                block_benchmark_generation: 1,
+                network_owner_store: 9,
+                network_owner_store_generation: 3,
+                network_adapter: 10_025,
+                network_adapter_generation: 1,
+                packet_device: 10_002,
+                packet_device_generation: 1,
+                socket: 10_031,
+                socket_generation: 1,
+                block_backend: artifact_manifest::ContractObjectRefManifest {
+                    kind: "fake-block-backend-object".to_owned(),
+                    id: 20_026,
+                    generation: 1,
+                },
+                block_device: 20_002,
+                block_device_generation: 1,
+                block_request_queue: 20_053,
+                block_request_queue_generation: 1,
+                block_dma_buffer: 20_061,
+                block_dma_buffer_generation: 1,
+                network_sample_bytes: 6_000,
+                block_sample_bytes: 8_192,
+                network_sample_packets: 3,
+                block_sample_requests: 2,
+                concurrent_window_nanos: 120_000,
+                combined_throughput_bytes_per_sec: 118_266_666,
+                max_p99_latency_nanos: 48_000,
+                invariant_checks: 6,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 574,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "integrated network disk io root/count mismatch"
         );
     }
 
@@ -7349,6 +7419,9 @@ mod tests {
         let integrated_simd_migration =
             ObjectRef::new(ObjectKind::IntegratedSimdMigration, 20, 1).unwrap();
         assert!(IntegratedSimdMigrationRef::try_from_ref(integrated_simd_migration).is_ok());
+        let integrated_network_disk_io =
+            ObjectRef::new(ObjectKind::IntegratedNetworkDiskIo, 21, 1).unwrap();
+        assert!(IntegratedNetworkDiskIoRef::try_from_ref(integrated_network_disk_io).is_ok());
         let device_object = ObjectRef::new(ObjectKind::DeviceObject, 17, 1).unwrap();
         assert!(DeviceObjectRef::try_from_ref(device_object).is_ok());
         let packet_device_object = ObjectRef::new(ObjectKind::PacketDeviceObject, 30, 1).unwrap();
