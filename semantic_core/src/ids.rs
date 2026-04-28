@@ -93,6 +93,7 @@ pub type DisplayEventLogId = u64;
 pub type DisplayCleanupId = u64;
 pub type DisplaySnapshotBarrierId = u64;
 pub type DisplayPanicLastFrameId = u64;
+pub type FramebufferBenchmarkId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

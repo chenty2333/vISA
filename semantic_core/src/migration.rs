@@ -1753,6 +1753,20 @@ pub enum SemanticInvariantError {
     DisplayPanicLastFrameMissingEvent {
         panic_last_frame: DisplayPanicLastFrameId,
     },
+    FramebufferBenchmarkInvalid {
+        benchmark: FramebufferBenchmarkId,
+    },
+    FramebufferBenchmarkMissingTarget {
+        benchmark: FramebufferBenchmarkId,
+        target: ContractObjectRef,
+    },
+    FramebufferBenchmarkMetricMismatch {
+        benchmark: FramebufferBenchmarkId,
+    },
+    FramebufferBenchmarkMissingEvent {
+        benchmark: FramebufferBenchmarkId,
+        event: EventId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

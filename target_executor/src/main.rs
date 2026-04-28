@@ -26,21 +26,22 @@ use artifact_manifest::{
     DisplaySnapshotBarrierManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
     EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
     FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
-    FileObjectManifest, FramebufferDirtyRegionManifest, FramebufferFlushRegionManifest,
-    FramebufferMappingManifest, FramebufferObjectManifest, FramebufferWindowLeaseManifest,
-    FramebufferWriteManifest, FsWaitManifest, GuestStateManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    FileObjectManifest, FramebufferBenchmarkManifest, FramebufferDirtyRegionManifest,
+    FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
+    FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8390,6 +8391,7 @@ fn build_target_executor_v1(
     run_display_cleanup_harness(semantic)?;
     run_display_snapshot_barrier_harness(semantic)?;
     run_display_panic_last_frame_harness(semantic)?;
+    run_framebuffer_benchmark_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8478,6 +8480,7 @@ fn build_target_executor_v1(
         display_cleanups: semantic.display_cleanups().to_vec(),
         display_snapshot_barriers: semantic.display_snapshot_barriers().to_vec(),
         display_panic_last_frames: semantic.display_panic_last_frames().to_vec(),
+        framebuffer_benchmarks: semantic.framebuffer_benchmarks().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: contract_stores,
@@ -10634,6 +10637,80 @@ fn run_display_panic_last_frame_harness(
     Ok(())
 }
 
+fn run_framebuffer_benchmark_harness(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let barrier = semantic
+        .display_snapshot_barriers()
+        .iter()
+        .find(|record| record.id == 24_001)
+        .cloned()
+        .ok_or("display runtime g12 requires g10 display snapshot barrier evidence")?;
+    let event_log = semantic
+        .display_event_logs()
+        .iter()
+        .find(|record| record.id == 23_801)
+        .cloned()
+        .ok_or("display runtime g12 requires g8 display event-log evidence")?;
+    let write = semantic
+        .framebuffer_writes()
+        .iter()
+        .find(|record| record.id == 23_501)
+        .cloned()
+        .ok_or("display runtime g12 requires g5 framebuffer write evidence")?;
+    let flush = semantic
+        .framebuffer_flush_regions()
+        .iter()
+        .find(|record| record.id == 23_601)
+        .cloned()
+        .ok_or("display runtime g12 requires g6 framebuffer flush evidence")?;
+    let sample_frames = 1;
+    let sample_bytes = flush.byte_len;
+    let frame_area_pixels = u64::from(flush.width) * u64::from(flush.height);
+    let write_nanos = 40_000;
+    let flush_nanos = 60_000;
+    let measured_nanos = write_nanos + flush_nanos;
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_032,
+        "display-runtime-g12",
+        SemanticCommand::RecordFramebufferBenchmark {
+            benchmark: 25_101,
+            scenario: "display-g12-single-flush".to_owned(),
+            owner_store: barrier.owner_store,
+            owner_store_generation: barrier.owner_store_generation,
+            display_capability: write.display_capability,
+            display_capability_generation: write.display_capability_generation,
+            framebuffer_write: write.id,
+            framebuffer_write_generation: write.generation,
+            framebuffer_flush_region: flush.id,
+            framebuffer_flush_region_generation: flush.generation,
+            display_event_log: event_log.id,
+            display_event_log_generation: event_log.generation,
+            display_snapshot_barrier: barrier.id,
+            display_snapshot_barrier_generation: barrier.generation,
+            sample_frames,
+            sample_bytes,
+            frame_area_pixels,
+            write_nanos,
+            flush_nanos,
+            measured_nanos,
+            budget_nanos: 200_000,
+            p50_latency_nanos: measured_nanos,
+            p99_latency_nanos: measured_nanos,
+            note: "g12 records semantic framebuffer write/flush benchmark evidence".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g12 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11480,6 +11557,7 @@ fn demo_migration_package(
             display_cleanup_count: semantic.display_cleanup_count(),
             display_snapshot_barrier_count: semantic.display_snapshot_barrier_count(),
             display_panic_last_frame_count: semantic.display_panic_last_frame_count(),
+            framebuffer_benchmark_count: semantic.framebuffer_benchmark_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11982,6 +12060,11 @@ fn demo_migration_package(
                 .display_panic_last_frames()
                 .iter()
                 .map(display_panic_last_frame_manifest)
+                .collect(),
+            framebuffer_benchmarks: semantic
+                .framebuffer_benchmarks()
+                .iter()
+                .map(framebuffer_benchmark_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -14409,6 +14492,44 @@ fn semantic_roots(
                     frame.raw_framebuffer_bytes_exported,
                     frame.state.as_str(),
                     frame.generation
+                )
+            })
+            .collect(),
+        framebuffer_benchmark_roots: semantic
+            .framebuffer_benchmarks()
+            .iter()
+            .map(|benchmark| {
+                format!(
+                    "framebuffer-benchmark id={} scenario={} owner_store={}@{} display={}@{} framebuffer={}@{} display_capability={}@{} framebuffer_write={}@{} framebuffer_flush_region={}@{} display_event_log={}@{} display_snapshot_barrier={}@{} sample_frames={} sample_bytes={} frame_area_pixels={} measured_nanos={} budget_nanos={} throughput_bytes_per_sec={} flushes_per_sec_milli={} p50_latency_nanos={} p99_latency_nanos={} state={} generation={}",
+                    benchmark.id,
+                    benchmark.scenario,
+                    benchmark.owner_store,
+                    benchmark.owner_store_generation,
+                    benchmark.display,
+                    benchmark.display_generation,
+                    benchmark.framebuffer,
+                    benchmark.framebuffer_generation,
+                    benchmark.display_capability,
+                    benchmark.display_capability_generation,
+                    benchmark.framebuffer_write,
+                    benchmark.framebuffer_write_generation,
+                    benchmark.framebuffer_flush_region,
+                    benchmark.framebuffer_flush_region_generation,
+                    benchmark.display_event_log,
+                    benchmark.display_event_log_generation,
+                    benchmark.display_snapshot_barrier,
+                    benchmark.display_snapshot_barrier_generation,
+                    benchmark.sample_frames,
+                    benchmark.sample_bytes,
+                    benchmark.frame_area_pixels,
+                    benchmark.measured_nanos,
+                    benchmark.budget_nanos,
+                    benchmark.throughput_bytes_per_sec,
+                    benchmark.flushes_per_sec_milli,
+                    benchmark.p50_latency_nanos,
+                    benchmark.p99_latency_nanos,
+                    benchmark.state.as_str(),
+                    benchmark.generation
                 )
             })
             .collect(),
@@ -17640,6 +17761,46 @@ fn display_panic_last_frame_manifest(
         state: frame.state.as_str().to_owned(),
         recorded_at_event: frame.recorded_at_event,
         note: frame.note.clone(),
+    }
+}
+
+fn framebuffer_benchmark_manifest(
+    benchmark: &semantic_core::FramebufferBenchmarkRecord,
+) -> FramebufferBenchmarkManifest {
+    FramebufferBenchmarkManifest {
+        id: benchmark.id,
+        scenario: benchmark.scenario.clone(),
+        owner_store: benchmark.owner_store,
+        owner_store_generation: benchmark.owner_store_generation,
+        display: benchmark.display,
+        display_generation: benchmark.display_generation,
+        framebuffer: benchmark.framebuffer,
+        framebuffer_generation: benchmark.framebuffer_generation,
+        display_capability: benchmark.display_capability,
+        display_capability_generation: benchmark.display_capability_generation,
+        framebuffer_write: benchmark.framebuffer_write,
+        framebuffer_write_generation: benchmark.framebuffer_write_generation,
+        framebuffer_flush_region: benchmark.framebuffer_flush_region,
+        framebuffer_flush_region_generation: benchmark.framebuffer_flush_region_generation,
+        display_event_log: benchmark.display_event_log,
+        display_event_log_generation: benchmark.display_event_log_generation,
+        display_snapshot_barrier: benchmark.display_snapshot_barrier,
+        display_snapshot_barrier_generation: benchmark.display_snapshot_barrier_generation,
+        sample_frames: benchmark.sample_frames,
+        sample_bytes: benchmark.sample_bytes,
+        frame_area_pixels: benchmark.frame_area_pixels,
+        write_nanos: benchmark.write_nanos,
+        flush_nanos: benchmark.flush_nanos,
+        measured_nanos: benchmark.measured_nanos,
+        budget_nanos: benchmark.budget_nanos,
+        throughput_bytes_per_sec: benchmark.throughput_bytes_per_sec,
+        flushes_per_sec_milli: benchmark.flushes_per_sec_milli,
+        p50_latency_nanos: benchmark.p50_latency_nanos,
+        p99_latency_nanos: benchmark.p99_latency_nanos,
+        generation: benchmark.generation,
+        state: benchmark.state.as_str().to_owned(),
+        recorded_at_event: benchmark.recorded_at_event,
+        note: benchmark.note.clone(),
     }
 }
 

@@ -1,0 +1,161 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "G12-framebuffer-benchmark",
+  "name": "golden_g12_framebuffer_benchmark",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real framebuffer present or scanout timing",
+    "real GPU pipeline benchmark",
+    "third-party graphics stack",
+    "raw framebuffer byte export"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "G5 produced framebuffer-write:23501@1",
+      "G6 produced framebuffer-flush-region:23601@1",
+      "G8 produced display-event-log:23801@1 covering the flush",
+      "G10 produced display-snapshot-barrier:24001@1 with zero active display boundary counts"
+    ],
+    "command": {
+      "name": "record-framebuffer-benchmark",
+      "benchmark": "framebuffer-benchmark:25101@1",
+      "owner_store": "store:14@3",
+      "display_capability": "display-capability:23201@1",
+      "framebuffer_write": "framebuffer-write:23501@1",
+      "framebuffer_flush_region": "framebuffer-flush-region:23601@1",
+      "display_event_log": "display-event-log:23801@1",
+      "display_snapshot_barrier": "display-snapshot-barrier:24001@1",
+      "result": "a semantic write/flush benchmark is recorded without claiming real scanout timing"
+    }
+  },
+  "events": [
+    {
+      "kind": "FramebufferBenchmarkRecorded",
+      "source": "SemanticGraph::record_framebuffer_benchmark_with_id",
+      "visible_as": "osctl framebuffer-benchmark list --json",
+      "event": 569
+    }
+  ],
+  "expected": {
+    "views": {
+      "framebuffer-benchmark": {
+        "id": 25101,
+        "generation": 1,
+        "state": "recorded",
+        "owner": {
+          "store": {
+            "kind": "store",
+            "id": 14,
+            "generation": 3
+          },
+          "display": {
+            "kind": "display-object",
+            "id": 23101,
+            "generation": 1
+          },
+          "framebuffer": {
+            "kind": "framebuffer-object",
+            "id": 23001,
+            "generation": 1
+          }
+        },
+        "references": {
+          "display_capability": {
+            "kind": "display-capability",
+            "id": 23201,
+            "generation": 1
+          },
+          "framebuffer_write": {
+            "kind": "framebuffer-write",
+            "id": 23501,
+            "generation": 1
+          },
+          "framebuffer_flush_region": {
+            "kind": "framebuffer-flush-region",
+            "id": 23601,
+            "generation": 1
+          },
+          "display_event_log": {
+            "kind": "display-event-log",
+            "id": 23801,
+            "generation": 1
+          },
+          "display_snapshot_barrier": {
+            "kind": "display-snapshot-barrier",
+            "id": 24001,
+            "generation": 1
+          }
+        },
+        "benchmark": {
+          "scenario": "display-g12-single-flush",
+          "sample_frames": 1,
+          "sample_bytes": 3200,
+          "frame_area_pixels": 800,
+          "write_nanos": 40000,
+          "flush_nanos": 60000,
+          "measured_nanos": 100000,
+          "budget_nanos": 200000,
+          "throughput_bytes_per_sec": 32000000,
+          "flushes_per_sec_milli": 10000000,
+          "p50_latency_nanos": 100000,
+          "p99_latency_nanos": 100000
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "framebuffer-benchmark:25101@1",
+          "relation": "framebuffer-benchmark->framebuffer-write",
+          "to": "framebuffer-write:23501@1",
+          "mode": "historical"
+        },
+        {
+          "from": "framebuffer-benchmark:25101@1",
+          "relation": "framebuffer-benchmark->framebuffer-flush-region",
+          "to": "framebuffer-flush-region:23601@1",
+          "mode": "historical"
+        },
+        {
+          "from": "framebuffer-benchmark:25101@1",
+          "relation": "framebuffer-benchmark->display-snapshot-barrier",
+          "to": "display-snapshot-barrier:24001@1",
+          "mode": "historical"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "FramebufferBenchmark id/generation is a first-class ObjectRef",
+      "benchmark metrics are derived from exact write/flush generations",
+      "sample bytes equal flushed byte length times sample frames",
+      "derived throughput and flush-rate values match measured time",
+      "benchmark is tied to a quiescent display snapshot barrier",
+      "real scanout and GPU timing remain explicit no-goals"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "display_runtime_g12_records_framebuffer_benchmark",
+      "display_runtime_g12_rejects_stale_barrier_and_bad_timing",
+      "display_runtime_g12_invariants_reject_throughput_drift",
+      "display_runtime_g12_contract_graph_rejects_metric_drift",
+      "semantic_roots_reject_framebuffer_benchmark_root_mismatch",
+      "framebuffer_benchmark_view_v1_exposes_semantic_display_metrics"
+    ],
+    "osctl_json_view": "framebuffer-benchmark list --json",
+    "framebuffer_benchmark": "framebuffer-benchmark:25101@1",
+    "owner_store": "store:14@3",
+    "framebuffer_flush_region": "framebuffer-flush-region:23601@1",
+    "display_snapshot_barrier": "display-snapshot-barrier:24001@1"
+  }
+}

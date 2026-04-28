@@ -23721,6 +23721,236 @@ fn display_runtime_g11_contract_graph_rejects_write_and_flush_binding_mismatch()
     }));
 }
 
+fn g12_framebuffer_benchmark_graph() -> (SemanticGraph, StoreId, Generation, u64, u64) {
+    let (graph, owner_store, owner_store_generation, _, _) = g11_display_panic_last_frame_graph();
+    let flush = &graph.framebuffer_flush_regions()[0];
+    let sample_bytes = flush.byte_len;
+    let frame_area_pixels = u64::from(flush.width) * u64::from(flush.height);
+    (
+        graph,
+        owner_store,
+        owner_store_generation,
+        sample_bytes,
+        frame_area_pixels,
+    )
+}
+
+#[test]
+fn display_runtime_g12_records_framebuffer_benchmark() {
+    let (mut graph, owner_store, owner_store_generation, sample_bytes, frame_area_pixels) =
+        g12_framebuffer_benchmark_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        15,
+        "display-runtime-g12",
+        SemanticCommand::RecordFramebufferBenchmark {
+            benchmark: 25_101,
+            scenario: "display-g12-single-flush".to_string(),
+            owner_store,
+            owner_store_generation,
+            display_capability: 23_201,
+            display_capability_generation: 1,
+            framebuffer_write: 23_501,
+            framebuffer_write_generation: 1,
+            framebuffer_flush_region: 23_601,
+            framebuffer_flush_region_generation: 1,
+            display_event_log: 23_801,
+            display_event_log_generation: 1,
+            display_snapshot_barrier: 24_011,
+            display_snapshot_barrier_generation: 1,
+            sample_frames: 1,
+            sample_bytes,
+            frame_area_pixels,
+            write_nanos: 40_000,
+            flush_nanos: 60_000,
+            measured_nanos: 100_000,
+            budget_nanos: 200_000,
+            p50_latency_nanos: 100_000,
+            p99_latency_nanos: 100_000,
+            note: "g12 framebuffer benchmark".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    let benchmark = &graph.framebuffer_benchmarks()[0];
+    assert_eq!(
+        benchmark.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::FramebufferBenchmark, 25_101, 1)
+    );
+    assert_eq!(benchmark.sample_bytes, sample_bytes);
+    assert_eq!(benchmark.frame_area_pixels, frame_area_pixels);
+    assert_eq!(benchmark.throughput_bytes_per_sec, 32_000_000);
+    assert_eq!(benchmark.flushes_per_sec_milli, 10_000_000);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "FramebufferBenchmarkRecorded benchmark=25101 owner_store={owner_store}@{owner_store_generation} display=23101@1 framebuffer=23001@1 display_capability=23201@1 framebuffer_write=23501@1 framebuffer_flush_region=23601@1 display_event_log=23801@1 display_snapshot_barrier=24011@1 sample_frames=1 sample_bytes={sample_bytes} frame_area_pixels={frame_area_pixels} write_nanos=40000 flush_nanos=60000 measured_nanos=100000 budget_nanos=200000 throughput_bytes_per_sec=32000000 flushes_per_sec_milli=10000000 p50_latency_nanos=100000 p99_latency_nanos=100000 generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g12_rejects_stale_barrier_and_bad_timing() {
+    let (mut graph, owner_store, owner_store_generation, sample_bytes, frame_area_pixels) =
+        g12_framebuffer_benchmark_graph();
+
+    let stale_barrier = graph.apply_envelope(CommandEnvelope::new(
+        15,
+        "display-runtime-g12",
+        SemanticCommand::RecordFramebufferBenchmark {
+            benchmark: 25_102,
+            scenario: "display-g12-single-flush".to_string(),
+            owner_store,
+            owner_store_generation,
+            display_capability: 23_201,
+            display_capability_generation: 1,
+            framebuffer_write: 23_501,
+            framebuffer_write_generation: 1,
+            framebuffer_flush_region: 23_601,
+            framebuffer_flush_region_generation: 1,
+            display_event_log: 23_801,
+            display_event_log_generation: 1,
+            display_snapshot_barrier: 24_011,
+            display_snapshot_barrier_generation: 2,
+            sample_frames: 1,
+            sample_bytes,
+            frame_area_pixels,
+            write_nanos: 40_000,
+            flush_nanos: 60_000,
+            measured_nanos: 100_000,
+            budget_nanos: 200_000,
+            p50_latency_nanos: 100_000,
+            p99_latency_nanos: 100_000,
+            note: "g12 stale barrier rejected".to_string(),
+        },
+    ));
+    assert_eq!(stale_barrier.status, CommandStatus::Rejected);
+
+    let bad_timing = graph.apply_envelope(CommandEnvelope::new(
+        16,
+        "display-runtime-g12",
+        SemanticCommand::RecordFramebufferBenchmark {
+            benchmark: 25_103,
+            scenario: "display-g12-single-flush".to_string(),
+            owner_store,
+            owner_store_generation,
+            display_capability: 23_201,
+            display_capability_generation: 1,
+            framebuffer_write: 23_501,
+            framebuffer_write_generation: 1,
+            framebuffer_flush_region: 23_601,
+            framebuffer_flush_region_generation: 1,
+            display_event_log: 23_801,
+            display_event_log_generation: 1,
+            display_snapshot_barrier: 24_011,
+            display_snapshot_barrier_generation: 1,
+            sample_frames: 1,
+            sample_bytes,
+            frame_area_pixels,
+            write_nanos: 40_000,
+            flush_nanos: 60_000,
+            measured_nanos: 90_000,
+            budget_nanos: 200_000,
+            p50_latency_nanos: 90_000,
+            p99_latency_nanos: 90_000,
+            note: "g12 bad timing rejected".to_string(),
+        },
+    ));
+    assert_eq!(bad_timing.status, CommandStatus::Rejected);
+    assert_eq!(graph.framebuffer_benchmark_count(), 0);
+}
+
+#[test]
+fn display_runtime_g12_invariants_reject_throughput_drift() {
+    let (mut graph, owner_store, owner_store_generation, sample_bytes, frame_area_pixels) =
+        g12_framebuffer_benchmark_graph();
+    assert!(graph.record_framebuffer_benchmark_with_id(
+        25_104,
+        "display-g12-single-flush",
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_501,
+        1,
+        23_601,
+        1,
+        23_801,
+        1,
+        24_011,
+        1,
+        1,
+        sample_bytes,
+        frame_area_pixels,
+        40_000,
+        60_000,
+        100_000,
+        200_000,
+        100_000,
+        100_000,
+        "g12 invariant drift",
+    ));
+    graph.corrupt_framebuffer_benchmark_throughput_for_test(25_104, 1);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::FramebufferBenchmarkInvalid { benchmark: 25_104 })
+    );
+}
+
+#[test]
+fn display_runtime_g12_contract_graph_rejects_metric_drift() {
+    let (mut graph, owner_store, owner_store_generation, sample_bytes, frame_area_pixels) =
+        g12_framebuffer_benchmark_graph();
+    assert!(graph.record_framebuffer_benchmark_with_id(
+        25_105,
+        "display-g12-single-flush",
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_501,
+        1,
+        23_601,
+        1,
+        23_801,
+        1,
+        24_011,
+        1,
+        1,
+        sample_bytes,
+        frame_area_pixels,
+        40_000,
+        60_000,
+        100_000,
+        200_000,
+        100_000,
+        100_000,
+        "g12 contract graph",
+    ));
+    let mut benchmarks = graph.framebuffer_benchmarks().to_vec();
+    benchmarks[0].throughput_bytes_per_sec = 1;
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        display_capabilities: graph.display_capabilities().to_vec(),
+        framebuffer_writes: graph.framebuffer_writes().to_vec(),
+        framebuffer_flush_regions: graph.framebuffer_flush_regions().to_vec(),
+        display_event_logs: graph.display_event_logs().to_vec(),
+        display_snapshot_barriers: graph.display_snapshot_barriers().to_vec(),
+        framebuffer_benchmarks: benchmarks,
+        stores: graph.stores().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-benchmark->metrics"
+            && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+    }));
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();

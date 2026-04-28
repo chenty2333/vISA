@@ -107,6 +107,7 @@ pub enum ContractObjectKind {
     DisplayCleanup,
     DisplaySnapshotBarrier,
     DisplayPanicLastFrame,
+    FramebufferBenchmark,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -230,6 +231,7 @@ impl ContractObjectKind {
             Self::DisplayCleanup => "display-cleanup",
             Self::DisplaySnapshotBarrier => "display-snapshot-barrier",
             Self::DisplayPanicLastFrame => "display-panic-last-frame",
+            Self::FramebufferBenchmark => "framebuffer-benchmark",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -5735,6 +5737,7 @@ mod tests {
             display_cleanups: Vec::new(),
             display_snapshot_barriers: Vec::new(),
             display_panic_last_frames: Vec::new(),
+            framebuffer_benchmarks: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -5847,6 +5850,7 @@ mod tests {
             display_cleanups: Vec::new(),
             display_snapshot_barriers: Vec::new(),
             display_panic_last_frames: Vec::new(),
+            framebuffer_benchmarks: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6093,6 +6097,7 @@ mod tests {
             display_cleanups: Vec::new(),
             display_snapshot_barriers: Vec::new(),
             display_panic_last_frames: Vec::new(),
+            framebuffer_benchmarks: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6209,6 +6214,7 @@ mod tests {
             display_cleanups: Vec::new(),
             display_snapshot_barriers: Vec::new(),
             display_panic_last_frames: Vec::new(),
+            framebuffer_benchmarks: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6412,6 +6418,7 @@ mod tests {
             display_cleanups: Vec::new(),
             display_snapshot_barriers: Vec::new(),
             display_panic_last_frames: Vec::new(),
+            framebuffer_benchmarks: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {

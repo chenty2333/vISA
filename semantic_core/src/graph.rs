@@ -102,6 +102,7 @@ pub struct SemanticGraph {
     display_cleanups: Vec<DisplayCleanupRecord>,
     display_snapshot_barriers: Vec<DisplaySnapshotBarrierRecord>,
     display_panic_last_frames: Vec<DisplayPanicLastFrameRecord>,
+    framebuffer_benchmarks: Vec<FramebufferBenchmarkRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -215,6 +216,7 @@ pub struct SemanticGraph {
     next_display_cleanup_id: DisplayCleanupId,
     next_display_snapshot_barrier_id: DisplaySnapshotBarrierId,
     next_display_panic_last_frame_id: DisplayPanicLastFrameId,
+    next_framebuffer_benchmark_id: FramebufferBenchmarkId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -273,6 +275,7 @@ mod fake_net_backend_object;
 mod fat_adapter_object;
 mod file_handle_capability;
 mod file_object;
+mod framebuffer_benchmark;
 mod framebuffer_dirty_region;
 mod framebuffer_flush_region;
 mod framebuffer_mapping;
@@ -443,6 +446,7 @@ impl SemanticGraph {
             display_cleanups: Vec::new(),
             display_snapshot_barriers: Vec::new(),
             display_panic_last_frames: Vec::new(),
+            framebuffer_benchmarks: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -556,6 +560,7 @@ impl SemanticGraph {
             next_display_cleanup_id: 1,
             next_display_snapshot_barrier_id: 1,
             next_display_panic_last_frame_id: 1,
+            next_framebuffer_benchmark_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

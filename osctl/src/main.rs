@@ -22,10 +22,11 @@ use artifact_manifest::{
     DisplaySnapshotBarrierManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
     EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
     FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
-    FileObjectManifest, FramebufferDirtyRegionManifest, FramebufferFlushRegionManifest,
-    FramebufferMappingManifest, FramebufferObjectManifest, FramebufferWindowLeaseManifest,
-    FramebufferWriteManifest, FsWaitManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    FileObjectManifest, FramebufferBenchmarkManifest, FramebufferDirtyRegionManifest,
+    FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
+    FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
@@ -449,6 +450,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "display-snapshot"
         | "display-panic-last-frame"
         | "panic-last-frame"
+        | "framebuffer-benchmark"
+        | "fb-benchmark"
+        | "display-benchmark"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -620,7 +624,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -628,7 +632,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -924,6 +928,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "display-cleanup" => "display-cleanup",
         "display-snapshot-barrier" | "display-snapshot" => "display-snapshot-barrier",
         "display-panic-last-frame" | "panic-last-frame" => "display-panic-last-frame",
+        "framebuffer-benchmark" | "fb-benchmark" | "display-benchmark" => "framebuffer-benchmark",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -7347,6 +7352,91 @@ fn cleanup_view_v1(cleanup: &CleanupTransactionManifest) -> serde_json::Value {
     })
 }
 
+fn framebuffer_benchmark_view_v1(benchmark: &FramebufferBenchmarkManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "framebuffer-benchmark",
+        "id": benchmark.id,
+        "generation": benchmark.generation,
+        "state": benchmark.state,
+        "owner": {
+            "store": object_ref_json(
+                "store",
+                benchmark.owner_store,
+                benchmark.owner_store_generation,
+            ),
+            "display": object_ref_json(
+                "display-object",
+                benchmark.display,
+                benchmark.display_generation,
+            ),
+            "framebuffer": object_ref_json(
+                "framebuffer-object",
+                benchmark.framebuffer,
+                benchmark.framebuffer_generation,
+            ),
+        },
+        "references": {
+            "display_capability": object_ref_json(
+                "display-capability",
+                benchmark.display_capability,
+                benchmark.display_capability_generation,
+            ),
+            "framebuffer_write": object_ref_json(
+                "framebuffer-write",
+                benchmark.framebuffer_write,
+                benchmark.framebuffer_write_generation,
+            ),
+            "framebuffer_flush_region": object_ref_json(
+                "framebuffer-flush-region",
+                benchmark.framebuffer_flush_region,
+                benchmark.framebuffer_flush_region_generation,
+            ),
+            "display_event_log": object_ref_json(
+                "display-event-log",
+                benchmark.display_event_log,
+                benchmark.display_event_log_generation,
+            ),
+            "display_snapshot_barrier": object_ref_json(
+                "display-snapshot-barrier",
+                benchmark.display_snapshot_barrier,
+                benchmark.display_snapshot_barrier_generation,
+            ),
+            "event": {
+                "id": benchmark.recorded_at_event,
+            },
+        },
+        "benchmark": {
+            "scenario": benchmark.scenario,
+            "sample_frames": benchmark.sample_frames,
+            "sample_bytes": benchmark.sample_bytes,
+            "frame_area_pixels": benchmark.frame_area_pixels,
+            "write_nanos": benchmark.write_nanos,
+            "flush_nanos": benchmark.flush_nanos,
+            "measured_nanos": benchmark.measured_nanos,
+            "budget_nanos": benchmark.budget_nanos,
+            "throughput_bytes_per_sec": benchmark.throughput_bytes_per_sec,
+            "flushes_per_sec_milli": benchmark.flushes_per_sec_milli,
+            "p50_latency_nanos": benchmark.p50_latency_nanos,
+            "p99_latency_nanos": benchmark.p99_latency_nanos,
+        },
+        "authority": {
+            "real_scanout_measured": false,
+            "real_gpu_pipeline_measured": false,
+            "uses_semantic_write_flush_evidence": true,
+            "requires_quiescent_snapshot_barrier": true,
+        },
+        "note": benchmark.note,
+        "last_transition": {
+            "recorded_at_event": benchmark.recorded_at_event,
+            "owner_store_generation": benchmark.owner_store_generation,
+            "display_generation": benchmark.display_generation,
+            "framebuffer_generation": benchmark.framebuffer_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn stable_views_for_kind(
     kind: &str,
     package: &MigrationPackageManifest,
@@ -7932,6 +8022,12 @@ fn stable_views_for_kind(
             .display_panic_last_frames
             .iter()
             .map(display_panic_last_frame_view_v1)
+            .collect()),
+        "framebuffer-benchmark" | "fb-benchmark" | "display-benchmark" => Ok(package
+            .semantic
+            .framebuffer_benchmarks
+            .iter()
+            .map(framebuffer_benchmark_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -12009,6 +12105,78 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             edges.push(graph_edge(from.clone(), to, relation, "historical", event));
         }
     }
+    for benchmark in &package.semantic.framebuffer_benchmarks {
+        let event = Some(benchmark.recorded_at_event);
+        let from = object_ref_json("framebuffer-benchmark", benchmark.id, benchmark.generation);
+        for (relation, to) in [
+            (
+                "framebuffer-benchmark->owner-store",
+                object_ref_json(
+                    "store",
+                    benchmark.owner_store,
+                    benchmark.owner_store_generation,
+                ),
+            ),
+            (
+                "framebuffer-benchmark->display-object",
+                object_ref_json(
+                    "display-object",
+                    benchmark.display,
+                    benchmark.display_generation,
+                ),
+            ),
+            (
+                "framebuffer-benchmark->framebuffer-object",
+                object_ref_json(
+                    "framebuffer-object",
+                    benchmark.framebuffer,
+                    benchmark.framebuffer_generation,
+                ),
+            ),
+            (
+                "framebuffer-benchmark->display-capability",
+                object_ref_json(
+                    "display-capability",
+                    benchmark.display_capability,
+                    benchmark.display_capability_generation,
+                ),
+            ),
+            (
+                "framebuffer-benchmark->framebuffer-write",
+                object_ref_json(
+                    "framebuffer-write",
+                    benchmark.framebuffer_write,
+                    benchmark.framebuffer_write_generation,
+                ),
+            ),
+            (
+                "framebuffer-benchmark->framebuffer-flush-region",
+                object_ref_json(
+                    "framebuffer-flush-region",
+                    benchmark.framebuffer_flush_region,
+                    benchmark.framebuffer_flush_region_generation,
+                ),
+            ),
+            (
+                "framebuffer-benchmark->display-event-log",
+                object_ref_json(
+                    "display-event-log",
+                    benchmark.display_event_log,
+                    benchmark.display_event_log_generation,
+                ),
+            ),
+            (
+                "framebuffer-benchmark->display-snapshot-barrier",
+                object_ref_json(
+                    "display-snapshot-barrier",
+                    benchmark.display_snapshot_barrier,
+                    benchmark.display_snapshot_barrier_generation,
+                ),
+            ),
+        ] {
+            edges.push(graph_edge(from.clone(), to, relation, "historical", event));
+        }
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -15641,6 +15809,51 @@ fn inspect_package_object(
                 );
             }
         }
+        "framebuffer-benchmark" | "fb-benchmark" | "display-benchmark" => {
+            println!(
+                "inspect framebuffer-benchmark package={} count={}",
+                package.package_id, package.semantic.framebuffer_benchmark_count
+            );
+            for benchmark in &package.semantic.framebuffer_benchmarks {
+                let line = format!(
+                    "framebuffer-benchmark id={} scenario={} owner_store={}@{} display={}@{} framebuffer={}@{} display_capability={}@{} framebuffer_write={}@{} framebuffer_flush_region={}@{} display_event_log={}@{} display_snapshot_barrier={}@{} sample_frames={} sample_bytes={} measured_nanos={} budget_nanos={} throughput_bytes_per_sec={} flushes_per_sec_milli={} state={} generation={}",
+                    benchmark.id,
+                    benchmark.scenario,
+                    benchmark.owner_store,
+                    benchmark.owner_store_generation,
+                    benchmark.display,
+                    benchmark.display_generation,
+                    benchmark.framebuffer,
+                    benchmark.framebuffer_generation,
+                    benchmark.display_capability,
+                    benchmark.display_capability_generation,
+                    benchmark.framebuffer_write,
+                    benchmark.framebuffer_write_generation,
+                    benchmark.framebuffer_flush_region,
+                    benchmark.framebuffer_flush_region_generation,
+                    benchmark.display_event_log,
+                    benchmark.display_event_log_generation,
+                    benchmark.display_snapshot_barrier,
+                    benchmark.display_snapshot_barrier_generation,
+                    benchmark.sample_frames,
+                    benchmark.sample_bytes,
+                    benchmark.measured_nanos,
+                    benchmark.budget_nanos,
+                    benchmark.throughput_bytes_per_sec,
+                    benchmark.flushes_per_sec_milli,
+                    benchmark.state,
+                    benchmark.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.framebuffer_benchmarks.is_empty() {
+                print_roots_filtered(
+                    "framebuffer-benchmark",
+                    &package.semantic.roots.framebuffer_benchmark_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -16110,6 +16323,19 @@ fn inspect_package_object_json(
                 .collect::<Vec<_>>(),
             serde_json::json!({
                 "root_count": package.semantic.roots.display_panic_last_frame_roots.len()
+            }),
+        ),
+        "framebuffer-benchmark" | "fb-benchmark" | "display-benchmark" => (
+            "framebuffer-benchmark",
+            package.semantic.framebuffer_benchmark_count,
+            package
+                .semantic
+                .framebuffer_benchmarks
+                .iter()
+                .map(framebuffer_benchmark_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package.semantic.roots.framebuffer_benchmark_roots.len()
             }),
         ),
         "command" => (
@@ -20808,6 +21034,61 @@ mod tests {
         assert_eq!(view["authority"]["panic_path_allocates"], false);
         assert_eq!(view["authority"]["real_panic_ring_write_executed"], false);
         assert_eq!(view["last_transition"]["recorded_at_event"], 507);
+    }
+
+    #[test]
+    fn framebuffer_benchmark_view_v1_exposes_semantic_display_metrics() {
+        let view = framebuffer_benchmark_view_v1(&FramebufferBenchmarkManifest {
+            id: 25_101,
+            scenario: "display-g12-single-flush".to_owned(),
+            owner_store: 12,
+            owner_store_generation: 2,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            display_capability: 23_201,
+            display_capability_generation: 1,
+            framebuffer_write: 23_501,
+            framebuffer_write_generation: 1,
+            framebuffer_flush_region: 23_601,
+            framebuffer_flush_region_generation: 1,
+            display_event_log: 23_801,
+            display_event_log_generation: 1,
+            display_snapshot_barrier: 24_001,
+            display_snapshot_barrier_generation: 1,
+            sample_frames: 1,
+            sample_bytes: 3200,
+            frame_area_pixels: 800,
+            write_nanos: 40_000,
+            flush_nanos: 60_000,
+            measured_nanos: 100_000,
+            budget_nanos: 200_000,
+            throughput_bytes_per_sec: 32_000_000,
+            flushes_per_sec_milli: 10_000_000,
+            p50_latency_nanos: 100_000,
+            p99_latency_nanos: 100_000,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 508,
+            note: "g12 framebuffer benchmark".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "framebuffer-benchmark");
+        assert_eq!(view["owner"]["store"]["generation"], 2);
+        assert_eq!(view["references"]["framebuffer_write"]["id"], 23_501);
+        assert_eq!(view["references"]["framebuffer_flush_region"]["id"], 23_601);
+        assert_eq!(view["references"]["display_snapshot_barrier"]["id"], 24_001);
+        assert_eq!(view["benchmark"]["sample_bytes"], 3200);
+        assert_eq!(view["benchmark"]["throughput_bytes_per_sec"], 32_000_000);
+        assert_eq!(view["benchmark"]["flushes_per_sec_milli"], 10_000_000);
+        assert_eq!(view["authority"]["real_scanout_measured"], false);
+        assert_eq!(
+            view["authority"]["uses_semantic_write_flush_evidence"],
+            true
+        );
+        assert_eq!(view["last_transition"]["recorded_at_event"], 508);
     }
 
     #[test]

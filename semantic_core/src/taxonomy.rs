@@ -1993,6 +1993,19 @@ impl DisplayPanicLastFrameState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FramebufferBenchmarkState {
+    Recorded,
+}
+
+impl FramebufferBenchmarkState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayCleanupStepKind {
     UnmapFramebufferMappings,
     ReleaseFramebufferWindowLeases,

@@ -3026,6 +3026,53 @@ impl DisplayPanicLastFrameRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FramebufferBenchmarkRecord {
+    pub id: FramebufferBenchmarkId,
+    pub scenario: String,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub display: DisplayObjectId,
+    pub display_generation: Generation,
+    pub framebuffer: FramebufferObjectId,
+    pub framebuffer_generation: Generation,
+    pub display_capability: DisplayCapabilityId,
+    pub display_capability_generation: Generation,
+    pub framebuffer_write: FramebufferWriteId,
+    pub framebuffer_write_generation: Generation,
+    pub framebuffer_flush_region: FramebufferFlushRegionId,
+    pub framebuffer_flush_region_generation: Generation,
+    pub display_event_log: DisplayEventLogId,
+    pub display_event_log_generation: Generation,
+    pub display_snapshot_barrier: DisplaySnapshotBarrierId,
+    pub display_snapshot_barrier_generation: Generation,
+    pub sample_frames: u32,
+    pub sample_bytes: u64,
+    pub frame_area_pixels: u64,
+    pub write_nanos: u64,
+    pub flush_nanos: u64,
+    pub measured_nanos: u64,
+    pub budget_nanos: u64,
+    pub throughput_bytes_per_sec: u64,
+    pub flushes_per_sec_milli: u64,
+    pub p50_latency_nanos: u64,
+    pub p99_latency_nanos: u64,
+    pub generation: Generation,
+    pub state: FramebufferBenchmarkState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl FramebufferBenchmarkRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::FramebufferBenchmark,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

@@ -96,6 +96,7 @@ pub struct ContractGraphSnapshot {
     pub display_cleanups: Vec<DisplayCleanupRecord>,
     pub display_snapshot_barriers: Vec<DisplaySnapshotBarrierRecord>,
     pub display_panic_last_frames: Vec<DisplayPanicLastFrameRecord>,
+    pub framebuffer_benchmarks: Vec<FramebufferBenchmarkRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -211,6 +212,7 @@ impl ContractGraphValidator {
         Self::validate_display_cleanups(snapshot, &mut violations);
         Self::validate_display_snapshot_barriers(snapshot, &mut violations);
         Self::validate_display_panic_last_frames(snapshot, &mut violations);
+        Self::validate_framebuffer_benchmarks(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -2363,6 +2365,235 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_framebuffer_benchmarks(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for benchmark in &snapshot.framebuffer_benchmarks {
+            let from = benchmark.object_ref();
+            if benchmark.id == 0
+                || benchmark.generation == 0
+                || benchmark.scenario.is_empty()
+                || benchmark.owner_store_generation == 0
+                || benchmark.display_generation == 0
+                || benchmark.framebuffer_generation == 0
+                || benchmark.display_capability_generation == 0
+                || benchmark.framebuffer_write_generation == 0
+                || benchmark.framebuffer_flush_region_generation == 0
+                || benchmark.display_event_log_generation == 0
+                || benchmark.display_snapshot_barrier_generation == 0
+                || benchmark.sample_frames == 0
+                || benchmark.sample_bytes == 0
+                || benchmark.frame_area_pixels == 0
+                || benchmark.write_nanos == 0
+                || benchmark.flush_nanos == 0
+                || benchmark.write_nanos.checked_add(benchmark.flush_nanos)
+                    != Some(benchmark.measured_nanos)
+                || benchmark.measured_nanos == 0
+                || benchmark.budget_nanos == 0
+                || benchmark.measured_nanos > benchmark.budget_nanos
+                || benchmark.p50_latency_nanos == 0
+                || benchmark.p99_latency_nanos < benchmark.p50_latency_nanos
+                || benchmark.p99_latency_nanos > benchmark.measured_nanos
+                || benchmark.state != FramebufferBenchmarkState::Recorded
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "framebuffer-benchmark->contract",
+                    from,
+                    None,
+                    "framebuffer benchmark requires exact refs, bounded timing, and recorded state",
+                ));
+                continue;
+            }
+            for (label, kind, id, generation) in [
+                (
+                    "framebuffer-benchmark->owner-store",
+                    ContractObjectKind::Store,
+                    benchmark.owner_store,
+                    benchmark.owner_store_generation,
+                ),
+                (
+                    "framebuffer-benchmark->display-object",
+                    ContractObjectKind::DisplayObject,
+                    benchmark.display,
+                    benchmark.display_generation,
+                ),
+                (
+                    "framebuffer-benchmark->framebuffer-object",
+                    ContractObjectKind::FramebufferObject,
+                    benchmark.framebuffer,
+                    benchmark.framebuffer_generation,
+                ),
+                (
+                    "framebuffer-benchmark->display-capability",
+                    ContractObjectKind::DisplayCapability,
+                    benchmark.display_capability,
+                    benchmark.display_capability_generation,
+                ),
+                (
+                    "framebuffer-benchmark->framebuffer-write",
+                    ContractObjectKind::FramebufferWrite,
+                    benchmark.framebuffer_write,
+                    benchmark.framebuffer_write_generation,
+                ),
+                (
+                    "framebuffer-benchmark->framebuffer-flush-region",
+                    ContractObjectKind::FramebufferFlushRegion,
+                    benchmark.framebuffer_flush_region,
+                    benchmark.framebuffer_flush_region_generation,
+                ),
+                (
+                    "framebuffer-benchmark->display-event-log",
+                    ContractObjectKind::DisplayEventLog,
+                    benchmark.display_event_log,
+                    benchmark.display_event_log_generation,
+                ),
+                (
+                    "framebuffer-benchmark->display-snapshot-barrier",
+                    ContractObjectKind::DisplaySnapshotBarrier,
+                    benchmark.display_snapshot_barrier,
+                    benchmark.display_snapshot_barrier_generation,
+                ),
+            ] {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    kind,
+                    id,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            let expected_throughput = SemanticGraph::derive_framebuffer_throughput_bytes_per_sec(
+                benchmark.sample_bytes,
+                benchmark.measured_nanos,
+            );
+            let expected_flushes = SemanticGraph::derive_framebuffer_flushes_per_sec_milli(
+                benchmark.sample_frames,
+                benchmark.measured_nanos,
+            );
+            if expected_throughput != Some(benchmark.throughput_bytes_per_sec)
+                || expected_flushes != Some(benchmark.flushes_per_sec_milli)
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "framebuffer-benchmark->metrics",
+                    from,
+                    None,
+                    "framebuffer benchmark derived metrics do not match samples and timing",
+                ));
+            }
+            if let Some(write) = snapshot.framebuffer_writes.iter().find(|write| {
+                write.id == benchmark.framebuffer_write
+                    && write.generation == benchmark.framebuffer_write_generation
+            }) {
+                if write.owner_store != benchmark.owner_store
+                    || write.owner_store_generation != benchmark.owner_store_generation
+                    || write.display_capability != benchmark.display_capability
+                    || write.display_capability_generation
+                        != benchmark.display_capability_generation
+                    || write.display != benchmark.display
+                    || write.display_generation != benchmark.display_generation
+                    || write.framebuffer != benchmark.framebuffer
+                    || write.framebuffer_generation != benchmark.framebuffer_generation
+                    || write.state != FramebufferWriteState::Applied
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "framebuffer-benchmark->write-binding",
+                        from,
+                        Some(write.object_ref()),
+                        "framebuffer benchmark write does not match display target",
+                    ));
+                }
+            }
+            if let Some(flush) = snapshot.framebuffer_flush_regions.iter().find(|flush| {
+                flush.id == benchmark.framebuffer_flush_region
+                    && flush.generation == benchmark.framebuffer_flush_region_generation
+            }) {
+                if flush.owner_store != benchmark.owner_store
+                    || flush.owner_store_generation != benchmark.owner_store_generation
+                    || flush.framebuffer_write != benchmark.framebuffer_write
+                    || flush.framebuffer_write_generation != benchmark.framebuffer_write_generation
+                    || flush.display_capability != benchmark.display_capability
+                    || flush.display_capability_generation
+                        != benchmark.display_capability_generation
+                    || flush.display != benchmark.display
+                    || flush.display_generation != benchmark.display_generation
+                    || flush.framebuffer != benchmark.framebuffer
+                    || flush.framebuffer_generation != benchmark.framebuffer_generation
+                    || flush
+                        .byte_len
+                        .checked_mul(u64::from(benchmark.sample_frames))
+                        != Some(benchmark.sample_bytes)
+                    || u64::from(flush.width).checked_mul(u64::from(flush.height))
+                        != Some(benchmark.frame_area_pixels)
+                    || flush.state != FramebufferFlushRegionState::Applied
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "framebuffer-benchmark->flush-binding",
+                        from,
+                        Some(flush.object_ref()),
+                        "framebuffer benchmark flush does not match sampled frame",
+                    ));
+                }
+            }
+            if let Some(event_log) = snapshot.display_event_logs.iter().find(|event_log| {
+                event_log.id == benchmark.display_event_log
+                    && event_log.generation == benchmark.display_event_log_generation
+            }) {
+                if event_log.owner_store != benchmark.owner_store
+                    || event_log.owner_store_generation != benchmark.owner_store_generation
+                    || event_log.display_capability != benchmark.display_capability
+                    || event_log.display_capability_generation
+                        != benchmark.display_capability_generation
+                    || event_log.display != benchmark.display
+                    || event_log.display_generation != benchmark.display_generation
+                    || event_log.framebuffer != benchmark.framebuffer
+                    || event_log.framebuffer_generation != benchmark.framebuffer_generation
+                    || event_log.flush_count < u64::from(benchmark.sample_frames)
+                    || event_log.state != DisplayEventLogState::Recorded
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "framebuffer-benchmark->event-log-binding",
+                        from,
+                        Some(event_log.object_ref()),
+                        "framebuffer benchmark event log does not cover the sampled flush",
+                    ));
+                }
+            }
+            if let Some(barrier) = snapshot.display_snapshot_barriers.iter().find(|barrier| {
+                barrier.id == benchmark.display_snapshot_barrier
+                    && barrier.generation == benchmark.display_snapshot_barrier_generation
+            }) {
+                if barrier.owner_store != benchmark.owner_store
+                    || barrier.owner_store_generation != benchmark.owner_store_generation
+                    || barrier.display != benchmark.display
+                    || barrier.display_generation != benchmark.display_generation
+                    || barrier.framebuffer != benchmark.framebuffer
+                    || barrier.framebuffer_generation != benchmark.framebuffer_generation
+                    || barrier.active_framebuffer_window_lease_count != 0
+                    || barrier.active_framebuffer_mapping_count != 0
+                    || barrier.dirty_framebuffer_region_count != 0
+                    || barrier.state != DisplaySnapshotBarrierState::Validated
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "framebuffer-benchmark->snapshot-barrier-binding",
+                        from,
+                        Some(barrier.object_ref()),
+                        "framebuffer benchmark snapshot barrier is not quiescent for the display target",
+                    ));
+                }
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -3586,6 +3817,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|frame| frame.id == id && frame.generation == generation)
                 .map(DisplayPanicLastFrameRecord::object_ref),
+            ContractObjectKind::FramebufferBenchmark => snapshot
+                .framebuffer_benchmarks
+                .iter()
+                .find(|benchmark| benchmark.id == id && benchmark.generation == generation)
+                .map(FramebufferBenchmarkRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -3771,6 +4007,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|frame| frame.id == id)
                 .map(DisplayPanicLastFrameRecord::object_ref),
+            ContractObjectKind::FramebufferBenchmark => snapshot
+                .framebuffer_benchmarks
+                .iter()
+                .find(|benchmark| benchmark.id == id)
+                .map(FramebufferBenchmarkRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -3935,6 +4176,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::DisplayCleanup
                 | ContractObjectKind::DisplaySnapshotBarrier
                 | ContractObjectKind::DisplayPanicLastFrame
+                | ContractObjectKind::FramebufferBenchmark
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -4128,6 +4370,16 @@ impl ContractGraphValidator {
                 .and_then(|frame| {
                     (frame.state != DisplayPanicLastFrameState::Recorded)
                         .then_some("live edge references unrecorded display panic last-frame")
+                }),
+            ContractObjectKind::FramebufferBenchmark => snapshot
+                .framebuffer_benchmarks
+                .iter()
+                .find(|benchmark| {
+                    benchmark.id == object.id && benchmark.generation == object.generation
+                })
+                .and_then(|benchmark| {
+                    (benchmark.state != FramebufferBenchmarkState::Recorded)
+                        .then_some("live edge references unrecorded framebuffer benchmark")
                 }),
             _ => None,
         }

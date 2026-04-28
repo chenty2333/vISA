@@ -415,6 +415,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub display_panic_last_frame_count: usize,
     #[serde(default)]
+    pub framebuffer_benchmark_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -681,6 +683,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub display_panic_last_frames: Vec<DisplayPanicLastFrameManifest>,
     #[serde(default)]
+    pub framebuffer_benchmarks: Vec<FramebufferBenchmarkManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -926,6 +930,8 @@ pub struct SemanticRootSetManifest {
     pub display_snapshot_barrier_roots: Vec<String>,
     #[serde(default)]
     pub display_panic_last_frame_roots: Vec<String>,
+    #[serde(default)]
+    pub framebuffer_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -3383,6 +3389,43 @@ pub struct DisplayPanicLastFrameManifest {
     pub panic_reason_code: u32,
     pub panic_record_kind: String,
     pub raw_framebuffer_bytes_exported: bool,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct FramebufferBenchmarkManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub owner_store: u64,
+    pub owner_store_generation: u64,
+    pub display: u64,
+    pub display_generation: u64,
+    pub framebuffer: u64,
+    pub framebuffer_generation: u64,
+    pub display_capability: u64,
+    pub display_capability_generation: u64,
+    pub framebuffer_write: u64,
+    pub framebuffer_write_generation: u64,
+    pub framebuffer_flush_region: u64,
+    pub framebuffer_flush_region_generation: u64,
+    pub display_event_log: u64,
+    pub display_event_log_generation: u64,
+    pub display_snapshot_barrier: u64,
+    pub display_snapshot_barrier_generation: u64,
+    pub sample_frames: u32,
+    pub sample_bytes: u64,
+    pub frame_area_pixels: u64,
+    pub write_nanos: u64,
+    pub flush_nanos: u64,
+    pub measured_nanos: u64,
+    pub budget_nanos: u64,
+    pub throughput_bytes_per_sec: u64,
+    pub flushes_per_sec_milli: u64,
+    pub p50_latency_nanos: u64,
+    pub p99_latency_nanos: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
