@@ -413,6 +413,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub display_snapshot_barrier_count: usize,
     #[serde(default)]
+    pub display_panic_last_frame_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -677,6 +679,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub display_snapshot_barriers: Vec<DisplaySnapshotBarrierManifest>,
     #[serde(default)]
+    pub display_panic_last_frames: Vec<DisplayPanicLastFrameManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -920,6 +924,8 @@ pub struct SemanticRootSetManifest {
     pub display_cleanup_roots: Vec<String>,
     #[serde(default)]
     pub display_snapshot_barrier_roots: Vec<String>,
+    #[serde(default)]
+    pub display_panic_last_frame_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -3342,6 +3348,44 @@ pub struct DisplaySnapshotBarrierManifest {
     pub state: String,
     pub validated_at_event: u64,
     pub reason: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct DisplayPanicLastFrameManifest {
+    pub id: u64,
+    pub owner_store: u64,
+    pub owner_store_generation: u64,
+    pub display: u64,
+    pub display_generation: u64,
+    pub framebuffer: u64,
+    pub framebuffer_generation: u64,
+    pub display_snapshot_barrier: u64,
+    pub display_snapshot_barrier_generation: u64,
+    pub display_event_log: u64,
+    pub display_event_log_generation: u64,
+    pub framebuffer_write: u64,
+    pub framebuffer_write_generation: u64,
+    pub framebuffer_flush_region: u64,
+    pub framebuffer_flush_region_generation: u64,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub byte_offset: u64,
+    pub byte_len: u64,
+    pub pixel_format: String,
+    pub payload_digest: u64,
+    pub summary_digest: u64,
+    pub summary_record_bytes: u32,
+    pub panic_epoch: u64,
+    pub panic_cpu: u32,
+    pub panic_reason_code: u32,
+    pub panic_record_kind: String,
+    pub raw_framebuffer_bytes_exported: bool,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
     pub note: String,
 }
 

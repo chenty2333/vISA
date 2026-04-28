@@ -160,6 +160,7 @@ pub enum ObjectKind {
     DisplayEventLog,
     DisplayCleanup,
     DisplaySnapshotBarrier,
+    DisplayPanicLastFrame,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -285,6 +286,7 @@ impl ObjectKind {
             Self::DisplayEventLog => "display-event-log",
             Self::DisplayCleanup => "display-cleanup",
             Self::DisplaySnapshotBarrier => "display-snapshot-barrier",
+            Self::DisplayPanicLastFrame => "display-panic-last-frame",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -614,6 +616,7 @@ typed_ref!(
     DisplaySnapshotBarrierRef,
     ObjectKind::DisplaySnapshotBarrier
 );
+typed_ref!(DisplayPanicLastFrameRef, ObjectKind::DisplayPanicLastFrame);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2356,6 +2359,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "display snapshot barrier root/count mismatch",
         ));
     }
+    if roots.display_panic_last_frame_roots.len() != package.semantic.display_panic_last_frame_count
+        || package.semantic.display_panic_last_frames.len()
+            != package.semantic.display_panic_last_frame_count
+    {
+        return Err(ContractError::new(
+            "display panic last-frame root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2972,6 +2983,7 @@ mod tests {
                 display_event_log_count: 0,
                 display_cleanup_count: 0,
                 display_snapshot_barrier_count: 0,
+                display_panic_last_frame_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -3106,6 +3118,7 @@ mod tests {
                 display_event_logs: Vec::new(),
                 display_cleanups: Vec::new(),
                 display_snapshot_barriers: Vec::new(),
+                display_panic_last_frames: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -5749,6 +5762,56 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_display_panic_last_frame_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.display_panic_last_frame_count = 1;
+        package.semantic.display_panic_last_frames.push(
+            artifact_manifest::DisplayPanicLastFrameManifest {
+                id: 101,
+                owner_store: 7,
+                owner_store_generation: 1,
+                display: 91,
+                display_generation: 1,
+                framebuffer: 90,
+                framebuffer_generation: 1,
+                display_snapshot_barrier: 100,
+                display_snapshot_barrier_generation: 1,
+                display_event_log: 99,
+                display_event_log_generation: 1,
+                framebuffer_write: 98,
+                framebuffer_write_generation: 1,
+                framebuffer_flush_region: 97,
+                framebuffer_flush_region_generation: 1,
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 1,
+                byte_offset: 0,
+                byte_len: 3200,
+                pixel_format: "xrgb8888".to_owned(),
+                payload_digest: 11,
+                summary_digest: 12,
+                summary_record_bytes: 512,
+                panic_epoch: 1,
+                panic_cpu: 0,
+                panic_reason_code: 1,
+                panic_record_kind: "contract-panic-summary-v1".to_owned(),
+                raw_framebuffer_bytes_exported: false,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 104,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "display panic last-frame root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -7103,6 +7166,9 @@ mod tests {
         let display_snapshot_barrier =
             ObjectRef::new(ObjectKind::DisplaySnapshotBarrier, 90, 1).unwrap();
         assert!(DisplaySnapshotBarrierRef::try_from_ref(display_snapshot_barrier).is_ok());
+        let display_panic_last_frame =
+            ObjectRef::new(ObjectKind::DisplayPanicLastFrame, 91, 1).unwrap();
+        assert!(DisplayPanicLastFrameRef::try_from_ref(display_panic_last_frame).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

@@ -2978,6 +2978,54 @@ impl DisplaySnapshotBarrierRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisplayPanicLastFrameRecord {
+    pub id: DisplayPanicLastFrameId,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub display: DisplayObjectId,
+    pub display_generation: Generation,
+    pub framebuffer: FramebufferObjectId,
+    pub framebuffer_generation: Generation,
+    pub display_snapshot_barrier: DisplaySnapshotBarrierId,
+    pub display_snapshot_barrier_generation: Generation,
+    pub display_event_log: DisplayEventLogId,
+    pub display_event_log_generation: Generation,
+    pub framebuffer_write: FramebufferWriteId,
+    pub framebuffer_write_generation: Generation,
+    pub framebuffer_flush_region: FramebufferFlushRegionId,
+    pub framebuffer_flush_region_generation: Generation,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub byte_offset: u64,
+    pub byte_len: u64,
+    pub pixel_format: String,
+    pub payload_digest: u64,
+    pub summary_digest: u64,
+    pub summary_record_bytes: u32,
+    pub panic_epoch: u64,
+    pub panic_cpu: u32,
+    pub panic_reason_code: u32,
+    pub panic_record_kind: String,
+    pub raw_framebuffer_bytes_exported: bool,
+    pub generation: Generation,
+    pub state: DisplayPanicLastFrameState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl DisplayPanicLastFrameRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::DisplayPanicLastFrame,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

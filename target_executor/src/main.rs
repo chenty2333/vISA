@@ -22,15 +22,15 @@ use artifact_manifest::{
     ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
     DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
     DisplayCapabilityManifest, DisplayCleanupManifest, DisplayCleanupStepManifest,
-    DisplayEventLogManifest, DisplayObjectManifest, DisplaySnapshotBarrierManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest,
-    FramebufferDirtyRegionManifest, FramebufferFlushRegionManifest, FramebufferMappingManifest,
-    FramebufferObjectManifest, FramebufferWindowLeaseManifest, FramebufferWriteManifest,
-    FsWaitManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    DisplayEventLogManifest, DisplayObjectManifest, DisplayPanicLastFrameManifest,
+    DisplaySnapshotBarrierManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
+    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
+    FileObjectManifest, FramebufferDirtyRegionManifest, FramebufferFlushRegionManifest,
+    FramebufferMappingManifest, FramebufferObjectManifest, FramebufferWindowLeaseManifest,
+    FramebufferWriteManifest, FsWaitManifest, GuestStateManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
     IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
@@ -8389,6 +8389,7 @@ fn build_target_executor_v1(
     run_display_event_log_harness(semantic)?;
     run_display_cleanup_harness(semantic)?;
     run_display_snapshot_barrier_harness(semantic)?;
+    run_display_panic_last_frame_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8476,6 +8477,7 @@ fn build_target_executor_v1(
         display_event_logs: semantic.display_event_logs().to_vec(),
         display_cleanups: semantic.display_cleanups().to_vec(),
         display_snapshot_barriers: semantic.display_snapshot_barriers().to_vec(),
+        display_panic_last_frames: semantic.display_panic_last_frames().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: contract_stores,
@@ -10547,6 +10549,91 @@ fn run_display_snapshot_barrier_harness(
     Ok(())
 }
 
+fn run_display_panic_last_frame_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let barrier = semantic
+        .display_snapshot_barriers()
+        .iter()
+        .find(|record| record.id == 24_001)
+        .cloned()
+        .ok_or("display runtime g11 requires g10 display snapshot barrier evidence")?;
+    let event_log = semantic
+        .display_event_logs()
+        .iter()
+        .find(|record| record.id == 23_801)
+        .cloned()
+        .ok_or("display runtime g11 requires g8 display event-log evidence")?;
+    let write = semantic
+        .framebuffer_writes()
+        .iter()
+        .find(|record| record.id == 23_501)
+        .cloned()
+        .ok_or("display runtime g11 requires g5 framebuffer write evidence")?;
+    let flush = semantic
+        .framebuffer_flush_regions()
+        .iter()
+        .find(|record| record.id == 23_601)
+        .cloned()
+        .ok_or("display runtime g11 requires g6 framebuffer flush evidence")?;
+    let panic_epoch = 1;
+    let summary_digest = SemanticGraph::expected_display_panic_last_frame_summary_digest_v1(
+        barrier.owner_store,
+        barrier.owner_store_generation,
+        barrier.display,
+        barrier.display_generation,
+        barrier.framebuffer,
+        barrier.framebuffer_generation,
+        barrier.id,
+        barrier.generation,
+        event_log.id,
+        event_log.generation,
+        write.id,
+        write.generation,
+        flush.id,
+        flush.generation,
+        flush.payload_digest,
+        panic_epoch,
+        0,
+        1,
+    );
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_031,
+        "display-runtime-g11",
+        SemanticCommand::RecordDisplayPanicLastFrame {
+            panic_last_frame: 25_001,
+            owner_store: barrier.owner_store,
+            owner_store_generation: barrier.owner_store_generation,
+            display_snapshot_barrier: barrier.id,
+            display_snapshot_barrier_generation: barrier.generation,
+            display_event_log: event_log.id,
+            display_event_log_generation: event_log.generation,
+            framebuffer_write: write.id,
+            framebuffer_write_generation: write.generation,
+            framebuffer_flush_region: flush.id,
+            framebuffer_flush_region_generation: flush.generation,
+            payload_digest: flush.payload_digest,
+            summary_digest,
+            summary_record_bytes: 512,
+            panic_epoch,
+            panic_record_kind: "contract-panic-summary-v1".to_owned(),
+            raw_framebuffer_bytes_exported: false,
+            note: "g11 records panic-safe last framebuffer summary without raw bytes".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g11 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11392,6 +11479,7 @@ fn demo_migration_package(
             display_event_log_count: semantic.display_event_log_count(),
             display_cleanup_count: semantic.display_cleanup_count(),
             display_snapshot_barrier_count: semantic.display_snapshot_barrier_count(),
+            display_panic_last_frame_count: semantic.display_panic_last_frame_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11889,6 +11977,11 @@ fn demo_migration_package(
                 .display_snapshot_barriers()
                 .iter()
                 .map(display_snapshot_barrier_manifest)
+                .collect(),
+            display_panic_last_frames: semantic
+                .display_panic_last_frames()
+                .iter()
+                .map(display_panic_last_frame_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -14285,6 +14378,37 @@ fn semantic_roots(
                     barrier.snapshot_validation_ok,
                     barrier.state.as_str(),
                     barrier.generation
+                )
+            })
+            .collect(),
+        display_panic_last_frame_roots: semantic
+            .display_panic_last_frames()
+            .iter()
+            .map(|frame| {
+                format!(
+                    "display-panic-last-frame id={} owner_store={}@{} display={}@{} framebuffer={}@{} barrier={}@{} display_event_log={}@{} framebuffer_write={}@{} framebuffer_flush_region={}@{} payload_digest={} summary_digest={} summary_record_bytes={} panic_epoch={} raw_framebuffer_bytes_exported={} state={} generation={}",
+                    frame.id,
+                    frame.owner_store,
+                    frame.owner_store_generation,
+                    frame.display,
+                    frame.display_generation,
+                    frame.framebuffer,
+                    frame.framebuffer_generation,
+                    frame.display_snapshot_barrier,
+                    frame.display_snapshot_barrier_generation,
+                    frame.display_event_log,
+                    frame.display_event_log_generation,
+                    frame.framebuffer_write,
+                    frame.framebuffer_write_generation,
+                    frame.framebuffer_flush_region,
+                    frame.framebuffer_flush_region_generation,
+                    frame.payload_digest,
+                    frame.summary_digest,
+                    frame.summary_record_bytes,
+                    frame.panic_epoch,
+                    frame.raw_framebuffer_bytes_exported,
+                    frame.state.as_str(),
+                    frame.generation
                 )
             })
             .collect(),
@@ -17475,6 +17599,47 @@ fn display_snapshot_barrier_manifest(
         validated_at_event: barrier.validated_at_event,
         reason: barrier.reason.clone(),
         note: barrier.note.clone(),
+    }
+}
+
+fn display_panic_last_frame_manifest(
+    frame: &semantic_core::DisplayPanicLastFrameRecord,
+) -> DisplayPanicLastFrameManifest {
+    DisplayPanicLastFrameManifest {
+        id: frame.id,
+        owner_store: frame.owner_store,
+        owner_store_generation: frame.owner_store_generation,
+        display: frame.display,
+        display_generation: frame.display_generation,
+        framebuffer: frame.framebuffer,
+        framebuffer_generation: frame.framebuffer_generation,
+        display_snapshot_barrier: frame.display_snapshot_barrier,
+        display_snapshot_barrier_generation: frame.display_snapshot_barrier_generation,
+        display_event_log: frame.display_event_log,
+        display_event_log_generation: frame.display_event_log_generation,
+        framebuffer_write: frame.framebuffer_write,
+        framebuffer_write_generation: frame.framebuffer_write_generation,
+        framebuffer_flush_region: frame.framebuffer_flush_region,
+        framebuffer_flush_region_generation: frame.framebuffer_flush_region_generation,
+        x: frame.x,
+        y: frame.y,
+        width: frame.width,
+        height: frame.height,
+        byte_offset: frame.byte_offset,
+        byte_len: frame.byte_len,
+        pixel_format: frame.pixel_format.clone(),
+        payload_digest: frame.payload_digest,
+        summary_digest: frame.summary_digest,
+        summary_record_bytes: frame.summary_record_bytes,
+        panic_epoch: frame.panic_epoch,
+        panic_cpu: frame.panic_cpu,
+        panic_reason_code: frame.panic_reason_code,
+        panic_record_kind: frame.panic_record_kind.clone(),
+        raw_framebuffer_bytes_exported: frame.raw_framebuffer_bytes_exported,
+        generation: frame.generation,
+        state: frame.state.as_str().to_owned(),
+        recorded_at_event: frame.recorded_at_event,
+        note: frame.note.clone(),
     }
 }
 

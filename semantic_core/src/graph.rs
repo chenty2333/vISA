@@ -101,6 +101,7 @@ pub struct SemanticGraph {
     display_event_logs: Vec<DisplayEventLogRecord>,
     display_cleanups: Vec<DisplayCleanupRecord>,
     display_snapshot_barriers: Vec<DisplaySnapshotBarrierRecord>,
+    display_panic_last_frames: Vec<DisplayPanicLastFrameRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -213,6 +214,7 @@ pub struct SemanticGraph {
     next_display_event_log_id: DisplayEventLogId,
     next_display_cleanup_id: DisplayCleanupId,
     next_display_snapshot_barrier_id: DisplaySnapshotBarrierId,
+    next_display_panic_last_frame_id: DisplayPanicLastFrameId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -260,6 +262,7 @@ mod display_capability;
 mod display_cleanup;
 mod display_event_log;
 mod display_object;
+mod display_panic_last_frame;
 mod display_snapshot_barrier;
 mod dma_buffer_object;
 mod driver_store_binding;
@@ -439,6 +442,7 @@ impl SemanticGraph {
             display_event_logs: Vec::new(),
             display_cleanups: Vec::new(),
             display_snapshot_barriers: Vec::new(),
+            display_panic_last_frames: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -551,6 +555,7 @@ impl SemanticGraph {
             next_display_event_log_id: 1,
             next_display_cleanup_id: 1,
             next_display_snapshot_barrier_id: 1,
+            next_display_panic_last_frame_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

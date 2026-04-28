@@ -18,14 +18,14 @@ use artifact_manifest::{
     CommandResultManifest, ContractObjectRefManifest, CrossHartSchedulerDecisionManifest,
     DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
     DirectoryObjectManifest, DisplayCapabilityManifest, DisplayCleanupManifest,
-    DisplayEventLogManifest, DisplayObjectManifest, DisplaySnapshotBarrierManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest,
-    FramebufferDirtyRegionManifest, FramebufferFlushRegionManifest, FramebufferMappingManifest,
-    FramebufferObjectManifest, FramebufferWindowLeaseManifest, FramebufferWriteManifest,
-    FsWaitManifest, HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    DisplayEventLogManifest, DisplayObjectManifest, DisplayPanicLastFrameManifest,
+    DisplaySnapshotBarrierManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
+    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
+    FileObjectManifest, FramebufferDirtyRegionManifest, FramebufferFlushRegionManifest,
+    FramebufferMappingManifest, FramebufferObjectManifest, FramebufferWindowLeaseManifest,
+    FramebufferWriteManifest, FsWaitManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
@@ -447,6 +447,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "display-cleanup"
         | "display-snapshot-barrier"
         | "display-snapshot"
+        | "display-panic-last-frame"
+        | "panic-last-frame"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -618,7 +620,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -626,7 +628,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -921,6 +923,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "display-event-log" | "display-log" => "display-event-log",
         "display-cleanup" => "display-cleanup",
         "display-snapshot-barrier" | "display-snapshot" => "display-snapshot-barrier",
+        "display-panic-last-frame" | "panic-last-frame" => "display-panic-last-frame",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -6373,6 +6376,88 @@ fn display_snapshot_barrier_view_v1(barrier: &DisplaySnapshotBarrierManifest) ->
     })
 }
 
+fn display_panic_last_frame_view_v1(frame: &DisplayPanicLastFrameManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "display-panic-last-frame",
+        "id": frame.id,
+        "generation": frame.generation,
+        "state": frame.state,
+        "owner": {
+            "store": object_ref_json(
+                "store",
+                frame.owner_store,
+                frame.owner_store_generation,
+            ),
+        },
+        "references": {
+            "display": object_ref_json(
+                "display-object",
+                frame.display,
+                frame.display_generation,
+            ),
+            "framebuffer": object_ref_json(
+                "framebuffer-object",
+                frame.framebuffer,
+                frame.framebuffer_generation,
+            ),
+            "display_snapshot_barrier": object_ref_json(
+                "display-snapshot-barrier",
+                frame.display_snapshot_barrier,
+                frame.display_snapshot_barrier_generation,
+            ),
+            "display_event_log": object_ref_json(
+                "display-event-log",
+                frame.display_event_log,
+                frame.display_event_log_generation,
+            ),
+            "framebuffer_write": object_ref_json(
+                "framebuffer-write",
+                frame.framebuffer_write,
+                frame.framebuffer_write_generation,
+            ),
+            "framebuffer_flush_region": object_ref_json(
+                "framebuffer-flush-region",
+                frame.framebuffer_flush_region,
+                frame.framebuffer_flush_region_generation,
+            ),
+        },
+        "frame": {
+            "x": frame.x,
+            "y": frame.y,
+            "width": frame.width,
+            "height": frame.height,
+            "byte_offset": frame.byte_offset,
+            "byte_len": frame.byte_len,
+            "pixel_format": frame.pixel_format,
+            "payload_digest": frame.payload_digest,
+            "summary_digest": frame.summary_digest,
+        },
+        "panic": {
+            "epoch": frame.panic_epoch,
+            "cpu": frame.panic_cpu,
+            "reason_code": frame.panic_reason_code,
+            "record_kind": frame.panic_record_kind,
+            "summary_record_bytes": frame.summary_record_bytes,
+            "raw_framebuffer_bytes_exported": frame.raw_framebuffer_bytes_exported,
+            "recorded_at_event": frame.recorded_at_event,
+        },
+        "authority": {
+            "panic_path_allocates": false,
+            "raw_framebuffer_bytes_exported": frame.raw_framebuffer_bytes_exported,
+            "real_panic_ring_write_executed": false,
+        },
+        "note": frame.note,
+        "last_transition": {
+            "recorded_at_event": frame.recorded_at_event,
+            "owner_store_generation": frame.owner_store_generation,
+            "display_generation": frame.display_generation,
+            "framebuffer_generation": frame.framebuffer_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     let vector_status = if resume.vector_status.is_empty() {
         "absent"
@@ -7841,6 +7926,12 @@ fn stable_views_for_kind(
             .display_snapshot_barriers
             .iter()
             .map(display_snapshot_barrier_view_v1)
+            .collect()),
+        "display-panic-last-frame" | "panic-last-frame" => Ok(package
+            .semantic
+            .display_panic_last_frames
+            .iter()
+            .map(display_panic_last_frame_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -11862,6 +11953,62 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             ));
         }
     }
+    for frame in &package.semantic.display_panic_last_frames {
+        let event = Some(frame.recorded_at_event);
+        let from = object_ref_json("display-panic-last-frame", frame.id, frame.generation);
+        for (relation, to) in [
+            (
+                "display-panic-last-frame->owner-store",
+                object_ref_json("store", frame.owner_store, frame.owner_store_generation),
+            ),
+            (
+                "display-panic-last-frame->display-object",
+                object_ref_json("display-object", frame.display, frame.display_generation),
+            ),
+            (
+                "display-panic-last-frame->framebuffer-object",
+                object_ref_json(
+                    "framebuffer-object",
+                    frame.framebuffer,
+                    frame.framebuffer_generation,
+                ),
+            ),
+            (
+                "display-panic-last-frame->snapshot-barrier",
+                object_ref_json(
+                    "display-snapshot-barrier",
+                    frame.display_snapshot_barrier,
+                    frame.display_snapshot_barrier_generation,
+                ),
+            ),
+            (
+                "display-panic-last-frame->display-event-log",
+                object_ref_json(
+                    "display-event-log",
+                    frame.display_event_log,
+                    frame.display_event_log_generation,
+                ),
+            ),
+            (
+                "display-panic-last-frame->framebuffer-write",
+                object_ref_json(
+                    "framebuffer-write",
+                    frame.framebuffer_write,
+                    frame.framebuffer_write_generation,
+                ),
+            ),
+            (
+                "display-panic-last-frame->framebuffer-flush-region",
+                object_ref_json(
+                    "framebuffer-flush-region",
+                    frame.framebuffer_flush_region,
+                    frame.framebuffer_flush_region_generation,
+                ),
+            ),
+        ] {
+            edges.push(graph_edge(from.clone(), to, relation, "historical", event));
+        }
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -15451,6 +15598,49 @@ fn inspect_package_object(
                 );
             }
         }
+        "display-panic-last-frame" | "panic-last-frame" => {
+            println!(
+                "inspect display-panic-last-frame package={} count={}",
+                package.package_id, package.semantic.display_panic_last_frame_count
+            );
+            for frame in &package.semantic.display_panic_last_frames {
+                let line = format!(
+                    "display-panic-last-frame id={} owner_store={}@{} display={}@{} framebuffer={}@{} barrier={}@{} display_event_log={}@{} framebuffer_write={}@{} framebuffer_flush_region={}@{} payload_digest={} summary_digest={} summary_record_bytes={} panic_epoch={} panic_cpu={} panic_reason_code={} raw_framebuffer_bytes_exported={} state={} generation={}",
+                    frame.id,
+                    frame.owner_store,
+                    frame.owner_store_generation,
+                    frame.display,
+                    frame.display_generation,
+                    frame.framebuffer,
+                    frame.framebuffer_generation,
+                    frame.display_snapshot_barrier,
+                    frame.display_snapshot_barrier_generation,
+                    frame.display_event_log,
+                    frame.display_event_log_generation,
+                    frame.framebuffer_write,
+                    frame.framebuffer_write_generation,
+                    frame.framebuffer_flush_region,
+                    frame.framebuffer_flush_region_generation,
+                    frame.payload_digest,
+                    frame.summary_digest,
+                    frame.summary_record_bytes,
+                    frame.panic_epoch,
+                    frame.panic_cpu,
+                    frame.panic_reason_code,
+                    frame.raw_framebuffer_bytes_exported,
+                    frame.state,
+                    frame.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.display_panic_last_frames.is_empty() {
+                print_roots_filtered(
+                    "display-panic-last-frame",
+                    &package.semantic.roots.display_panic_last_frame_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -15907,6 +16097,19 @@ fn inspect_package_object_json(
                 .collect::<Vec<_>>(),
             serde_json::json!({
                 "root_count": package.semantic.roots.display_snapshot_barrier_roots.len()
+            }),
+        ),
+        "display-panic-last-frame" | "panic-last-frame" => (
+            "display-panic-last-frame",
+            package.semantic.display_panic_last_frame_count,
+            package
+                .semantic
+                .display_panic_last_frames
+                .iter()
+                .map(display_panic_last_frame_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package.semantic.roots.display_panic_last_frame_roots.len()
             }),
         ),
         "command" => (
@@ -20551,6 +20754,60 @@ mod tests {
         );
         assert_eq!(view["authority"]["real_snapshot_cow_executed"], false);
         assert_eq!(view["last_transition"]["validated_at_event"], 506);
+    }
+
+    #[test]
+    fn display_panic_last_frame_view_v1_exposes_panic_safe_summary() {
+        let view = display_panic_last_frame_view_v1(&DisplayPanicLastFrameManifest {
+            id: 25_001,
+            owner_store: 12,
+            owner_store_generation: 2,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            display_snapshot_barrier: 24_001,
+            display_snapshot_barrier_generation: 1,
+            display_event_log: 23_801,
+            display_event_log_generation: 1,
+            framebuffer_write: 23_501,
+            framebuffer_write_generation: 1,
+            framebuffer_flush_region: 23_601,
+            framebuffer_flush_region_generation: 1,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3200,
+            pixel_format: "xrgb8888".to_owned(),
+            payload_digest: 12_345,
+            summary_digest: 54_321,
+            summary_record_bytes: 512,
+            panic_epoch: 1,
+            panic_cpu: 0,
+            panic_reason_code: 1,
+            panic_record_kind: "contract-panic-summary-v1".to_owned(),
+            raw_framebuffer_bytes_exported: false,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 507,
+            note: "g11 display panic last-frame".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "display-panic-last-frame");
+        assert_eq!(view["owner"]["store"]["generation"], 2);
+        assert_eq!(view["references"]["display_snapshot_barrier"]["id"], 24_001);
+        assert_eq!(view["references"]["display_event_log"]["id"], 23_801);
+        assert_eq!(view["frame"]["payload_digest"], 12_345);
+        assert_eq!(view["frame"]["summary_digest"], 54_321);
+        assert_eq!(view["panic"]["record_kind"], "contract-panic-summary-v1");
+        assert_eq!(view["panic"]["summary_record_bytes"], 512);
+        assert_eq!(view["panic"]["raw_framebuffer_bytes_exported"], false);
+        assert_eq!(view["authority"]["panic_path_allocates"], false);
+        assert_eq!(view["authority"]["real_panic_ring_write_executed"], false);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 507);
     }
 
     #[test]

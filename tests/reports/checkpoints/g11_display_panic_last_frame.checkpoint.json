@@ -1,0 +1,131 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "G11-panic-last-frame-summary",
+  "phase": "Phase 7 Display / Graphics Minimal Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add DisplayPanicLastFrameRecord as first-class semantic panic last-frame evidence",
+    "Add RecordDisplayPanicLastFrame command and DisplayPanicLastFrameRecorded event",
+    "Require exact Store, DisplayObject, FramebufferObject, DisplaySnapshotBarrier, DisplayEventLog, FramebufferWrite, and FramebufferFlushRegion generations",
+    "Reject raw framebuffer byte export from panic last-frame summaries",
+    "Bound the panic summary record size to the panic-ring record limit",
+    "Expose display-panic-last-frame stable ViewV1 and graph historical edges through osctl"
+  ],
+  "no_goals": [
+    "real framebuffer present or scanout flush",
+    "real panic-ring write on bare metal",
+    "raw framebuffer byte dump",
+    "GPU or desktop graphics stack"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/display_panic_last_frame.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/display/golden_g11_display_panic_last_frame.trace.json",
+    "tests/reports/checkpoints/g11_display_panic_last_frame.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/display/golden_g11_display_panic_last_frame.trace.json",
+    "tests/reports/checkpoints/g11_display_panic_last_frame.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "Panic last-frame summaries use exact object refs and generations instead of framebuffer labels",
+      "Raw framebuffer bytes cannot be exported through the semantic panic summary",
+      "Summary record size is bounded to 4096 bytes",
+      "ContractGraph treats panic last-frame refs as historical attribution edges",
+      "ContractGraph rejects panic last-frame summaries whose write or flush binding drifts from the recorded frame",
+      "osctl ViewV1 reports panic record kind, summary digest, and raw-byte export status without dumping adapter state"
+    ],
+    "bad_smells_checked": [
+      "No real panic-ring write was claimed or simulated as target hardware behavior",
+      "No raw framebuffer pointer or byte buffer became semantic truth",
+      "No third-party graphics dependency was introduced",
+      "osctl emits ViewV1 JSON rather than internal Rust structs",
+      "panic last-frame history does not create live ownership"
+    ],
+    "residual_notes": [
+      "G12 owns framebuffer benchmark",
+      "X8 owns panic ring extraction after substrate panic",
+      "Future real panic path must write a bounded ContractPanicSummaryV1 to target_abi PanicRingV1 without allocation"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core display_runtime_g11 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core display_panic_last_frame -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl display_panic_last_frame -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl display-panic-last-frame list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect display-panic-last-frame --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "./scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "display_panic_last_frame": "display-panic-last-frame:25001@1",
+    "owner_store": "store:14@3",
+    "display_snapshot_barrier": "display-snapshot-barrier:24001@1",
+    "display_event_log": "display-event-log:23801@1",
+    "framebuffer_write": "framebuffer-write:23501@1",
+    "framebuffer_flush_region": "framebuffer-flush-region:23601@1",
+    "payload_digest": 9562158844241690816,
+    "summary_digest": 13670226034746644570,
+    "summary_record_bytes": 512,
+    "raw_framebuffer_bytes_exported": false,
+    "recorded_at_event": 568,
+    "contract_validation": "ok"
+  },
+  "residual_gaps": [
+    "G12 owns framebuffer benchmark",
+    "X8 owns panic ring extraction after substrate panic",
+    "Future real panic path must write a bounded ContractPanicSummaryV1 to target_abi PanicRingV1 without allocation"
+  ],
+  "next_checkpoint": "G12-framebuffer-benchmark"
+}

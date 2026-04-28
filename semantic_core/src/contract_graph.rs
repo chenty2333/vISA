@@ -95,6 +95,7 @@ pub struct ContractGraphSnapshot {
     pub display_event_logs: Vec<DisplayEventLogRecord>,
     pub display_cleanups: Vec<DisplayCleanupRecord>,
     pub display_snapshot_barriers: Vec<DisplaySnapshotBarrierRecord>,
+    pub display_panic_last_frames: Vec<DisplayPanicLastFrameRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -209,6 +210,7 @@ impl ContractGraphValidator {
         Self::validate_display_event_logs(snapshot, &mut violations);
         Self::validate_display_cleanups(snapshot, &mut violations);
         Self::validate_display_snapshot_barriers(snapshot, &mut violations);
+        Self::validate_display_panic_last_frames(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -2168,6 +2170,199 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_display_panic_last_frames(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for frame in &snapshot.display_panic_last_frames {
+            let from = frame.object_ref();
+            if frame.id == 0
+                || frame.generation == 0
+                || frame.owner_store_generation == 0
+                || frame.display_generation == 0
+                || frame.framebuffer_generation == 0
+                || frame.display_snapshot_barrier_generation == 0
+                || frame.display_event_log_generation == 0
+                || frame.framebuffer_write_generation == 0
+                || frame.framebuffer_flush_region_generation == 0
+                || frame.payload_digest == 0
+                || frame.summary_digest == 0
+                || frame.summary_record_bytes == 0
+                || frame.summary_record_bytes > 4096
+                || frame.panic_epoch == 0
+                || frame.panic_record_kind != "contract-panic-summary-v1"
+                || frame.raw_framebuffer_bytes_exported
+                || frame.state != DisplayPanicLastFrameState::Recorded
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "display-panic-last-frame->contract",
+                    from,
+                    None,
+                    "display panic last-frame summary requires exact refs and no raw framebuffer bytes",
+                ));
+                continue;
+            }
+            for (label, kind, id, generation) in [
+                (
+                    "display-panic-last-frame->owner-store",
+                    ContractObjectKind::Store,
+                    frame.owner_store,
+                    frame.owner_store_generation,
+                ),
+                (
+                    "display-panic-last-frame->display-object",
+                    ContractObjectKind::DisplayObject,
+                    frame.display,
+                    frame.display_generation,
+                ),
+                (
+                    "display-panic-last-frame->framebuffer-object",
+                    ContractObjectKind::FramebufferObject,
+                    frame.framebuffer,
+                    frame.framebuffer_generation,
+                ),
+                (
+                    "display-panic-last-frame->snapshot-barrier",
+                    ContractObjectKind::DisplaySnapshotBarrier,
+                    frame.display_snapshot_barrier,
+                    frame.display_snapshot_barrier_generation,
+                ),
+                (
+                    "display-panic-last-frame->display-event-log",
+                    ContractObjectKind::DisplayEventLog,
+                    frame.display_event_log,
+                    frame.display_event_log_generation,
+                ),
+                (
+                    "display-panic-last-frame->framebuffer-write",
+                    ContractObjectKind::FramebufferWrite,
+                    frame.framebuffer_write,
+                    frame.framebuffer_write_generation,
+                ),
+                (
+                    "display-panic-last-frame->framebuffer-flush-region",
+                    ContractObjectKind::FramebufferFlushRegion,
+                    frame.framebuffer_flush_region,
+                    frame.framebuffer_flush_region_generation,
+                ),
+            ] {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    kind,
+                    id,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            if let Some(barrier) = snapshot.display_snapshot_barriers.iter().find(|barrier| {
+                barrier.id == frame.display_snapshot_barrier
+                    && barrier.generation == frame.display_snapshot_barrier_generation
+            }) {
+                if barrier.owner_store != frame.owner_store
+                    || barrier.owner_store_generation != frame.owner_store_generation
+                    || barrier.display != frame.display
+                    || barrier.display_generation != frame.display_generation
+                    || barrier.framebuffer != frame.framebuffer
+                    || barrier.framebuffer_generation != frame.framebuffer_generation
+                    || barrier.state != DisplaySnapshotBarrierState::Validated
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "display-panic-last-frame->snapshot-barrier-binding",
+                        from,
+                        Some(barrier.object_ref()),
+                        "display panic last-frame barrier does not match frame target",
+                    ));
+                }
+            }
+            if let Some(event_log) = snapshot.display_event_logs.iter().find(|event_log| {
+                event_log.id == frame.display_event_log
+                    && event_log.generation == frame.display_event_log_generation
+            }) {
+                if event_log.owner_store != frame.owner_store
+                    || event_log.owner_store_generation != frame.owner_store_generation
+                    || event_log.display != frame.display
+                    || event_log.display_generation != frame.display_generation
+                    || event_log.framebuffer != frame.framebuffer
+                    || event_log.framebuffer_generation != frame.framebuffer_generation
+                    || event_log.flush_count == 0
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "display-panic-last-frame->event-log-binding",
+                        from,
+                        Some(event_log.object_ref()),
+                        "display panic last-frame event log does not match frame target",
+                    ));
+                }
+            }
+            if let Some(write) = snapshot.framebuffer_writes.iter().find(|write| {
+                write.id == frame.framebuffer_write
+                    && write.generation == frame.framebuffer_write_generation
+            }) {
+                if write.owner_store != frame.owner_store
+                    || write.owner_store_generation != frame.owner_store_generation
+                    || write.display != frame.display
+                    || write.display_generation != frame.display_generation
+                    || write.framebuffer != frame.framebuffer
+                    || write.framebuffer_generation != frame.framebuffer_generation
+                    || write.x != frame.x
+                    || write.y != frame.y
+                    || write.width != frame.width
+                    || write.height != frame.height
+                    || write.byte_offset != frame.byte_offset
+                    || write.byte_len != frame.byte_len
+                    || write.pixel_format != frame.pixel_format
+                    || write.payload_digest != frame.payload_digest
+                    || write.state != FramebufferWriteState::Applied
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "display-panic-last-frame->write-binding",
+                        from,
+                        Some(write.object_ref()),
+                        "display panic last-frame write does not match frame target",
+                    ));
+                }
+            }
+            if let Some(flush) = snapshot.framebuffer_flush_regions.iter().find(|flush| {
+                flush.id == frame.framebuffer_flush_region
+                    && flush.generation == frame.framebuffer_flush_region_generation
+            }) {
+                if flush.owner_store != frame.owner_store
+                    || flush.owner_store_generation != frame.owner_store_generation
+                    || flush.framebuffer_write != frame.framebuffer_write
+                    || flush.framebuffer_write_generation != frame.framebuffer_write_generation
+                    || flush.display != frame.display
+                    || flush.display_generation != frame.display_generation
+                    || flush.framebuffer != frame.framebuffer
+                    || flush.framebuffer_generation != frame.framebuffer_generation
+                    || flush.x != frame.x
+                    || flush.y != frame.y
+                    || flush.width != frame.width
+                    || flush.height != frame.height
+                    || flush.byte_offset != frame.byte_offset
+                    || flush.byte_len != frame.byte_len
+                    || flush.pixel_format != frame.pixel_format
+                    || flush.payload_digest != frame.payload_digest
+                    || flush.state != FramebufferFlushRegionState::Applied
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "display-panic-last-frame->flush-binding",
+                        from,
+                        Some(flush.object_ref()),
+                        "display panic last-frame flush does not match frame target",
+                    ));
+                }
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -3386,6 +3581,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|barrier| barrier.id == id && barrier.generation == generation)
                 .map(DisplaySnapshotBarrierRecord::object_ref),
+            ContractObjectKind::DisplayPanicLastFrame => snapshot
+                .display_panic_last_frames
+                .iter()
+                .find(|frame| frame.id == id && frame.generation == generation)
+                .map(DisplayPanicLastFrameRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -3566,6 +3766,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|barrier| barrier.id == id)
                 .map(DisplaySnapshotBarrierRecord::object_ref),
+            ContractObjectKind::DisplayPanicLastFrame => snapshot
+                .display_panic_last_frames
+                .iter()
+                .find(|frame| frame.id == id)
+                .map(DisplayPanicLastFrameRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -3729,6 +3934,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::DisplayEventLog
                 | ContractObjectKind::DisplayCleanup
                 | ContractObjectKind::DisplaySnapshotBarrier
+                | ContractObjectKind::DisplayPanicLastFrame
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -3914,6 +4120,14 @@ impl ContractGraphValidator {
                 .and_then(|barrier| {
                     (barrier.state != DisplaySnapshotBarrierState::Validated)
                         .then_some("live edge references unvalidated display snapshot barrier")
+                }),
+            ContractObjectKind::DisplayPanicLastFrame => snapshot
+                .display_panic_last_frames
+                .iter()
+                .find(|frame| frame.id == object.id && frame.generation == object.generation)
+                .and_then(|frame| {
+                    (frame.state != DisplayPanicLastFrameState::Recorded)
+                        .then_some("live edge references unrecorded display panic last-frame")
                 }),
             _ => None,
         }

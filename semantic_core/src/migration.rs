@@ -1719,6 +1719,40 @@ pub enum SemanticInvariantError {
     DisplaySnapshotBarrierMissingEvent {
         barrier: DisplaySnapshotBarrierId,
     },
+    DisplayPanicLastFrameInvalid {
+        panic_last_frame: DisplayPanicLastFrameId,
+    },
+    DisplayPanicLastFrameMissingStore {
+        panic_last_frame: DisplayPanicLastFrameId,
+        store: StoreId,
+    },
+    DisplayPanicLastFrameMissingDisplay {
+        panic_last_frame: DisplayPanicLastFrameId,
+        display: DisplayObjectId,
+    },
+    DisplayPanicLastFrameMissingFramebuffer {
+        panic_last_frame: DisplayPanicLastFrameId,
+        framebuffer: FramebufferObjectId,
+    },
+    DisplayPanicLastFrameMissingBarrier {
+        panic_last_frame: DisplayPanicLastFrameId,
+        barrier: DisplaySnapshotBarrierId,
+    },
+    DisplayPanicLastFrameMissingEventLog {
+        panic_last_frame: DisplayPanicLastFrameId,
+        display_event_log: DisplayEventLogId,
+    },
+    DisplayPanicLastFrameMissingWrite {
+        panic_last_frame: DisplayPanicLastFrameId,
+        framebuffer_write: FramebufferWriteId,
+    },
+    DisplayPanicLastFrameMissingFlush {
+        panic_last_frame: DisplayPanicLastFrameId,
+        framebuffer_flush_region: FramebufferFlushRegionId,
+    },
+    DisplayPanicLastFrameMissingEvent {
+        panic_last_frame: DisplayPanicLastFrameId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

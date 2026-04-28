@@ -23425,6 +23425,302 @@ fn display_runtime_g10_contract_graph_rejects_stale_cleanup_ref() {
     }));
 }
 
+fn g11_display_panic_last_frame_graph() -> (SemanticGraph, StoreId, Generation, u64, u64) {
+    let (mut graph, owner_store, owner_store_generation) = g9_display_cleanup_graph();
+    assert!(graph.cleanup_display_for_store_with_id(
+        23_911,
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_101,
+        1,
+        23_001,
+        1,
+        "display-window-cleanup",
+        "g11 cleanup before panic summary",
+    ));
+    assert!(graph.validate_display_snapshot_barrier_with_id(
+        24_011,
+        owner_store,
+        owner_store_generation,
+        23_101,
+        1,
+        23_001,
+        1,
+        Some(23_911),
+        Some(1),
+        "display-snapshot-barrier",
+        "g11 barrier before panic summary",
+    ));
+    let payload_digest = graph.framebuffer_flush_regions()[0].payload_digest;
+    let summary_digest = SemanticGraph::expected_display_panic_last_frame_summary_digest_v1(
+        owner_store,
+        owner_store_generation,
+        23_101,
+        1,
+        23_001,
+        1,
+        24_011,
+        1,
+        23_801,
+        1,
+        23_501,
+        1,
+        23_601,
+        1,
+        payload_digest,
+        1,
+        0,
+        1,
+    );
+    (
+        graph,
+        owner_store,
+        owner_store_generation,
+        payload_digest,
+        summary_digest,
+    )
+}
+
+#[test]
+fn display_runtime_g11_records_panic_last_frame_summary() {
+    let (mut graph, owner_store, owner_store_generation, payload_digest, summary_digest) =
+        g11_display_panic_last_frame_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        13,
+        "display-runtime-g11",
+        SemanticCommand::RecordDisplayPanicLastFrame {
+            panic_last_frame: 25_001,
+            owner_store,
+            owner_store_generation,
+            display_snapshot_barrier: 24_011,
+            display_snapshot_barrier_generation: 1,
+            display_event_log: 23_801,
+            display_event_log_generation: 1,
+            framebuffer_write: 23_501,
+            framebuffer_write_generation: 1,
+            framebuffer_flush_region: 23_601,
+            framebuffer_flush_region_generation: 1,
+            payload_digest,
+            summary_digest,
+            summary_record_bytes: 512,
+            panic_epoch: 1,
+            panic_record_kind: "contract-panic-summary-v1".to_string(),
+            raw_framebuffer_bytes_exported: false,
+            note: "g11 panic last-frame".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    let frame = &graph.display_panic_last_frames()[0];
+    assert_eq!(
+        frame.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::DisplayPanicLastFrame, 25_001, 1)
+    );
+    assert_eq!(frame.display_snapshot_barrier, 24_011);
+    assert_eq!(frame.display_event_log, 23_801);
+    assert_eq!(frame.framebuffer_flush_region, 23_601);
+    assert_eq!(frame.payload_digest, payload_digest);
+    assert_eq!(frame.summary_digest, summary_digest);
+    assert!(!frame.raw_framebuffer_bytes_exported);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "DisplayPanicLastFrameRecorded panic_last_frame=25001 owner_store={owner_store}@{owner_store_generation} display=23101@1 framebuffer=23001@1 barrier=24011@1 display_event_log=23801@1 framebuffer_write=23501@1 framebuffer_flush_region=23601@1 payload_digest={payload_digest} summary_digest={summary_digest} summary_record_bytes=512 panic_epoch=1 panic_cpu=0 panic_reason_code=1 raw_framebuffer_bytes_exported=false generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g11_rejects_raw_bytes_and_stale_barrier() {
+    let (mut graph, owner_store, owner_store_generation, payload_digest, summary_digest) =
+        g11_display_panic_last_frame_graph();
+
+    let raw_bytes = graph.apply_envelope(CommandEnvelope::new(
+        13,
+        "display-runtime-g11",
+        SemanticCommand::RecordDisplayPanicLastFrame {
+            panic_last_frame: 25_002,
+            owner_store,
+            owner_store_generation,
+            display_snapshot_barrier: 24_011,
+            display_snapshot_barrier_generation: 1,
+            display_event_log: 23_801,
+            display_event_log_generation: 1,
+            framebuffer_write: 23_501,
+            framebuffer_write_generation: 1,
+            framebuffer_flush_region: 23_601,
+            framebuffer_flush_region_generation: 1,
+            payload_digest,
+            summary_digest,
+            summary_record_bytes: 512,
+            panic_epoch: 1,
+            panic_record_kind: "contract-panic-summary-v1".to_string(),
+            raw_framebuffer_bytes_exported: true,
+            note: "g11 raw bytes rejected".to_string(),
+        },
+    ));
+    assert_eq!(raw_bytes.status, CommandStatus::Rejected);
+
+    let stale_barrier = graph.apply_envelope(CommandEnvelope::new(
+        14,
+        "display-runtime-g11",
+        SemanticCommand::RecordDisplayPanicLastFrame {
+            panic_last_frame: 25_003,
+            owner_store,
+            owner_store_generation,
+            display_snapshot_barrier: 24_011,
+            display_snapshot_barrier_generation: 2,
+            display_event_log: 23_801,
+            display_event_log_generation: 1,
+            framebuffer_write: 23_501,
+            framebuffer_write_generation: 1,
+            framebuffer_flush_region: 23_601,
+            framebuffer_flush_region_generation: 1,
+            payload_digest,
+            summary_digest,
+            summary_record_bytes: 512,
+            panic_epoch: 1,
+            panic_record_kind: "contract-panic-summary-v1".to_string(),
+            raw_framebuffer_bytes_exported: false,
+            note: "g11 stale barrier rejected".to_string(),
+        },
+    ));
+    assert_eq!(stale_barrier.status, CommandStatus::Rejected);
+    assert_eq!(graph.display_panic_last_frame_count(), 0);
+}
+
+#[test]
+fn display_runtime_g11_invariants_reject_summary_digest_drift() {
+    let (mut graph, owner_store, owner_store_generation, payload_digest, summary_digest) =
+        g11_display_panic_last_frame_graph();
+    assert!(graph.record_display_panic_last_frame_with_id(
+        25_004,
+        owner_store,
+        owner_store_generation,
+        24_011,
+        1,
+        23_801,
+        1,
+        23_501,
+        1,
+        23_601,
+        1,
+        payload_digest,
+        summary_digest,
+        512,
+        1,
+        "contract-panic-summary-v1",
+        false,
+        "g11 invariant drift",
+    ));
+    graph.corrupt_display_panic_last_frame_summary_digest_for_test(25_004, summary_digest ^ 1);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::DisplayPanicLastFrameInvalid {
+            panic_last_frame: 25_004,
+        })
+    );
+}
+
+#[test]
+fn display_runtime_g11_contract_graph_rejects_raw_bytes() {
+    let (mut graph, owner_store, owner_store_generation, payload_digest, summary_digest) =
+        g11_display_panic_last_frame_graph();
+    assert!(graph.record_display_panic_last_frame_with_id(
+        25_005,
+        owner_store,
+        owner_store_generation,
+        24_011,
+        1,
+        23_801,
+        1,
+        23_501,
+        1,
+        23_601,
+        1,
+        payload_digest,
+        summary_digest,
+        512,
+        1,
+        "contract-panic-summary-v1",
+        false,
+        "g11 contract graph",
+    ));
+    let mut frames = graph.display_panic_last_frames().to_vec();
+    frames[0].raw_framebuffer_bytes_exported = true;
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        framebuffer_writes: graph.framebuffer_writes().to_vec(),
+        framebuffer_flush_regions: graph.framebuffer_flush_regions().to_vec(),
+        display_event_logs: graph.display_event_logs().to_vec(),
+        display_snapshot_barriers: graph.display_snapshot_barriers().to_vec(),
+        display_panic_last_frames: frames,
+        stores: graph.stores().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "display-panic-last-frame->contract"
+            && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+    }));
+}
+
+#[test]
+fn display_runtime_g11_contract_graph_rejects_write_and_flush_binding_mismatch() {
+    let (mut graph, owner_store, owner_store_generation, payload_digest, summary_digest) =
+        g11_display_panic_last_frame_graph();
+    assert!(graph.record_display_panic_last_frame_with_id(
+        25_006,
+        owner_store,
+        owner_store_generation,
+        24_011,
+        1,
+        23_801,
+        1,
+        23_501,
+        1,
+        23_601,
+        1,
+        payload_digest,
+        summary_digest,
+        512,
+        1,
+        "contract-panic-summary-v1",
+        false,
+        "g11 contract graph binding mismatch",
+    ));
+    let mut frames = graph.display_panic_last_frames().to_vec();
+    frames[0].payload_digest ^= 1;
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        framebuffer_writes: graph.framebuffer_writes().to_vec(),
+        framebuffer_flush_regions: graph.framebuffer_flush_regions().to_vec(),
+        display_event_logs: graph.display_event_logs().to_vec(),
+        display_snapshot_barriers: graph.display_snapshot_barriers().to_vec(),
+        display_panic_last_frames: frames,
+        stores: graph.stores().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "display-panic-last-frame->write-binding"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "display-panic-last-frame->flush-binding"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();

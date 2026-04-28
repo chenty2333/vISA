@@ -106,6 +106,7 @@ pub enum ContractObjectKind {
     DisplayEventLog,
     DisplayCleanup,
     DisplaySnapshotBarrier,
+    DisplayPanicLastFrame,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -228,6 +229,7 @@ impl ContractObjectKind {
             Self::DisplayEventLog => "display-event-log",
             Self::DisplayCleanup => "display-cleanup",
             Self::DisplaySnapshotBarrier => "display-snapshot-barrier",
+            Self::DisplayPanicLastFrame => "display-panic-last-frame",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -5732,6 +5734,7 @@ mod tests {
             display_event_logs: Vec::new(),
             display_cleanups: Vec::new(),
             display_snapshot_barriers: Vec::new(),
+            display_panic_last_frames: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -5843,6 +5846,7 @@ mod tests {
             display_event_logs: Vec::new(),
             display_cleanups: Vec::new(),
             display_snapshot_barriers: Vec::new(),
+            display_panic_last_frames: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6088,6 +6092,7 @@ mod tests {
             display_event_logs: Vec::new(),
             display_cleanups: Vec::new(),
             display_snapshot_barriers: Vec::new(),
+            display_panic_last_frames: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6203,6 +6208,7 @@ mod tests {
             display_event_logs: Vec::new(),
             display_cleanups: Vec::new(),
             display_snapshot_barriers: Vec::new(),
+            display_panic_last_frames: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6405,6 +6411,7 @@ mod tests {
             display_event_logs: Vec::new(),
             display_cleanups: Vec::new(),
             display_snapshot_barriers: Vec::new(),
+            display_panic_last_frames: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
