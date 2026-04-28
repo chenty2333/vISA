@@ -1,0 +1,84 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "V6-lazy-vector-state-enable",
+  "name": "golden_v6_lazy_vector_state_enable",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "preempt saves dirty vector state",
+    "resume restores vector state",
+    "cross-hart vector migration",
+    "real target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "ActivationContext vector status is absent",
+      "VectorState vector-state:22001@1 is reserved and live-owned by activation:87@1",
+      "VectorState target feature set declares riscv-v as supported"
+    ],
+    "command": {
+      "name": "enable-lazy-vector-state",
+      "context": "activation-context:9060@1",
+      "vector_state": "vector-state:22001@1",
+      "result": "activation-context:9060@2 vector_status=dirty"
+    }
+  },
+  "events": [
+    {
+      "kind": "LazyVectorStateEnabled",
+      "source": "SemanticGraph::enable_lazy_vector_state",
+      "visible_as": "osctl activation-context list --json",
+      "reason": "first vector use creates semantic dirty state without saving/restoring registers"
+    }
+  ],
+  "expected": {
+    "views": {
+      "activation-context": {
+        "id": 9060,
+        "generation": 2,
+        "state": "created",
+        "vector_context": {
+          "status": "dirty",
+          "vector_state": {
+            "kind": "vector-state",
+            "id": 22001,
+            "generation": 1
+          }
+        }
+      },
+      "vector-state": {
+        "id": 22001,
+        "generation": 1,
+        "state": "reserved"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "lazy enable requires an absent ActivationContext vector state",
+      "lazy enable requires an exact live VectorState ObjectRef",
+      "unavailable VectorState cannot enable lazy vector state",
+      "duplicate lazy enable is rejected",
+      "lazy enable records dirty semantic context only; it does not store vector register bytes"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "simd_runtime_v6_lazy_enable_transitions_absent_context_to_dirty",
+      "simd_runtime_v6_rejects_lazy_enable_when_context_already_has_vector_state",
+      "simd_runtime_v6_rejects_lazy_enable_with_unavailable_vector_state",
+      "activation_context_view_v1_exposes_vector_clean_dirty_state"
+    ],
+    "osctl_json_view": "activation-context list --json",
+    "activation_context": "activation-context:9060@2",
+    "vector_state": "vector-state:22001@1"
+  }
+}

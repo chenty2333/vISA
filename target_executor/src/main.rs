@@ -8327,6 +8327,13 @@ fn build_target_executor_v1(
     )?;
     run_simd_vector_state_harness(semantic, &publisher, &executor)?;
     run_simd_activation_context_vector_harness(semantic)?;
+    run_simd_lazy_vector_enable_harness(
+        &verified_artifacts,
+        semantic,
+        &mut publisher,
+        &mut store_manager,
+        &mut executor,
+    )?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8609,6 +8616,175 @@ fn run_simd_activation_context_vector_harness(
         if result.status != CommandStatus::Applied {
             return Err(format!(
                 "simd runtime v5 command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn run_simd_lazy_vector_enable_harness(
+    verified_artifacts: &[VerifiedArtifact],
+    semantic: &mut SemanticGraph,
+    publisher: &mut CodePublisher,
+    store_manager: &mut TargetStoreManager,
+    executor: &mut TargetExecutor,
+) -> Result<(), Box<dyn Error>> {
+    let Some(artifact) = verified_artifacts.first() else {
+        return Ok(());
+    };
+    let feature_set = 21_001;
+    let feature_recorded = semantic.apply_envelope(CommandEnvelope::new(
+        60_010,
+        "simd-runtime-v6",
+        SemanticCommand::RecordTargetFeatureSet {
+            feature_set,
+            name: "v6-simd-supported-fixture".to_owned(),
+            discovery_source: "target-executor-v6-lazy-vector-enable-harness".to_owned(),
+            target_profile: "riscv64-vector-host-validation-fixture".to_owned(),
+            target_arch: "riscv64".to_owned(),
+            base_isa: "rv64gcv".to_owned(),
+            simd_abi: "riscv-v".to_owned(),
+            simd_supported: true,
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            scalar_fallback: false,
+            unsupported_reason: String::new(),
+            note: "v6 synthetic supported SIMD fixture for lazy enable contract".to_owned(),
+        },
+    ));
+    if feature_recorded.status != CommandStatus::Applied {
+        return Err(format!(
+            "simd runtime v6 target feature command {} ({}) failed: status={} violations={:?}",
+            feature_recorded.command_id,
+            feature_recorded.command,
+            feature_recorded.status.as_str(),
+            feature_recorded.violations
+        )
+        .into());
+    }
+    let feature_ref = semantic
+        .target_feature_sets()
+        .iter()
+        .find(|feature| feature.id == feature_set)
+        .map(|feature| feature.object_ref())
+        .ok_or("v6 target feature fixture missing")?;
+
+    let store_id =
+        store_manager.register_verified_artifact(artifact, "restartable", "simd-lazy-enable");
+    store_manager
+        .set_running(store_id)
+        .map_err(|error| error.message())?;
+    let store = store_manager
+        .record(store_id)
+        .ok_or("SIMD lazy enable store missing after registration")?
+        .store
+        .clone();
+    let code_id = publisher
+        .allocate(artifact)
+        .map_err(|error| error.message())?;
+    publisher
+        .declare_simd_requirement(
+            code_id,
+            feature_ref,
+            "riscv-v",
+            32,
+            128,
+            "v6 lazy vector enable harness",
+        )
+        .map_err(|error| error.message())?;
+    publisher.fill(code_id).map_err(|error| error.message())?;
+    publisher.seal(code_id).map_err(|error| error.message())?;
+    publisher
+        .publish_rx(code_id)
+        .map_err(|error| error.message())?;
+    publisher
+        .bind_to_store(code_id, &store)
+        .map_err(|error| error.message())?;
+    let code = publisher
+        .object(code_id)
+        .ok_or("SIMD lazy enable code missing after bind")?
+        .clone();
+    let activation = executor
+        .start_activation(
+            &store,
+            &code,
+            ActivationEntry::Symbol("simd_lazy_vector_enable".to_owned()),
+        )
+        .map_err(|error| error.message())?;
+
+    semantic.ensure_task(
+        9_060,
+        FrontendKind::WasmApp,
+        "v6-simd-lazy-vector-enable-task",
+    );
+    let commands = [
+        CommandEnvelope::new(
+            60_011,
+            "simd-runtime-v6",
+            SemanticCommand::CreateRuntimeActivation {
+                activation,
+                owner_task: 9_060,
+                owner_task_generation: 1,
+                owner_store: None,
+                owner_store_generation: None,
+                code_object: Some(code.object_ref()),
+            },
+        ),
+        CommandEnvelope::new(
+            60_012,
+            "simd-runtime-v6",
+            SemanticCommand::CreateActivationContext {
+                context: 9_060,
+                activation,
+                activation_generation: 1,
+            },
+        ),
+        CommandEnvelope::new(
+            60_013,
+            "simd-runtime-v6",
+            SemanticCommand::RecordVectorState {
+                vector_state: 22_001,
+                owner_activation: ContractObjectRef::new(
+                    ContractObjectKind::Activation,
+                    activation,
+                    1,
+                ),
+                owner_store: ContractObjectRef::new(
+                    ContractObjectKind::Store,
+                    store.id,
+                    store.generation,
+                ),
+                code_object: code.object_ref(),
+                target_feature_set: feature_ref,
+                simd_abi: "riscv-v".to_owned(),
+                vector_register_count: 32,
+                vector_register_bits: 128,
+                register_bytes: 512,
+                state: VectorStateState::Reserved,
+                note: "v6 reserved vector state before lazy enable".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            60_014,
+            "simd-runtime-v6",
+            SemanticCommand::EnableLazyVectorState {
+                context: 9_060,
+                context_generation: 1,
+                vector_state: ContractObjectRef::new(ContractObjectKind::VectorState, 22_001, 1),
+                note: "v6 first vector instruction marks activation context dirty".to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "simd runtime v6 command {} ({}) failed: status={} violations={:?}",
                 result.command_id,
                 result.command,
                 result.status.as_str(),

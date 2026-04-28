@@ -71,6 +71,12 @@ pub enum SemanticCommand {
         vector_status: ActivationVectorState,
         note: String,
     },
+    EnableLazyVectorState {
+        context: ActivationContextId,
+        context_generation: Generation,
+        vector_state: ContractObjectRef,
+        note: String,
+    },
     CaptureSavedContext {
         saved_context: SavedContextId,
         context: ActivationContextId,
@@ -1353,6 +1359,7 @@ impl SemanticCommand {
             Self::UpdateActivationContextVectorState { .. } => {
                 "update-activation-context-vector-state"
             }
+            Self::EnableLazyVectorState { .. } => "enable-lazy-vector-state",
             Self::CaptureSavedContext { .. } => "capture-saved-context",
             Self::SavePreemptedContext { .. } => "save-preempted-context",
             Self::RecordTimerInterrupt { .. } => "record-timer-interrupt",
@@ -1931,6 +1938,14 @@ impl SemanticGraph {
                     *vector_state,
                     *vector_status,
                 )
+                .map_err(CommandError::precondition),
+            SemanticCommand::EnableLazyVectorState {
+                context,
+                context_generation,
+                vector_state,
+                ..
+            } => self
+                .validate_lazy_vector_state_enable(*context, *context_generation, *vector_state)
                 .map_err(CommandError::precondition),
             SemanticCommand::CaptureSavedContext {
                 saved_context,
@@ -5096,6 +5111,12 @@ impl SemanticGraph {
                 vector_status,
                 &note,
             ),
+            SemanticCommand::EnableLazyVectorState {
+                context,
+                context_generation,
+                vector_state,
+                note,
+            } => self.enable_lazy_vector_state(context, context_generation, vector_state, &note),
             SemanticCommand::CaptureSavedContext {
                 saved_context,
                 context,

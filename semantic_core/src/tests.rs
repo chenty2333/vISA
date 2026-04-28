@@ -19412,6 +19412,117 @@ fn simd_runtime_v5_invariants_reject_vector_context_generation_drift() {
 }
 
 #[test]
+fn simd_runtime_v6_lazy_enable_transitions_absent_context_to_dirty() {
+    let mut graph = v5_activation_context_with_reserved_vector_state();
+    let vector_ref = ContractObjectRef::new(ContractObjectKind::VectorState, 22_000, 1);
+
+    let enabled = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v6-test",
+        SemanticCommand::EnableLazyVectorState {
+            context: 12,
+            context_generation: 1,
+            vector_state: vector_ref,
+            note: "first vector instruction enables vector state".to_string(),
+        },
+    ));
+
+    assert_eq!(enabled.status, CommandStatus::Applied);
+    assert_eq!(
+        graph.activation_contexts()[0].vector_status,
+        ActivationVectorState::Dirty
+    );
+    assert_eq!(
+        graph.activation_contexts()[0].vector_state,
+        Some(vector_ref)
+    );
+    assert_eq!(graph.activation_contexts()[0].generation, 2);
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "LazyVectorStateEnabled context=12@1->2 vector_state=vector-state:22000@1 vector_status=dirty generation=1"
+    );
+}
+
+#[test]
+fn simd_runtime_v6_rejects_lazy_enable_when_context_already_has_vector_state() {
+    let mut graph = v5_activation_context_with_reserved_vector_state();
+    let vector_ref = ContractObjectRef::new(ContractObjectKind::VectorState, 22_000, 1);
+    assert!(graph.enable_lazy_vector_state(12, 1, vector_ref, "first vector use"));
+
+    let duplicate = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "v6-test",
+        SemanticCommand::EnableLazyVectorState {
+            context: 12,
+            context_generation: 2,
+            vector_state: vector_ref,
+            note: "second lazy enable".to_string(),
+        },
+    ));
+
+    assert_eq!(duplicate.status, CommandStatus::Rejected);
+    assert_eq!(
+        duplicate.violations,
+        vec!["lazy vector enable requires absent vector context".to_string()]
+    );
+}
+
+#[test]
+fn simd_runtime_v6_rejects_lazy_enable_with_unavailable_vector_state() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "simd-unavailable-task");
+    let code_object = ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4);
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, Some(code_object)));
+    assert!(graph.create_activation_context_with_id(12, 11, 1));
+    assert!(graph.record_target_feature_set_with_id(
+        21_000,
+        "riscv64-qemu-virt-research-target",
+        "target-runtime-default-profile",
+        "riscv64-qemu-virt-research",
+        "riscv64",
+        "rv64imac",
+        "riscv-v",
+        false,
+        0,
+        0,
+        true,
+        "default profile does not declare RVV/SIMD",
+        "v6 unavailable SIMD discovery",
+    ));
+    assert!(graph.record_vector_state_with_id(
+        22_000,
+        ContractObjectRef::new(ContractObjectKind::Activation, 11, 1),
+        ContractObjectRef::new(ContractObjectKind::Store, 2, 5),
+        code_object,
+        ContractObjectRef::new(ContractObjectKind::TargetFeatureSet, 21_000, 1),
+        "riscv-v",
+        32,
+        128,
+        512,
+        VectorStateState::Unavailable,
+        "v6 unavailable vector state",
+    ));
+
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v6-test",
+        SemanticCommand::EnableLazyVectorState {
+            context: 12,
+            context_generation: 1,
+            vector_state: ContractObjectRef::new(ContractObjectKind::VectorState, 22_000, 1),
+            note: "first vector instruction on unsupported target".to_string(),
+        },
+    ));
+
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["activation context vector state must be live-owned".to_string()]
+    );
+}
+
+#[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();
     let blocker = ContractObjectRef::new(ContractObjectKind::TimerInterrupt, 5, 1);

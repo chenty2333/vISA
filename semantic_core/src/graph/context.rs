@@ -455,6 +455,72 @@ impl SemanticGraph {
         true
     }
 
+    pub(crate) fn validate_lazy_vector_state_enable(
+        &self,
+        context: ActivationContextId,
+        context_generation: Generation,
+        vector_state: ContractObjectRef,
+    ) -> Result<(), &'static str> {
+        let Some(context_record) = self.activation_contexts.iter().find(|record| {
+            record.id == context
+                && record.generation == context_generation
+                && record.state != ActivationContextState::Dropped
+        }) else {
+            return Err("activation context generation is missing or dropped");
+        };
+        if context_record.vector_status != ActivationVectorState::Absent
+            || context_record.vector_state.is_some()
+        {
+            return Err("lazy vector enable requires absent vector context");
+        }
+        self.validate_activation_context_vector_state(
+            context,
+            context_generation,
+            Some(vector_state),
+            ActivationVectorState::Dirty,
+        )
+    }
+
+    pub fn enable_lazy_vector_state(
+        &mut self,
+        context: ActivationContextId,
+        context_generation: Generation,
+        vector_state: ContractObjectRef,
+        _note: &str,
+    ) -> bool {
+        if self
+            .validate_lazy_vector_state_enable(context, context_generation, vector_state)
+            .is_err()
+        {
+            return false;
+        }
+        let Some(index) = self
+            .activation_contexts
+            .iter()
+            .position(|record| record.id == context && record.generation == context_generation)
+        else {
+            return false;
+        };
+        let context_generation_before = self.activation_contexts[index].generation;
+        self.activation_contexts[index].generation += 1;
+        let context_generation_after = self.activation_contexts[index].generation;
+        let event = self.event_log.push(
+            "scheduler",
+            EventKind::LazyVectorStateEnabled {
+                context,
+                context_generation_before,
+                context_generation_after,
+                vector_state,
+                generation: 1,
+            },
+        );
+        self.activation_contexts[index].vector_state = Some(vector_state);
+        self.activation_contexts[index].vector_status = ActivationVectorState::Dirty;
+        self.activation_contexts[index].vector_state_event = Some(event);
+        self.activation_contexts[index].last_event = Some(event);
+        true
+    }
+
     pub fn activation_contexts(&self) -> &[ActivationContextRecord] {
         &self.activation_contexts
     }
@@ -694,20 +760,35 @@ impl SemanticGraph {
                         );
                     };
                     if !self.event_log.events.iter().any(|event| {
-                        event.id == vector_event
-                            && matches!(
-                                &event.kind,
-                                EventKind::ActivationContextVectorStateUpdated {
-                                    context: event_context,
-                                    context_generation_after,
-                                    vector_state: event_vector_state,
-                                    vector_status,
-                                    ..
-                                } if *event_context == context.id
+                        if event.id != vector_event {
+                            return false;
+                        }
+                        match &event.kind {
+                            EventKind::ActivationContextVectorStateUpdated {
+                                context: event_context,
+                                context_generation_after,
+                                vector_state: event_vector_state,
+                                vector_status,
+                                ..
+                            } => {
+                                *event_context == context.id
                                     && *context_generation_after <= context.generation
                                     && *event_vector_state == context.vector_state
                                     && *vector_status == context.vector_status
-                            )
+                            }
+                            EventKind::LazyVectorStateEnabled {
+                                context: event_context,
+                                context_generation_after,
+                                vector_state: event_vector_state,
+                                ..
+                            } => {
+                                *event_context == context.id
+                                    && *context_generation_after <= context.generation
+                                    && Some(*event_vector_state) == context.vector_state
+                                    && context.vector_status == ActivationVectorState::Dirty
+                            }
+                            _ => false,
+                        }
                     }) {
                         return Err(
                             SemanticInvariantError::ActivationContextVectorStateMissing {

@@ -90,6 +90,13 @@ pub enum EventKind {
         vector_status: ActivationVectorState,
         generation: Generation,
     },
+    LazyVectorStateEnabled {
+        context: ActivationContextId,
+        context_generation_before: Generation,
+        context_generation_after: Generation,
+        vector_state: ContractObjectRef,
+        generation: Generation,
+    },
     SavedContextCaptured {
         saved_context: SavedContextId,
         context: ActivationContextId,
@@ -1805,6 +1812,16 @@ impl EventKind {
                     .map(ContractObjectRef::summary)
                     .unwrap_or_else(|| "none".to_string()),
                 vector_status.as_str()
+            ),
+            Self::LazyVectorStateEnabled {
+                context,
+                context_generation_before,
+                context_generation_after,
+                vector_state,
+                generation,
+            } => format!(
+                "LazyVectorStateEnabled context={context}@{context_generation_before}->{context_generation_after} vector_state={} vector_status=dirty generation={generation}",
+                vector_state.summary()
             ),
             Self::SavedContextCaptured {
                 saved_context,
