@@ -1,0 +1,193 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "X6-integrated-snapshot-io-lease-barrier",
+  "phase": "Phase 8 Integrated System Scenarios",
+  "status": "pass",
+  "scope": [
+    "Add IntegratedSnapshotIoLeaseBarrierRecord as first-class integrated scenario evidence",
+    "Tie S14 SmpSnapshotBarrier, I10 IoCleanup, and G10 DisplaySnapshotBarrier into one generation-checked snapshot closure scenario",
+    "Require exact generations for SmpSnapshotBarrier, IoCleanup, DisplaySnapshotBarrier, Store, DeviceObject, DisplayObject, and FramebufferObject",
+    "Derive active lease counts and cleanup release/revoke counts from semantic source records",
+    "Reject missing, stale, dirty, incomplete, or count-drifted snapshot/io/display evidence",
+    "Emit IntegratedSnapshotIoLeaseBarrierRecorded event and stable osctl ViewV1 JSON",
+    "Expose historical graph edges without creating live ownership or substrate mapping truth",
+    "Publish target_executor semantic package roots and count validation for X6 evidence"
+  ],
+  "no_goals": [
+    "real snapshot execution",
+    "real DMA/MMIO/IRQ hardware execution",
+    "real display hardware execution",
+    "new runtime-only executor behavior",
+    "target-side cwasm execution"
+  ],
+  "implemented_contract_clauses": [
+    {
+      "spec": "references/roadmap.md",
+      "clause": "X6 snapshot barrier blocks active IO leases"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+      "clause": "all integrated snapshot/io lease barrier references carry kind/id/generation"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+      "clause": "integrated scenario uses Historical graph edges for snapshot, cleanup, device, display, and framebuffer attribution"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/06-store-fault-cleanup.md",
+      "clause": "completed cleanup records are validator-visible evidence for released IO authority"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+      "clause": "osctl exposes stable ViewV1 JSON and contract validation output"
+    }
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/integrated_snapshot_io_lease_barrier.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/integrated/golden_x6_snapshot_io_lease_barrier.trace.json",
+    "tests/reports/checkpoints/x6_integrated_snapshot_io_lease_barrier.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/integrated/golden_x6_snapshot_io_lease_barrier.trace.json",
+    "tests/reports/checkpoints/x6_integrated_snapshot_io_lease_barrier.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "contract graph models IntegratedSnapshotIoLeaseBarrier as exact-generation integrated evidence",
+      "target_executor writes X6 records, roots, and counts into the semantic package",
+      "target_executor includes the referenced driver store generation in contract validation evidence",
+      "osctl command, inspect, replay, and graph history expose integrated-snapshot-io-lease-barrier evidence through stable ViewV1 JSON",
+      "semantic validation rejects missing barrier evidence, stale display snapshot barrier generation, and source cleanup count drift"
+    ],
+    "bad_smells_checked": [
+      "No substrate DMA/MMIO/IRQ mapping became semantic truth",
+      "No real snapshot or hardware DMA execution is claimed",
+      "No display adapter internal state became semantic truth",
+      "No adapter internal structs are serialized as osctl stable views",
+      "No target-side cwasm execution path was changed",
+      "No third-party dependency was introduced in semantic_core"
+    ],
+    "residual_notes": [
+      "X7 owns code publish while SMP workload active",
+      "Future real snapshot and device paths must feed the same semantic barrier and cleanup objects rather than bypassing X6 evidence"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core integrated_runtime_x6 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core integrated_snapshot_io_lease_barrier -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl integrated_snapshot_io_lease_barrier -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p semantic_core -p artifact_manifest -p contract_core -p target_executor -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl integrated-snapshot-io-lease-barrier list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect integrated-snapshot-io-lease-barrier --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "./scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "integrated_snapshot_io_lease_barrier": "integrated-snapshot-io-lease-barrier:26601@1",
+    "smp_snapshot_barrier": "smp-snapshot-barrier:9401@1",
+    "io_cleanup": "io-cleanup:9967@1",
+    "display_snapshot_barrier": "display-snapshot-barrier:24001@1",
+    "driver_store": "store:2@2",
+    "device": "device-object:9701@1",
+    "display": "display-object:23101@1",
+    "framebuffer": "framebuffer-object:23001@1",
+    "released_dma_buffers": 1,
+    "released_mmio_regions": 1,
+    "released_irq_lines": 1,
+    "released_framebuffer_window_leases": 1,
+    "recorded_at_event": 576,
+    "contract_validation": "ok"
+  },
+  "no_goals_respected": {
+    "no_real_target_side_cwasm_execution": true,
+    "no_full_wasi_component_runtime": true,
+    "no_real_snapshot_execution": true,
+    "no_real_dma_mmio_irq_hardware_execution": true,
+    "no_real_display_hardware_execution": true,
+    "no_global_object_id_authority": true,
+    "no_substrate_mapping_as_semantic_truth": true
+  },
+  "residual_gaps": [
+    "X7 owns code publish while SMP workload active",
+    "Real snapshot, device, and display paths must later provide runtime-backed evidence through the existing semantic objects"
+  ],
+  "next_checkpoint": "X7-integrated-code-publish-smp-workload-active"
+}

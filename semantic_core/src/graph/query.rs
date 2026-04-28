@@ -94,6 +94,7 @@ impl SemanticGraph {
         self.check_integrated_simd_migration_invariants()?;
         self.check_integrated_network_disk_io_invariants()?;
         self.check_integrated_display_scheduler_load_invariants()?;
+        self.check_integrated_snapshot_io_lease_barrier_invariants()?;
         self.check_device_object_invariants()?;
         self.check_queue_object_invariants()?;
         self.check_descriptor_object_invariants()?;

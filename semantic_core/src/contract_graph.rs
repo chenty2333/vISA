@@ -98,6 +98,7 @@ pub struct ContractGraphSnapshot {
     pub display_panic_last_frames: Vec<DisplayPanicLastFrameRecord>,
     pub framebuffer_benchmarks: Vec<FramebufferBenchmarkRecord>,
     pub integrated_display_scheduler_loads: Vec<IntegratedDisplaySchedulerLoadRecord>,
+    pub integrated_snapshot_io_lease_barriers: Vec<IntegratedSnapshotIoLeaseBarrierRecord>,
     pub integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
     pub integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
     pub integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultRecord>,
@@ -107,6 +108,7 @@ pub struct ContractGraphSnapshot {
     pub block_benchmarks: Vec<BlockBenchmarkRecord>,
     pub fake_block_backends: Vec<FakeBlockBackendObjectRecord>,
     pub network_driver_cleanups: Vec<NetworkDriverCleanupRecord>,
+    pub device_objects: Vec<DeviceObjectRecord>,
     pub packet_device_objects: Vec<PacketDeviceObjectRecord>,
     pub network_stack_adapters: Vec<NetworkStackAdapterRecord>,
     pub socket_objects: Vec<SocketObjectRecord>,
@@ -131,6 +133,7 @@ pub struct ContractGraphSnapshot {
     pub remote_preempts: Vec<RemotePreemptRecord>,
     pub activation_cleanups: Vec<ActivationCleanupRecord>,
     pub smp_cleanup_quiescence: Vec<SmpCleanupQuiescenceRecord>,
+    pub smp_snapshot_barriers: Vec<SmpSnapshotBarrierRecord>,
     pub smp_stress_runs: Vec<SmpStressRunRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
@@ -249,6 +252,7 @@ impl ContractGraphValidator {
         Self::validate_display_panic_last_frames(snapshot, &mut violations);
         Self::validate_framebuffer_benchmarks(snapshot, &mut violations);
         Self::validate_integrated_display_scheduler_loads(snapshot, &mut violations);
+        Self::validate_integrated_snapshot_io_lease_barriers(snapshot, &mut violations);
         Self::validate_integrated_smp_preemption_cleanups(snapshot, &mut violations);
         Self::validate_integrated_smp_network_faults(snapshot, &mut violations);
         Self::validate_integrated_disk_preempt_faults(snapshot, &mut violations);
@@ -3890,6 +3894,179 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_integrated_snapshot_io_lease_barriers(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for record in &snapshot.integrated_snapshot_io_lease_barriers {
+            let from = record.object_ref();
+            if record.id == 0
+                || record.generation == 0
+                || record.scenario.is_empty()
+                || record.state != IntegratedSnapshotIoLeaseBarrierState::Recorded
+                || record.smp_snapshot_barrier_generation == 0
+                || record.io_cleanup_generation == 0
+                || record.display_snapshot_barrier_generation == 0
+                || record.driver_store_generation == 0
+                || record.device_generation == 0
+                || record.display_generation == 0
+                || record.framebuffer_generation == 0
+                || record.active_dmw_lease_count != 0
+                || record.in_flight_dma_count != 0
+                || record.raw_dma_binding_count != 0
+                || record.raw_mmio_binding_count != 0
+                || record.active_framebuffer_window_lease_count != 0
+                || record.active_framebuffer_mapping_count != 0
+                || record.dirty_framebuffer_region_count != 0
+                || record.released_dma_buffers == 0
+                || record.released_mmio_regions == 0
+                || record.released_irq_lines == 0
+                || record.released_framebuffer_window_leases == 0
+                || record.revoked_device_capabilities == 0
+                || record.revoked_display_capabilities == 0
+                || record.smp_barrier_event == 0
+                || record.io_cleanup_completed_event == 0
+                || record.display_barrier_event == 0
+                || record.invariant_checks == 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "integrated-snapshot-io-lease-barrier->contract",
+                    from,
+                    None,
+                    "integrated snapshot/io lease barrier requires clean snapshot barriers and cleanup evidence",
+                ));
+                continue;
+            }
+            for (label, kind, id, generation) in [
+                (
+                    "integrated-snapshot-io-lease-barrier->smp-snapshot-barrier",
+                    ContractObjectKind::SmpSnapshotBarrier,
+                    record.smp_snapshot_barrier,
+                    record.smp_snapshot_barrier_generation,
+                ),
+                (
+                    "integrated-snapshot-io-lease-barrier->io-cleanup",
+                    ContractObjectKind::IoCleanup,
+                    record.io_cleanup,
+                    record.io_cleanup_generation,
+                ),
+                (
+                    "integrated-snapshot-io-lease-barrier->display-snapshot-barrier",
+                    ContractObjectKind::DisplaySnapshotBarrier,
+                    record.display_snapshot_barrier,
+                    record.display_snapshot_barrier_generation,
+                ),
+                (
+                    "integrated-snapshot-io-lease-barrier->driver-store",
+                    ContractObjectKind::Store,
+                    record.driver_store,
+                    record.driver_store_generation,
+                ),
+                (
+                    "integrated-snapshot-io-lease-barrier->device",
+                    ContractObjectKind::DeviceObject,
+                    record.device,
+                    record.device_generation,
+                ),
+                (
+                    "integrated-snapshot-io-lease-barrier->display",
+                    ContractObjectKind::DisplayObject,
+                    record.display,
+                    record.display_generation,
+                ),
+                (
+                    "integrated-snapshot-io-lease-barrier->framebuffer",
+                    ContractObjectKind::FramebufferObject,
+                    record.framebuffer,
+                    record.framebuffer_generation,
+                ),
+            ] {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    kind,
+                    id,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+
+            let smp_barrier = snapshot.smp_snapshot_barriers.iter().find(|barrier| {
+                barrier.id == record.smp_snapshot_barrier
+                    && barrier.generation == record.smp_snapshot_barrier_generation
+            });
+            let cleanup = snapshot.io_cleanups.iter().find(|cleanup| {
+                cleanup.id == record.io_cleanup
+                    && cleanup.generation == record.io_cleanup_generation
+            });
+            let display_barrier = snapshot.display_snapshot_barriers.iter().find(|barrier| {
+                barrier.id == record.display_snapshot_barrier
+                    && barrier.generation == record.display_snapshot_barrier_generation
+            });
+            if let (Some(smp_barrier), Some(cleanup), Some(display_barrier)) =
+                (smp_barrier, cleanup, display_barrier)
+            {
+                let display_cleanup = display_barrier
+                    .display_cleanup
+                    .zip(display_barrier.display_cleanup_generation)
+                    .and_then(|(cleanup_id, generation)| {
+                        snapshot.display_cleanups.iter().find(|cleanup| {
+                            cleanup.id == cleanup_id && cleanup.generation == generation
+                        })
+                    });
+                if smp_barrier.state != SmpSnapshotBarrierState::Validated
+                    || !smp_barrier.snapshot_validation_ok
+                    || smp_barrier.active_dmw_lease_count != record.active_dmw_lease_count
+                    || smp_barrier.in_flight_dma_count != record.in_flight_dma_count
+                    || smp_barrier.raw_dma_binding_count != record.raw_dma_binding_count
+                    || smp_barrier.raw_mmio_binding_count != record.raw_mmio_binding_count
+                    || cleanup.state != IoCleanupState::Completed
+                    || cleanup.driver_store != record.driver_store
+                    || cleanup.driver_store_generation != record.driver_store_generation
+                    || cleanup.device != record.device
+                    || cleanup.device_generation != record.device_generation
+                    || cleanup.released_dma_buffers.len() as u32 != record.released_dma_buffers
+                    || cleanup.released_mmio_regions.len() as u32 != record.released_mmio_regions
+                    || cleanup.released_irq_lines.len() as u32 != record.released_irq_lines
+                    || cleanup.revoked_device_capabilities.len() as u32
+                        != record.revoked_device_capabilities
+                    || display_barrier.state != DisplaySnapshotBarrierState::Validated
+                    || !display_barrier.snapshot_validation_ok
+                    || display_barrier.display != record.display
+                    || display_barrier.display_generation != record.display_generation
+                    || display_barrier.framebuffer != record.framebuffer
+                    || display_barrier.framebuffer_generation != record.framebuffer_generation
+                    || display_barrier.active_framebuffer_window_lease_count
+                        != record.active_framebuffer_window_lease_count
+                    || display_barrier.active_framebuffer_mapping_count
+                        != record.active_framebuffer_mapping_count
+                    || display_barrier.dirty_framebuffer_region_count
+                        != record.dirty_framebuffer_region_count
+                    || smp_barrier.validated_at_event != record.smp_barrier_event
+                    || cleanup.completed_at_event != record.io_cleanup_completed_event
+                    || display_barrier.validated_at_event != record.display_barrier_event
+                    || display_cleanup.is_none_or(|cleanup| {
+                        cleanup.released_framebuffer_window_leases.len() as u32
+                            != record.released_framebuffer_window_leases
+                            || cleanup.revoked_display_capabilities.len() as u32
+                                != record.revoked_display_capabilities
+                    })
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-snapshot-io-lease-barrier->evidence-binding",
+                        from,
+                        Some(smp_barrier.object_ref()),
+                        "integrated snapshot/io lease barrier record does not match source cleanup and barrier evidence",
+                    ));
+                }
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -5077,6 +5254,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|decision| decision.id == id && decision.generation == generation)
                 .map(SchedulerDecisionRecord::object_ref),
+            ContractObjectKind::SmpSnapshotBarrier => snapshot
+                .smp_snapshot_barriers
+                .iter()
+                .find(|barrier| barrier.id == id && barrier.generation == generation)
+                .map(SmpSnapshotBarrierRecord::object_ref),
             ContractObjectKind::RemotePreempt => snapshot
                 .remote_preempts
                 .iter()
@@ -5197,6 +5379,16 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id && record.generation == generation)
                 .map(IntegratedDisplaySchedulerLoadRecord::object_ref),
+            ContractObjectKind::IntegratedSnapshotIoLeaseBarrier => snapshot
+                .integrated_snapshot_io_lease_barriers
+                .iter()
+                .find(|record| record.id == id && record.generation == generation)
+                .map(IntegratedSnapshotIoLeaseBarrierRecord::object_ref),
+            ContractObjectKind::DeviceObject => snapshot
+                .device_objects
+                .iter()
+                .find(|device| device.id == id && device.generation == generation)
+                .map(DeviceObjectRecord::object_ref),
             ContractObjectKind::NetworkDriverCleanup => snapshot
                 .network_driver_cleanups
                 .iter()
@@ -5439,6 +5631,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|decision| decision.id == id)
                 .map(SchedulerDecisionRecord::object_ref),
+            ContractObjectKind::SmpSnapshotBarrier => snapshot
+                .smp_snapshot_barriers
+                .iter()
+                .find(|barrier| barrier.id == id)
+                .map(SmpSnapshotBarrierRecord::object_ref),
             ContractObjectKind::RemotePreempt => snapshot
                 .remote_preempts
                 .iter()
@@ -5559,6 +5756,16 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id)
                 .map(IntegratedDisplaySchedulerLoadRecord::object_ref),
+            ContractObjectKind::IntegratedSnapshotIoLeaseBarrier => snapshot
+                .integrated_snapshot_io_lease_barriers
+                .iter()
+                .find(|record| record.id == id)
+                .map(IntegratedSnapshotIoLeaseBarrierRecord::object_ref),
+            ContractObjectKind::DeviceObject => snapshot
+                .device_objects
+                .iter()
+                .find(|device| device.id == id)
+                .map(DeviceObjectRecord::object_ref),
             ContractObjectKind::NetworkDriverCleanup => snapshot
                 .network_driver_cleanups
                 .iter()
@@ -5722,9 +5929,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::SmpSafePoint
             | ContractObjectKind::StopTheWorldRendezvous
             | ContractObjectKind::SmpCodePublishBarrier
-            | ContractObjectKind::SmpSnapshotBarrier
             | ContractObjectKind::SmpScalingBenchmark
-            | ContractObjectKind::DeviceObject
             | ContractObjectKind::QueueObject
             | ContractObjectKind::DescriptorObject
             | ContractObjectKind::DmaBufferObject
@@ -5804,6 +6009,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::DisplayPanicLastFrame
                 | ContractObjectKind::FramebufferBenchmark
                 | ContractObjectKind::IntegratedDisplaySchedulerLoad
+                | ContractObjectKind::IntegratedSnapshotIoLeaseBarrier
                 | ContractObjectKind::IntegratedSmpPreemptionCleanup
                 | ContractObjectKind::IntegratedSmpNetworkFault
                 | ContractObjectKind::IntegratedDiskPreemptFault
@@ -5814,6 +6020,8 @@ impl ContractGraphValidator {
                 | ContractObjectKind::BlockRequestObject
                 | ContractObjectKind::BlockDeviceObject
                 | ContractObjectKind::BlockRangeObject
+                | ContractObjectKind::SmpSnapshotBarrier
+                | ContractObjectKind::DeviceObject
                 | ContractObjectKind::Task
                 | ContractObjectKind::SchedulerDecision
                 | ContractObjectKind::RunnableQueue
@@ -6071,6 +6279,15 @@ impl ContractGraphValidator {
                 .and_then(|record| {
                     (record.state != IntegratedDisplaySchedulerLoadState::Recorded).then_some(
                         "live edge references unrecorded integrated display/scheduler load evidence",
+                    )
+                }),
+            ContractObjectKind::IntegratedSnapshotIoLeaseBarrier => snapshot
+                .integrated_snapshot_io_lease_barriers
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != IntegratedSnapshotIoLeaseBarrierState::Recorded).then_some(
+                        "live edge references unrecorded integrated snapshot/io lease barrier evidence",
                     )
                 }),
             ContractObjectKind::Task => snapshot

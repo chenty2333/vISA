@@ -33,6 +33,7 @@ pub struct SemanticGraph {
     integrated_simd_migrations: Vec<IntegratedSimdMigrationRecord>,
     integrated_network_disk_ios: Vec<IntegratedNetworkDiskIoRecord>,
     integrated_display_scheduler_loads: Vec<IntegratedDisplaySchedulerLoadRecord>,
+    integrated_snapshot_io_lease_barriers: Vec<IntegratedSnapshotIoLeaseBarrierRecord>,
     device_objects: Vec<DeviceObjectRecord>,
     queue_objects: Vec<QueueObjectRecord>,
     descriptor_objects: Vec<DescriptorObjectRecord>,
@@ -153,6 +154,7 @@ pub struct SemanticGraph {
     next_integrated_simd_migration_id: IntegratedSimdMigrationId,
     next_integrated_network_disk_io_id: IntegratedNetworkDiskIoId,
     next_integrated_display_scheduler_load_id: IntegratedDisplaySchedulerLoadId,
+    next_integrated_snapshot_io_lease_barrier_id: IntegratedSnapshotIoLeaseBarrierId,
     next_device_object_id: DeviceObjectId,
     next_queue_object_id: QueueObjectId,
     next_descriptor_object_id: DescriptorObjectId,
@@ -303,6 +305,7 @@ mod integrated_network_disk_io;
 mod integrated_simd_migration;
 mod integrated_smp_network_fault;
 mod integrated_smp_preemption_cleanup;
+mod integrated_snapshot_io_lease_barrier;
 mod interface;
 mod io_cleanup;
 mod io_fault_injection;
@@ -395,6 +398,7 @@ impl SemanticGraph {
             integrated_simd_migrations: Vec::new(),
             integrated_network_disk_ios: Vec::new(),
             integrated_display_scheduler_loads: Vec::new(),
+            integrated_snapshot_io_lease_barriers: Vec::new(),
             device_objects: Vec::new(),
             queue_objects: Vec::new(),
             descriptor_objects: Vec::new(),
@@ -515,6 +519,7 @@ impl SemanticGraph {
             next_integrated_simd_migration_id: 1,
             next_integrated_network_disk_io_id: 1,
             next_integrated_display_scheduler_load_id: 1,
+            next_integrated_snapshot_io_lease_barrier_id: 1,
             next_device_object_id: 1,
             next_queue_object_id: 1,
             next_descriptor_object_id: 1,

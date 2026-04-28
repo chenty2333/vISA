@@ -26692,6 +26692,448 @@ fn integrated_runtime_x5_contract_graph_rejects_scheduler_generation_drift() {
     }));
 }
 
+fn add_i10_io_cleanup_setup_to_graph(
+    graph: &mut SemanticGraph,
+) -> (StoreId, Generation, DriverStoreBindingId) {
+    let device_resource = graph.register_resource(ResourceKind::Device, None, "device:fake-io0");
+    let device_resource_generation = graph.resource_handle(device_resource).unwrap().generation;
+    let dma_resource = graph.register_resource(ResourceKind::DmaBuffer, None, "dma:fake-io0-rx0");
+    let dma_resource_generation = graph.resource_handle(dma_resource).unwrap().generation;
+    let mmio_resource = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:fake-io0");
+    let mmio_resource_generation = graph.resource_handle(mmio_resource).unwrap().generation;
+    let irq_resource = graph.register_resource(ResourceKind::IrqLine, None, "irq:fake-io0-rx");
+    let irq_resource_generation = graph.resource_handle(irq_resource).unwrap().generation;
+    assert!(graph.record_device_object_with_id(
+        401,
+        "fake-io0",
+        "fake-device",
+        device_resource,
+        device_resource_generation,
+        "fake-io-backend",
+        "semantic-harness",
+        "vmos",
+        "fake-io-v1",
+        "x6 device object harness",
+    ));
+    assert!(graph.record_queue_object_with_id(
+        501,
+        "fake-io0-rx",
+        QueueObjectRole::Rx,
+        0,
+        64,
+        401,
+        1,
+        "x6 queue object harness",
+    ));
+    assert!(graph.record_descriptor_object_with_id(
+        601,
+        501,
+        1,
+        0,
+        DescriptorObjectAccess::ReadWrite,
+        2048,
+        "x6 descriptor object harness",
+    ));
+    assert!(graph.record_dma_buffer_object_with_id(
+        701,
+        601,
+        1,
+        dma_resource,
+        dma_resource_generation,
+        DmaBufferObjectAccess::ReadWrite,
+        2048,
+        "x6 dma buffer object harness",
+    ));
+    assert!(graph.record_mmio_region_object_with_id(
+        801,
+        401,
+        1,
+        mmio_resource,
+        mmio_resource_generation,
+        0,
+        0x1000,
+        0x100,
+        MmioRegionObjectAccess::ReadWrite,
+        "x6 mmio region object harness",
+    ));
+    assert!(graph.record_irq_line_object_with_id(
+        901,
+        401,
+        1,
+        irq_resource,
+        irq_resource_generation,
+        5,
+        IrqLineTrigger::Level,
+        IrqLinePolarity::ActiveHigh,
+        "x6 irq line object harness",
+    ));
+    let driver_store = graph.register_store(
+        "driver.fake-io0",
+        "driver.fake-io0.fake-aot",
+        "driver",
+        "restartable",
+    );
+    graph.set_store_state(driver_store, StoreState::Running);
+    let driver_store_generation = graph.store_handle(driver_store).unwrap().generation;
+    let device = ContractObjectRef::new(ContractObjectKind::DeviceObject, 401, 1);
+    let mmio = ContractObjectRef::new(ContractObjectKind::MmioRegionObject, 801, 1);
+    let dma = ContractObjectRef::new(ContractObjectKind::DmaBufferObject, 701, 1);
+    let irq = ContractObjectRef::new(ContractObjectKind::IrqLineObject, 901, 1);
+    let device_capability = record_i8_device_probe_capability(
+        graph,
+        driver_store,
+        driver_store_generation,
+        device,
+        1401,
+    );
+    assert!(graph.record_driver_store_binding_with_id(
+        1402,
+        driver_store,
+        driver_store_generation,
+        401,
+        1,
+        device_capability,
+        1,
+        "x6 binding harness",
+    ));
+
+    let mmio_cap = graph.grant_capability_with_authority_ref(
+        "driver.fake-io0",
+        "mmio.fake-io0.regs",
+        AuthorityObjectRef::internal(CapabilityClass::MmioRegion, mmio),
+        &["write32"],
+        "store",
+        "x6-test",
+        true,
+    );
+    let dma_cap = graph.grant_capability_with_authority_ref(
+        "driver.fake-io0",
+        "dma.fake-io0.rx0",
+        AuthorityObjectRef::internal(CapabilityClass::DmaBuffer, dma),
+        &["sync-for-device"],
+        "store",
+        "x6-test",
+        true,
+    );
+    let irq_cap = graph.grant_capability_with_authority_ref(
+        "driver.fake-io0",
+        "irq.fake-io0.rx",
+        AuthorityObjectRef::internal(CapabilityClass::IrqLine, irq),
+        &["ack"],
+        "store",
+        "x6-test",
+        true,
+    );
+    let mmio_handle = graph
+        .capabilities()
+        .record(mmio_cap)
+        .and_then(|record| record.store_local_handle(vec!["write32".to_string()]))
+        .unwrap();
+    let dma_handle = graph
+        .capabilities()
+        .record(dma_cap)
+        .and_then(|record| record.store_local_handle(vec!["sync-for-device".to_string()]))
+        .unwrap();
+    let irq_handle = graph
+        .capabilities()
+        .record(irq_cap)
+        .and_then(|record| record.store_local_handle(vec!["ack".to_string()]))
+        .unwrap();
+    assert!(graph.record_device_capability_with_id(
+        1403,
+        driver_store,
+        driver_store_generation,
+        mmio,
+        CapabilityClass::MmioRegion,
+        "write32",
+        mmio_handle,
+        "x6 mmio capability",
+    ));
+    assert!(graph.record_device_capability_with_id(
+        1404,
+        driver_store,
+        driver_store_generation,
+        dma,
+        CapabilityClass::DmaBuffer,
+        "sync-for-device",
+        dma_handle,
+        "x6 dma capability",
+    ));
+    assert!(graph.record_device_capability_with_id(
+        1405,
+        driver_store,
+        driver_store_generation,
+        irq,
+        CapabilityClass::IrqLine,
+        "ack",
+        irq_handle,
+        "x6 irq capability",
+    ));
+    assert!(
+        graph
+            .apply(SemanticCommand::CreateWait {
+                wait: 1406,
+                owner_task: None,
+                owner_store: Some(driver_store),
+                owner_store_generation: Some(driver_store_generation),
+                kind: SemanticWaitKind::DeviceIrq,
+                generation: 1,
+                blockers: vec![irq],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: Some("driver.fake-io0:cleanup-rx".to_string()),
+            })
+            .is_ok()
+    );
+    assert!(graph.record_io_wait_with_id(
+        1407,
+        1406,
+        1,
+        driver_store,
+        driver_store_generation,
+        401,
+        1,
+        1402,
+        1,
+        irq,
+        "x6 pending io wait",
+    ));
+    assert!(graph.record_irq_event_with_id(
+        1409,
+        901,
+        1,
+        401,
+        1,
+        driver_store,
+        driver_store_generation,
+        1,
+        "x6 historical irq event before cleanup",
+    ));
+    (driver_store, driver_store_generation, 1402)
+}
+
+fn add_s14_snapshot_barrier_to_graph(graph: &mut SemanticGraph) {
+    assert!(graph.register_hart_with_id(1, 0, "boot-hart0", true, "x6 hart0"));
+    assert!(graph.set_hart_state(1, 1, HartState::Idle, "scheduler-ready", "idle"));
+    assert!(graph.register_hart_with_id(2, 1, "hart1", false, "x6 hart1"));
+    assert!(graph.set_hart_state(2, 1, HartState::Parked, "scheduler-ready", "parked"));
+    assert!(graph.record_smp_safe_point_with_id(
+        71,
+        1,
+        2,
+        vec![(1, 2), (2, 2)],
+        "snapshot-barrier-boundary",
+        "x6 snapshot safe point",
+    ));
+    assert!(graph.complete_stop_the_world_rendezvous_with_id(
+        81,
+        3,
+        71,
+        1,
+        true,
+        "snapshot-barrier-rendezvous",
+        "x6 all harts stopped for snapshot",
+    ));
+    assert!(graph.validate_smp_snapshot_barrier_with_id(
+        101,
+        81,
+        1,
+        SnapshotBarrierValidationState::default(),
+        "smp-snapshot-barrier",
+        "x6 clean SMP snapshot barrier",
+    ));
+}
+
+fn x6_snapshot_io_lease_barrier_graph() -> SemanticGraph {
+    let (mut graph, owner_store, owner_store_generation) = g9_display_cleanup_graph();
+    assert!(graph.cleanup_display_for_store_with_id(
+        23_907,
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_101,
+        1,
+        23_001,
+        1,
+        "display-window-cleanup",
+        "x6 display cleanup before snapshot",
+    ));
+    assert!(graph.validate_display_snapshot_barrier_with_id(
+        24_002,
+        owner_store,
+        owner_store_generation,
+        23_101,
+        1,
+        23_001,
+        1,
+        Some(23_907),
+        Some(1),
+        "display-snapshot-barrier",
+        "x6 display snapshot after cleanup",
+    ));
+    let (driver_store, driver_store_generation, binding) =
+        add_i10_io_cleanup_setup_to_graph(&mut graph);
+    let io_cleanup = graph.apply_envelope(CommandEnvelope::new(
+        21,
+        "x6-test",
+        SemanticCommand::CleanupIoDriver {
+            cleanup: 1408,
+            driver_store,
+            driver_store_generation,
+            device: 401,
+            device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            reason: "device-fault".to_string(),
+            note: "x6 io cleanup before snapshot".to_string(),
+        },
+    ));
+    assert_eq!(io_cleanup.status, CommandStatus::Applied, "{io_cleanup:?}");
+    add_s14_snapshot_barrier_to_graph(&mut graph);
+    graph
+}
+
+#[test]
+fn integrated_runtime_x6_records_snapshot_io_lease_barrier() {
+    let mut graph = x6_snapshot_io_lease_barrier_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        22,
+        "x6-test",
+        SemanticCommand::RecordIntegratedSnapshotIoLeaseBarrier {
+            integrated: 901,
+            scenario: "x6-snapshot-barrier-blocks-active-io-leases".to_string(),
+            smp_snapshot_barrier: 101,
+            smp_snapshot_barrier_generation: 1,
+            io_cleanup: 1408,
+            io_cleanup_generation: 1,
+            display_snapshot_barrier: 24_002,
+            display_snapshot_barrier_generation: 1,
+            invariant_checks: 7,
+            note: "integrate snapshot barrier with IO and display lease cleanup".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    assert_eq!(graph.integrated_snapshot_io_lease_barrier_count(), 1);
+    let record = &graph.integrated_snapshot_io_lease_barriers()[0];
+    assert_eq!(record.id, 901);
+    assert_eq!(record.smp_snapshot_barrier, 101);
+    assert_eq!(record.io_cleanup, 1408);
+    assert_eq!(record.display_snapshot_barrier, 24_002);
+    assert_eq!(record.driver_store, 2);
+    assert_eq!(record.device, 401);
+    assert_eq!(record.display, 23_101);
+    assert_eq!(record.framebuffer, 23_001);
+    assert_eq!(record.active_dmw_lease_count, 0);
+    assert_eq!(record.in_flight_dma_count, 0);
+    assert_eq!(record.raw_dma_binding_count, 0);
+    assert_eq!(record.raw_mmio_binding_count, 0);
+    assert_eq!(record.active_framebuffer_window_lease_count, 0);
+    assert_eq!(record.active_framebuffer_mapping_count, 0);
+    assert_eq!(record.dirty_framebuffer_region_count, 0);
+    assert_eq!(record.released_dma_buffers, 1);
+    assert_eq!(record.released_mmio_regions, 1);
+    assert_eq!(record.released_irq_lines, 1);
+    assert_eq!(record.released_framebuffer_window_leases, 1);
+    assert_eq!(record.revoked_display_capabilities, 1);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "IntegratedSnapshotIoLeaseBarrierRecorded integrated=901 scenario=x6-snapshot-barrier-blocks-active-io-leases smp_snapshot_barrier=101@1 io_cleanup=1408@1 display_snapshot_barrier=24002@1 released_dma_buffers=1 released_mmio_regions=1 released_irq_lines=1 released_framebuffer_window_leases=1 active_dmw_leases=0 in_flight_dma=0 active_framebuffer_window_leases=0 invariant_checks=7 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn integrated_runtime_x6_rejects_missing_or_stale_barrier_refs() {
+    let missing = SemanticGraph::new().apply_envelope(CommandEnvelope::new(
+        1,
+        "x6-test",
+        SemanticCommand::RecordIntegratedSnapshotIoLeaseBarrier {
+            integrated: 901,
+            scenario: "x6-snapshot-barrier-blocks-active-io-leases".to_string(),
+            smp_snapshot_barrier: 101,
+            smp_snapshot_barrier_generation: 1,
+            io_cleanup: 1408,
+            io_cleanup_generation: 1,
+            display_snapshot_barrier: 24_002,
+            display_snapshot_barrier_generation: 1,
+            invariant_checks: 7,
+            note: "missing evidence rejects".to_string(),
+        },
+    ));
+    assert_eq!(missing.status, CommandStatus::Rejected);
+    assert_eq!(
+        missing.violations,
+        vec![
+            "integrated snapshot/io lease barrier missing smp snapshot barrier evidence"
+                .to_string()
+        ]
+    );
+
+    let stale = x6_snapshot_io_lease_barrier_graph().apply_envelope(CommandEnvelope::new(
+        22,
+        "x6-test",
+        SemanticCommand::RecordIntegratedSnapshotIoLeaseBarrier {
+            integrated: 901,
+            scenario: "x6-snapshot-barrier-blocks-active-io-leases".to_string(),
+            smp_snapshot_barrier: 101,
+            smp_snapshot_barrier_generation: 1,
+            io_cleanup: 1408,
+            io_cleanup_generation: 1,
+            display_snapshot_barrier: 24_002,
+            display_snapshot_barrier_generation: 2,
+            invariant_checks: 7,
+            note: "stale display barrier rejects".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale.violations,
+        vec![
+            "integrated snapshot/io lease barrier missing display snapshot barrier evidence"
+                .to_string()
+        ]
+    );
+}
+
+#[test]
+fn integrated_runtime_x6_contract_graph_rejects_cleanup_count_drift() {
+    let mut graph = x6_snapshot_io_lease_barrier_graph();
+    assert!(graph.record_integrated_snapshot_io_lease_barrier_with_id(
+        901,
+        "x6-snapshot-barrier-blocks-active-io-leases",
+        101,
+        1,
+        1408,
+        1,
+        24_002,
+        1,
+        7,
+        "integrated snapshot io lease barrier",
+    ));
+    let mut integrated = graph.integrated_snapshot_io_lease_barriers().to_vec();
+    integrated[0].released_dma_buffers = 2;
+    let snapshot = ContractGraphSnapshot {
+        integrated_snapshot_io_lease_barriers: integrated,
+        smp_snapshot_barriers: graph.smp_snapshot_barriers().to_vec(),
+        io_cleanups: graph.io_cleanups().to_vec(),
+        display_snapshot_barriers: graph.display_snapshot_barriers().to_vec(),
+        display_cleanups: graph.display_cleanups().to_vec(),
+        stores: graph.stores().to_vec(),
+        device_objects: graph.device_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "integrated-snapshot-io-lease-barrier->evidence-binding"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

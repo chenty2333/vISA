@@ -838,6 +838,16 @@ pub enum SemanticInvariantError {
     IntegratedDisplaySchedulerLoadMissingEvent {
         integrated: IntegratedDisplaySchedulerLoadId,
     },
+    IntegratedSnapshotIoLeaseBarrierInvalid {
+        integrated: IntegratedSnapshotIoLeaseBarrierId,
+    },
+    IntegratedSnapshotIoLeaseBarrierMissingEvidence {
+        integrated: IntegratedSnapshotIoLeaseBarrierId,
+        evidence: &'static str,
+    },
+    IntegratedSnapshotIoLeaseBarrierMissingEvent {
+        integrated: IntegratedSnapshotIoLeaseBarrierId,
+    },
     DeviceObjectInvalid {
         device: DeviceObjectId,
     },

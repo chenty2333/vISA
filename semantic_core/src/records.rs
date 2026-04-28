@@ -945,6 +945,57 @@ impl IntegratedDisplaySchedulerLoadRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntegratedSnapshotIoLeaseBarrierRecord {
+    pub id: IntegratedSnapshotIoLeaseBarrierId,
+    pub scenario: String,
+    pub smp_snapshot_barrier: SmpSnapshotBarrierId,
+    pub smp_snapshot_barrier_generation: Generation,
+    pub io_cleanup: IoCleanupId,
+    pub io_cleanup_generation: Generation,
+    pub display_snapshot_barrier: DisplaySnapshotBarrierId,
+    pub display_snapshot_barrier_generation: Generation,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub device: DeviceObjectId,
+    pub device_generation: Generation,
+    pub display: DisplayObjectId,
+    pub display_generation: Generation,
+    pub framebuffer: FramebufferObjectId,
+    pub framebuffer_generation: Generation,
+    pub active_dmw_lease_count: u32,
+    pub in_flight_dma_count: u32,
+    pub raw_dma_binding_count: u32,
+    pub raw_mmio_binding_count: u32,
+    pub active_framebuffer_window_lease_count: u32,
+    pub active_framebuffer_mapping_count: u32,
+    pub dirty_framebuffer_region_count: u32,
+    pub released_dma_buffers: u32,
+    pub released_mmio_regions: u32,
+    pub released_irq_lines: u32,
+    pub released_framebuffer_window_leases: u32,
+    pub revoked_device_capabilities: u32,
+    pub revoked_display_capabilities: u32,
+    pub smp_barrier_event: EventId,
+    pub io_cleanup_completed_event: EventId,
+    pub display_barrier_event: EventId,
+    pub invariant_checks: u32,
+    pub generation: Generation,
+    pub state: IntegratedSnapshotIoLeaseBarrierState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl IntegratedSnapshotIoLeaseBarrierRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::IntegratedSnapshotIoLeaseBarrier,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceObjectRecord {
     pub id: DeviceObjectId,
     pub name: String,

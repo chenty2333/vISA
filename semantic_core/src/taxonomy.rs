@@ -499,6 +499,21 @@ impl IntegratedDisplaySchedulerLoadState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntegratedSnapshotIoLeaseBarrierState {
+    Recorded,
+    Rejected,
+}
+
+impl IntegratedSnapshotIoLeaseBarrierState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceObjectState {
     Registered,
     Removed,

@@ -333,6 +333,18 @@ pub enum SemanticCommand {
         invariant_checks: u32,
         note: String,
     },
+    RecordIntegratedSnapshotIoLeaseBarrier {
+        integrated: IntegratedSnapshotIoLeaseBarrierId,
+        scenario: String,
+        smp_snapshot_barrier: SmpSnapshotBarrierId,
+        smp_snapshot_barrier_generation: Generation,
+        io_cleanup: IoCleanupId,
+        io_cleanup_generation: Generation,
+        display_snapshot_barrier: DisplaySnapshotBarrierId,
+        display_snapshot_barrier_generation: Generation,
+        invariant_checks: u32,
+        note: String,
+    },
     RecordDeviceObject {
         device: DeviceObjectId,
         name: String,
@@ -1723,6 +1735,9 @@ impl SemanticCommand {
             Self::RecordIntegratedDisplaySchedulerLoad { .. } => {
                 "record-integrated-display-scheduler-load"
             }
+            Self::RecordIntegratedSnapshotIoLeaseBarrier { .. } => {
+                "record-integrated-snapshot-io-lease-barrier"
+            }
             Self::RecordDeviceObject { .. } => "record-device-object",
             Self::RecordPacketDeviceObject { .. } => "record-packet-device-object",
             Self::RecordPacketBufferObject { .. } => "record-packet-buffer-object",
@@ -3096,6 +3111,30 @@ impl SemanticGraph {
                     *framebuffer_benchmark_generation,
                     *scheduler_decision,
                     *scheduler_decision_generation,
+                    *invariant_checks,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordIntegratedSnapshotIoLeaseBarrier {
+                integrated,
+                scenario,
+                smp_snapshot_barrier,
+                smp_snapshot_barrier_generation,
+                io_cleanup,
+                io_cleanup_generation,
+                display_snapshot_barrier,
+                display_snapshot_barrier_generation,
+                invariant_checks,
+                ..
+            } => self
+                .validate_integrated_snapshot_io_lease_barrier(
+                    *integrated,
+                    scenario,
+                    *smp_snapshot_barrier,
+                    *smp_snapshot_barrier_generation,
+                    *io_cleanup,
+                    *io_cleanup_generation,
+                    *display_snapshot_barrier,
+                    *display_snapshot_barrier_generation,
                     *invariant_checks,
                 )
                 .map_err(CommandError::precondition),
@@ -6665,6 +6704,29 @@ impl SemanticGraph {
                 framebuffer_benchmark_generation,
                 scheduler_decision,
                 scheduler_decision_generation,
+                invariant_checks,
+                &note,
+            ),
+            SemanticCommand::RecordIntegratedSnapshotIoLeaseBarrier {
+                integrated,
+                scenario,
+                smp_snapshot_barrier,
+                smp_snapshot_barrier_generation,
+                io_cleanup,
+                io_cleanup_generation,
+                display_snapshot_barrier,
+                display_snapshot_barrier_generation,
+                invariant_checks,
+                note,
+            } => self.record_integrated_snapshot_io_lease_barrier_with_id(
+                integrated,
+                &scenario,
+                smp_snapshot_barrier,
+                smp_snapshot_barrier_generation,
+                io_cleanup,
+                io_cleanup_generation,
+                display_snapshot_barrier,
+                display_snapshot_barrier_generation,
                 invariant_checks,
                 &note,
             ),

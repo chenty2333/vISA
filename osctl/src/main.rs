@@ -29,9 +29,9 @@ use artifact_manifest::{
     IntegratedDiskPreemptFaultManifest, IntegratedDisplaySchedulerLoadManifest,
     IntegratedNetworkDiskIoManifest, IntegratedSimdMigrationManifest,
     IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    IntegratedSnapshotIoLeaseBarrierManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -297,6 +297,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "integrated-display-scheduler-load"
         | "display-scheduler-load"
         | "integrated-display-load"
+        | "integrated-snapshot-io-lease-barrier"
+        | "snapshot-io-lease-barrier"
+        | "snapshot-io-barrier"
         | "device"
         | "device-object"
         | "queue"
@@ -645,7 +648,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -653,7 +656,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -968,6 +971,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "integrated-display-scheduler-load"
         | "display-scheduler-load"
         | "integrated-display-load" => "integrated-display-scheduler-load",
+        "integrated-snapshot-io-lease-barrier"
+        | "snapshot-io-lease-barrier"
+        | "snapshot-io-barrier" => "integrated-snapshot-io-lease-barrier",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2468,6 +2474,97 @@ fn integrated_display_scheduler_load_view_v1(
             "uses_semantic_scheduler_decision": true,
             "real_display_hardware_executed": false,
             "real_preemptive_scheduler_executed": false,
+            "adapter_internal_state_is_not_semantic_truth": true,
+        },
+        "note": record.note,
+        "last_transition": {
+            "event": record.recorded_at_event,
+            "state": record.state,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn integrated_snapshot_io_lease_barrier_view_v1(
+    record: &IntegratedSnapshotIoLeaseBarrierManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "integrated-snapshot-io-lease-barrier",
+        "id": record.id,
+        "generation": record.generation,
+        "state": record.state,
+        "owner": {
+            "driver_store": object_ref_json(
+                "store",
+                record.driver_store,
+                record.driver_store_generation,
+            ),
+            "device": object_ref_json(
+                "device-object",
+                record.device,
+                record.device_generation,
+            ),
+            "display": object_ref_json(
+                "display-object",
+                record.display,
+                record.display_generation,
+            ),
+            "framebuffer": object_ref_json(
+                "framebuffer-object",
+                record.framebuffer,
+                record.framebuffer_generation,
+            ),
+        },
+        "references": {
+            "smp_snapshot_barrier": object_ref_json(
+                "smp-snapshot-barrier",
+                record.smp_snapshot_barrier,
+                record.smp_snapshot_barrier_generation,
+            ),
+            "io_cleanup": object_ref_json(
+                "io-cleanup",
+                record.io_cleanup,
+                record.io_cleanup_generation,
+            ),
+            "display_snapshot_barrier": object_ref_json(
+                "display-snapshot-barrier",
+                record.display_snapshot_barrier,
+                record.display_snapshot_barrier_generation,
+            ),
+            "event": {
+                "id": record.recorded_at_event,
+            },
+        },
+        "closure": {
+            "scenario": record.scenario,
+            "active_dmw_lease_count": record.active_dmw_lease_count,
+            "in_flight_dma_count": record.in_flight_dma_count,
+            "raw_dma_binding_count": record.raw_dma_binding_count,
+            "raw_mmio_binding_count": record.raw_mmio_binding_count,
+            "active_framebuffer_window_lease_count": record.active_framebuffer_window_lease_count,
+            "active_framebuffer_mapping_count": record.active_framebuffer_mapping_count,
+            "dirty_framebuffer_region_count": record.dirty_framebuffer_region_count,
+            "released_dma_buffers": record.released_dma_buffers,
+            "released_mmio_regions": record.released_mmio_regions,
+            "released_irq_lines": record.released_irq_lines,
+            "released_framebuffer_window_leases": record.released_framebuffer_window_leases,
+            "revoked_device_capabilities": record.revoked_device_capabilities,
+            "revoked_display_capabilities": record.revoked_display_capabilities,
+            "smp_barrier_event": record.smp_barrier_event,
+            "io_cleanup_completed_event": record.io_cleanup_completed_event,
+            "display_barrier_event": record.display_barrier_event,
+            "invariant_checks": record.invariant_checks,
+            "requires_clean_smp_snapshot_barrier": true,
+            "requires_completed_io_cleanup": true,
+            "requires_clean_display_snapshot_barrier": true,
+        },
+        "authority": {
+            "uses_semantic_snapshot_barrier": true,
+            "uses_semantic_io_cleanup": true,
+            "uses_semantic_display_snapshot_barrier": true,
+            "real_snapshot_or_dma_hardware_executed": false,
+            "real_display_hardware_executed": false,
             "adapter_internal_state_is_not_semantic_truth": true,
         },
         "note": record.note,
@@ -8183,6 +8280,14 @@ fn stable_views_for_kind(
             .iter()
             .map(integrated_display_scheduler_load_view_v1)
             .collect()),
+        "integrated-snapshot-io-lease-barrier"
+        | "snapshot-io-lease-barrier"
+        | "snapshot-io-barrier" => Ok(package
+            .semantic
+            .integrated_snapshot_io_lease_barriers
+            .iter()
+            .map(integrated_snapshot_io_lease_barrier_view_v1)
+            .collect()),
         "device" | "device-object" => Ok(package
             .semantic
             .device_objects
@@ -9628,6 +9733,13 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
             .semantic
             .roots
             .integrated_display_scheduler_load_roots,
+    );
+    print_roots(
+        "integrated-snapshot-io-lease-barrier",
+        &package
+            .semantic
+            .roots
+            .integrated_snapshot_io_lease_barrier_roots,
     );
     print_roots("device", &package.semantic.roots.device_object_roots);
     print_roots("queue", &package.semantic.roots.queue_object_roots);
@@ -11665,6 +11777,65 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "display-event-log",
                 record.display_event_log,
                 record.display_event_log_generation,
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(kind, id, generation),
+                label,
+                "historical",
+                Some(record.recorded_at_event),
+            ));
+        }
+    }
+    for record in &package.semantic.integrated_snapshot_io_lease_barriers {
+        let from = object_ref_json(
+            "integrated-snapshot-io-lease-barrier",
+            record.id,
+            record.generation,
+        );
+        for (label, kind, id, generation) in [
+            (
+                "integrated-smp-snapshot-barrier",
+                "smp-snapshot-barrier",
+                record.smp_snapshot_barrier,
+                record.smp_snapshot_barrier_generation,
+            ),
+            (
+                "integrated-io-cleanup",
+                "io-cleanup",
+                record.io_cleanup,
+                record.io_cleanup_generation,
+            ),
+            (
+                "integrated-display-snapshot-barrier",
+                "display-snapshot-barrier",
+                record.display_snapshot_barrier,
+                record.display_snapshot_barrier_generation,
+            ),
+            (
+                "integrated-driver-store",
+                "store",
+                record.driver_store,
+                record.driver_store_generation,
+            ),
+            (
+                "integrated-device",
+                "device-object",
+                record.device,
+                record.device_generation,
+            ),
+            (
+                "integrated-display",
+                "display-object",
+                record.display,
+                record.display_generation,
+            ),
+            (
+                "integrated-framebuffer",
+                "framebuffer-object",
+                record.framebuffer,
+                record.framebuffer_generation,
             ),
         ] {
             edges.push(graph_edge(
@@ -17264,6 +17435,60 @@ fn inspect_package_object(
                 );
             }
         }
+        "integrated-snapshot-io-lease-barrier"
+        | "snapshot-io-lease-barrier"
+        | "snapshot-io-barrier" => {
+            println!(
+                "inspect integrated-snapshot-io-lease-barrier package={} count={}",
+                package.package_id, package.semantic.integrated_snapshot_io_lease_barrier_count
+            );
+            for record in &package.semantic.integrated_snapshot_io_lease_barriers {
+                let line = format!(
+                    "integrated-snapshot-io-lease-barrier id={} scenario={} smp_snapshot_barrier={}@{} io_cleanup={}@{} display_snapshot_barrier={}@{} driver_store={}@{} device={}@{} display={}@{} framebuffer={}@{} released_dma_buffers={} released_mmio_regions={} released_irq_lines={} released_framebuffer_window_leases={} active_dmw_leases={} in_flight_dma={} active_framebuffer_window_leases={} invariants={} state={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.smp_snapshot_barrier,
+                    record.smp_snapshot_barrier_generation,
+                    record.io_cleanup,
+                    record.io_cleanup_generation,
+                    record.display_snapshot_barrier,
+                    record.display_snapshot_barrier_generation,
+                    record.driver_store,
+                    record.driver_store_generation,
+                    record.device,
+                    record.device_generation,
+                    record.display,
+                    record.display_generation,
+                    record.framebuffer,
+                    record.framebuffer_generation,
+                    record.released_dma_buffers,
+                    record.released_mmio_regions,
+                    record.released_irq_lines,
+                    record.released_framebuffer_window_leases,
+                    record.active_dmw_lease_count,
+                    record.in_flight_dma_count,
+                    record.active_framebuffer_window_lease_count,
+                    record.invariant_checks,
+                    record.state,
+                    record.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package
+                .semantic
+                .integrated_snapshot_io_lease_barriers
+                .is_empty()
+            {
+                print_roots_filtered(
+                    "integrated-snapshot-io-lease-barrier",
+                    &package
+                        .semantic
+                        .roots
+                        .integrated_snapshot_io_lease_barrier_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -17856,6 +18081,25 @@ fn inspect_package_object_json(
                     .len()
             }),
         ),
+        "integrated-snapshot-io-lease-barrier"
+        | "snapshot-io-lease-barrier"
+        | "snapshot-io-barrier" => (
+            "integrated-snapshot-io-lease-barrier",
+            package.semantic.integrated_snapshot_io_lease_barrier_count,
+            package
+                .semantic
+                .integrated_snapshot_io_lease_barriers
+                .iter()
+                .map(integrated_snapshot_io_lease_barrier_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package
+                    .semantic
+                    .roots
+                    .integrated_snapshot_io_lease_barrier_roots
+                    .len()
+            }),
+        ),
         "command" => (
             "command",
             package.semantic.command_result_count,
@@ -18376,6 +18620,13 @@ fn replay_until(
         .integrated_display_scheduler_load_roots
     {
         println!("replay integrated-display-scheduler-load {integrated}");
+    }
+    for integrated in &package
+        .semantic
+        .roots
+        .integrated_snapshot_io_lease_barrier_roots
+    {
+        println!("replay integrated-snapshot-io-lease-barrier {integrated}");
     }
     for device in &package.semantic.roots.device_object_roots {
         println!("replay device {device}");
@@ -23213,6 +23464,117 @@ mod tests {
             && edge["from"]["kind"] == "integrated-display-scheduler-load"
             && edge["relation"] == "integrated-scheduler-decision"
             && edge["to"]["kind"] == "scheduler-decision"
+            && edge["to"]["generation"] == 1));
+    }
+
+    fn test_integrated_snapshot_io_lease_barrier_manifest()
+    -> IntegratedSnapshotIoLeaseBarrierManifest {
+        IntegratedSnapshotIoLeaseBarrierManifest {
+            id: 26_601,
+            scenario: "x6-snapshot-barrier-blocks-active-io-leases".to_owned(),
+            smp_snapshot_barrier: 9_401,
+            smp_snapshot_barrier_generation: 1,
+            io_cleanup: 9_967,
+            io_cleanup_generation: 1,
+            display_snapshot_barrier: 24_001,
+            display_snapshot_barrier_generation: 1,
+            driver_store: 2,
+            driver_store_generation: 2,
+            device: 9_701,
+            device_generation: 1,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            active_dmw_lease_count: 0,
+            in_flight_dma_count: 0,
+            raw_dma_binding_count: 0,
+            raw_mmio_binding_count: 0,
+            active_framebuffer_window_lease_count: 0,
+            active_framebuffer_mapping_count: 0,
+            dirty_framebuffer_region_count: 0,
+            released_dma_buffers: 1,
+            released_mmio_regions: 1,
+            released_irq_lines: 1,
+            released_framebuffer_window_leases: 1,
+            revoked_device_capabilities: 4,
+            revoked_display_capabilities: 1,
+            smp_barrier_event: 117,
+            io_cleanup_completed_event: 152,
+            display_barrier_event: 567,
+            invariant_checks: 7,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 576,
+            note: "x6 integrated snapshot/io lease barrier".to_owned(),
+        }
+    }
+
+    #[test]
+    fn integrated_snapshot_io_lease_barrier_view_v1_exposes_barrier_and_cleanup_refs() {
+        let view = integrated_snapshot_io_lease_barrier_view_v1(
+            &test_integrated_snapshot_io_lease_barrier_manifest(),
+        );
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "integrated-snapshot-io-lease-barrier");
+        assert_eq!(view["owner"]["driver_store"]["generation"], 2);
+        assert_eq!(view["owner"]["device"]["id"], 9_701);
+        assert_eq!(view["owner"]["display"]["id"], 23_101);
+        assert_eq!(view["references"]["smp_snapshot_barrier"]["id"], 9_401);
+        assert_eq!(view["references"]["io_cleanup"]["id"], 9_967);
+        assert_eq!(view["references"]["display_snapshot_barrier"]["id"], 24_001);
+        assert_eq!(view["closure"]["active_dmw_lease_count"], 0);
+        assert_eq!(view["closure"]["in_flight_dma_count"], 0);
+        assert_eq!(view["closure"]["released_dma_buffers"], 1);
+        assert_eq!(view["closure"]["released_mmio_regions"], 1);
+        assert_eq!(view["closure"]["released_irq_lines"], 1);
+        assert_eq!(view["closure"]["released_framebuffer_window_leases"], 1);
+        assert_eq!(view["closure"]["requires_clean_smp_snapshot_barrier"], true);
+        assert_eq!(view["closure"]["requires_completed_io_cleanup"], true);
+        assert_eq!(
+            view["closure"]["requires_clean_display_snapshot_barrier"],
+            true
+        );
+        assert_eq!(
+            view["authority"]["real_snapshot_or_dma_hardware_executed"],
+            false
+        );
+        assert_eq!(view["authority"]["real_display_hardware_executed"], false);
+        assert_eq!(view["last_transition"]["event"], 576);
+    }
+
+    #[test]
+    fn integrated_snapshot_io_lease_barrier_graph_edges_are_history_only() {
+        let mut package = minimal_graph_package();
+        package.semantic.integrated_snapshot_io_lease_barrier_count = 1;
+        package
+            .semantic
+            .integrated_snapshot_io_lease_barriers
+            .push(test_integrated_snapshot_io_lease_barrier_manifest());
+
+        let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
+        assert!(
+            !live
+                .iter()
+                .any(|edge| { edge["from"]["kind"] == "integrated-snapshot-io-lease-barrier" })
+        );
+
+        let history = graph_edges_for_package(&package, GraphEdgeMode::History);
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-snapshot-io-lease-barrier"
+            && edge["relation"] == "integrated-smp-snapshot-barrier"
+            && edge["to"]["kind"] == "smp-snapshot-barrier"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-snapshot-io-lease-barrier"
+            && edge["relation"] == "integrated-io-cleanup"
+            && edge["to"]["kind"] == "io-cleanup"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-snapshot-io-lease-barrier"
+            && edge["relation"] == "integrated-display-snapshot-barrier"
+            && edge["to"]["kind"] == "display-snapshot-barrier"
             && edge["to"]["generation"] == 1));
     }
 

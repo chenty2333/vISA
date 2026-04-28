@@ -33,18 +33,18 @@ use artifact_manifest::{
     IntegratedDiskPreemptFaultManifest, IntegratedDisplaySchedulerLoadManifest,
     IntegratedNetworkDiskIoManifest, IntegratedSimdMigrationManifest,
     IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    IntegratedSnapshotIoLeaseBarrierManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8401,6 +8401,7 @@ fn build_target_executor_v1(
     run_integrated_simd_migration_harness(semantic)?;
     run_integrated_network_disk_io_harness(semantic)?;
     run_integrated_display_scheduler_load_harness(semantic)?;
+    run_integrated_snapshot_io_lease_barrier_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8493,6 +8494,9 @@ fn build_target_executor_v1(
         display_panic_last_frames: semantic.display_panic_last_frames().to_vec(),
         framebuffer_benchmarks: semantic.framebuffer_benchmarks().to_vec(),
         integrated_display_scheduler_loads: semantic.integrated_display_scheduler_loads().to_vec(),
+        integrated_snapshot_io_lease_barriers: semantic
+            .integrated_snapshot_io_lease_barriers()
+            .to_vec(),
         integrated_smp_preemption_cleanups: semantic.integrated_smp_preemption_cleanups().to_vec(),
         integrated_smp_network_faults: semantic.integrated_smp_network_faults().to_vec(),
         integrated_disk_preempt_faults: semantic.integrated_disk_preempt_faults().to_vec(),
@@ -8500,6 +8504,7 @@ fn build_target_executor_v1(
         integrated_network_disk_ios: semantic.integrated_network_disk_ios().to_vec(),
         network_benchmarks: semantic.network_benchmarks().to_vec(),
         network_driver_cleanups: semantic.network_driver_cleanups().to_vec(),
+        device_objects: semantic.device_objects().to_vec(),
         packet_device_objects: semantic.packet_device_objects().to_vec(),
         network_stack_adapters: semantic.network_stack_adapters().to_vec(),
         socket_objects: semantic.socket_objects().to_vec(),
@@ -8526,6 +8531,7 @@ fn build_target_executor_v1(
         remote_preempts: semantic.remote_preempts().to_vec(),
         activation_cleanups: semantic.activation_cleanups().to_vec(),
         smp_cleanup_quiescence: semantic.smp_cleanup_quiescence().to_vec(),
+        smp_snapshot_barriers: semantic.smp_snapshot_barriers().to_vec(),
         smp_stress_runs: semantic.smp_stress_runs().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
@@ -10952,6 +10958,39 @@ fn run_integrated_display_scheduler_load_harness(
     Ok(())
 }
 
+fn run_integrated_snapshot_io_lease_barrier_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        100_007,
+        "integrated-runtime-x6",
+        SemanticCommand::RecordIntegratedSnapshotIoLeaseBarrier {
+            integrated: 26_601,
+            scenario: "x6-snapshot-barrier-blocks-active-io-leases".to_owned(),
+            smp_snapshot_barrier: 9_401,
+            smp_snapshot_barrier_generation: 1,
+            io_cleanup: 9_967,
+            io_cleanup_generation: 1,
+            display_snapshot_barrier: 24_001,
+            display_snapshot_barrier_generation: 1,
+            invariant_checks: 7,
+            note: "x6 records snapshot barrier closure after IO and display leases are cleaned"
+                .to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "integrated runtime x6 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11036,6 +11075,20 @@ fn contract_graph_store_records(
         if let Some(store) = semantic.stores().iter().find(|store| {
             store.id == integrated.network_owner_store
                 && store.generation == integrated.network_owner_store_generation
+        }) {
+            stores.push(store.clone());
+        }
+    }
+    for integrated in semantic.integrated_snapshot_io_lease_barriers() {
+        if stores.iter().any(|store| {
+            store.id == integrated.driver_store
+                && store.generation == integrated.driver_store_generation
+        }) {
+            continue;
+        }
+        if let Some(store) = semantic.stores().iter().find(|store| {
+            store.id == integrated.driver_store
+                && store.generation == integrated.driver_store_generation
         }) {
             stores.push(store.clone());
         }
@@ -11769,6 +11822,8 @@ fn demo_migration_package(
             integrated_network_disk_io_count: semantic.integrated_network_disk_io_count(),
             integrated_display_scheduler_load_count: semantic
                 .integrated_display_scheduler_load_count(),
+            integrated_snapshot_io_lease_barrier_count: semantic
+                .integrated_snapshot_io_lease_barrier_count(),
             device_object_count: semantic.device_object_count(),
             queue_object_count: semantic.queue_object_count(),
             descriptor_object_count: semantic.descriptor_object_count(),
@@ -12010,6 +12065,11 @@ fn demo_migration_package(
                 .integrated_display_scheduler_loads()
                 .iter()
                 .map(integrated_display_scheduler_load_manifest)
+                .collect(),
+            integrated_snapshot_io_lease_barriers: semantic
+                .integrated_snapshot_io_lease_barriers()
+                .iter()
+                .map(integrated_snapshot_io_lease_barrier_manifest)
                 .collect(),
             device_objects: semantic
                 .device_objects()
@@ -13041,6 +13101,39 @@ fn semantic_roots(
                     record.sample_bytes,
                     record.scheduler_load_units,
                     record.display_measured_nanos,
+                    record.generation
+                )
+            })
+            .collect(),
+        integrated_snapshot_io_lease_barrier_roots: semantic
+            .integrated_snapshot_io_lease_barriers()
+            .iter()
+            .map(|record| {
+                format!(
+                    "integrated-snapshot-io-lease-barrier id={} scenario={} smp_snapshot_barrier={}@{} io_cleanup={}@{} display_snapshot_barrier={}@{} driver_store={}@{} device={}@{} display={}@{} framebuffer={}@{} released_dma_buffers={} released_mmio_regions={} released_irq_lines={} released_framebuffer_window_leases={} active_dmw_leases={} in_flight_dma={} active_framebuffer_window_leases={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.smp_snapshot_barrier,
+                    record.smp_snapshot_barrier_generation,
+                    record.io_cleanup,
+                    record.io_cleanup_generation,
+                    record.display_snapshot_barrier,
+                    record.display_snapshot_barrier_generation,
+                    record.driver_store,
+                    record.driver_store_generation,
+                    record.device,
+                    record.device_generation,
+                    record.display,
+                    record.display_generation,
+                    record.framebuffer,
+                    record.framebuffer_generation,
+                    record.released_dma_buffers,
+                    record.released_mmio_regions,
+                    record.released_irq_lines,
+                    record.released_framebuffer_window_leases,
+                    record.active_dmw_lease_count,
+                    record.in_flight_dma_count,
+                    record.active_framebuffer_window_lease_count,
                     record.generation
                 )
             })
@@ -16390,6 +16483,50 @@ fn integrated_display_scheduler_load_manifest(
         display_measured_nanos: record.display_measured_nanos,
         scheduler_decided_at_event: record.scheduler_decided_at_event,
         display_recorded_at_event: record.display_recorded_at_event,
+        invariant_checks: record.invariant_checks,
+        generation: record.generation,
+        state: record.state.as_str().to_owned(),
+        recorded_at_event: record.recorded_at_event,
+        note: record.note.clone(),
+    }
+}
+
+fn integrated_snapshot_io_lease_barrier_manifest(
+    record: &semantic_core::IntegratedSnapshotIoLeaseBarrierRecord,
+) -> IntegratedSnapshotIoLeaseBarrierManifest {
+    IntegratedSnapshotIoLeaseBarrierManifest {
+        id: record.id,
+        scenario: record.scenario.clone(),
+        smp_snapshot_barrier: record.smp_snapshot_barrier,
+        smp_snapshot_barrier_generation: record.smp_snapshot_barrier_generation,
+        io_cleanup: record.io_cleanup,
+        io_cleanup_generation: record.io_cleanup_generation,
+        display_snapshot_barrier: record.display_snapshot_barrier,
+        display_snapshot_barrier_generation: record.display_snapshot_barrier_generation,
+        driver_store: record.driver_store,
+        driver_store_generation: record.driver_store_generation,
+        device: record.device,
+        device_generation: record.device_generation,
+        display: record.display,
+        display_generation: record.display_generation,
+        framebuffer: record.framebuffer,
+        framebuffer_generation: record.framebuffer_generation,
+        active_dmw_lease_count: record.active_dmw_lease_count,
+        in_flight_dma_count: record.in_flight_dma_count,
+        raw_dma_binding_count: record.raw_dma_binding_count,
+        raw_mmio_binding_count: record.raw_mmio_binding_count,
+        active_framebuffer_window_lease_count: record.active_framebuffer_window_lease_count,
+        active_framebuffer_mapping_count: record.active_framebuffer_mapping_count,
+        dirty_framebuffer_region_count: record.dirty_framebuffer_region_count,
+        released_dma_buffers: record.released_dma_buffers,
+        released_mmio_regions: record.released_mmio_regions,
+        released_irq_lines: record.released_irq_lines,
+        released_framebuffer_window_leases: record.released_framebuffer_window_leases,
+        revoked_device_capabilities: record.revoked_device_capabilities,
+        revoked_display_capabilities: record.revoked_display_capabilities,
+        smp_barrier_event: record.smp_barrier_event,
+        io_cleanup_completed_event: record.io_cleanup_completed_event,
+        display_barrier_event: record.display_barrier_event,
         invariant_checks: record.invariant_checks,
         generation: record.generation,
         state: record.state.as_str().to_owned(),

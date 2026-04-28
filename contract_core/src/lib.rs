@@ -92,6 +92,7 @@ pub enum ObjectKind {
     IntegratedSimdMigration,
     IntegratedNetworkDiskIo,
     IntegratedDisplaySchedulerLoad,
+    IntegratedSnapshotIoLeaseBarrier,
     DeviceObject,
     QueueObject,
     DescriptorObject,
@@ -225,6 +226,7 @@ impl ObjectKind {
             Self::IntegratedSimdMigration => "integrated-simd-migration",
             Self::IntegratedNetworkDiskIo => "integrated-network-disk-io",
             Self::IntegratedDisplaySchedulerLoad => "integrated-display-scheduler-load",
+            Self::IntegratedSnapshotIoLeaseBarrier => "integrated-snapshot-io-lease-barrier",
             Self::DeviceObject => "device-object",
             Self::QueueObject => "queue-object",
             Self::DescriptorObject => "descriptor-object",
@@ -535,6 +537,10 @@ typed_ref!(
 typed_ref!(
     IntegratedDisplaySchedulerLoadRef,
     ObjectKind::IntegratedDisplaySchedulerLoad
+);
+typed_ref!(
+    IntegratedSnapshotIoLeaseBarrierRef,
+    ObjectKind::IntegratedSnapshotIoLeaseBarrier
 );
 typed_ref!(DeviceObjectRef, ObjectKind::DeviceObject);
 typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
@@ -1966,6 +1972,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "integrated display scheduler load root/count mismatch",
         ));
     }
+    if roots.integrated_snapshot_io_lease_barrier_roots.len()
+        != package.semantic.integrated_snapshot_io_lease_barrier_count
+        || package.semantic.integrated_snapshot_io_lease_barriers.len()
+            != package.semantic.integrated_snapshot_io_lease_barrier_count
+    {
+        return Err(ContractError::new(
+            "integrated snapshot io lease barrier root/count mismatch",
+        ));
+    }
     if roots.device_object_roots.len() != package.semantic.device_object_count
         || package.semantic.device_objects.len() != package.semantic.device_object_count
     {
@@ -3016,6 +3031,7 @@ mod tests {
                 integrated_simd_migration_count: 0,
                 integrated_network_disk_io_count: 0,
                 integrated_display_scheduler_load_count: 0,
+                integrated_snapshot_io_lease_barrier_count: 0,
                 device_object_count: 0,
                 queue_object_count: 0,
                 descriptor_object_count: 0,
@@ -3158,6 +3174,7 @@ mod tests {
                 integrated_simd_migrations: Vec::new(),
                 integrated_network_disk_ios: Vec::new(),
                 integrated_display_scheduler_loads: Vec::new(),
+                integrated_snapshot_io_lease_barriers: Vec::new(),
                 device_objects: Vec::new(),
                 queue_objects: Vec::new(),
                 descriptor_objects: Vec::new(),
@@ -4253,6 +4270,59 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "integrated display scheduler load root/count mismatch"
+        );
+    }
+
+    #[test]
+    fn semantic_roots_reject_integrated_snapshot_io_lease_barrier_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.integrated_snapshot_io_lease_barrier_count = 1;
+        package.semantic.integrated_snapshot_io_lease_barriers.push(
+            artifact_manifest::IntegratedSnapshotIoLeaseBarrierManifest {
+                id: 26_601,
+                scenario: "x6-snapshot-barrier-blocks-active-io-leases".to_owned(),
+                smp_snapshot_barrier: 9_401,
+                smp_snapshot_barrier_generation: 1,
+                io_cleanup: 9_967,
+                io_cleanup_generation: 1,
+                display_snapshot_barrier: 24_001,
+                display_snapshot_barrier_generation: 1,
+                driver_store: 2,
+                driver_store_generation: 2,
+                device: 9_701,
+                device_generation: 1,
+                display: 23_101,
+                display_generation: 1,
+                framebuffer: 23_001,
+                framebuffer_generation: 1,
+                active_dmw_lease_count: 0,
+                in_flight_dma_count: 0,
+                raw_dma_binding_count: 0,
+                raw_mmio_binding_count: 0,
+                active_framebuffer_window_lease_count: 0,
+                active_framebuffer_mapping_count: 0,
+                dirty_framebuffer_region_count: 0,
+                released_dma_buffers: 1,
+                released_mmio_regions: 1,
+                released_irq_lines: 1,
+                released_framebuffer_window_leases: 1,
+                revoked_device_capabilities: 4,
+                revoked_display_capabilities: 1,
+                smp_barrier_event: 117,
+                io_cleanup_completed_event: 152,
+                display_barrier_event: 567,
+                invariant_checks: 7,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 576,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "integrated snapshot io lease barrier root/count mismatch"
         );
     }
 
@@ -7496,6 +7566,12 @@ mod tests {
             ObjectRef::new(ObjectKind::IntegratedDisplaySchedulerLoad, 22, 1).unwrap();
         assert!(
             IntegratedDisplaySchedulerLoadRef::try_from_ref(integrated_display_scheduler_load)
+                .is_ok()
+        );
+        let integrated_snapshot_io_lease_barrier =
+            ObjectRef::new(ObjectKind::IntegratedSnapshotIoLeaseBarrier, 23, 1).unwrap();
+        assert!(
+            IntegratedSnapshotIoLeaseBarrierRef::try_from_ref(integrated_snapshot_io_lease_barrier)
                 .is_ok()
         );
         let device_object = ObjectRef::new(ObjectKind::DeviceObject, 17, 1).unwrap();

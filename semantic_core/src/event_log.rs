@@ -437,6 +437,25 @@ pub enum EventKind {
         invariant_checks: u32,
         generation: Generation,
     },
+    IntegratedSnapshotIoLeaseBarrierRecorded {
+        scenario: String,
+        integrated: IntegratedSnapshotIoLeaseBarrierId,
+        smp_snapshot_barrier: SmpSnapshotBarrierId,
+        smp_snapshot_barrier_generation: Generation,
+        io_cleanup: IoCleanupId,
+        io_cleanup_generation: Generation,
+        display_snapshot_barrier: DisplaySnapshotBarrierId,
+        display_snapshot_barrier_generation: Generation,
+        released_dma_buffers: u32,
+        released_mmio_regions: u32,
+        released_irq_lines: u32,
+        released_framebuffer_window_leases: u32,
+        active_dmw_lease_count: u32,
+        in_flight_dma_count: u32,
+        active_framebuffer_window_lease_count: u32,
+        invariant_checks: u32,
+        generation: Generation,
+    },
     DeviceObjectRecorded {
         device: DeviceObjectId,
         resource: ResourceId,
@@ -2721,6 +2740,27 @@ impl EventKind {
                 generation,
             } => format!(
                 "IntegratedDisplaySchedulerLoadRecorded integrated={integrated} scenario={scenario} framebuffer_benchmark={framebuffer_benchmark}@{framebuffer_benchmark_generation} scheduler_decision={scheduler_decision}@{scheduler_decision_generation} owner_store={owner_store}@{owner_store_generation} queue={queue}@{queue_generation} activation={selected_activation}@{selected_activation_generation} display={display}@{display_generation} framebuffer={framebuffer}@{framebuffer_generation} sample_frames={sample_frames} sample_bytes={sample_bytes} scheduler_load_units={scheduler_load_units} display_measured_nanos={display_measured_nanos} invariant_checks={invariant_checks} generation={generation}"
+            ),
+            Self::IntegratedSnapshotIoLeaseBarrierRecorded {
+                scenario,
+                integrated,
+                smp_snapshot_barrier,
+                smp_snapshot_barrier_generation,
+                io_cleanup,
+                io_cleanup_generation,
+                display_snapshot_barrier,
+                display_snapshot_barrier_generation,
+                released_dma_buffers,
+                released_mmio_regions,
+                released_irq_lines,
+                released_framebuffer_window_leases,
+                active_dmw_lease_count,
+                in_flight_dma_count,
+                active_framebuffer_window_lease_count,
+                invariant_checks,
+                generation,
+            } => format!(
+                "IntegratedSnapshotIoLeaseBarrierRecorded integrated={integrated} scenario={scenario} smp_snapshot_barrier={smp_snapshot_barrier}@{smp_snapshot_barrier_generation} io_cleanup={io_cleanup}@{io_cleanup_generation} display_snapshot_barrier={display_snapshot_barrier}@{display_snapshot_barrier_generation} released_dma_buffers={released_dma_buffers} released_mmio_regions={released_mmio_regions} released_irq_lines={released_irq_lines} released_framebuffer_window_leases={released_framebuffer_window_leases} active_dmw_leases={active_dmw_lease_count} in_flight_dma={in_flight_dma_count} active_framebuffer_window_leases={active_framebuffer_window_lease_count} invariant_checks={invariant_checks} generation={generation}"
             ),
             Self::DeviceObjectRecorded {
                 device,

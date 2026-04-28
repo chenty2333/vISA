@@ -277,6 +277,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_display_scheduler_load_count: usize,
     #[serde(default)]
+    pub integrated_snapshot_io_lease_barrier_count: usize,
+    #[serde(default)]
     pub device_object_count: usize,
     #[serde(default)]
     pub queue_object_count: usize,
@@ -557,6 +559,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_display_scheduler_loads: Vec<IntegratedDisplaySchedulerLoadManifest>,
     #[serde(default)]
+    pub integrated_snapshot_io_lease_barriers: Vec<IntegratedSnapshotIoLeaseBarrierManifest>,
+    #[serde(default)]
     pub device_objects: Vec<DeviceObjectManifest>,
     #[serde(default)]
     pub queue_objects: Vec<QueueObjectManifest>,
@@ -816,6 +820,8 @@ pub struct SemanticRootSetManifest {
     pub integrated_network_disk_io_roots: Vec<String>,
     #[serde(default)]
     pub integrated_display_scheduler_load_roots: Vec<String>,
+    #[serde(default)]
+    pub integrated_snapshot_io_lease_barrier_roots: Vec<String>,
     #[serde(default)]
     pub device_object_roots: Vec<String>,
     #[serde(default)]
@@ -1826,6 +1832,47 @@ pub struct IntegratedDisplaySchedulerLoadManifest {
     pub display_measured_nanos: u64,
     pub scheduler_decided_at_event: u64,
     pub display_recorded_at_event: u64,
+    pub invariant_checks: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IntegratedSnapshotIoLeaseBarrierManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub smp_snapshot_barrier: u64,
+    pub smp_snapshot_barrier_generation: u64,
+    pub io_cleanup: u64,
+    pub io_cleanup_generation: u64,
+    pub display_snapshot_barrier: u64,
+    pub display_snapshot_barrier_generation: u64,
+    pub driver_store: u64,
+    pub driver_store_generation: u64,
+    pub device: u64,
+    pub device_generation: u64,
+    pub display: u64,
+    pub display_generation: u64,
+    pub framebuffer: u64,
+    pub framebuffer_generation: u64,
+    pub active_dmw_lease_count: u32,
+    pub in_flight_dma_count: u32,
+    pub raw_dma_binding_count: u32,
+    pub raw_mmio_binding_count: u32,
+    pub active_framebuffer_window_lease_count: u32,
+    pub active_framebuffer_mapping_count: u32,
+    pub dirty_framebuffer_region_count: u32,
+    pub released_dma_buffers: u32,
+    pub released_mmio_regions: u32,
+    pub released_irq_lines: u32,
+    pub released_framebuffer_window_leases: u32,
+    pub revoked_device_capabilities: u32,
+    pub revoked_display_capabilities: u32,
+    pub smp_barrier_event: u64,
+    pub io_cleanup_completed_event: u64,
+    pub display_barrier_event: u64,
     pub invariant_checks: u32,
     pub generation: u64,
     pub state: String,
