@@ -94,6 +94,7 @@ pub enum ContractObjectKind {
     VectorState,
     SimdFaultInjection,
     SimdBenchmark,
+    SimdContextSwitchBenchmark,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -204,6 +205,7 @@ impl ContractObjectKind {
             Self::VectorState => "vector-state",
             Self::SimdFaultInjection => "simd-fault-injection",
             Self::SimdBenchmark => "simd-benchmark",
+            Self::SimdContextSwitchBenchmark => "simd-context-switch-benchmark",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -5691,6 +5693,9 @@ mod tests {
             vector_states: Vec::new(),
             simd_fault_injections: Vec::new(),
             simd_benchmarks: Vec::new(),
+            simd_context_switch_benchmarks: Vec::new(),
+            preemptions: Vec::new(),
+            activation_resumes: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(stale_store);
@@ -5788,6 +5793,9 @@ mod tests {
             vector_states: Vec::new(),
             simd_fault_injections: Vec::new(),
             simd_benchmarks: Vec::new(),
+            simd_context_switch_benchmarks: Vec::new(),
+            preemptions: Vec::new(),
+            activation_resumes: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(store.store);
@@ -6019,6 +6027,9 @@ mod tests {
             vector_states: Vec::new(),
             simd_fault_injections: Vec::new(),
             simd_benchmarks: Vec::new(),
+            simd_context_switch_benchmarks: Vec::new(),
+            preemptions: Vec::new(),
+            activation_resumes: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(store.store);
@@ -6120,6 +6131,9 @@ mod tests {
             vector_states: Vec::new(),
             simd_fault_injections: Vec::new(),
             simd_benchmarks: Vec::new(),
+            simd_context_switch_benchmarks: Vec::new(),
+            preemptions: Vec::new(),
+            activation_resumes: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(dead_store.clone());
@@ -6308,6 +6322,9 @@ mod tests {
             vector_states: Vec::new(),
             simd_fault_injections: Vec::new(),
             simd_benchmarks: Vec::new(),
+            simd_context_switch_benchmarks: Vec::new(),
+            preemptions: Vec::new(),
+            activation_resumes: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(current_store.clone());
@@ -7247,6 +7264,278 @@ mod tests {
 
         assert!(violations.iter().any(|violation| {
             violation.edge == "simd-benchmark->scalar-code"
+                && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+        }));
+    }
+
+    #[test]
+    fn simd_runtime_v12_context_switch_benchmark_validates_preempt_resume_vector_refs() {
+        let (artifact, store, code, _capabilities) = running_store_and_code();
+        let feature_set = target_feature_set_record();
+        let activation = ActivationRecord {
+            id: 11,
+            store: store.store.id,
+            store_generation: store.store.generation,
+            code_object: code.id,
+            code_generation: code.generation,
+            artifact: artifact.artifact_id,
+            entry: ActivationEntry::Symbol("v12_vector_context_switch".to_string()),
+            generation: 5,
+            state: ActivationState::Running,
+            start_event: 1,
+            exit_event: None,
+            active_dmw_leases: 0,
+            blocked_wait: None,
+            trap: None,
+            return_tag: None,
+        };
+        let preemption = PreemptionRecord {
+            id: 9_070,
+            activation: activation.id,
+            activation_generation_before: 3,
+            activation_generation_after: 4,
+            timer_interrupt: 9_070,
+            timer_interrupt_generation: 1,
+            queue: 9_070,
+            queue_generation: 2,
+            generation: 1,
+            state: PreemptionState::Applied,
+            preempted_at_event: 10,
+            note: "v12 preempt benchmark fixture".to_string(),
+        };
+        let saved_vector_state = VectorStateRecord {
+            id: 22_002,
+            owner_activation: ContractObjectRef::new(ContractObjectKind::Activation, 11, 5),
+            owner_store: ContractObjectRef::new(
+                ContractObjectKind::Store,
+                store.store.id,
+                store.store.generation,
+            ),
+            code_object: code.object_ref(),
+            target_feature_set: feature_set.object_ref(),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            register_bytes: 512,
+            generation: 1,
+            state: VectorStateState::Dropped,
+            recorded_at_event: 11,
+            note: "v12 saved vector state".to_string(),
+        };
+        let restored_vector_state = VectorStateRecord {
+            id: 22_003,
+            owner_activation: ContractObjectRef::new(ContractObjectKind::Activation, 11, 5),
+            owner_store: ContractObjectRef::new(
+                ContractObjectKind::Store,
+                store.store.id,
+                store.store.generation,
+            ),
+            code_object: code.object_ref(),
+            target_feature_set: feature_set.object_ref(),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            register_bytes: 512,
+            generation: 1,
+            state: VectorStateState::Reserved,
+            recorded_at_event: 12,
+            note: "v12 restored vector state".to_string(),
+        };
+        let resume = ActivationResumeRecord {
+            id: 9_071,
+            scheduler_decision: 9_071,
+            scheduler_decision_generation: 1,
+            activation: activation.id,
+            activation_generation_before: 4,
+            activation_generation_after: 5,
+            owner_task: 9_070,
+            owner_task_generation: 1,
+            queue: 9_070,
+            queue_generation: 2,
+            context: Some(9_070),
+            context_generation_before: Some(4),
+            context_generation_after: Some(5),
+            saved_context: Some(9_070),
+            saved_context_generation: Some(2),
+            saved_vector_state: Some(saved_vector_state.object_ref()),
+            restored_vector_state: Some(restored_vector_state.object_ref()),
+            vector_status: ActivationVectorState::Clean,
+            vector_restored_at_event: Some(13),
+            generation: 1,
+            state: ActivationResumeState::Applied,
+            resumed_at_event: 13,
+            note: "v12 resume benchmark fixture".to_string(),
+        };
+        let benchmark = SimdContextSwitchBenchmarkRecord {
+            id: 22_012,
+            preemption: preemption.object_ref(),
+            activation_resume: resume.object_ref(),
+            saved_vector_state: saved_vector_state.object_ref(),
+            restored_vector_state: restored_vector_state.object_ref(),
+            target_feature_set: feature_set.object_ref(),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            sample_count: 64,
+            scalar_context_switch_nanos: 30_000,
+            vector_context_switch_nanos: 46_384,
+            overhead_nanos: 16_384,
+            budget_nanos: 50_000,
+            generation: 1,
+            state: SimdContextSwitchBenchmarkState::Recorded,
+            recorded_at_event: 99,
+            note: "v12 context switch benchmark".to_string(),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([artifact]),
+            code_objects: Vec::from([code]),
+            target_feature_sets: Vec::from([feature_set]),
+            vector_states: Vec::from([saved_vector_state, restored_vector_state]),
+            simd_context_switch_benchmarks: Vec::from([benchmark]),
+            preemptions: Vec::from([preemption]),
+            activation_resumes: Vec::from([resume]),
+            stores: Vec::from([store.store]),
+            activations: Vec::from([activation]),
+            ..ContractGraphSnapshot::default()
+        };
+
+        assert_eq!(validate_contract_graph(&snapshot), Vec::new());
+    }
+
+    #[test]
+    fn simd_runtime_v12_rejects_benchmark_resume_vector_mismatch() {
+        let (artifact, store, code, _capabilities) = running_store_and_code();
+        let feature_set = target_feature_set_record();
+        let activation = ActivationRecord {
+            id: 11,
+            store: store.store.id,
+            store_generation: store.store.generation,
+            code_object: code.id,
+            code_generation: code.generation,
+            artifact: artifact.artifact_id,
+            entry: ActivationEntry::Symbol("v12_vector_context_switch".to_string()),
+            generation: 5,
+            state: ActivationState::Running,
+            start_event: 1,
+            exit_event: None,
+            active_dmw_leases: 0,
+            blocked_wait: None,
+            trap: None,
+            return_tag: None,
+        };
+        let preemption = PreemptionRecord {
+            id: 9_070,
+            activation: activation.id,
+            activation_generation_before: 3,
+            activation_generation_after: 4,
+            timer_interrupt: 9_070,
+            timer_interrupt_generation: 1,
+            queue: 9_070,
+            queue_generation: 2,
+            generation: 1,
+            state: PreemptionState::Applied,
+            preempted_at_event: 10,
+            note: "v12 preempt benchmark fixture".to_string(),
+        };
+        let saved_vector_state = VectorStateRecord {
+            id: 22_002,
+            owner_activation: ContractObjectRef::new(ContractObjectKind::Activation, 11, 5),
+            owner_store: ContractObjectRef::new(
+                ContractObjectKind::Store,
+                store.store.id,
+                store.store.generation,
+            ),
+            code_object: code.object_ref(),
+            target_feature_set: feature_set.object_ref(),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            register_bytes: 512,
+            generation: 1,
+            state: VectorStateState::Dropped,
+            recorded_at_event: 11,
+            note: "v12 saved vector state".to_string(),
+        };
+        let restored_vector_state = VectorStateRecord {
+            id: 22_003,
+            owner_activation: ContractObjectRef::new(ContractObjectKind::Activation, 11, 5),
+            owner_store: ContractObjectRef::new(
+                ContractObjectKind::Store,
+                store.store.id,
+                store.store.generation,
+            ),
+            code_object: code.object_ref(),
+            target_feature_set: feature_set.object_ref(),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            register_bytes: 512,
+            generation: 1,
+            state: VectorStateState::Reserved,
+            recorded_at_event: 12,
+            note: "v12 restored vector state".to_string(),
+        };
+        let resume = ActivationResumeRecord {
+            id: 9_071,
+            scheduler_decision: 9_071,
+            scheduler_decision_generation: 1,
+            activation: activation.id,
+            activation_generation_before: 4,
+            activation_generation_after: 5,
+            owner_task: 9_070,
+            owner_task_generation: 1,
+            queue: 9_070,
+            queue_generation: 2,
+            context: Some(9_070),
+            context_generation_before: Some(4),
+            context_generation_after: Some(5),
+            saved_context: Some(9_070),
+            saved_context_generation: Some(2),
+            saved_vector_state: Some(saved_vector_state.object_ref()),
+            restored_vector_state: None,
+            vector_status: ActivationVectorState::Clean,
+            vector_restored_at_event: Some(13),
+            generation: 1,
+            state: ActivationResumeState::Applied,
+            resumed_at_event: 13,
+            note: "bad v12 resume benchmark fixture".to_string(),
+        };
+        let benchmark = SimdContextSwitchBenchmarkRecord {
+            id: 22_012,
+            preemption: preemption.object_ref(),
+            activation_resume: resume.object_ref(),
+            saved_vector_state: saved_vector_state.object_ref(),
+            restored_vector_state: restored_vector_state.object_ref(),
+            target_feature_set: feature_set.object_ref(),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            sample_count: 64,
+            scalar_context_switch_nanos: 30_000,
+            vector_context_switch_nanos: 46_384,
+            overhead_nanos: 16_384,
+            budget_nanos: 50_000,
+            generation: 1,
+            state: SimdContextSwitchBenchmarkState::Recorded,
+            recorded_at_event: 99,
+            note: "bad v12 context switch benchmark".to_string(),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([artifact]),
+            code_objects: Vec::from([code]),
+            target_feature_sets: Vec::from([feature_set]),
+            vector_states: Vec::from([saved_vector_state, restored_vector_state]),
+            simd_context_switch_benchmarks: Vec::from([benchmark]),
+            preemptions: Vec::from([preemption]),
+            activation_resumes: Vec::from([resume]),
+            stores: Vec::from([store.store]),
+            activations: Vec::from([activation]),
+            ..ContractGraphSnapshot::default()
+        };
+        let violations = validate_contract_graph(&snapshot);
+
+        assert!(violations.iter().any(|violation| {
+            violation.edge == "simd-context-switch-benchmark->activation-resume"
                 && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
         }));
     }

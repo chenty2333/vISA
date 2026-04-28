@@ -2567,6 +2567,38 @@ impl SimdBenchmarkRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SimdContextSwitchBenchmarkRecord {
+    pub id: SimdContextSwitchBenchmarkId,
+    pub preemption: ContractObjectRef,
+    pub activation_resume: ContractObjectRef,
+    pub saved_vector_state: ContractObjectRef,
+    pub restored_vector_state: ContractObjectRef,
+    pub target_feature_set: ContractObjectRef,
+    pub simd_abi: String,
+    pub vector_register_count: u16,
+    pub vector_register_bits: u16,
+    pub sample_count: u64,
+    pub scalar_context_switch_nanos: u64,
+    pub vector_context_switch_nanos: u64,
+    pub overhead_nanos: u64,
+    pub budget_nanos: u64,
+    pub generation: Generation,
+    pub state: SimdContextSwitchBenchmarkState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl SimdContextSwitchBenchmarkRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::SimdContextSwitchBenchmark,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

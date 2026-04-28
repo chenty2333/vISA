@@ -89,6 +89,7 @@ pub struct SemanticGraph {
     vector_states: Vec<VectorStateRecord>,
     simd_fault_injections: Vec<SimdFaultInjectionRecord>,
     simd_benchmarks: Vec<SimdBenchmarkRecord>,
+    simd_context_switch_benchmarks: Vec<SimdContextSwitchBenchmarkRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -189,6 +190,7 @@ pub struct SemanticGraph {
     next_vector_state_id: VectorStateId,
     next_simd_fault_injection_id: SimdFaultInjectionId,
     next_simd_benchmark_id: SimdBenchmarkId,
+    next_simd_context_switch_benchmark_id: SimdContextSwitchBenchmarkId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -277,6 +279,7 @@ mod remote_park;
 mod resource;
 mod scheduler;
 mod simd_benchmark;
+mod simd_context_switch_benchmark;
 mod simd_fault_injection;
 mod smp_cleanup_quiescence;
 mod smp_code_publish;
@@ -391,6 +394,7 @@ impl SemanticGraph {
             vector_states: Vec::new(),
             simd_fault_injections: Vec::new(),
             simd_benchmarks: Vec::new(),
+            simd_context_switch_benchmarks: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -491,6 +495,7 @@ impl SemanticGraph {
             next_vector_state_id: 1,
             next_simd_fault_injection_id: 1,
             next_simd_benchmark_id: 1,
+            next_simd_context_switch_benchmark_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

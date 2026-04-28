@@ -83,6 +83,9 @@ pub struct ContractGraphSnapshot {
     pub vector_states: Vec<VectorStateRecord>,
     pub simd_fault_injections: Vec<SimdFaultInjectionRecord>,
     pub simd_benchmarks: Vec<SimdBenchmarkRecord>,
+    pub simd_context_switch_benchmarks: Vec<SimdContextSwitchBenchmarkRecord>,
+    pub preemptions: Vec<PreemptionRecord>,
+    pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
     pub activations: Vec<ActivationRecord>,
     pub traps: Vec<TargetTrapRecord>,
@@ -183,6 +186,7 @@ impl ContractGraphValidator {
         Self::validate_vector_states(snapshot, &mut violations);
         Self::validate_simd_fault_injections(snapshot, &mut violations);
         Self::validate_simd_benchmarks(snapshot, &mut violations);
+        Self::validate_simd_context_switch_benchmarks(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -629,6 +633,188 @@ impl ContractGraphValidator {
                         from,
                         Some(code.object_ref()),
                         "SIMD benchmark vector code object does not declare matching SIMD requirement",
+                    ));
+                }
+            }
+        }
+    }
+
+    fn validate_simd_context_switch_benchmarks(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for benchmark in &snapshot.simd_context_switch_benchmarks {
+            let from = benchmark.object_ref();
+            for (label, target, expected_kind) in [
+                (
+                    "simd-context-switch-benchmark->preemption",
+                    benchmark.preemption,
+                    ContractObjectKind::Preemption,
+                ),
+                (
+                    "simd-context-switch-benchmark->activation-resume",
+                    benchmark.activation_resume,
+                    ContractObjectKind::ActivationResume,
+                ),
+                (
+                    "simd-context-switch-benchmark->saved-vector-state",
+                    benchmark.saved_vector_state,
+                    ContractObjectKind::VectorState,
+                ),
+                (
+                    "simd-context-switch-benchmark->restored-vector-state",
+                    benchmark.restored_vector_state,
+                    ContractObjectKind::VectorState,
+                ),
+                (
+                    "simd-context-switch-benchmark->target-feature-set",
+                    benchmark.target_feature_set,
+                    ContractObjectKind::TargetFeatureSet,
+                ),
+            ] {
+                if target.kind != expected_kind {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        label,
+                        from,
+                        Some(target),
+                        "SIMD context switch benchmark edge uses the wrong object kind",
+                    ));
+                    continue;
+                }
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    expected_kind,
+                    target.id,
+                    target.generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+
+            if benchmark.saved_vector_state == benchmark.restored_vector_state {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "simd-context-switch-benchmark->vector-state-pair",
+                    from,
+                    Some(benchmark.saved_vector_state),
+                    "SIMD context switch benchmark requires distinct saved/restored vector states",
+                ));
+            }
+            if benchmark.sample_count == 0
+                || benchmark.scalar_context_switch_nanos == 0
+                || benchmark.vector_context_switch_nanos <= benchmark.scalar_context_switch_nanos
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "simd-context-switch-benchmark->metrics",
+                    from,
+                    None,
+                    "SIMD context switch benchmark requires nonzero samples and higher vector context cost",
+                ));
+            } else {
+                let expected_overhead =
+                    benchmark.vector_context_switch_nanos - benchmark.scalar_context_switch_nanos;
+                if benchmark.overhead_nanos != expected_overhead
+                    || benchmark.overhead_nanos > benchmark.budget_nanos
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "simd-context-switch-benchmark->metrics",
+                        from,
+                        None,
+                        "SIMD context switch benchmark overhead is inconsistent or over budget",
+                    ));
+                }
+            }
+
+            let preemption = snapshot
+                .preemptions
+                .iter()
+                .find(|preemption| preemption.object_ref() == benchmark.preemption);
+            let resume = snapshot
+                .activation_resumes
+                .iter()
+                .find(|resume| resume.object_ref() == benchmark.activation_resume);
+            if let (Some(preemption), Some(resume)) = (preemption, resume) {
+                if preemption.activation != resume.activation
+                    || preemption.activation_generation_after != resume.activation_generation_before
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "simd-context-switch-benchmark->activation-flow",
+                        from,
+                        Some(resume.object_ref()),
+                        "SIMD context switch benchmark preempt/resume activation generations do not form a handoff",
+                    ));
+                }
+            }
+
+            if let Some(resume) = resume {
+                if resume.saved_vector_state != Some(benchmark.saved_vector_state)
+                    || resume.restored_vector_state != Some(benchmark.restored_vector_state)
+                    || resume.vector_status != ActivationVectorState::Clean
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "simd-context-switch-benchmark->activation-resume",
+                        from,
+                        Some(resume.object_ref()),
+                        "SIMD context switch benchmark resume does not record the benchmark vector restore pair",
+                    ));
+                }
+            }
+
+            let feature = snapshot
+                .target_feature_sets
+                .iter()
+                .find(|feature| feature.object_ref() == benchmark.target_feature_set);
+            if let Some(feature) = feature {
+                if !feature.simd_supported
+                    || feature.simd_abi != benchmark.simd_abi
+                    || feature.vector_register_count < benchmark.vector_register_count
+                    || feature.vector_register_bits < benchmark.vector_register_bits
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "simd-context-switch-benchmark->target-feature-set",
+                        from,
+                        Some(feature.object_ref()),
+                        "SIMD context switch benchmark target feature set does not support measured vector shape",
+                    ));
+                }
+            }
+
+            for (label, vector_ref) in [
+                (
+                    "simd-context-switch-benchmark->saved-vector-state",
+                    benchmark.saved_vector_state,
+                ),
+                (
+                    "simd-context-switch-benchmark->restored-vector-state",
+                    benchmark.restored_vector_state,
+                ),
+            ] {
+                let Some(vector) = snapshot
+                    .vector_states
+                    .iter()
+                    .find(|vector| vector.object_ref() == vector_ref)
+                else {
+                    continue;
+                };
+                if vector.target_feature_set != benchmark.target_feature_set
+                    || vector.simd_abi != benchmark.simd_abi
+                    || vector.vector_register_count != benchmark.vector_register_count
+                    || vector.vector_register_bits != benchmark.vector_register_bits
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        label,
+                        from,
+                        Some(vector.object_ref()),
+                        "SIMD context switch benchmark vector state shape does not match benchmark target",
                     ));
                 }
             }
@@ -1701,6 +1887,21 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|benchmark| benchmark.id == id)
                 .map(SimdBenchmarkRecord::object_ref),
+            ContractObjectKind::SimdContextSwitchBenchmark => snapshot
+                .simd_context_switch_benchmarks
+                .iter()
+                .find(|benchmark| benchmark.id == id)
+                .map(SimdContextSwitchBenchmarkRecord::object_ref),
+            ContractObjectKind::Preemption => snapshot
+                .preemptions
+                .iter()
+                .find(|preemption| preemption.id == id)
+                .map(PreemptionRecord::object_ref),
+            ContractObjectKind::ActivationResume => snapshot
+                .activation_resumes
+                .iter()
+                .find(|resume| resume.id == id)
+                .map(ActivationResumeRecord::object_ref),
             ContractObjectKind::Artifact => snapshot
                 .artifacts
                 .iter()
@@ -1884,6 +2085,21 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|benchmark| benchmark.id == id)
                 .map(SimdBenchmarkRecord::object_ref),
+            ContractObjectKind::SimdContextSwitchBenchmark => snapshot
+                .simd_context_switch_benchmarks
+                .iter()
+                .find(|benchmark| benchmark.id == id)
+                .map(SimdContextSwitchBenchmarkRecord::object_ref),
+            ContractObjectKind::Preemption => snapshot
+                .preemptions
+                .iter()
+                .find(|preemption| preemption.id == id)
+                .map(PreemptionRecord::object_ref),
+            ContractObjectKind::ActivationResume => snapshot
+                .activation_resumes
+                .iter()
+                .find(|resume| resume.id == id)
+                .map(ActivationResumeRecord::object_ref),
             ContractObjectKind::Store => snapshot
                 .stores
                 .iter()
@@ -1933,7 +2149,6 @@ impl ContractGraphValidator {
             | ContractObjectKind::IpiEvent
             | ContractObjectKind::RemotePreempt
             | ContractObjectKind::RemotePark
-            | ContractObjectKind::Preemption
             | ContractObjectKind::SchedulerDecision
             | ContractObjectKind::CrossHartSchedulerDecision
             | ContractObjectKind::ActivationMigration
@@ -2002,7 +2217,6 @@ impl ContractGraphValidator {
             | ContractObjectKind::BlockRequestGenerationAudit
             | ContractObjectKind::BlockBenchmark
             | ContractObjectKind::BlockRecoveryBenchmark
-            | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup
             | ContractObjectKind::PreemptionLatencySample
@@ -2027,6 +2241,9 @@ impl ContractGraphValidator {
                 | ContractObjectKind::VectorState
                 | ContractObjectKind::SimdFaultInjection
                 | ContractObjectKind::SimdBenchmark
+                | ContractObjectKind::SimdContextSwitchBenchmark
+                | ContractObjectKind::Preemption
+                | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
                 | ContractObjectKind::Activation
                 | ContractObjectKind::Trap

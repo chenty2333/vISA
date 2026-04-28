@@ -1048,6 +1048,23 @@ pub enum SemanticCommand {
         context_overhead_nanos: u64,
         note: String,
     },
+    RecordSimdContextSwitchBenchmark {
+        benchmark: SimdContextSwitchBenchmarkId,
+        preemption: ContractObjectRef,
+        activation_resume: ContractObjectRef,
+        saved_vector_state: ContractObjectRef,
+        restored_vector_state: ContractObjectRef,
+        target_feature_set: ContractObjectRef,
+        simd_abi: String,
+        vector_register_count: u16,
+        vector_register_bits: u16,
+        sample_count: u64,
+        scalar_context_switch_nanos: u64,
+        vector_context_switch_nanos: u64,
+        overhead_nanos: u64,
+        budget_nanos: u64,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -1480,6 +1497,7 @@ impl SemanticCommand {
             Self::RecordVectorState { .. } => "record-vector-state",
             Self::RecordSimdFaultInjection { .. } => "record-simd-fault-injection",
             Self::RecordSimdBenchmark { .. } => "record-simd-benchmark",
+            Self::RecordSimdContextSwitchBenchmark { .. } => "record-simd-context-switch-benchmark",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -4351,6 +4369,51 @@ impl SemanticGraph {
                     .map_err(CommandError::precondition)
                 }
             }
+            SemanticCommand::RecordSimdContextSwitchBenchmark {
+                benchmark,
+                preemption,
+                activation_resume,
+                saved_vector_state,
+                restored_vector_state,
+                target_feature_set,
+                simd_abi,
+                vector_register_count,
+                vector_register_bits,
+                sample_count,
+                scalar_context_switch_nanos,
+                vector_context_switch_nanos,
+                overhead_nanos,
+                budget_nanos,
+                ..
+            } => {
+                if self
+                    .simd_context_switch_benchmarks
+                    .iter()
+                    .any(|record| record.id == *benchmark)
+                {
+                    Err(CommandError::precondition(
+                        "SIMD context switch benchmark already exists",
+                    ))
+                } else {
+                    self.validate_simd_context_switch_benchmark(
+                        *benchmark,
+                        *preemption,
+                        *activation_resume,
+                        *saved_vector_state,
+                        *restored_vector_state,
+                        *target_feature_set,
+                        simd_abi,
+                        *vector_register_count,
+                        *vector_register_bits,
+                        *sample_count,
+                        *scalar_context_switch_nanos,
+                        *vector_context_switch_nanos,
+                        *overhead_nanos,
+                        *budget_nanos,
+                    )
+                    .map_err(CommandError::precondition)
+                }
+            }
             SemanticCommand::RecordQueueObject {
                 queue,
                 name,
@@ -7128,6 +7191,39 @@ impl SemanticGraph {
                 vector_nanos,
                 speedup_milli,
                 context_overhead_nanos,
+                &note,
+            ),
+            SemanticCommand::RecordSimdContextSwitchBenchmark {
+                benchmark,
+                preemption,
+                activation_resume,
+                saved_vector_state,
+                restored_vector_state,
+                target_feature_set,
+                simd_abi,
+                vector_register_count,
+                vector_register_bits,
+                sample_count,
+                scalar_context_switch_nanos,
+                vector_context_switch_nanos,
+                overhead_nanos,
+                budget_nanos,
+                note,
+            } => self.record_simd_context_switch_benchmark_with_id(
+                benchmark,
+                preemption,
+                activation_resume,
+                saved_vector_state,
+                restored_vector_state,
+                target_feature_set,
+                &simd_abi,
+                vector_register_count,
+                vector_register_bits,
+                sample_count,
+                scalar_context_switch_nanos,
+                vector_context_switch_nanos,
+                overhead_nanos,
+                budget_nanos,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

@@ -148,6 +148,7 @@ pub enum ObjectKind {
     VectorState,
     SimdFaultInjection,
     SimdBenchmark,
+    SimdContextSwitchBenchmark,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -261,6 +262,7 @@ impl ObjectKind {
             Self::VectorState => "vector-state",
             Self::SimdFaultInjection => "simd-fault-injection",
             Self::SimdBenchmark => "simd-benchmark",
+            Self::SimdContextSwitchBenchmark => "simd-context-switch-benchmark",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -563,6 +565,10 @@ typed_ref!(TargetFeatureSetRef, ObjectKind::TargetFeatureSet);
 typed_ref!(VectorStateRef, ObjectKind::VectorState);
 typed_ref!(SimdFaultInjectionRef, ObjectKind::SimdFaultInjection);
 typed_ref!(SimdBenchmarkRef, ObjectKind::SimdBenchmark);
+typed_ref!(
+    SimdContextSwitchBenchmarkRef,
+    ObjectKind::SimdContextSwitchBenchmark
+);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2227,6 +2233,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("simd benchmark root/count mismatch"));
     }
+    if roots.simd_context_switch_benchmark_roots.len()
+        != package.semantic.simd_context_switch_benchmark_count
+        || package.semantic.simd_context_switch_benchmarks.len()
+            != package.semantic.simd_context_switch_benchmark_count
+    {
+        return Err(ContractError::new(
+            "simd context switch benchmark root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2831,6 +2846,7 @@ mod tests {
                 vector_state_count: 0,
                 simd_fault_injection_count: 0,
                 simd_benchmark_count: 0,
+                simd_context_switch_benchmark_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2953,6 +2969,7 @@ mod tests {
                 vector_states: Vec::new(),
                 simd_fault_injections: Vec::new(),
                 simd_benchmarks: Vec::new(),
+                simd_context_switch_benchmarks: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -5156,6 +5173,60 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_simd_context_switch_benchmark_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.simd_context_switch_benchmark_count = 1;
+        package.semantic.simd_context_switch_benchmarks.push(
+            artifact_manifest::SimdContextSwitchBenchmarkManifest {
+                id: 90,
+                preemption: artifact_manifest::ContractObjectRefManifest {
+                    kind: "preemption".to_owned(),
+                    id: 6,
+                    generation: 1,
+                },
+                activation_resume: artifact_manifest::ContractObjectRefManifest {
+                    kind: "activation-resume".to_owned(),
+                    id: 15,
+                    generation: 1,
+                },
+                saved_vector_state: artifact_manifest::ContractObjectRefManifest {
+                    kind: "vector-state".to_owned(),
+                    id: 22_002,
+                    generation: 1,
+                },
+                restored_vector_state: artifact_manifest::ContractObjectRefManifest {
+                    kind: "vector-state".to_owned(),
+                    id: 22_003,
+                    generation: 1,
+                },
+                target_feature_set: artifact_manifest::ContractObjectRefManifest {
+                    kind: "target-feature-set".to_owned(),
+                    id: 21_002,
+                    generation: 1,
+                },
+                simd_abi: "riscv-v".to_owned(),
+                vector_register_count: 32,
+                vector_register_bits: 128,
+                sample_count: 64,
+                scalar_context_switch_nanos: 30_000,
+                vector_context_switch_nanos: 46_384,
+                overhead_nanos: 16_384,
+                budget_nanos: 50_000,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 100,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "simd context switch benchmark root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -6481,6 +6552,9 @@ mod tests {
         assert!(SimdFaultInjectionRef::try_from_ref(simd_fault_injection).is_ok());
         let simd_benchmark = ObjectRef::new(ObjectKind::SimdBenchmark, 78, 1).unwrap();
         assert!(SimdBenchmarkRef::try_from_ref(simd_benchmark).is_ok());
+        let simd_context_switch_benchmark =
+            ObjectRef::new(ObjectKind::SimdContextSwitchBenchmark, 79, 1).unwrap();
+        assert!(SimdContextSwitchBenchmarkRef::try_from_ref(simd_context_switch_benchmark).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

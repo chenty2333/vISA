@@ -32,14 +32,14 @@ use artifact_manifest::{
     PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
     QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SimdBenchmarkManifest, SimdFaultInjectionManifest, SmpCleanupQuiescenceManifest,
-    SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
-    SmpSnapshotBarrierManifest, SmpStressRunManifest, SocketObjectManifest,
-    SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
-    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest,
-    TargetFeatureSetManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
-    VectorStateManifest, VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest,
-    WaitRecordManifest,
+    SimdBenchmarkManifest, SimdContextSwitchBenchmarkManifest, SimdFaultInjectionManifest,
+    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
+    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
+    SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
+    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
+    TargetArtifactImageManifest, TargetFeatureSetManifest, TaskRecordManifest,
+    TimerInterruptManifest, TrapRecordManifest, VectorStateManifest,
+    VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -412,6 +412,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "simd-fault"
         | "simd-benchmark"
         | "simd-scalar-vector-benchmark"
+        | "simd-context-switch-benchmark"
+        | "simd-context-switch"
+        | "simd-switch-benchmark"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -583,7 +586,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -591,7 +594,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -870,6 +873,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "vector-state" | "vector" | "simd-vector-state" => "vector-state",
         "simd-fault-injection" | "simd-fault" => "simd-fault-injection",
         "simd-benchmark" | "simd-scalar-vector-benchmark" => "simd-benchmark",
+        "simd-context-switch-benchmark" | "simd-context-switch" | "simd-switch-benchmark" => {
+            "simd-context-switch-benchmark"
+        }
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -4180,6 +4186,50 @@ fn simd_benchmark_view_v1(benchmark: &SimdBenchmarkManifest) -> serde_json::Valu
     })
 }
 
+fn simd_context_switch_benchmark_view_v1(
+    benchmark: &SimdContextSwitchBenchmarkManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "simd-context-switch-benchmark",
+        "id": benchmark.id,
+        "generation": benchmark.generation,
+        "state": benchmark.state,
+        "owner": {
+            "target_feature_set": object_ref_manifest_json(&benchmark.target_feature_set),
+            "activation_resume": object_ref_manifest_json(&benchmark.activation_resume),
+        },
+        "references": {
+            "preemption": object_ref_manifest_json(&benchmark.preemption),
+            "activation_resume": object_ref_manifest_json(&benchmark.activation_resume),
+            "saved_vector_state": object_ref_manifest_json(&benchmark.saved_vector_state),
+            "restored_vector_state": object_ref_manifest_json(&benchmark.restored_vector_state),
+            "target_feature_set": object_ref_manifest_json(&benchmark.target_feature_set),
+            "event": {
+                "id": benchmark.recorded_at_event,
+            },
+        },
+        "simd": {
+            "abi": benchmark.simd_abi,
+            "vector_register_count": benchmark.vector_register_count,
+            "vector_register_bits": benchmark.vector_register_bits,
+        },
+        "metrics": {
+            "sample_count": benchmark.sample_count,
+            "scalar_context_switch_nanos": benchmark.scalar_context_switch_nanos,
+            "vector_context_switch_nanos": benchmark.vector_context_switch_nanos,
+            "overhead_nanos": benchmark.overhead_nanos,
+            "budget_nanos": benchmark.budget_nanos,
+        },
+        "note": benchmark.note,
+        "last_transition": {
+            "recorded_at_event": benchmark.recorded_at_event,
+            "state": benchmark.state,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn packet_buffer_object_view_v1(packet_buffer: &PacketBufferObjectManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -6976,6 +7026,14 @@ fn stable_views_for_kind(
             .iter()
             .map(simd_benchmark_view_v1)
             .collect()),
+        "simd-context-switch-benchmark" | "simd-context-switch" | "simd-switch-benchmark" => {
+            Ok(package
+                .semantic
+                .simd_context_switch_benchmarks
+                .iter()
+                .map(simd_context_switch_benchmark_view_v1)
+                .collect())
+        }
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -10355,6 +10413,51 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             event,
         ));
     }
+    for benchmark in &package.semantic.simd_context_switch_benchmarks {
+        let event = Some(benchmark.recorded_at_event);
+        let from = object_ref_json(
+            "simd-context-switch-benchmark",
+            benchmark.id,
+            benchmark.generation,
+        );
+        for (target, label) in [
+            (
+                &benchmark.preemption,
+                "simd-context-switch-benchmark->preemption",
+            ),
+            (
+                &benchmark.activation_resume,
+                "simd-context-switch-benchmark->activation-resume",
+            ),
+            (
+                &benchmark.saved_vector_state,
+                "simd-context-switch-benchmark->saved-vector-state",
+            ),
+            (
+                &benchmark.restored_vector_state,
+                "simd-context-switch-benchmark->restored-vector-state",
+            ),
+            (
+                &benchmark.target_feature_set,
+                "simd-context-switch-benchmark->target-feature-set",
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(target),
+                label,
+                "historical",
+                event,
+            ));
+        }
+        edges.push(graph_edge(
+            from,
+            object_ref_json("event", benchmark.recorded_at_event, 1),
+            "simd-context-switch-benchmark->event",
+            "historical",
+            event,
+        ));
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -13460,6 +13563,46 @@ fn inspect_package_object(
                 );
             }
         }
+        "simd-context-switch-benchmark" | "simd-context-switch" | "simd-switch-benchmark" => {
+            println!(
+                "inspect simd-context-switch-benchmark package={} count={}",
+                package.package_id, package.semantic.simd_context_switch_benchmark_count
+            );
+            for benchmark in &package.semantic.simd_context_switch_benchmarks {
+                let line = format!(
+                    "simd-context-switch-benchmark id={} preemption={}@{} activation_resume={}@{} saved_vector_state={}@{} restored_vector_state={}@{} target_feature_set={}@{} simd_abi={} vector_register_count={} vector_register_bits={} sample_count={} scalar_context_switch_nanos={} vector_context_switch_nanos={} overhead_nanos={} budget_nanos={} state={} generation={}",
+                    benchmark.id,
+                    benchmark.preemption.id,
+                    benchmark.preemption.generation,
+                    benchmark.activation_resume.id,
+                    benchmark.activation_resume.generation,
+                    benchmark.saved_vector_state.id,
+                    benchmark.saved_vector_state.generation,
+                    benchmark.restored_vector_state.id,
+                    benchmark.restored_vector_state.generation,
+                    benchmark.target_feature_set.id,
+                    benchmark.target_feature_set.generation,
+                    benchmark.simd_abi,
+                    benchmark.vector_register_count,
+                    benchmark.vector_register_bits,
+                    benchmark.sample_count,
+                    benchmark.scalar_context_switch_nanos,
+                    benchmark.vector_context_switch_nanos,
+                    benchmark.overhead_nanos,
+                    benchmark.budget_nanos,
+                    benchmark.state,
+                    benchmark.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.simd_context_switch_benchmarks.is_empty() {
+                print_roots_filtered(
+                    "simd-context-switch-benchmark",
+                    &package.semantic.roots.simd_context_switch_benchmark_roots,
+                    filter,
+                );
+            }
+        }
         "command" => {
             println!(
                 "inspect command package={} count={}",
@@ -13783,6 +13926,23 @@ fn inspect_package_object_json(
                 .map(simd_benchmark_view_v1)
                 .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.simd_benchmark_roots.len() }),
+        ),
+        "simd-context-switch-benchmark" | "simd-context-switch" | "simd-switch-benchmark" => (
+            "simd-context-switch-benchmark",
+            package.semantic.simd_context_switch_benchmark_count,
+            package
+                .semantic
+                .simd_context_switch_benchmarks
+                .iter()
+                .map(simd_context_switch_benchmark_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package
+                    .semantic
+                    .roots
+                    .simd_context_switch_benchmark_roots
+                    .len()
+            }),
         ),
         "command" => (
             "command",
@@ -17894,6 +18054,64 @@ mod tests {
         assert_eq!(view["metrics"]["speedup_milli"], 3000);
         assert_eq!(view["metrics"]["context_overhead_nanos"], 80_000);
         assert_eq!(view["last_transition"]["recorded_at_event"], 492);
+    }
+
+    #[test]
+    fn simd_context_switch_benchmark_view_v1_exposes_overhead_and_refs() {
+        let view = simd_context_switch_benchmark_view_v1(&SimdContextSwitchBenchmarkManifest {
+            id: 22_012,
+            preemption: ContractObjectRefManifest {
+                kind: "preemption".to_owned(),
+                id: 9_070,
+                generation: 1,
+            },
+            activation_resume: ContractObjectRefManifest {
+                kind: "activation-resume".to_owned(),
+                id: 9_071,
+                generation: 1,
+            },
+            saved_vector_state: ContractObjectRefManifest {
+                kind: "vector-state".to_owned(),
+                id: 22_002,
+                generation: 1,
+            },
+            restored_vector_state: ContractObjectRefManifest {
+                kind: "vector-state".to_owned(),
+                id: 22_003,
+                generation: 1,
+            },
+            target_feature_set: ContractObjectRefManifest {
+                kind: "target-feature-set".to_owned(),
+                id: 21_002,
+                generation: 1,
+            },
+            simd_abi: "riscv-v".to_owned(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            sample_count: 64,
+            scalar_context_switch_nanos: 30_000,
+            vector_context_switch_nanos: 46_384,
+            overhead_nanos: 16_384,
+            budget_nanos: 50_000,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 493,
+            note: "v12 SIMD context switch benchmark".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "simd-context-switch-benchmark");
+        assert_eq!(view["owner"]["activation_resume"]["id"], 9_071);
+        assert_eq!(view["references"]["preemption"]["generation"], 1);
+        assert_eq!(view["references"]["saved_vector_state"]["id"], 22_002);
+        assert_eq!(view["references"]["restored_vector_state"]["id"], 22_003);
+        assert_eq!(view["simd"]["abi"], "riscv-v");
+        assert_eq!(view["metrics"]["sample_count"], 64);
+        assert_eq!(view["metrics"]["scalar_context_switch_nanos"], 30_000);
+        assert_eq!(view["metrics"]["vector_context_switch_nanos"], 46_384);
+        assert_eq!(view["metrics"]["overhead_nanos"], 16_384);
+        assert_eq!(view["metrics"]["budget_nanos"], 50_000);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 493);
     }
 
     #[test]

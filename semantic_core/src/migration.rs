@@ -1522,6 +1522,13 @@ pub enum SemanticInvariantError {
         benchmark: SimdBenchmarkId,
         event: EventId,
     },
+    SimdContextSwitchBenchmarkInvalid {
+        benchmark: SimdContextSwitchBenchmarkId,
+    },
+    SimdContextSwitchBenchmarkMissingEvent {
+        benchmark: SimdContextSwitchBenchmarkId,
+        event: EventId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

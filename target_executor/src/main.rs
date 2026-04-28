@@ -40,9 +40,9 @@ use artifact_manifest::{
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
-    SimdFaultInjectionManifest, SimdTrapAttributionManifest, SmpCleanupQuiescenceManifest,
-    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
-    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    SimdContextSwitchBenchmarkManifest, SimdFaultInjectionManifest, SimdTrapAttributionManifest,
+    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
+    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, SocketObjectManifest,
     SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
@@ -8372,6 +8372,7 @@ fn build_target_executor_v1(
         &mut publisher,
         &mut store_manager,
     )?;
+    run_simd_context_switch_benchmark_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8440,6 +8441,9 @@ fn build_target_executor_v1(
         vector_states: semantic.vector_states().to_vec(),
         simd_fault_injections: semantic.simd_fault_injections().to_vec(),
         simd_benchmarks: semantic.simd_benchmarks().to_vec(),
+        simd_context_switch_benchmarks: semantic.simd_context_switch_benchmarks().to_vec(),
+        preemptions: semantic.preemptions().to_vec(),
+        activation_resumes: semantic.activation_resumes().to_vec(),
         stores: store_manager
             .records()
             .iter()
@@ -9894,6 +9898,74 @@ fn run_simd_benchmark_harness(
     Ok(())
 }
 
+fn run_simd_context_switch_benchmark_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let preemption = semantic
+        .preemptions()
+        .iter()
+        .find(|record| record.id == 9_070)
+        .map(|record| record.object_ref())
+        .ok_or("v12 SIMD context switch benchmark requires v7 preemption evidence")?;
+    let activation_resume = semantic
+        .activation_resumes()
+        .iter()
+        .find(|record| record.id == 9_071)
+        .map(|record| record.object_ref())
+        .ok_or("v12 SIMD context switch benchmark requires v8 activation resume evidence")?;
+    let saved_vector_state = semantic
+        .vector_states()
+        .iter()
+        .find(|record| record.id == 22_002)
+        .map(|record| record.object_ref())
+        .ok_or("v12 SIMD context switch benchmark requires v7 saved vector state evidence")?;
+    let restored_vector_state = semantic
+        .vector_states()
+        .iter()
+        .find(|record| record.id == 22_003)
+        .map(|record| record.object_ref())
+        .ok_or("v12 SIMD context switch benchmark requires v8 restored vector state evidence")?;
+    let target_feature_set = semantic
+        .target_feature_sets()
+        .iter()
+        .find(|record| record.id == 21_002)
+        .map(|record| record.object_ref())
+        .ok_or("v12 SIMD context switch benchmark requires v7 target feature set evidence")?;
+
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_019,
+        "simd-runtime-v12",
+        SemanticCommand::RecordSimdContextSwitchBenchmark {
+            benchmark: 22_012,
+            preemption,
+            activation_resume,
+            saved_vector_state,
+            restored_vector_state,
+            target_feature_set,
+            simd_abi: "riscv-v".to_owned(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            sample_count: 64,
+            scalar_context_switch_nanos: 30_000,
+            vector_context_switch_nanos: 46_384,
+            overhead_nanos: 16_384,
+            budget_nanos: 50_000,
+            note: "v12 records deterministic SIMD vector context-switch overhead".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "simd runtime v12 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn declared_authority_objects(capabilities: &[CapabilityRecord]) -> Vec<ExternalObjectDeclaration> {
     let mut declarations = Vec::new();
     for capability in capabilities {
@@ -10652,6 +10724,7 @@ fn demo_migration_package(
             vector_state_count: semantic.vector_state_count(),
             simd_fault_injection_count: semantic.simd_fault_injection_count(),
             simd_benchmark_count: semantic.simd_benchmark_count(),
+            simd_context_switch_benchmark_count: semantic.simd_context_switch_benchmark_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11089,6 +11162,11 @@ fn demo_migration_package(
                 .simd_benchmarks()
                 .iter()
                 .map(simd_benchmark_manifest)
+                .collect(),
+            simd_context_switch_benchmarks: semantic
+                .simd_context_switch_benchmarks()
+                .iter()
+                .map(simd_context_switch_benchmark_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -13150,6 +13228,31 @@ fn semantic_roots(
                     benchmark.vector_nanos,
                     benchmark.speedup_milli,
                     benchmark.context_overhead_nanos,
+                    benchmark.state.as_str(),
+                    benchmark.generation
+                )
+            })
+            .collect(),
+        simd_context_switch_benchmark_roots: semantic
+            .simd_context_switch_benchmarks()
+            .iter()
+            .map(|benchmark| {
+                format!(
+                    "simd-context-switch-benchmark id={} preemption={} activation_resume={} saved_vector_state={} restored_vector_state={} target_feature_set={} simd_abi={} vector_register_count={} vector_register_bits={} sample_count={} scalar_context_switch_nanos={} vector_context_switch_nanos={} overhead_nanos={} budget_nanos={} state={} generation={}",
+                    benchmark.id,
+                    benchmark.preemption.summary(),
+                    benchmark.activation_resume.summary(),
+                    benchmark.saved_vector_state.summary(),
+                    benchmark.restored_vector_state.summary(),
+                    benchmark.target_feature_set.summary(),
+                    benchmark.simd_abi,
+                    benchmark.vector_register_count,
+                    benchmark.vector_register_bits,
+                    benchmark.sample_count,
+                    benchmark.scalar_context_switch_nanos,
+                    benchmark.vector_context_switch_nanos,
+                    benchmark.overhead_nanos,
+                    benchmark.budget_nanos,
                     benchmark.state.as_str(),
                     benchmark.generation
                 )
@@ -15978,6 +16081,31 @@ fn simd_benchmark_manifest(
         vector_nanos: benchmark.vector_nanos,
         speedup_milli: benchmark.speedup_milli,
         context_overhead_nanos: benchmark.context_overhead_nanos,
+        generation: benchmark.generation,
+        state: benchmark.state.as_str().to_owned(),
+        recorded_at_event: benchmark.recorded_at_event,
+        note: benchmark.note.clone(),
+    }
+}
+
+fn simd_context_switch_benchmark_manifest(
+    benchmark: &semantic_core::SimdContextSwitchBenchmarkRecord,
+) -> SimdContextSwitchBenchmarkManifest {
+    SimdContextSwitchBenchmarkManifest {
+        id: benchmark.id,
+        preemption: contract_object_ref_manifest(benchmark.preemption),
+        activation_resume: contract_object_ref_manifest(benchmark.activation_resume),
+        saved_vector_state: contract_object_ref_manifest(benchmark.saved_vector_state),
+        restored_vector_state: contract_object_ref_manifest(benchmark.restored_vector_state),
+        target_feature_set: contract_object_ref_manifest(benchmark.target_feature_set),
+        simd_abi: benchmark.simd_abi.clone(),
+        vector_register_count: benchmark.vector_register_count,
+        vector_register_bits: benchmark.vector_register_bits,
+        sample_count: benchmark.sample_count,
+        scalar_context_switch_nanos: benchmark.scalar_context_switch_nanos,
+        vector_context_switch_nanos: benchmark.vector_context_switch_nanos,
+        overhead_nanos: benchmark.overhead_nanos,
+        budget_nanos: benchmark.budget_nanos,
         generation: benchmark.generation,
         state: benchmark.state.as_str().to_owned(),
         recorded_at_event: benchmark.recorded_at_event,

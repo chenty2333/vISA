@@ -389,6 +389,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub simd_benchmark_count: usize,
     #[serde(default)]
+    pub simd_context_switch_benchmark_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -629,6 +631,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub simd_benchmarks: Vec<SimdBenchmarkManifest>,
     #[serde(default)]
+    pub simd_context_switch_benchmarks: Vec<SimdContextSwitchBenchmarkManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -848,6 +852,8 @@ pub struct SemanticRootSetManifest {
     pub simd_fault_injection_roots: Vec<String>,
     #[serde(default)]
     pub simd_benchmark_roots: Vec<String>,
+    #[serde(default)]
+    pub simd_context_switch_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2968,6 +2974,28 @@ pub struct SimdBenchmarkManifest {
     pub vector_nanos: u64,
     pub speedup_milli: u64,
     pub context_overhead_nanos: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SimdContextSwitchBenchmarkManifest {
+    pub id: u64,
+    pub preemption: ContractObjectRefManifest,
+    pub activation_resume: ContractObjectRefManifest,
+    pub saved_vector_state: ContractObjectRefManifest,
+    pub restored_vector_state: ContractObjectRefManifest,
+    pub target_feature_set: ContractObjectRefManifest,
+    pub simd_abi: String,
+    pub vector_register_count: u16,
+    pub vector_register_bits: u16,
+    pub sample_count: u64,
+    pub scalar_context_switch_nanos: u64,
+    pub vector_context_switch_nanos: u64,
+    pub overhead_nanos: u64,
+    pub budget_nanos: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
