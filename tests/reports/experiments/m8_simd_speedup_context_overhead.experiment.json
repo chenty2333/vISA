@@ -1,0 +1,158 @@
+{
+  "schema": "vmos-experiment-report",
+  "schema_version": 1,
+  "name": "m8_simd_speedup_context_overhead_host_validation",
+  "checkpoint": "M8-simd-speedup-context-overhead",
+  "commands": [
+    {
+      "command": "cargo run -p target_executor",
+      "purpose": "generate semantic package containing SIMD speedup and context-switch benchmark evidence"
+    },
+    {
+      "command": "cargo run -p osctl -- simd-benchmark list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "inspect stable SimdBenchmark ViewV1 JSON"
+    },
+    {
+      "command": "cargo run -p osctl -- simd-context-switch-benchmark list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "inspect stable SimdContextSwitchBenchmark ViewV1 JSON"
+    },
+    {
+      "command": "cargo run -p osctl -- graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "prove SIMD benchmark evidence remains historical exact-generation graph evidence"
+    }
+  ],
+  "events": [
+    {
+      "kind": "SimdBenchmarkRecorded",
+      "source": "SemanticGraph::record_simd_benchmark_with_id",
+      "event": 551,
+      "object": "simd-benchmark:22011@1"
+    },
+    {
+      "kind": "SimdContextSwitchBenchmarkRecorded",
+      "source": "SemanticGraph::record_simd_context_switch_benchmark_with_id",
+      "event": 552,
+      "object": "simd-context-switch-benchmark:22012@1"
+    }
+  ],
+  "final_views": {
+    "simd_benchmark": {
+      "schema": 1,
+      "kind": "simd-benchmark",
+      "id": 22011,
+      "generation": 1,
+      "state": "recorded",
+      "metrics": {
+        "workload_units": 4096,
+        "scalar_nanos": 120000,
+        "vector_nanos": 40000,
+        "speedup_milli": 3000,
+        "context_overhead_nanos": 80000
+      },
+      "references": {
+        "target_feature_set": {
+          "kind": "target-feature-set",
+          "id": 21011,
+          "generation": 1
+        },
+        "scalar_code_object": {
+          "kind": "code-object",
+          "id": 19,
+          "generation": 5
+        },
+        "vector_code_object": {
+          "kind": "code-object",
+          "id": 20,
+          "generation": 6
+        }
+      }
+    },
+    "simd_context_switch_benchmark": {
+      "schema": 1,
+      "kind": "simd-context-switch-benchmark",
+      "id": 22012,
+      "generation": 1,
+      "state": "recorded",
+      "metrics": {
+        "sample_count": 64,
+        "scalar_context_switch_nanos": 30000,
+        "vector_context_switch_nanos": 46384,
+        "overhead_nanos": 16384,
+        "budget_nanos": 50000,
+        "within_budget": true
+      },
+      "references": {
+        "preemption": {
+          "kind": "preemption",
+          "id": 9070,
+          "generation": 1
+        },
+        "activation_resume": {
+          "kind": "activation-resume",
+          "id": 9071,
+          "generation": 1
+        },
+        "saved_vector_state": {
+          "kind": "vector-state",
+          "id": 22002,
+          "generation": 1
+        },
+        "restored_vector_state": {
+          "kind": "vector-state",
+          "id": 22003,
+          "generation": 1
+        }
+      }
+    },
+    "contract_validation": {
+      "ok": true,
+      "violation_count": 0
+    },
+    "osctl": {
+      "schema": "vmos-osctl-json-v1",
+      "stable_views": [
+        "simd-benchmark.list",
+        "simd-context-switch-benchmark.list"
+      ],
+      "read_only": true
+    }
+  },
+  "metrics": {
+    "simd_benchmark_count": 1,
+    "context_switch_benchmark_count": 1,
+    "workload_units": 4096,
+    "scalar_nanos": 120000,
+    "vector_nanos": 40000,
+    "speedup_milli": 3000,
+    "context_overhead_nanos": 80000,
+    "sample_count": 64,
+    "scalar_context_switch_nanos": 30000,
+    "vector_context_switch_nanos": 46384,
+    "overhead_nanos": 16384,
+    "budget_nanos": 50000,
+    "within_budget": true,
+    "measurement_sources": [
+      "simd-benchmark:22011@1",
+      "simd-context-switch-benchmark:22012@1"
+    ],
+    "hardware_dependency": "none"
+  },
+  "validation": {
+    "contract_ok": true,
+    "golden_replay_ok": true,
+    "osctl_view_ok": true,
+    "semantic_objects": [
+      "SimdBenchmark",
+      "SimdContextSwitchBenchmark"
+    ],
+    "semantic_commands": [
+      "RecordSimdBenchmark",
+      "RecordSimdContextSwitchBenchmark"
+    ],
+    "semantic_events": [
+      "SimdBenchmarkRecorded",
+      "SimdContextSwitchBenchmarkRecorded"
+    ],
+    "semantic_invariant": "exact SIMD feature/code/vector state generations, vector faster than scalar, derived speedup, derived overhead, and context overhead budget"
+  }
+}
