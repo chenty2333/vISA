@@ -89,6 +89,7 @@ pub enum ObjectKind {
     IntegratedSmpPreemptionCleanup,
     IntegratedSmpNetworkFault,
     IntegratedDiskPreemptFault,
+    IntegratedSimdMigration,
     DeviceObject,
     QueueObject,
     DescriptorObject,
@@ -219,6 +220,7 @@ impl ObjectKind {
             Self::IntegratedSmpPreemptionCleanup => "integrated-smp-preemption-cleanup",
             Self::IntegratedSmpNetworkFault => "integrated-smp-network-fault",
             Self::IntegratedDiskPreemptFault => "integrated-disk-preempt-fault",
+            Self::IntegratedSimdMigration => "integrated-simd-migration",
             Self::DeviceObject => "device-object",
             Self::QueueObject => "queue-object",
             Self::DescriptorObject => "descriptor-object",
@@ -517,6 +519,10 @@ typed_ref!(
 typed_ref!(
     IntegratedDiskPreemptFaultRef,
     ObjectKind::IntegratedDiskPreemptFault
+);
+typed_ref!(
+    IntegratedSimdMigrationRef,
+    ObjectKind::IntegratedSimdMigration
 );
 typed_ref!(DeviceObjectRef, ObjectKind::DeviceObject);
 typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
@@ -1921,6 +1927,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "integrated disk preempt fault root/count mismatch",
         ));
     }
+    if roots.integrated_simd_migration_roots.len()
+        != package.semantic.integrated_simd_migration_count
+        || package.semantic.integrated_simd_migrations.len()
+            != package.semantic.integrated_simd_migration_count
+    {
+        return Err(ContractError::new(
+            "integrated simd migration root/count mismatch",
+        ));
+    }
     if roots.device_object_roots.len() != package.semantic.device_object_count
         || package.semantic.device_objects.len() != package.semantic.device_object_count
     {
@@ -2968,6 +2983,7 @@ mod tests {
                 integrated_smp_preemption_cleanup_count: 0,
                 integrated_smp_network_fault_count: 0,
                 integrated_disk_preempt_fault_count: 0,
+                integrated_simd_migration_count: 0,
                 device_object_count: 0,
                 queue_object_count: 0,
                 descriptor_object_count: 0,
@@ -3107,6 +3123,7 @@ mod tests {
                 integrated_smp_preemption_cleanups: Vec::new(),
                 integrated_smp_network_faults: Vec::new(),
                 integrated_disk_preempt_faults: Vec::new(),
+                integrated_simd_migrations: Vec::new(),
                 device_objects: Vec::new(),
                 queue_objects: Vec::new(),
                 descriptor_objects: Vec::new(),
@@ -4043,6 +4060,59 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "integrated disk preempt fault root/count mismatch"
+        );
+    }
+
+    #[test]
+    fn semantic_roots_reject_integrated_simd_migration_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.integrated_simd_migration_count = 1;
+        package.semantic.integrated_simd_migrations.push(
+            artifact_manifest::IntegratedSimdMigrationManifest {
+                id: 20,
+                scenario: "x3-simd-task-migration-across-harts".to_owned(),
+                activation_migration: 9,
+                activation_migration_generation: 1,
+                target_feature_set: 75,
+                target_feature_set_generation: 1,
+                source_vector_state: artifact_manifest::ContractObjectRefManifest {
+                    kind: "vector-state".to_owned(),
+                    id: 76,
+                    generation: 1,
+                },
+                migrated_vector_state: artifact_manifest::ContractObjectRefManifest {
+                    kind: "vector-state".to_owned(),
+                    id: 77,
+                    generation: 1,
+                },
+                activation: 8,
+                activation_generation_before: 2,
+                activation_generation_after: 3,
+                context: 4,
+                context_generation_after: 3,
+                source_hart: 1,
+                source_hart_generation: 1,
+                target_hart: 2,
+                target_hart_generation: 1,
+                source_queue: 3,
+                source_queue_generation: 2,
+                target_queue: 4,
+                target_queue_generation: 2,
+                simd_abi: "riscv-v".to_owned(),
+                vector_register_count: 32,
+                vector_register_bits: 128,
+                invariant_checks: 6,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 56,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "integrated simd migration root/count mismatch"
         );
     }
 
@@ -7276,6 +7346,9 @@ mod tests {
         let integrated_disk_fault =
             ObjectRef::new(ObjectKind::IntegratedDiskPreemptFault, 19, 1).unwrap();
         assert!(IntegratedDiskPreemptFaultRef::try_from_ref(integrated_disk_fault).is_ok());
+        let integrated_simd_migration =
+            ObjectRef::new(ObjectKind::IntegratedSimdMigration, 20, 1).unwrap();
+        assert!(IntegratedSimdMigrationRef::try_from_ref(integrated_simd_migration).is_ok());
         let device_object = ObjectRef::new(ObjectKind::DeviceObject, 17, 1).unwrap();
         assert!(DeviceObjectRef::try_from_ref(device_object).is_ok());
         let packet_device_object = ObjectRef::new(ObjectKind::PacketDeviceObject, 30, 1).unwrap();

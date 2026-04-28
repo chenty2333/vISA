@@ -25975,6 +25975,186 @@ fn integrated_runtime_x2_contract_graph_rejects_generation_drift() {
     }));
 }
 
+fn x3_integrated_simd_migration_graph() -> SemanticGraph {
+    let mut graph = v9_cross_hart_clean_vector_migration_graph(ActivationVectorState::Clean);
+    assert!(graph.migrate_runnable_activation_with_id(
+        71,
+        11,
+        4,
+        2,
+        2,
+        3,
+        2,
+        2,
+        4,
+        1,
+        2,
+        "vector-rebalance",
+        "x3 cross-hart migration rehomes clean vector state",
+    ));
+    graph
+}
+
+#[test]
+fn integrated_runtime_x3_records_simd_task_migration_across_harts() {
+    let mut graph = x3_integrated_simd_migration_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "x3-test",
+        SemanticCommand::RecordIntegratedSimdMigration {
+            integrated: 601,
+            scenario: "x3-simd-task-migration-across-harts".to_string(),
+            activation_migration: 71,
+            activation_migration_generation: 1,
+            invariant_checks: 6,
+            note: "integrate SIMD vector migration with cross-hart activation migration"
+                .to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.integrated_simd_migrations().len(), 1);
+    let record = &graph.integrated_simd_migrations()[0];
+    assert_eq!(record.id, 601);
+    assert_eq!(record.activation_migration, 71);
+    assert_eq!(record.target_feature_set, 21_003);
+    assert_eq!(
+        record.source_vector_state,
+        ContractObjectRef::new(ContractObjectKind::VectorState, 22_004, 1)
+    );
+    assert_eq!(
+        record.migrated_vector_state,
+        ContractObjectRef::new(ContractObjectKind::VectorState, 22_005, 1)
+    );
+    assert_eq!(record.activation, 11);
+    assert_eq!(record.activation_generation_before, 4);
+    assert_eq!(record.activation_generation_after, 5);
+    assert_eq!(record.source_hart, 2);
+    assert_eq!(record.target_hart, 1);
+    assert_eq!(record.simd_abi, "riscv-v");
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "IntegratedSimdMigrationRecorded integrated=601 scenario=x3-simd-task-migration-across-harts migration=71@1 target_feature_set=21003@1 source_vector_state=vector-state:22004@1 migrated_vector_state=vector-state:22005@1 activation=11@4->5 source_hart=2@4 target_hart=1@2 simd_abi=riscv-v invariant_checks=6 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn integrated_runtime_x3_rejects_missing_or_dirty_vector_migration() {
+    let rejected = SemanticGraph::new().apply_envelope(CommandEnvelope::new(
+        1,
+        "x3-test",
+        SemanticCommand::RecordIntegratedSimdMigration {
+            integrated: 601,
+            scenario: "x3-simd-task-migration-across-harts".to_string(),
+            activation_migration: 71,
+            activation_migration_generation: 1,
+            invariant_checks: 6,
+            note: "missing migration rejects".to_string(),
+        },
+    ));
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["integrated SIMD migration missing activation migration evidence".to_string()]
+    );
+
+    let mut dirty = v9_cross_hart_clean_vector_migration_graph(ActivationVectorState::Dirty);
+    let migration = dirty.apply_envelope(CommandEnvelope::new(
+        2,
+        "x3-test",
+        SemanticCommand::MigrateRunnableActivation {
+            migration: 71,
+            activation: 11,
+            activation_generation: 4,
+            source_queue: 2,
+            source_queue_generation: 2,
+            target_queue: 3,
+            target_queue_generation: 2,
+            source_hart: 2,
+            source_hart_generation: 4,
+            target_hart: 1,
+            target_hart_generation: 2,
+            reason: "vector-rebalance".to_string(),
+            note: "dirty vector migration must reject before X3 integration".to_string(),
+        },
+    ));
+    assert_eq!(migration.status, CommandStatus::Rejected);
+    assert_eq!(
+        migration.violations,
+        vec!["activation migration requires clean vector state".to_string()]
+    );
+}
+
+#[test]
+fn integrated_runtime_x3_contract_graph_rejects_vector_generation_drift() {
+    let mut graph = x3_integrated_simd_migration_graph();
+    assert!(graph.record_integrated_simd_migration_with_id(
+        601,
+        "x3-simd-task-migration-across-harts",
+        71,
+        1,
+        6,
+        "integrated SIMD migration",
+    ));
+    let mut integrated = graph.integrated_simd_migrations().to_vec();
+    integrated[0].migrated_vector_state.generation = 99;
+    let snapshot = ContractGraphSnapshot {
+        integrated_simd_migrations: integrated,
+        target_feature_sets: graph.target_feature_sets().to_vec(),
+        vector_states: graph.vector_states().to_vec(),
+        harts: graph.harts().to_vec(),
+        runnable_queues: graph.runnable_queues().to_vec(),
+        activation_contexts: graph.activation_contexts().to_vec(),
+        activation_migrations: graph.activation_migrations().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "integrated-simd-migration->migrated-vector-state"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
+#[test]
+fn integrated_runtime_x3_contract_graph_rejects_context_binding_drift() {
+    let mut graph = x3_integrated_simd_migration_graph();
+    assert!(graph.record_integrated_simd_migration_with_id(
+        601,
+        "x3-simd-task-migration-across-harts",
+        71,
+        1,
+        6,
+        "integrated SIMD migration",
+    ));
+    let mut contexts = graph.activation_contexts().to_vec();
+    let record = &graph.integrated_simd_migrations()[0];
+    contexts
+        .iter_mut()
+        .find(|context| {
+            context.id == record.context && context.generation == record.context_generation_after
+        })
+        .expect("x3 context")
+        .vector_status = ActivationVectorState::Dirty;
+    let snapshot = ContractGraphSnapshot {
+        integrated_simd_migrations: graph.integrated_simd_migrations().to_vec(),
+        target_feature_sets: graph.target_feature_sets().to_vec(),
+        vector_states: graph.vector_states().to_vec(),
+        harts: graph.harts().to_vec(),
+        runnable_queues: graph.runnable_queues().to_vec(),
+        activation_contexts: contexts,
+        activation_migrations: graph.activation_migrations().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "integrated-simd-migration->context-binding"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

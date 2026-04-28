@@ -1,0 +1,181 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "X3-integrated-simd-task-migration-across-harts",
+  "name": "golden_x3_simd_migration",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real vector register payload migration",
+    "real cross-hart substrate interrupt delivery",
+    "raw vector register payload storage",
+    "adapter-internal state as semantic truth",
+    "new third-party runtime dependency"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "S9 produced activation-migration:9080@1 across hart:8@2 -> hart:9@2",
+      "V9 produced a clean vector migration with source vector-state:22004@1 dropped",
+      "V9 produced migrated vector-state:22005@1 reserved for activation:89@3",
+      "V0 produced target-feature-set:21003@1 with simd_supported=true and simd_abi=riscv-v"
+    ],
+    "command": {
+      "name": "record-integrated-simd-migration",
+      "integrated": "integrated-simd-migration:26301@1",
+      "activation_migration": "activation-migration:9080@1",
+      "target_feature_set": "target-feature-set:21003@1",
+      "source_vector_state": "vector-state:22004@1",
+      "migrated_vector_state": "vector-state:22005@1",
+      "activation": "activation:89@2->3",
+      "source_hart": "hart:8@2",
+      "target_hart": "hart:9@2",
+      "result": "semantic evidence ties clean SIMD vector state rehome to cross-hart activation migration without claiming raw vector payload migration"
+    }
+  },
+  "events": [
+    {
+      "kind": "IntegratedSimdMigrationRecorded",
+      "source": "SemanticGraph::record_integrated_simd_migration_with_id",
+      "visible_as": "osctl integrated-simd-migration list --json",
+      "event": 573
+    }
+  ],
+  "expected": {
+    "views": {
+      "integrated-simd-migration": {
+        "id": 26301,
+        "generation": 1,
+        "state": "recorded",
+        "owner": {
+          "activation": {
+            "kind": "activation",
+            "id": 89,
+            "generation_before": 2,
+            "generation_after": 3
+          },
+          "source_hart": {
+            "kind": "hart",
+            "id": 8,
+            "generation": 2
+          },
+          "target_hart": {
+            "kind": "hart",
+            "id": 9,
+            "generation": 2
+          }
+        },
+        "references": {
+          "activation_migration": {
+            "kind": "activation-migration",
+            "id": 9080,
+            "generation": 1
+          },
+          "target_feature_set": {
+            "kind": "target-feature-set",
+            "id": 21003,
+            "generation": 1
+          },
+          "source_vector_state": {
+            "kind": "vector-state",
+            "id": 22004,
+            "generation": 1
+          },
+          "migrated_vector_state": {
+            "kind": "vector-state",
+            "id": 22005,
+            "generation": 1
+          },
+          "context": {
+            "kind": "activation-context",
+            "id": 9080,
+            "generation": 3
+          },
+          "source_queue": {
+            "kind": "runnable-queue",
+            "id": 9080,
+            "generation": 2
+          },
+          "target_queue": {
+            "kind": "runnable-queue",
+            "id": 9081,
+            "generation": 2
+          }
+        },
+        "closure": {
+          "scenario": "x3-simd-task-migration-across-harts",
+          "simd_abi": "riscv-v",
+          "vector_register_count": 32,
+          "vector_register_bits": 128,
+          "invariant_checks": 6,
+          "requires_clean_vector_context": true,
+          "requires_source_vector_dropped": true,
+          "requires_migrated_vector_reserved": true,
+          "requires_cross_hart_migration": true
+        },
+        "authority": {
+          "uses_semantic_activation_migration": true,
+          "uses_semantic_vector_state_refs": true,
+          "real_vector_register_payload_migrated": false,
+          "real_cross_hart_substrate_interrupt_executed": false,
+          "adapter_internal_state_is_not_semantic_truth": true
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "integrated-simd-migration:26301@1",
+          "relation": "integrated-activation-migration",
+          "to": "activation-migration:9080@1",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-simd-migration:26301@1",
+          "relation": "integrated-source-vector-state",
+          "to": "vector-state:22004@1",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-simd-migration:26301@1",
+          "relation": "integrated-migrated-vector-state",
+          "to": "vector-state:22005@1",
+          "mode": "historical"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "Integrated SIMD migration evidence is a first-class ObjectRef",
+      "all referenced evidence carries exact generation",
+      "source and target harts must differ",
+      "source vector state must be dropped and owned by the pre-migration activation generation",
+      "migrated vector state must be reserved and owned by the post-migration activation generation",
+      "target feature set must declare compatible SIMD ABI and register shape",
+      "history graph uses Historical edges only"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "integrated_runtime_x3_records_simd_task_migration_across_harts",
+      "integrated_runtime_x3_rejects_missing_or_dirty_vector_migration",
+      "integrated_runtime_x3_contract_graph_rejects_vector_generation_drift",
+      "integrated_runtime_x3_contract_graph_rejects_context_binding_drift",
+      "semantic_roots_reject_integrated_simd_migration_root_mismatch",
+      "integrated_simd_migration_view_v1_exposes_vector_rehome_refs",
+      "integrated_simd_migration_graph_edges_are_history_only"
+    ],
+    "osctl_json_view": "integrated-simd-migration list --json",
+    "integrated_simd_migration": "integrated-simd-migration:26301@1",
+    "activation_migration": "activation-migration:9080@1",
+    "source_vector_state": "vector-state:22004@1",
+    "migrated_vector_state": "vector-state:22005@1",
+    "event": 573
+  }
+}

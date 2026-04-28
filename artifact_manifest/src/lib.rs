@@ -271,6 +271,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_disk_preempt_fault_count: usize,
     #[serde(default)]
+    pub integrated_simd_migration_count: usize,
+    #[serde(default)]
     pub device_object_count: usize,
     #[serde(default)]
     pub queue_object_count: usize,
@@ -545,6 +547,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultManifest>,
     #[serde(default)]
+    pub integrated_simd_migrations: Vec<IntegratedSimdMigrationManifest>,
+    #[serde(default)]
     pub device_objects: Vec<DeviceObjectManifest>,
     #[serde(default)]
     pub queue_objects: Vec<QueueObjectManifest>,
@@ -798,6 +802,8 @@ pub struct SemanticRootSetManifest {
     pub integrated_smp_network_fault_roots: Vec<String>,
     #[serde(default)]
     pub integrated_disk_preempt_fault_roots: Vec<String>,
+    #[serde(default)]
+    pub integrated_simd_migration_roots: Vec<String>,
     #[serde(default)]
     pub device_object_roots: Vec<String>,
     #[serde(default)]
@@ -1697,6 +1703,39 @@ pub struct IntegratedDiskPreemptFaultManifest {
     pub errno: i32,
     pub preempted_activation: u64,
     pub preempted_activation_generation_after: u64,
+    pub invariant_checks: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IntegratedSimdMigrationManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub activation_migration: u64,
+    pub activation_migration_generation: u64,
+    pub target_feature_set: u64,
+    pub target_feature_set_generation: u64,
+    pub source_vector_state: ContractObjectRefManifest,
+    pub migrated_vector_state: ContractObjectRefManifest,
+    pub activation: u64,
+    pub activation_generation_before: u64,
+    pub activation_generation_after: u64,
+    pub context: u64,
+    pub context_generation_after: u64,
+    pub source_hart: u64,
+    pub source_hart_generation: u64,
+    pub target_hart: u64,
+    pub target_hart_generation: u64,
+    pub source_queue: u64,
+    pub source_queue_generation: u64,
+    pub target_queue: u64,
+    pub target_queue_generation: u64,
+    pub simd_abi: String,
+    pub vector_register_count: u16,
+    pub vector_register_bits: u16,
     pub invariant_checks: u32,
     pub generation: u64,
     pub state: String,

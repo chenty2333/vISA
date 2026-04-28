@@ -808,6 +808,16 @@ pub enum SemanticInvariantError {
     IntegratedDiskPreemptFaultMissingEvent {
         integrated: IntegratedDiskPreemptFaultId,
     },
+    IntegratedSimdMigrationInvalid {
+        integrated: IntegratedSimdMigrationId,
+    },
+    IntegratedSimdMigrationMissingEvidence {
+        integrated: IntegratedSimdMigrationId,
+        evidence: &'static str,
+    },
+    IntegratedSimdMigrationMissingEvent {
+        integrated: IntegratedSimdMigrationId,
+    },
     DeviceObjectInvalid {
         device: DeviceObjectId,
     },

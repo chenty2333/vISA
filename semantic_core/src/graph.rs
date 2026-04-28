@@ -30,6 +30,7 @@ pub struct SemanticGraph {
     integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
     integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
     integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultRecord>,
+    integrated_simd_migrations: Vec<IntegratedSimdMigrationRecord>,
     device_objects: Vec<DeviceObjectRecord>,
     queue_objects: Vec<QueueObjectRecord>,
     descriptor_objects: Vec<DescriptorObjectRecord>,
@@ -147,6 +148,7 @@ pub struct SemanticGraph {
     next_integrated_smp_preemption_cleanup_id: IntegratedSmpPreemptionCleanupId,
     next_integrated_smp_network_fault_id: IntegratedSmpNetworkFaultId,
     next_integrated_disk_preempt_fault_id: IntegratedDiskPreemptFaultId,
+    next_integrated_simd_migration_id: IntegratedSimdMigrationId,
     next_device_object_id: DeviceObjectId,
     next_queue_object_id: QueueObjectId,
     next_descriptor_object_id: DescriptorObjectId,
@@ -292,6 +294,7 @@ mod fs_wait;
 mod hart;
 mod hart_event;
 mod integrated_disk_preempt_fault;
+mod integrated_simd_migration;
 mod integrated_smp_network_fault;
 mod integrated_smp_preemption_cleanup;
 mod interface;
@@ -383,6 +386,7 @@ impl SemanticGraph {
             integrated_smp_preemption_cleanups: Vec::new(),
             integrated_smp_network_faults: Vec::new(),
             integrated_disk_preempt_faults: Vec::new(),
+            integrated_simd_migrations: Vec::new(),
             device_objects: Vec::new(),
             queue_objects: Vec::new(),
             descriptor_objects: Vec::new(),
@@ -500,6 +504,7 @@ impl SemanticGraph {
             next_integrated_smp_preemption_cleanup_id: 1,
             next_integrated_smp_network_fault_id: 1,
             next_integrated_disk_preempt_fault_id: 1,
+            next_integrated_simd_migration_id: 1,
             next_device_object_id: 1,
             next_queue_object_id: 1,
             next_descriptor_object_id: 1,

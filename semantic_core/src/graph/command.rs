@@ -305,6 +305,14 @@ pub enum SemanticCommand {
         invariant_checks: u32,
         note: String,
     },
+    RecordIntegratedSimdMigration {
+        integrated: IntegratedSimdMigrationId,
+        scenario: String,
+        activation_migration: ActivationMigrationId,
+        activation_migration_generation: Generation,
+        invariant_checks: u32,
+        note: String,
+    },
     RecordDeviceObject {
         device: DeviceObjectId,
         name: String,
@@ -1690,6 +1698,7 @@ impl SemanticCommand {
             }
             Self::RecordIntegratedSmpNetworkFault { .. } => "record-integrated-smp-network-fault",
             Self::RecordIntegratedDiskPreemptFault { .. } => "record-integrated-disk-preempt-fault",
+            Self::RecordIntegratedSimdMigration { .. } => "record-integrated-simd-migration",
             Self::RecordDeviceObject { .. } => "record-device-object",
             Self::RecordPacketDeviceObject { .. } => "record-packet-device-object",
             Self::RecordPacketBufferObject { .. } => "record-packet-buffer-object",
@@ -3007,6 +3016,22 @@ impl SemanticGraph {
                     *preemption_generation,
                     *block_pending_io_policy,
                     *block_pending_io_policy_generation,
+                    *invariant_checks,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordIntegratedSimdMigration {
+                integrated,
+                scenario,
+                activation_migration,
+                activation_migration_generation,
+                invariant_checks,
+                ..
+            } => self
+                .validate_integrated_simd_migration(
+                    *integrated,
+                    scenario,
+                    *activation_migration,
+                    *activation_migration_generation,
                     *invariant_checks,
                 )
                 .map_err(CommandError::precondition),
@@ -6523,6 +6548,21 @@ impl SemanticGraph {
                 preemption_generation,
                 block_pending_io_policy,
                 block_pending_io_policy_generation,
+                invariant_checks,
+                &note,
+            ),
+            SemanticCommand::RecordIntegratedSimdMigration {
+                integrated,
+                scenario,
+                activation_migration,
+                activation_migration_generation,
+                invariant_checks,
+                note,
+            } => self.record_integrated_simd_migration_with_id(
+                integrated,
+                &scenario,
+                activation_migration,
+                activation_migration_generation,
                 invariant_checks,
                 &note,
             ),

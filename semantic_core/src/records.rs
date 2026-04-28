@@ -804,6 +804,49 @@ impl IntegratedDiskPreemptFaultRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntegratedSimdMigrationRecord {
+    pub id: IntegratedSimdMigrationId,
+    pub scenario: String,
+    pub activation_migration: ActivationMigrationId,
+    pub activation_migration_generation: Generation,
+    pub target_feature_set: TargetFeatureSetId,
+    pub target_feature_set_generation: Generation,
+    pub source_vector_state: ContractObjectRef,
+    pub migrated_vector_state: ContractObjectRef,
+    pub activation: ActivationId,
+    pub activation_generation_before: Generation,
+    pub activation_generation_after: Generation,
+    pub context: ActivationContextId,
+    pub context_generation_after: Generation,
+    pub source_hart: HartId,
+    pub source_hart_generation: Generation,
+    pub target_hart: HartId,
+    pub target_hart_generation: Generation,
+    pub source_queue: RunnableQueueId,
+    pub source_queue_generation: Generation,
+    pub target_queue: RunnableQueueId,
+    pub target_queue_generation: Generation,
+    pub simd_abi: String,
+    pub vector_register_count: u16,
+    pub vector_register_bits: u16,
+    pub invariant_checks: u32,
+    pub generation: Generation,
+    pub state: IntegratedSimdMigrationState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl IntegratedSimdMigrationRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::IntegratedSimdMigration,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceObjectRecord {
     pub id: DeviceObjectId,
     pub name: String,

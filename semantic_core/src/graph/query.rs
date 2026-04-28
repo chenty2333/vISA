@@ -91,6 +91,7 @@ impl SemanticGraph {
         self.check_integrated_smp_preemption_cleanup_invariants()?;
         self.check_integrated_smp_network_fault_invariants()?;
         self.check_integrated_disk_preempt_fault_invariants()?;
+        self.check_integrated_simd_migration_invariants()?;
         self.check_device_object_invariants()?;
         self.check_queue_object_invariants()?;
         self.check_descriptor_object_invariants()?;

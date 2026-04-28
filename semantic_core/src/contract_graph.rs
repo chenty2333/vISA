@@ -100,6 +100,7 @@ pub struct ContractGraphSnapshot {
     pub integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
     pub integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
     pub integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultRecord>,
+    pub integrated_simd_migrations: Vec<IntegratedSimdMigrationRecord>,
     pub network_driver_cleanups: Vec<NetworkDriverCleanupRecord>,
     pub packet_device_objects: Vec<PacketDeviceObjectRecord>,
     pub network_stack_adapters: Vec<NetworkStackAdapterRecord>,
@@ -110,6 +111,10 @@ pub struct ContractGraphSnapshot {
     pub block_request_objects: Vec<BlockRequestObjectRecord>,
     pub block_device_objects: Vec<BlockDeviceObjectRecord>,
     pub block_range_objects: Vec<BlockRangeObjectRecord>,
+    pub harts: Vec<HartRecord>,
+    pub runnable_queues: Vec<RunnableQueueRecord>,
+    pub activation_contexts: Vec<ActivationContextRecord>,
+    pub activation_migrations: Vec<ActivationMigrationRecord>,
     pub saved_contexts: Vec<SavedContextRecord>,
     pub timer_interrupts: Vec<TimerInterruptRecord>,
     pub remote_preempts: Vec<RemotePreemptRecord>,
@@ -235,6 +240,7 @@ impl ContractGraphValidator {
         Self::validate_integrated_smp_preemption_cleanups(snapshot, &mut violations);
         Self::validate_integrated_smp_network_faults(snapshot, &mut violations);
         Self::validate_integrated_disk_preempt_faults(snapshot, &mut violations);
+        Self::validate_integrated_simd_migrations(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -3267,6 +3273,270 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_integrated_simd_migrations(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for record in &snapshot.integrated_simd_migrations {
+            let from = record.object_ref();
+            if record.id == 0
+                || record.generation == 0
+                || record.scenario.is_empty()
+                || record.state != IntegratedSimdMigrationState::Recorded
+                || record.activation_migration_generation == 0
+                || record.target_feature_set_generation == 0
+                || record.source_vector_state.generation == 0
+                || record.migrated_vector_state.generation == 0
+                || record.activation_generation_before == 0
+                || record.activation_generation_after <= record.activation_generation_before
+                || record.context_generation_after == 0
+                || record.source_hart_generation == 0
+                || record.target_hart_generation == 0
+                || record.source_hart == record.target_hart
+                || record.source_queue_generation == 0
+                || record.target_queue_generation == 0
+                || record.simd_abi.is_empty()
+                || record.vector_register_count == 0
+                || record.vector_register_bits == 0
+                || record.invariant_checks == 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "integrated-simd-migration->contract",
+                    from,
+                    None,
+                    "integrated SIMD migration requires exact refs and clean cross-hart vector migration evidence",
+                ));
+                continue;
+            }
+            for (label, kind, id, generation) in [
+                (
+                    "integrated-simd-migration->activation-migration",
+                    ContractObjectKind::ActivationMigration,
+                    record.activation_migration,
+                    record.activation_migration_generation,
+                ),
+                (
+                    "integrated-simd-migration->target-feature-set",
+                    ContractObjectKind::TargetFeatureSet,
+                    record.target_feature_set,
+                    record.target_feature_set_generation,
+                ),
+                (
+                    "integrated-simd-migration->activation-before",
+                    ContractObjectKind::Activation,
+                    record.activation,
+                    record.activation_generation_before,
+                ),
+                (
+                    "integrated-simd-migration->activation-after",
+                    ContractObjectKind::Activation,
+                    record.activation,
+                    record.activation_generation_after,
+                ),
+                (
+                    "integrated-simd-migration->source-hart",
+                    ContractObjectKind::Hart,
+                    u64::from(record.source_hart),
+                    record.source_hart_generation,
+                ),
+                (
+                    "integrated-simd-migration->target-hart",
+                    ContractObjectKind::Hart,
+                    u64::from(record.target_hart),
+                    record.target_hart_generation,
+                ),
+                (
+                    "integrated-simd-migration->source-queue",
+                    ContractObjectKind::RunnableQueue,
+                    record.source_queue,
+                    record.source_queue_generation,
+                ),
+                (
+                    "integrated-simd-migration->target-queue",
+                    ContractObjectKind::RunnableQueue,
+                    record.target_queue,
+                    record.target_queue_generation,
+                ),
+                (
+                    "integrated-simd-migration->context",
+                    ContractObjectKind::ActivationContext,
+                    record.context,
+                    record.context_generation_after,
+                ),
+            ] {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    kind,
+                    id,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            for (label, object) in [
+                (
+                    "integrated-simd-migration->source-vector-state",
+                    record.source_vector_state,
+                ),
+                (
+                    "integrated-simd-migration->migrated-vector-state",
+                    record.migrated_vector_state,
+                ),
+            ] {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    object.kind,
+                    object.id,
+                    object.generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            if let Some(migration) = snapshot.activation_migrations.iter().find(|migration| {
+                migration.id == record.activation_migration
+                    && migration.generation == record.activation_migration_generation
+            }) {
+                if migration.state != ActivationMigrationState::Applied
+                    || migration.source_hart == migration.target_hart
+                    || migration.activation != record.activation
+                    || migration.activation_generation_before != record.activation_generation_before
+                    || migration.activation_generation_after != record.activation_generation_after
+                    || migration.source_hart != record.source_hart
+                    || migration.source_hart_generation != record.source_hart_generation
+                    || migration.target_hart != record.target_hart
+                    || migration.target_hart_generation != record.target_hart_generation
+                    || migration.source_queue != record.source_queue
+                    || migration.source_queue_generation != record.source_queue_generation
+                    || migration.target_queue != record.target_queue
+                    || migration.target_queue_generation != record.target_queue_generation
+                    || migration.context != Some(record.context)
+                    || migration.context_generation_after != Some(record.context_generation_after)
+                    || migration.source_vector_state != Some(record.source_vector_state)
+                    || migration.migrated_vector_state != Some(record.migrated_vector_state)
+                    || migration.vector_status != ActivationVectorState::Clean
+                    || migration.vector_migrated_at_event.is_none()
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-simd-migration->activation-migration-binding",
+                        from,
+                        Some(migration.object_ref()),
+                        "integrated SIMD migration activation migration binding does not match clean cross-hart vector evidence",
+                    ));
+                }
+            }
+            if let Some(feature) = snapshot.target_feature_sets.iter().find(|feature| {
+                feature.id == record.target_feature_set
+                    && feature.generation == record.target_feature_set_generation
+            }) {
+                if feature.state != TargetFeatureSetState::Discovered
+                    || !feature.simd_supported
+                    || feature.simd_abi != record.simd_abi
+                    || feature.vector_register_count != record.vector_register_count
+                    || feature.vector_register_bits != record.vector_register_bits
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-simd-migration->target-feature-binding",
+                        from,
+                        Some(feature.object_ref()),
+                        "integrated SIMD migration target feature set does not support the recorded vector shape",
+                    ));
+                }
+            }
+            let source = snapshot.vector_states.iter().find(|vector| {
+                vector.id == record.source_vector_state.id
+                    && vector.generation == record.source_vector_state.generation
+            });
+            let migrated = snapshot.vector_states.iter().find(|vector| {
+                vector.id == record.migrated_vector_state.id
+                    && vector.generation == record.migrated_vector_state.generation
+            });
+            if let (Some(source), Some(migrated)) = (source, migrated) {
+                if source.state != VectorStateState::Dropped
+                    || migrated.state != VectorStateState::Reserved
+                    || source.owner_activation
+                        != ContractObjectRef::new(
+                            ContractObjectKind::Activation,
+                            record.activation,
+                            record.activation_generation_before,
+                        )
+                    || migrated.owner_activation
+                        != ContractObjectRef::new(
+                            ContractObjectKind::Activation,
+                            record.activation,
+                            record.activation_generation_after,
+                        )
+                    || source.target_feature_set
+                        != ContractObjectRef::new(
+                            ContractObjectKind::TargetFeatureSet,
+                            record.target_feature_set,
+                            record.target_feature_set_generation,
+                        )
+                    || migrated.target_feature_set != source.target_feature_set
+                    || source.simd_abi != record.simd_abi
+                    || migrated.simd_abi != record.simd_abi
+                    || source.vector_register_count != record.vector_register_count
+                    || migrated.vector_register_count != record.vector_register_count
+                    || source.vector_register_bits != record.vector_register_bits
+                    || migrated.vector_register_bits != record.vector_register_bits
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-simd-migration->vector-binding",
+                        from,
+                        Some(migrated.object_ref()),
+                        "integrated SIMD migration source/migrated vector state refs do not prove clean rehome semantics",
+                    ));
+                }
+            }
+            if let Some(context) = snapshot.activation_contexts.iter().find(|context| {
+                context.id == record.context
+                    && context.generation == record.context_generation_after
+            }) {
+                if context.activation != record.activation
+                    || context.activation_generation != record.activation_generation_after
+                    || context.vector_state != Some(record.migrated_vector_state)
+                    || context.vector_status != ActivationVectorState::Clean
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-simd-migration->context-binding",
+                        from,
+                        Some(context.object_ref()),
+                        "integrated SIMD migration context must point at the clean migrated vector state",
+                    ));
+                }
+            }
+            if snapshot.vector_states.iter().any(|vector| {
+                vector.owner_activation
+                    == ContractObjectRef::new(
+                        ContractObjectKind::Activation,
+                        record.activation,
+                        record.activation_generation_before,
+                    )
+                    && vector.state == VectorStateState::Reserved
+            }) {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::LiveObjectReferencesDeadObject,
+                    "integrated-simd-migration->old-vector-live-leak",
+                    from,
+                    Some(ContractObjectRef::new(
+                        ContractObjectKind::Activation,
+                        record.activation,
+                        record.activation_generation_before,
+                    )),
+                    "integrated SIMD migration cannot leave reserved vector state on the old activation generation",
+                ));
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -4540,6 +4810,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id && record.generation == generation)
                 .map(IntegratedDiskPreemptFaultRecord::object_ref),
+            ContractObjectKind::IntegratedSimdMigration => snapshot
+                .integrated_simd_migrations
+                .iter()
+                .find(|record| record.id == id && record.generation == generation)
+                .map(IntegratedSimdMigrationRecord::object_ref),
             ContractObjectKind::NetworkDriverCleanup => snapshot
                 .network_driver_cleanups
                 .iter()
@@ -4592,6 +4867,26 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|range| range.id == id && range.generation == generation)
                 .map(BlockRangeObjectRecord::object_ref),
+            ContractObjectKind::Hart => snapshot
+                .harts
+                .iter()
+                .find(|hart| u64::from(hart.id) == id && hart.generation == generation)
+                .map(HartRecord::object_ref),
+            ContractObjectKind::RunnableQueue => snapshot
+                .runnable_queues
+                .iter()
+                .find(|queue| queue.id == id && queue.generation == generation)
+                .map(RunnableQueueRecord::object_ref),
+            ContractObjectKind::ActivationContext => snapshot
+                .activation_contexts
+                .iter()
+                .find(|context| context.id == id && context.generation == generation)
+                .map(ActivationContextRecord::object_ref),
+            ContractObjectKind::ActivationMigration => snapshot
+                .activation_migrations
+                .iter()
+                .find(|migration| migration.id == id && migration.generation == generation)
+                .map(ActivationMigrationRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -4827,6 +5122,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id)
                 .map(IntegratedDiskPreemptFaultRecord::object_ref),
+            ContractObjectKind::IntegratedSimdMigration => snapshot
+                .integrated_simd_migrations
+                .iter()
+                .find(|record| record.id == id)
+                .map(IntegratedSimdMigrationRecord::object_ref),
             ContractObjectKind::NetworkDriverCleanup => snapshot
                 .network_driver_cleanups
                 .iter()
@@ -4877,6 +5177,26 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|range| range.id == id)
                 .map(BlockRangeObjectRecord::object_ref),
+            ContractObjectKind::Hart => snapshot
+                .harts
+                .iter()
+                .find(|hart| u64::from(hart.id) == id)
+                .map(HartRecord::object_ref),
+            ContractObjectKind::RunnableQueue => snapshot
+                .runnable_queues
+                .iter()
+                .find(|queue| queue.id == id)
+                .map(RunnableQueueRecord::object_ref),
+            ContractObjectKind::ActivationContext => snapshot
+                .activation_contexts
+                .iter()
+                .find(|context| context.id == id)
+                .map(ActivationContextRecord::object_ref),
+            ContractObjectKind::ActivationMigration => snapshot
+                .activation_migrations
+                .iter()
+                .find(|migration| migration.id == id)
+                .map(ActivationMigrationRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -4927,15 +5247,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|external| external.object.id == id)
                 .map(|external| external.object),
-            ContractObjectKind::Hart
-            | ContractObjectKind::Task
-            | ContractObjectKind::RunnableQueue
-            | ContractObjectKind::ActivationContext
+            ContractObjectKind::Task
             | ContractObjectKind::IpiEvent
             | ContractObjectKind::RemotePark
             | ContractObjectKind::SchedulerDecision
             | ContractObjectKind::CrossHartSchedulerDecision
-            | ContractObjectKind::ActivationMigration
             | ContractObjectKind::SmpSafePoint
             | ContractObjectKind::StopTheWorldRendezvous
             | ContractObjectKind::SmpCodePublishBarrier
@@ -5029,6 +5345,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::IntegratedSmpPreemptionCleanup
                 | ContractObjectKind::IntegratedSmpNetworkFault
                 | ContractObjectKind::IntegratedDiskPreemptFault
+                | ContractObjectKind::IntegratedSimdMigration
                 | ContractObjectKind::BlockPendingIoPolicy
                 | ContractObjectKind::BlockWait
                 | ContractObjectKind::BlockRequestObject
@@ -5264,6 +5581,14 @@ impl ContractGraphValidator {
                     (record.state != IntegratedDiskPreemptFaultState::Recorded).then_some(
                         "live edge references unrecorded integrated disk/preempt fault evidence",
                     )
+                }),
+            ContractObjectKind::IntegratedSimdMigration => snapshot
+                .integrated_simd_migrations
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != IntegratedSimdMigrationState::Recorded)
+                        .then_some("live edge references unrecorded integrated SIMD migration evidence")
                 }),
             _ => None,
         }

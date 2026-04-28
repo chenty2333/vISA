@@ -30,19 +30,20 @@ use artifact_manifest::{
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    IntegratedDiskPreemptFaultManifest, IntegratedSmpNetworkFaultManifest,
-    IntegratedSmpPreemptionCleanupManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    IntegratedDiskPreemptFaultManifest, IntegratedSimdMigrationManifest,
+    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8396,6 +8397,7 @@ fn build_target_executor_v1(
     run_integrated_smp_preemption_cleanup_harness(semantic)?;
     run_integrated_smp_network_fault_harness(semantic)?;
     run_integrated_disk_preempt_fault_harness(semantic)?;
+    run_integrated_simd_migration_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8490,6 +8492,7 @@ fn build_target_executor_v1(
         integrated_smp_preemption_cleanups: semantic.integrated_smp_preemption_cleanups().to_vec(),
         integrated_smp_network_faults: semantic.integrated_smp_network_faults().to_vec(),
         integrated_disk_preempt_faults: semantic.integrated_disk_preempt_faults().to_vec(),
+        integrated_simd_migrations: semantic.integrated_simd_migrations().to_vec(),
         network_driver_cleanups: semantic.network_driver_cleanups().to_vec(),
         packet_device_objects: semantic.packet_device_objects().to_vec(),
         network_stack_adapters: semantic.network_stack_adapters().to_vec(),
@@ -8500,6 +8503,10 @@ fn build_target_executor_v1(
         block_request_objects: semantic.block_request_objects().to_vec(),
         block_device_objects: semantic.block_device_objects().to_vec(),
         block_range_objects: semantic.block_range_objects().to_vec(),
+        harts: semantic.harts().to_vec(),
+        runnable_queues: semantic.runnable_queues().to_vec(),
+        activation_contexts: semantic.activation_contexts().to_vec(),
+        activation_migrations: semantic.activation_migrations().to_vec(),
         saved_contexts: semantic.saved_contexts().to_vec(),
         timer_interrupts: semantic.timer_interrupts().to_vec(),
         remote_preempts: semantic.remote_preempts().to_vec(),
@@ -10842,6 +10849,35 @@ fn run_integrated_disk_preempt_fault_harness(
     Ok(())
 }
 
+fn run_integrated_simd_migration_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        100_004,
+        "integrated-runtime-x3",
+        SemanticCommand::RecordIntegratedSimdMigration {
+            integrated: 26_301,
+            scenario: "x3-simd-task-migration-across-harts".to_owned(),
+            activation_migration: 9_080,
+            activation_migration_generation: 1,
+            invariant_checks: 6,
+            note: "x3 records clean SIMD vector state rehome across hart migration evidence"
+                .to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "integrated runtime x3 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11641,6 +11677,7 @@ fn demo_migration_package(
                 .integrated_smp_preemption_cleanup_count(),
             integrated_smp_network_fault_count: semantic.integrated_smp_network_fault_count(),
             integrated_disk_preempt_fault_count: semantic.integrated_disk_preempt_fault_count(),
+            integrated_simd_migration_count: semantic.integrated_simd_migration_count(),
             device_object_count: semantic.device_object_count(),
             queue_object_count: semantic.queue_object_count(),
             descriptor_object_count: semantic.descriptor_object_count(),
@@ -11867,6 +11904,11 @@ fn demo_migration_package(
                 .integrated_disk_preempt_faults()
                 .iter()
                 .map(integrated_disk_preempt_fault_manifest)
+                .collect(),
+            integrated_simd_migrations: semantic
+                .integrated_simd_migrations()
+                .iter()
+                .map(integrated_simd_migration_manifest)
                 .collect(),
             device_objects: semantic
                 .device_objects()
@@ -12825,6 +12867,31 @@ fn semantic_roots(
                     record.errno,
                     record.preempted_activation,
                     record.preempted_activation_generation_after,
+                    record.generation
+                )
+            })
+            .collect(),
+        integrated_simd_migration_roots: semantic
+            .integrated_simd_migrations()
+            .iter()
+            .map(|record| {
+                format!(
+                    "integrated-simd-migration id={} scenario={} migration={}@{} target_feature_set={}@{} source_vector_state={} migrated_vector_state={} activation={}@{}->{} source_hart={}@{} target_hart={}@{} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.activation_migration,
+                    record.activation_migration_generation,
+                    record.target_feature_set,
+                    record.target_feature_set_generation,
+                    record.source_vector_state.summary(),
+                    record.migrated_vector_state.summary(),
+                    record.activation,
+                    record.activation_generation_before,
+                    record.activation_generation_after,
+                    record.source_hart,
+                    record.source_hart_generation,
+                    record.target_hart,
+                    record.target_hart_generation,
                     record.generation
                 )
             })
@@ -16054,6 +16121,42 @@ fn integrated_disk_preempt_fault_manifest(
         errno: record.errno,
         preempted_activation: record.preempted_activation,
         preempted_activation_generation_after: record.preempted_activation_generation_after,
+        invariant_checks: record.invariant_checks,
+        generation: record.generation,
+        state: record.state.as_str().to_owned(),
+        recorded_at_event: record.recorded_at_event,
+        note: record.note.clone(),
+    }
+}
+
+fn integrated_simd_migration_manifest(
+    record: &semantic_core::IntegratedSimdMigrationRecord,
+) -> IntegratedSimdMigrationManifest {
+    IntegratedSimdMigrationManifest {
+        id: record.id,
+        scenario: record.scenario.clone(),
+        activation_migration: record.activation_migration,
+        activation_migration_generation: record.activation_migration_generation,
+        target_feature_set: record.target_feature_set,
+        target_feature_set_generation: record.target_feature_set_generation,
+        source_vector_state: contract_object_ref_manifest(record.source_vector_state),
+        migrated_vector_state: contract_object_ref_manifest(record.migrated_vector_state),
+        activation: record.activation,
+        activation_generation_before: record.activation_generation_before,
+        activation_generation_after: record.activation_generation_after,
+        context: record.context,
+        context_generation_after: record.context_generation_after,
+        source_hart: u64::from(record.source_hart),
+        source_hart_generation: record.source_hart_generation,
+        target_hart: u64::from(record.target_hart),
+        target_hart_generation: record.target_hart_generation,
+        source_queue: record.source_queue,
+        source_queue_generation: record.source_queue_generation,
+        target_queue: record.target_queue,
+        target_queue_generation: record.target_queue_generation,
+        simd_abi: record.simd_abi.clone(),
+        vector_register_count: record.vector_register_count,
+        vector_register_bits: record.vector_register_bits,
         invariant_checks: record.invariant_checks,
         generation: record.generation,
         state: record.state.as_str().to_owned(),
