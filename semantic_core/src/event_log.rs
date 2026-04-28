@@ -474,6 +474,22 @@ pub enum EventKind {
         invariant_checks: u32,
         generation: Generation,
     },
+    IntegratedDisplayPanicRecorded {
+        scenario: String,
+        integrated: IntegratedDisplayPanicId,
+        substrate_panic_event: EventId,
+        display_panic_last_frame: DisplayPanicLastFrameId,
+        display_panic_last_frame_generation: Generation,
+        panic_ring_record_count: u32,
+        panic_ring_lost_count: u64,
+        jsonl_frame_count: u32,
+        contract_panic_summary_records: u32,
+        last_frame_summary_records: u32,
+        corrupt_record_count: u32,
+        truncated_record_count: u32,
+        invariant_checks: u32,
+        generation: Generation,
+    },
     DeviceObjectRecorded {
         device: DeviceObjectId,
         resource: ResourceId,
@@ -2044,6 +2060,16 @@ pub enum EventKind {
         capability: Option<CapabilityId>,
         capability_generation: Option<Generation>,
     },
+    SubstratePanic {
+        authority: String,
+        operation: String,
+        requester: Option<String>,
+        artifact: Option<ArtifactId>,
+        store: Option<StoreId>,
+        panic_epoch: u64,
+        panic_cpu: u32,
+        panic_reason_code: u32,
+    },
     InterfaceUnsupported {
         interface_kind: String,
         interface: String,
@@ -2799,6 +2825,24 @@ impl EventKind {
                 generation,
             } => format!(
                 "IntegratedCodePublishSmpWorkloadRecorded integrated={integrated} scenario={scenario} stress_run={smp_stress_run}@{smp_stress_run_generation} code_publish_barrier={smp_code_publish_barrier}@{smp_code_publish_barrier_generation} rendezvous={publish_rendezvous}@{publish_rendezvous_generation} safe_point={publish_safe_point}@{publish_safe_point_generation} code_publish_epoch={code_publish_epoch_before}->{code_publish_epoch_after} harts={hart_count} iterations={workload_iterations} invariant_checks={invariant_checks} generation={generation}"
+            ),
+            Self::IntegratedDisplayPanicRecorded {
+                scenario,
+                integrated,
+                substrate_panic_event,
+                display_panic_last_frame,
+                display_panic_last_frame_generation,
+                panic_ring_record_count,
+                panic_ring_lost_count,
+                jsonl_frame_count,
+                contract_panic_summary_records,
+                last_frame_summary_records,
+                corrupt_record_count,
+                truncated_record_count,
+                invariant_checks,
+                generation,
+            } => format!(
+                "IntegratedDisplayPanicRecorded integrated={integrated} scenario={scenario} substrate_panic_event={substrate_panic_event} display_panic_last_frame={display_panic_last_frame}@{display_panic_last_frame_generation} panic_ring_records={panic_ring_record_count} lost={panic_ring_lost_count} jsonl_frames={jsonl_frame_count} contract_panic_summary_records={contract_panic_summary_records} last_frame_summary_records={last_frame_summary_records} corrupt_records={corrupt_record_count} truncated_records={truncated_record_count} invariant_checks={invariant_checks} generation={generation}"
             ),
             Self::DeviceObjectRecorded {
                 device,
@@ -4849,6 +4893,27 @@ impl EventKind {
                     .unwrap_or_else(|| "none".to_string());
                 format!(
                     "SubstrateCapabilityDenied authority={authority} op={operation} requester={requester} artifact={artifact} store={store} capability={capability} generation={generation}"
+                )
+            }
+            Self::SubstratePanic {
+                authority,
+                operation,
+                requester,
+                artifact,
+                store,
+                panic_epoch,
+                panic_cpu,
+                panic_reason_code,
+            } => {
+                let requester = requester.as_deref().unwrap_or("none");
+                let artifact = artifact
+                    .map(|artifact| artifact.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                let store = store
+                    .map(|store| store.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                format!(
+                    "SubstratePanic authority={authority} op={operation} requester={requester} artifact={artifact} store={store} panic_epoch={panic_epoch} panic_cpu={panic_cpu} panic_reason_code={panic_reason_code}"
                 )
             }
             Self::InterfaceUnsupported {

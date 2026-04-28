@@ -26,6 +26,7 @@ pub type IntegratedNetworkDiskIoId = u64;
 pub type IntegratedDisplaySchedulerLoadId = u64;
 pub type IntegratedSnapshotIoLeaseBarrierId = u64;
 pub type IntegratedCodePublishSmpWorkloadId = u64;
+pub type IntegratedDisplayPanicId = u64;
 pub type DeviceObjectId = u64;
 pub type QueueObjectId = u64;
 pub type DescriptorObjectId = u64;

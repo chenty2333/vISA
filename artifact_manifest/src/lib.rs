@@ -281,6 +281,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_code_publish_smp_workload_count: usize,
     #[serde(default)]
+    pub integrated_display_panic_count: usize,
+    #[serde(default)]
     pub device_object_count: usize,
     #[serde(default)]
     pub queue_object_count: usize,
@@ -565,6 +567,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_code_publish_smp_workloads: Vec<IntegratedCodePublishSmpWorkloadManifest>,
     #[serde(default)]
+    pub integrated_display_panics: Vec<IntegratedDisplayPanicManifest>,
+    #[serde(default)]
     pub device_objects: Vec<DeviceObjectManifest>,
     #[serde(default)]
     pub queue_objects: Vec<QueueObjectManifest>,
@@ -828,6 +832,8 @@ pub struct SemanticRootSetManifest {
     pub integrated_snapshot_io_lease_barrier_roots: Vec<String>,
     #[serde(default)]
     pub integrated_code_publish_smp_workload_roots: Vec<String>,
+    #[serde(default)]
+    pub integrated_display_panic_roots: Vec<String>,
     #[serde(default)]
     pub device_object_roots: Vec<String>,
     #[serde(default)]
@@ -1911,6 +1917,37 @@ pub struct IntegratedCodePublishSmpWorkloadManifest {
     pub stress_event_log_cursor: u64,
     pub barrier_event: u64,
     pub stress_recorded_at_event: u64,
+    pub invariant_checks: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IntegratedDisplayPanicManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub substrate_panic_event: u64,
+    pub substrate_panic_epoch: u64,
+    pub substrate_panic_cpu: u32,
+    pub substrate_panic_reason_code: u32,
+    pub display_panic_last_frame: u64,
+    pub display_panic_last_frame_generation: u64,
+    pub panic_ring_bytes: u32,
+    pub panic_record_max_bytes: u32,
+    pub panic_ring_oldest_seq: u64,
+    pub panic_ring_newest_seq: u64,
+    pub panic_ring_record_count: u32,
+    pub panic_ring_lost_count: u64,
+    pub jsonl_frame_count: u32,
+    pub contract_panic_summary_records: u32,
+    pub last_frame_summary_records: u32,
+    pub corrupt_record_count: u32,
+    pub truncated_record_count: u32,
+    pub summary_record_bytes: u32,
+    pub raw_framebuffer_bytes_exported: bool,
+    pub panic_path_allocates: bool,
     pub invariant_checks: u32,
     pub generation: u64,
     pub state: String,

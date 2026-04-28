@@ -94,6 +94,7 @@ pub enum ObjectKind {
     IntegratedDisplaySchedulerLoad,
     IntegratedSnapshotIoLeaseBarrier,
     IntegratedCodePublishSmpWorkload,
+    IntegratedDisplayPanic,
     DeviceObject,
     QueueObject,
     DescriptorObject,
@@ -229,6 +230,7 @@ impl ObjectKind {
             Self::IntegratedDisplaySchedulerLoad => "integrated-display-scheduler-load",
             Self::IntegratedSnapshotIoLeaseBarrier => "integrated-snapshot-io-lease-barrier",
             Self::IntegratedCodePublishSmpWorkload => "integrated-code-publish-smp-workload",
+            Self::IntegratedDisplayPanic => "integrated-display-panic",
             Self::DeviceObject => "device-object",
             Self::QueueObject => "queue-object",
             Self::DescriptorObject => "descriptor-object",
@@ -547,6 +549,10 @@ typed_ref!(
 typed_ref!(
     IntegratedCodePublishSmpWorkloadRef,
     ObjectKind::IntegratedCodePublishSmpWorkload
+);
+typed_ref!(
+    IntegratedDisplayPanicRef,
+    ObjectKind::IntegratedDisplayPanic
 );
 typed_ref!(DeviceObjectRef, ObjectKind::DeviceObject);
 typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
@@ -2490,6 +2496,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "display panic last-frame root/count mismatch",
         ));
     }
+    if roots.integrated_display_panic_roots.len() != package.semantic.integrated_display_panic_count
+        || package.semantic.integrated_display_panics.len()
+            != package.semantic.integrated_display_panic_count
+    {
+        return Err(ContractError::new(
+            "integrated display panic root/count mismatch",
+        ));
+    }
     if roots.framebuffer_benchmark_roots.len() != package.semantic.framebuffer_benchmark_count
         || package.semantic.framebuffer_benchmarks.len()
             != package.semantic.framebuffer_benchmark_count
@@ -3123,6 +3137,7 @@ mod tests {
                 display_cleanup_count: 0,
                 display_snapshot_barrier_count: 0,
                 display_panic_last_frame_count: 0,
+                integrated_display_panic_count: 0,
                 framebuffer_benchmark_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
@@ -3267,6 +3282,7 @@ mod tests {
                 display_cleanups: Vec::new(),
                 display_snapshot_barriers: Vec::new(),
                 display_panic_last_frames: Vec::new(),
+                integrated_display_panics: Vec::new(),
                 framebuffer_benchmarks: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
@@ -4384,6 +4400,49 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "integrated code publish smp workload root/count mismatch"
+        );
+    }
+
+    #[test]
+    fn semantic_roots_reject_integrated_display_panic_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.integrated_display_panic_count = 1;
+        package.semantic.integrated_display_panics.push(
+            artifact_manifest::IntegratedDisplayPanicManifest {
+                id: 26_801,
+                scenario: "x8-panic-ring-extraction-after-substrate-panic".to_owned(),
+                substrate_panic_event: 577,
+                substrate_panic_epoch: 1,
+                substrate_panic_cpu: 0,
+                substrate_panic_reason_code: 1,
+                display_panic_last_frame: 25_001,
+                display_panic_last_frame_generation: 1,
+                panic_ring_bytes: 65_536,
+                panic_record_max_bytes: 4_096,
+                panic_ring_oldest_seq: 1,
+                panic_ring_newest_seq: 3,
+                panic_ring_record_count: 3,
+                panic_ring_lost_count: 0,
+                jsonl_frame_count: 5,
+                contract_panic_summary_records: 1,
+                last_frame_summary_records: 1,
+                corrupt_record_count: 0,
+                truncated_record_count: 0,
+                summary_record_bytes: 512,
+                raw_framebuffer_bytes_exported: false,
+                panic_path_allocates: false,
+                invariant_checks: 8,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 578,
+                note: "x8 panic ring extraction after substrate panic".to_owned(),
+            },
+        );
+
+        let err = validate_semantic_roots(&package).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "integrated display panic root/count mismatch"
         );
     }
 
@@ -7643,6 +7702,9 @@ mod tests {
             )
             .is_ok()
         );
+        let integrated_display_panic =
+            ObjectRef::new(ObjectKind::IntegratedDisplayPanic, 25, 1).unwrap();
+        assert!(IntegratedDisplayPanicRef::try_from_ref(integrated_display_panic).is_ok());
         let device_object = ObjectRef::new(ObjectKind::DeviceObject, 17, 1).unwrap();
         assert!(DeviceObjectRef::try_from_ref(device_object).is_ok());
         let packet_device_object = ObjectRef::new(ObjectKind::PacketDeviceObject, 30, 1).unwrap();

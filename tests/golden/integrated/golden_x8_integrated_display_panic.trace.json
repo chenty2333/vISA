@@ -1,0 +1,152 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "X8-integrated-display-panic",
+  "name": "golden_x8_integrated_display_panic",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/target-runtime-abi/06-nostd-control-plane.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real substrate panic halt",
+    "raw framebuffer byte export",
+    "panic-path allocation",
+    "real target-side cwasm execution",
+    "adapter-internal state as semantic truth"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "G11 produced display-panic-last-frame:25001@1 with contract-panic-summary-v1 and raw_framebuffer_bytes_exported=false",
+      "target_abi PanicRingV1 uses a 64 KiB ring and 4 KiB maximum record size",
+      "Substrate panic evidence is recorded as a semantic substrate panic event before panic ring extraction",
+      "panic ring JSONL extraction is target-to-host only and cursor-safe"
+    ],
+    "command": {
+      "name": "record-integrated-display-panic",
+      "integrated": "integrated-display-panic:26801@1",
+      "substrate_panic_event": "event:578",
+      "display_panic_last_frame": "display-panic-last-frame:25001@1",
+      "panic_ring_record_count": 3,
+      "jsonl_frame_count": 5,
+      "result": "semantic evidence proves panic ring extraction ties substrate panic evidence to the display panic last-frame summary without exporting raw framebuffer bytes"
+    }
+  },
+  "events": [
+    {
+      "kind": "SubstratePanic",
+      "source": "SemanticGraph::record_substrate_panic",
+      "visible_as": "osctl substrate events --json",
+      "event": 578
+    },
+    {
+      "kind": "IntegratedDisplayPanicRecorded",
+      "source": "SemanticGraph::record_integrated_display_panic_with_id",
+      "visible_as": "osctl integrated-display-panic list --json",
+      "event": 579
+    }
+  ],
+  "expected": {
+    "views": {
+      "integrated-display-panic": {
+        "id": 26801,
+        "generation": 1,
+        "state": "recorded",
+        "owner": {
+          "panic_epoch": 1,
+          "panic_cpu": 0
+        },
+        "references": {
+          "substrate_panic_event": {
+            "id": 578,
+            "epoch": 1,
+            "reason_code": 1
+          },
+          "display_panic_last_frame": {
+            "kind": "display-panic-last-frame",
+            "id": 25001,
+            "generation": 1
+          }
+        },
+        "panic_ring": {
+          "ring_bytes": 65536,
+          "record_max_bytes": 4096,
+          "oldest_seq": 1,
+          "newest_seq": 3,
+          "record_count": 3,
+          "lost_count": 0,
+          "jsonl_frame_count": 5,
+          "contract_panic_summary_records": 1,
+          "last_frame_summary_records": 1,
+          "corrupt_record_count": 0,
+          "truncated_record_count": 0,
+          "summary_record_bytes": 512,
+          "raw_framebuffer_bytes_exported": false
+        },
+        "closure": {
+          "scenario": "x8-panic-ring-extraction-after-substrate-panic",
+          "requires_substrate_panic_event": true,
+          "requires_bounded_panic_ring_record": true,
+          "requires_display_panic_last_frame": true,
+          "requires_no_raw_framebuffer_bytes": true,
+          "requires_no_corrupt_or_truncated_records": true,
+          "panic_path_allocates": false,
+          "invariant_checks": 8
+        },
+        "authority": {
+          "target_to_host_extraction_only": true,
+          "panic_path_allocates": false,
+          "raw_framebuffer_bytes_exported": false,
+          "real_substrate_halt_executed": false,
+          "adapter_internal_state_is_not_semantic_truth": true
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "integrated-display-panic:26801@1",
+          "relation": "integrated-display-panic->display-panic-last-frame",
+          "to": "display-panic-last-frame:25001@1",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-display-panic:26801@1",
+          "relation": "integrated-display-panic->substrate-panic-event",
+          "to": "substrate-event:578@1",
+          "mode": "historical"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "Integrated display panic evidence is a first-class ObjectRef",
+      "Substrate panic event and display panic last-frame evidence are linked by historical edges only",
+      "panic ring extraction uses target_abi bounds: 64 KiB ring and 4 KiB record maximum",
+      "corrupt and truncated panic records are not accepted as a clean integrated evidence record",
+      "raw framebuffer bytes are never exported through osctl stable JSON",
+      "panic extraction is target-to-host only and does not claim real substrate halt",
+      "no adapter internal state becomes semantic truth"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "integrated_runtime_x8_records_panic_ring_extraction",
+      "integrated_runtime_x8_rejects_missing_or_corrupt_panic_evidence",
+      "integrated_runtime_x8_contract_graph_rejects_last_frame_drift",
+      "semantic_roots_reject_integrated_display_panic_root_mismatch",
+      "integrated_display_panic_view_v1_exposes_panic_ring_and_last_frame_refs",
+      "integrated_display_panic_graph_edges_are_history_only"
+    ],
+    "osctl_json_view": "integrated-display-panic list --json",
+    "integrated_display_panic": "integrated-display-panic:26801@1",
+    "display_panic_last_frame": "display-panic-last-frame:25001@1",
+    "substrate_panic_event": 578,
+    "event": 579
+  }
+}

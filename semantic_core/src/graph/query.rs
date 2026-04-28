@@ -96,6 +96,7 @@ impl SemanticGraph {
         self.check_integrated_display_scheduler_load_invariants()?;
         self.check_integrated_snapshot_io_lease_barrier_invariants()?;
         self.check_integrated_code_publish_smp_workload_invariants()?;
+        self.check_integrated_display_panic_invariants()?;
         self.check_device_object_invariants()?;
         self.check_queue_object_invariants()?;
         self.check_descriptor_object_invariants()?;

@@ -858,6 +858,16 @@ pub enum SemanticInvariantError {
     IntegratedCodePublishSmpWorkloadMissingEvent {
         integrated: IntegratedCodePublishSmpWorkloadId,
     },
+    IntegratedDisplayPanicInvalid {
+        integrated: IntegratedDisplayPanicId,
+    },
+    IntegratedDisplayPanicMissingEvidence {
+        integrated: IntegratedDisplayPanicId,
+        evidence: &'static str,
+    },
+    IntegratedDisplayPanicMissingEvent {
+        integrated: IntegratedDisplayPanicId,
+    },
     DeviceObjectInvalid {
         device: DeviceObjectId,
     },

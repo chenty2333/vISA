@@ -27267,6 +27267,197 @@ fn integrated_runtime_x7_contract_graph_rejects_epoch_drift() {
     }));
 }
 
+fn x8_integrated_display_panic_graph() -> SemanticGraph {
+    let (mut graph, owner_store, owner_store_generation, payload_digest, summary_digest) =
+        g11_display_panic_last_frame_graph();
+    assert!(graph.record_display_panic_last_frame_with_id(
+        25_001,
+        owner_store,
+        owner_store_generation,
+        24_011,
+        1,
+        23_801,
+        1,
+        23_501,
+        1,
+        23_601,
+        1,
+        payload_digest,
+        summary_digest,
+        512,
+        1,
+        "contract-panic-summary-v1",
+        false,
+        "x8 panic last-frame evidence",
+    ));
+    graph.record_substrate_panic(
+        "PanicRing",
+        "extract-after-substrate-panic",
+        Some("substrate.panic".to_string()),
+        None,
+        None,
+        1,
+        0,
+        1,
+    );
+    graph
+}
+
+#[test]
+fn integrated_runtime_x8_records_panic_ring_extraction() {
+    let mut graph = x8_integrated_display_panic_graph();
+    let substrate_panic_event = graph.event_log_tail(1)[0].id;
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        23,
+        "x8-test",
+        SemanticCommand::RecordIntegratedDisplayPanic {
+            integrated: 903,
+            scenario: "x8-panic-ring-extraction-after-substrate-panic".to_string(),
+            substrate_panic_event,
+            display_panic_last_frame: 25_001,
+            display_panic_last_frame_generation: 1,
+            panic_ring_bytes: 65_536,
+            panic_record_max_bytes: 4_096,
+            panic_ring_oldest_seq: 1,
+            panic_ring_newest_seq: 3,
+            panic_ring_record_count: 3,
+            panic_ring_lost_count: 0,
+            jsonl_frame_count: 5,
+            contract_panic_summary_records: 1,
+            last_frame_summary_records: 1,
+            corrupt_record_count: 0,
+            truncated_record_count: 0,
+            invariant_checks: 8,
+            note: "integrate substrate panic ring extraction with display panic evidence"
+                .to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    assert_eq!(graph.integrated_display_panic_count(), 1);
+    let record = &graph.integrated_display_panics()[0];
+    assert_eq!(record.id, 903);
+    assert_eq!(record.substrate_panic_event, substrate_panic_event);
+    assert_eq!(record.display_panic_last_frame, 25_001);
+    assert_eq!(record.panic_ring_record_count, 3);
+    assert_eq!(record.jsonl_frame_count, 5);
+    assert_eq!(record.contract_panic_summary_records, 1);
+    assert_eq!(record.corrupt_record_count, 0);
+    assert!(!record.raw_framebuffer_bytes_exported);
+    assert!(!record.panic_path_allocates);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "IntegratedDisplayPanicRecorded integrated=903 scenario=x8-panic-ring-extraction-after-substrate-panic substrate_panic_event={substrate_panic_event} display_panic_last_frame=25001@1 panic_ring_records=3 lost=0 jsonl_frames=5 contract_panic_summary_records=1 last_frame_summary_records=1 corrupt_records=0 truncated_records=0 invariant_checks=8 generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn integrated_runtime_x8_rejects_missing_or_corrupt_panic_evidence() {
+    let missing = SemanticGraph::new().apply_envelope(CommandEnvelope::new(
+        1,
+        "x8-test",
+        SemanticCommand::RecordIntegratedDisplayPanic {
+            integrated: 903,
+            scenario: "x8-panic-ring-extraction-after-substrate-panic".to_string(),
+            substrate_panic_event: 1,
+            display_panic_last_frame: 25_001,
+            display_panic_last_frame_generation: 1,
+            panic_ring_bytes: 65_536,
+            panic_record_max_bytes: 4_096,
+            panic_ring_oldest_seq: 1,
+            panic_ring_newest_seq: 3,
+            panic_ring_record_count: 3,
+            panic_ring_lost_count: 0,
+            jsonl_frame_count: 5,
+            contract_panic_summary_records: 1,
+            last_frame_summary_records: 1,
+            corrupt_record_count: 0,
+            truncated_record_count: 0,
+            invariant_checks: 8,
+            note: "missing display panic frame rejects".to_string(),
+        },
+    ));
+    assert_eq!(missing.status, CommandStatus::Rejected);
+    assert_eq!(
+        missing.violations,
+        vec!["integrated display panic missing last-frame evidence".to_string()]
+    );
+
+    let mut graph = x8_integrated_display_panic_graph();
+    let substrate_panic_event = graph.event_log_tail(1)[0].id;
+    let corrupt = graph.apply_envelope(CommandEnvelope::new(
+        23,
+        "x8-test",
+        SemanticCommand::RecordIntegratedDisplayPanic {
+            integrated: 903,
+            scenario: "x8-panic-ring-extraction-after-substrate-panic".to_string(),
+            substrate_panic_event,
+            display_panic_last_frame: 25_001,
+            display_panic_last_frame_generation: 1,
+            panic_ring_bytes: 65_536,
+            panic_record_max_bytes: 4_096,
+            panic_ring_oldest_seq: 1,
+            panic_ring_newest_seq: 3,
+            panic_ring_record_count: 3,
+            panic_ring_lost_count: 0,
+            jsonl_frame_count: 5,
+            contract_panic_summary_records: 1,
+            last_frame_summary_records: 1,
+            corrupt_record_count: 1,
+            truncated_record_count: 0,
+            invariant_checks: 8,
+            note: "corrupt panic ring extraction rejects".to_string(),
+        },
+    ));
+    assert_eq!(corrupt.status, CommandStatus::Rejected);
+    assert_eq!(
+        corrupt.violations,
+        vec!["integrated display panic requires clean panic-ring extraction evidence".to_string()]
+    );
+}
+
+#[test]
+fn integrated_runtime_x8_contract_graph_rejects_last_frame_drift() {
+    let mut graph = x8_integrated_display_panic_graph();
+    let substrate_panic_event = graph.event_log_tail(1)[0].id;
+    assert!(graph.record_integrated_display_panic_with_id(
+        903,
+        "x8-panic-ring-extraction-after-substrate-panic",
+        substrate_panic_event,
+        25_001,
+        1,
+        65_536,
+        4_096,
+        1,
+        3,
+        3,
+        0,
+        5,
+        1,
+        1,
+        0,
+        0,
+        8,
+        "integrated display panic",
+    ));
+    let mut frames = graph.display_panic_last_frames().to_vec();
+    frames[0].raw_framebuffer_bytes_exported = true;
+    let snapshot = ContractGraphSnapshot {
+        display_panic_last_frames: frames,
+        integrated_display_panics: graph.integrated_display_panics().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "display-panic-last-frame->contract"
+            || violation.edge == "integrated-display-panic->last-frame-binding"
+    }));
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

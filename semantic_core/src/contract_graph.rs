@@ -100,6 +100,7 @@ pub struct ContractGraphSnapshot {
     pub integrated_display_scheduler_loads: Vec<IntegratedDisplaySchedulerLoadRecord>,
     pub integrated_snapshot_io_lease_barriers: Vec<IntegratedSnapshotIoLeaseBarrierRecord>,
     pub integrated_code_publish_smp_workloads: Vec<IntegratedCodePublishSmpWorkloadRecord>,
+    pub integrated_display_panics: Vec<IntegratedDisplayPanicRecord>,
     pub integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
     pub integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
     pub integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultRecord>,
@@ -258,6 +259,7 @@ impl ContractGraphValidator {
         Self::validate_integrated_display_scheduler_loads(snapshot, &mut violations);
         Self::validate_integrated_snapshot_io_lease_barriers(snapshot, &mut violations);
         Self::validate_integrated_code_publish_smp_workloads(snapshot, &mut violations);
+        Self::validate_integrated_display_panics(snapshot, &mut violations);
         Self::validate_integrated_smp_preemption_cleanups(snapshot, &mut violations);
         Self::validate_integrated_smp_network_faults(snapshot, &mut violations);
         Self::validate_integrated_disk_preempt_faults(snapshot, &mut violations);
@@ -4201,6 +4203,84 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_integrated_display_panics(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for record in &snapshot.integrated_display_panics {
+            let from = record.object_ref();
+            if record.id == 0
+                || record.generation == 0
+                || record.scenario.is_empty()
+                || record.state != IntegratedDisplayPanicState::Recorded
+                || record.substrate_panic_event == 0
+                || record.display_panic_last_frame_generation == 0
+                || record.panic_ring_bytes != 65_536
+                || record.panic_record_max_bytes != 4_096
+                || record.panic_ring_oldest_seq == 0
+                || record.panic_ring_newest_seq < record.panic_ring_oldest_seq
+                || record.panic_ring_record_count < 2
+                || record
+                    .panic_ring_newest_seq
+                    .saturating_sub(record.panic_ring_oldest_seq)
+                    .saturating_add(1)
+                    < u64::from(record.panic_ring_record_count)
+                || record.panic_ring_lost_count != 0
+                || record.jsonl_frame_count < record.panic_ring_record_count.saturating_add(2)
+                || record.contract_panic_summary_records == 0
+                || record.last_frame_summary_records == 0
+                || record.corrupt_record_count != 0
+                || record.truncated_record_count != 0
+                || record.summary_record_bytes == 0
+                || record.summary_record_bytes > record.panic_record_max_bytes
+                || record.raw_framebuffer_bytes_exported
+                || record.panic_path_allocates
+                || record.invariant_checks == 0
+                || record.recorded_at_event == 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "integrated-display-panic->contract",
+                    from,
+                    None,
+                    "integrated display panic requires clean panic-ring extraction and bounded last-frame summary",
+                ));
+                continue;
+            }
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "integrated-display-panic->display-panic-last-frame",
+                ContractObjectKind::DisplayPanicLastFrame,
+                record.display_panic_last_frame,
+                record.display_panic_last_frame_generation,
+                ContractEdgeMode::Historical,
+            );
+            if let Some(frame) = snapshot.display_panic_last_frames.iter().find(|frame| {
+                frame.id == record.display_panic_last_frame
+                    && frame.generation == record.display_panic_last_frame_generation
+            }) {
+                if frame.state != DisplayPanicLastFrameState::Recorded
+                    || frame.raw_framebuffer_bytes_exported
+                    || frame.summary_record_bytes != record.summary_record_bytes
+                    || frame.panic_epoch != record.substrate_panic_epoch
+                    || frame.panic_cpu != record.substrate_panic_cpu
+                    || frame.panic_reason_code != record.substrate_panic_reason_code
+                    || frame.panic_record_kind != "contract-panic-summary-v1"
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-display-panic->last-frame-binding",
+                        from,
+                        Some(frame.object_ref()),
+                        "integrated display panic does not match last-frame panic summary evidence",
+                    ));
+                }
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -5523,6 +5603,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id && record.generation == generation)
                 .map(IntegratedCodePublishSmpWorkloadRecord::object_ref),
+            ContractObjectKind::IntegratedDisplayPanic => snapshot
+                .integrated_display_panics
+                .iter()
+                .find(|record| record.id == id && record.generation == generation)
+                .map(IntegratedDisplayPanicRecord::object_ref),
             ContractObjectKind::SmpSafePoint => snapshot
                 .smp_safe_points
                 .iter()
@@ -5920,6 +6005,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id)
                 .map(IntegratedCodePublishSmpWorkloadRecord::object_ref),
+            ContractObjectKind::IntegratedDisplayPanic => snapshot
+                .integrated_display_panics
+                .iter()
+                .find(|record| record.id == id)
+                .map(IntegratedDisplayPanicRecord::object_ref),
             ContractObjectKind::SmpSafePoint => snapshot
                 .smp_safe_points
                 .iter()
@@ -6469,6 +6559,14 @@ impl ContractGraphValidator {
                     (record.state != IntegratedCodePublishSmpWorkloadState::Recorded).then_some(
                         "live edge references unrecorded integrated code publish/SMP workload evidence",
                     )
+                }),
+            ContractObjectKind::IntegratedDisplayPanic => snapshot
+                .integrated_display_panics
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != IntegratedDisplayPanicState::Recorded)
+                        .then_some("live edge references unrecorded integrated display panic evidence")
                 }),
             ContractObjectKind::SmpCodePublishBarrier => snapshot
                 .smp_code_publish_barriers

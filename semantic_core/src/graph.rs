@@ -35,6 +35,7 @@ pub struct SemanticGraph {
     integrated_display_scheduler_loads: Vec<IntegratedDisplaySchedulerLoadRecord>,
     integrated_snapshot_io_lease_barriers: Vec<IntegratedSnapshotIoLeaseBarrierRecord>,
     integrated_code_publish_smp_workloads: Vec<IntegratedCodePublishSmpWorkloadRecord>,
+    integrated_display_panics: Vec<IntegratedDisplayPanicRecord>,
     device_objects: Vec<DeviceObjectRecord>,
     queue_objects: Vec<QueueObjectRecord>,
     descriptor_objects: Vec<DescriptorObjectRecord>,
@@ -157,6 +158,7 @@ pub struct SemanticGraph {
     next_integrated_display_scheduler_load_id: IntegratedDisplaySchedulerLoadId,
     next_integrated_snapshot_io_lease_barrier_id: IntegratedSnapshotIoLeaseBarrierId,
     next_integrated_code_publish_smp_workload_id: IntegratedCodePublishSmpWorkloadId,
+    next_integrated_display_panic_id: IntegratedDisplayPanicId,
     next_device_object_id: DeviceObjectId,
     next_queue_object_id: QueueObjectId,
     next_descriptor_object_id: DescriptorObjectId,
@@ -303,6 +305,7 @@ mod hart;
 mod hart_event;
 mod integrated_code_publish_smp_workload;
 mod integrated_disk_preempt_fault;
+mod integrated_display_panic;
 mod integrated_display_scheduler_load;
 mod integrated_network_disk_io;
 mod integrated_simd_migration;
@@ -403,6 +406,7 @@ impl SemanticGraph {
             integrated_display_scheduler_loads: Vec::new(),
             integrated_snapshot_io_lease_barriers: Vec::new(),
             integrated_code_publish_smp_workloads: Vec::new(),
+            integrated_display_panics: Vec::new(),
             device_objects: Vec::new(),
             queue_objects: Vec::new(),
             descriptor_objects: Vec::new(),
@@ -525,6 +529,7 @@ impl SemanticGraph {
             next_integrated_display_scheduler_load_id: 1,
             next_integrated_snapshot_io_lease_barrier_id: 1,
             next_integrated_code_publish_smp_workload_id: 1,
+            next_integrated_display_panic_id: 1,
             next_device_object_id: 1,
             next_queue_object_id: 1,
             next_descriptor_object_id: 1,

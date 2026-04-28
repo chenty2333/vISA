@@ -1038,6 +1038,47 @@ impl IntegratedCodePublishSmpWorkloadRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntegratedDisplayPanicRecord {
+    pub id: IntegratedDisplayPanicId,
+    pub scenario: String,
+    pub substrate_panic_event: EventId,
+    pub substrate_panic_epoch: u64,
+    pub substrate_panic_cpu: u32,
+    pub substrate_panic_reason_code: u32,
+    pub display_panic_last_frame: DisplayPanicLastFrameId,
+    pub display_panic_last_frame_generation: Generation,
+    pub panic_ring_bytes: u32,
+    pub panic_record_max_bytes: u32,
+    pub panic_ring_oldest_seq: u64,
+    pub panic_ring_newest_seq: u64,
+    pub panic_ring_record_count: u32,
+    pub panic_ring_lost_count: u64,
+    pub jsonl_frame_count: u32,
+    pub contract_panic_summary_records: u32,
+    pub last_frame_summary_records: u32,
+    pub corrupt_record_count: u32,
+    pub truncated_record_count: u32,
+    pub summary_record_bytes: u32,
+    pub raw_framebuffer_bytes_exported: bool,
+    pub panic_path_allocates: bool,
+    pub invariant_checks: u32,
+    pub generation: Generation,
+    pub state: IntegratedDisplayPanicState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl IntegratedDisplayPanicRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::IntegratedDisplayPanic,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceObjectRecord {
     pub id: DeviceObjectId,
     pub name: String,

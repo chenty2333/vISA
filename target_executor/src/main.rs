@@ -31,21 +31,21 @@ use artifact_manifest::{
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
     IntegratedCodePublishSmpWorkloadManifest, IntegratedDiskPreemptFaultManifest,
-    IntegratedDisplaySchedulerLoadManifest, IntegratedNetworkDiskIoManifest,
-    IntegratedSimdMigrationManifest, IntegratedSmpNetworkFaultManifest,
-    IntegratedSmpPreemptionCleanupManifest, IntegratedSnapshotIoLeaseBarrierManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    IntegratedDisplayPanicManifest, IntegratedDisplaySchedulerLoadManifest,
+    IntegratedNetworkDiskIoManifest, IntegratedSimdMigrationManifest,
+    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
+    IntegratedSnapshotIoLeaseBarrierManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -119,6 +119,7 @@ use target_abi::{
     OBJECT_KIND_CODE_OBJECT_V1, ObjectRefRaw, RV64_ENTRY_TRAP_EBREAK_OFFSET, TrapKindV1,
     TrapMapEntryV1,
 };
+use target_abi::{PANIC_RECORD_MAX_LEN, PANIC_RING_SIZE, PanicRecordKindV1, PanicRingV1};
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
 const SEMANTIC_EVIDENCE_CAPABILITY_SOURCES: &[&str] = &[
@@ -8404,6 +8405,7 @@ fn build_target_executor_v1(
     run_integrated_display_scheduler_load_harness(semantic)?;
     run_integrated_snapshot_io_lease_barrier_harness(semantic)?;
     run_integrated_code_publish_smp_workload_harness(semantic)?;
+    run_integrated_display_panic_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8502,6 +8504,7 @@ fn build_target_executor_v1(
         integrated_code_publish_smp_workloads: semantic
             .integrated_code_publish_smp_workloads()
             .to_vec(),
+        integrated_display_panics: semantic.integrated_display_panics().to_vec(),
         integrated_smp_preemption_cleanups: semantic.integrated_smp_preemption_cleanups().to_vec(),
         integrated_smp_network_faults: semantic.integrated_smp_network_faults().to_vec(),
         integrated_disk_preempt_faults: semantic.integrated_disk_preempt_faults().to_vec(),
@@ -11030,6 +11033,89 @@ fn run_integrated_code_publish_smp_workload_harness(
     Ok(())
 }
 
+fn run_integrated_display_panic_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let substrate_panic_event = semantic.record_substrate_panic(
+        "PanicRing",
+        "extract-after-substrate-panic",
+        Some("substrate.panic".to_owned()),
+        None,
+        None,
+        1,
+        0,
+        1,
+    );
+    let mut ring = PanicRingV1::new();
+    ring.push_record(
+        PanicRecordKindV1::PanicRecord,
+        br#"{"panic_epoch":1,"panic_cpu":0,"reason_code":1}"#,
+    )
+    .map_err(|err| format!("push panic record: {err:?}"))?;
+    ring.push_record(
+        PanicRecordKindV1::LastHostcallFrameSummary,
+        br#"{"hostcall":"none","status":"substrate-panic"}"#,
+    )
+    .map_err(|err| format!("push hostcall summary record: {err:?}"))?;
+    ring.push_record(
+        PanicRecordKindV1::ContractPanicSummary,
+        br#"{"display_panic_last_frame":"display-panic-last-frame:25001@1","raw_framebuffer_bytes_exported":false}"#,
+    )
+    .map_err(|err| format!("push contract panic summary record: {err:?}"))?;
+    let mut out = [0u8; 8192];
+    let len = ring
+        .dump_jsonl(&mut out)
+        .map_err(|err| format!("dump panic ring jsonl: {err:?}"))?;
+    let jsonl = std::str::from_utf8(&out[..len])?;
+    let jsonl_frame_count = jsonl.lines().count() as u32;
+    let contract_panic_summary_records = jsonl
+        .matches("\"schema\":\"contract-panic-summary-v1\"")
+        .count() as u32;
+    let corrupt_record_count = jsonl
+        .matches("\"schema\":\"panic-ring-corrupt-record-v1\"")
+        .count() as u32;
+    let truncated_record_count = jsonl
+        .matches("\"schema\":\"truncated-panic-record-v1\"")
+        .count() as u32;
+
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        100_009,
+        "integrated-runtime-x8",
+        SemanticCommand::RecordIntegratedDisplayPanic {
+            integrated: 26_801,
+            scenario: "x8-panic-ring-extraction-after-substrate-panic".to_owned(),
+            substrate_panic_event,
+            display_panic_last_frame: 25_001,
+            display_panic_last_frame_generation: 1,
+            panic_ring_bytes: PANIC_RING_SIZE as u32,
+            panic_record_max_bytes: PANIC_RECORD_MAX_LEN as u32,
+            panic_ring_oldest_seq: ring.header().oldest_seq,
+            panic_ring_newest_seq: ring.header().write_seq,
+            panic_ring_record_count: ring.header().record_count,
+            panic_ring_lost_count: ring.header().lost_count,
+            jsonl_frame_count,
+            contract_panic_summary_records,
+            last_frame_summary_records: contract_panic_summary_records,
+            corrupt_record_count,
+            truncated_record_count,
+            invariant_checks: 8,
+            note: "x8 records panic-ring extraction after substrate panic without raw framebuffer bytes"
+                .to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "integrated runtime x8 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11865,6 +11951,7 @@ fn demo_migration_package(
                 .integrated_snapshot_io_lease_barrier_count(),
             integrated_code_publish_smp_workload_count: semantic
                 .integrated_code_publish_smp_workload_count(),
+            integrated_display_panic_count: semantic.integrated_display_panic_count(),
             device_object_count: semantic.device_object_count(),
             queue_object_count: semantic.queue_object_count(),
             descriptor_object_count: semantic.descriptor_object_count(),
@@ -12116,6 +12203,11 @@ fn demo_migration_package(
                 .integrated_code_publish_smp_workloads()
                 .iter()
                 .map(integrated_code_publish_smp_workload_manifest)
+                .collect(),
+            integrated_display_panics: semantic
+                .integrated_display_panics()
+                .iter()
+                .map(integrated_display_panic_manifest)
                 .collect(),
             device_objects: semantic
                 .device_objects()
@@ -13204,6 +13296,24 @@ fn semantic_roots(
                     record.code_publish_epoch_after,
                     record.hart_count,
                     record.workload_iterations,
+                    record.generation
+                )
+            })
+            .collect(),
+        integrated_display_panic_roots: semantic
+            .integrated_display_panics()
+            .iter()
+            .map(|record| {
+                format!(
+                    "integrated-display-panic id={} scenario={} substrate_panic_event={} display_panic_last_frame={}@{} panic_ring_records={} lost={} jsonl_frames={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.substrate_panic_event,
+                    record.display_panic_last_frame,
+                    record.display_panic_last_frame_generation,
+                    record.panic_ring_record_count,
+                    record.panic_ring_lost_count,
+                    record.jsonl_frame_count,
                     record.generation
                 )
             })
@@ -16640,6 +16750,40 @@ fn integrated_code_publish_smp_workload_manifest(
     }
 }
 
+fn integrated_display_panic_manifest(
+    record: &semantic_core::IntegratedDisplayPanicRecord,
+) -> IntegratedDisplayPanicManifest {
+    IntegratedDisplayPanicManifest {
+        id: record.id,
+        scenario: record.scenario.clone(),
+        substrate_panic_event: record.substrate_panic_event,
+        substrate_panic_epoch: record.substrate_panic_epoch,
+        substrate_panic_cpu: record.substrate_panic_cpu,
+        substrate_panic_reason_code: record.substrate_panic_reason_code,
+        display_panic_last_frame: record.display_panic_last_frame,
+        display_panic_last_frame_generation: record.display_panic_last_frame_generation,
+        panic_ring_bytes: record.panic_ring_bytes,
+        panic_record_max_bytes: record.panic_record_max_bytes,
+        panic_ring_oldest_seq: record.panic_ring_oldest_seq,
+        panic_ring_newest_seq: record.panic_ring_newest_seq,
+        panic_ring_record_count: record.panic_ring_record_count,
+        panic_ring_lost_count: record.panic_ring_lost_count,
+        jsonl_frame_count: record.jsonl_frame_count,
+        contract_panic_summary_records: record.contract_panic_summary_records,
+        last_frame_summary_records: record.last_frame_summary_records,
+        corrupt_record_count: record.corrupt_record_count,
+        truncated_record_count: record.truncated_record_count,
+        summary_record_bytes: record.summary_record_bytes,
+        raw_framebuffer_bytes_exported: record.raw_framebuffer_bytes_exported,
+        panic_path_allocates: record.panic_path_allocates,
+        invariant_checks: record.invariant_checks,
+        generation: record.generation,
+        state: record.state.as_str().to_owned(),
+        recorded_at_event: record.recorded_at_event,
+        note: record.note.clone(),
+    }
+}
+
 fn device_object_manifest(device: &semantic_core::DeviceObjectRecord) -> DeviceObjectManifest {
     DeviceObjectManifest {
         id: device.id,
@@ -19101,6 +19245,32 @@ fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateEventManifes
                 capability: capability_manifest,
                 explanation: format!(
                     "{requester_label} was denied {authority}::{operation} by capability gate"
+                ),
+            })
+        }
+        EventKind::SubstratePanic {
+            authority,
+            operation,
+            requester,
+            artifact,
+            store,
+            panic_epoch,
+            panic_cpu,
+            panic_reason_code,
+        } => {
+            let requester_label = requester.as_deref().unwrap_or("unknown");
+            Some(SubstrateEventManifest {
+                id: event.id,
+                epoch: event.epoch,
+                event_kind: "panic".to_owned(),
+                authority: authority.clone(),
+                operation: operation.clone(),
+                requester: requester.clone(),
+                artifact: *artifact,
+                store: *store,
+                capability: None,
+                explanation: format!(
+                    "{requester_label} reported substrate panic epoch={panic_epoch} cpu={panic_cpu} reason={panic_reason_code}"
                 ),
             })
         }

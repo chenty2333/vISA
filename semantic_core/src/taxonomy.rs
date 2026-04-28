@@ -529,6 +529,21 @@ impl IntegratedCodePublishSmpWorkloadState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntegratedDisplayPanicState {
+    Recorded,
+    Rejected,
+}
+
+impl IntegratedDisplayPanicState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceObjectState {
     Registered,
     Removed,

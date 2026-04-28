@@ -27,12 +27,12 @@ use artifact_manifest::{
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
     IntegratedCodePublishSmpWorkloadManifest, IntegratedDiskPreemptFaultManifest,
-    IntegratedDisplaySchedulerLoadManifest, IntegratedNetworkDiskIoManifest,
-    IntegratedSimdMigrationManifest, IntegratedSmpNetworkFaultManifest,
-    IntegratedSmpPreemptionCleanupManifest, IntegratedSnapshotIoLeaseBarrierManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    IntegratedDisplayPanicManifest, IntegratedDisplaySchedulerLoadManifest,
+    IntegratedNetworkDiskIoManifest, IntegratedSimdMigrationManifest,
+    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
+    IntegratedSnapshotIoLeaseBarrierManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -304,6 +304,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "integrated-code-publish-smp-workload"
         | "code-publish-smp-workload"
         | "integrated-code-publish-workload"
+        | "integrated-display-panic"
+        | "display-panic"
+        | "panic-ring-extraction"
         | "device"
         | "device-object"
         | "queue"
@@ -652,7 +655,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|integrated-code-publish-smp-workload|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|integrated-code-publish-smp-workload|integrated-display-panic|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -660,7 +663,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|integrated-code-publish-smp-workload|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|integrated-code-publish-smp-workload|integrated-display-panic|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -981,6 +984,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "integrated-code-publish-smp-workload"
         | "code-publish-smp-workload"
         | "integrated-code-publish-workload" => "integrated-code-publish-smp-workload",
+        "integrated-display-panic" | "display-panic" | "panic-ring-extraction" => {
+            "integrated-display-panic"
+        }
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2644,6 +2650,73 @@ fn integrated_code_publish_smp_workload_view_v1(
             "uses_semantic_code_publish_barrier": true,
             "real_smp_dynamic_code_publish_executed": false,
             "real_wx_page_publish_executed": false,
+            "adapter_internal_state_is_not_semantic_truth": true,
+        },
+        "note": record.note,
+        "last_transition": {
+            "event": record.recorded_at_event,
+            "state": record.state,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn integrated_display_panic_view_v1(record: &IntegratedDisplayPanicManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "integrated-display-panic",
+        "id": record.id,
+        "generation": record.generation,
+        "state": record.state,
+        "owner": {
+            "panic_epoch": record.substrate_panic_epoch,
+            "panic_cpu": record.substrate_panic_cpu,
+        },
+        "references": {
+            "substrate_panic_event": {
+                "id": record.substrate_panic_event,
+                "epoch": record.substrate_panic_epoch,
+                "reason_code": record.substrate_panic_reason_code,
+            },
+            "display_panic_last_frame": object_ref_json(
+                "display-panic-last-frame",
+                record.display_panic_last_frame,
+                record.display_panic_last_frame_generation,
+            ),
+            "event": {
+                "id": record.recorded_at_event,
+            },
+        },
+        "panic_ring": {
+            "ring_bytes": record.panic_ring_bytes,
+            "record_max_bytes": record.panic_record_max_bytes,
+            "oldest_seq": record.panic_ring_oldest_seq,
+            "newest_seq": record.panic_ring_newest_seq,
+            "record_count": record.panic_ring_record_count,
+            "lost_count": record.panic_ring_lost_count,
+            "jsonl_frame_count": record.jsonl_frame_count,
+            "contract_panic_summary_records": record.contract_panic_summary_records,
+            "last_frame_summary_records": record.last_frame_summary_records,
+            "corrupt_record_count": record.corrupt_record_count,
+            "truncated_record_count": record.truncated_record_count,
+            "summary_record_bytes": record.summary_record_bytes,
+            "raw_framebuffer_bytes_exported": record.raw_framebuffer_bytes_exported,
+        },
+        "closure": {
+            "scenario": record.scenario,
+            "requires_substrate_panic_event": true,
+            "requires_bounded_panic_ring_record": true,
+            "requires_display_panic_last_frame": true,
+            "requires_no_raw_framebuffer_bytes": true,
+            "requires_no_corrupt_or_truncated_records": true,
+            "panic_path_allocates": record.panic_path_allocates,
+            "invariant_checks": record.invariant_checks,
+        },
+        "authority": {
+            "target_to_host_extraction_only": true,
+            "panic_path_allocates": record.panic_path_allocates,
+            "raw_framebuffer_bytes_exported": record.raw_framebuffer_bytes_exported,
+            "real_substrate_halt_executed": false,
             "adapter_internal_state_is_not_semantic_truth": true,
         },
         "note": record.note,
@@ -8375,6 +8448,12 @@ fn stable_views_for_kind(
             .iter()
             .map(integrated_code_publish_smp_workload_view_v1)
             .collect()),
+        "integrated-display-panic" | "display-panic" | "panic-ring-extraction" => Ok(package
+            .semantic
+            .integrated_display_panics
+            .iter()
+            .map(integrated_display_panic_view_v1)
+            .collect()),
         "device" | "device-object" => Ok(package
             .semantic
             .device_objects
@@ -9834,6 +9913,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
             .semantic
             .roots
             .integrated_code_publish_smp_workload_roots,
+    );
+    print_roots(
+        "integrated-display-panic",
+        &package.semantic.roots.integrated_display_panic_roots,
     );
     print_roots("device", &package.semantic.roots.device_object_roots);
     print_roots("queue", &package.semantic.roots.queue_object_roots);
@@ -11981,6 +12064,31 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 Some(record.recorded_at_event),
             ));
         }
+    }
+    for record in &package.semantic.integrated_display_panics {
+        let from = object_ref_json("integrated-display-panic", record.id, record.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "display-panic-last-frame",
+                record.display_panic_last_frame,
+                record.display_panic_last_frame_generation,
+            ),
+            "integrated-display-panic->display-panic-last-frame",
+            "historical",
+            Some(record.recorded_at_event),
+        ));
+        edges.push(graph_edge(
+            from,
+            serde_json::json!({
+                "kind": "substrate-event",
+                "id": record.substrate_panic_event,
+                "generation": 1,
+            }),
+            "integrated-display-panic->substrate-panic-event",
+            "historical",
+            Some(record.recorded_at_event),
+        ));
     }
     for completion in &package.semantic.block_completion_objects {
         if completion.state != "recorded" {
@@ -17670,6 +17778,39 @@ fn inspect_package_object(
                 );
             }
         }
+        "integrated-display-panic" | "display-panic" | "panic-ring-extraction" => {
+            println!(
+                "inspect integrated-display-panic package={} count={}",
+                package.package_id, package.semantic.integrated_display_panic_count
+            );
+            for record in &package.semantic.integrated_display_panics {
+                let line = format!(
+                    "integrated-display-panic id={} scenario={} substrate_panic_event={} display_panic_last_frame={}@{} panic_ring_records={} lost={} jsonl_frames={} contract_panic_summary_records={} corrupt_records={} truncated_records={} raw_framebuffer_bytes_exported={} state={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.substrate_panic_event,
+                    record.display_panic_last_frame,
+                    record.display_panic_last_frame_generation,
+                    record.panic_ring_record_count,
+                    record.panic_ring_lost_count,
+                    record.jsonl_frame_count,
+                    record.contract_panic_summary_records,
+                    record.corrupt_record_count,
+                    record.truncated_record_count,
+                    record.raw_framebuffer_bytes_exported,
+                    record.state,
+                    record.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.integrated_display_panics.is_empty() {
+                print_roots_filtered(
+                    "integrated-display-panic",
+                    &package.semantic.roots.integrated_display_panic_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -18300,6 +18441,23 @@ fn inspect_package_object_json(
                     .len()
             }),
         ),
+        "integrated-display-panic" | "display-panic" | "panic-ring-extraction" => (
+            "integrated-display-panic",
+            package.semantic.integrated_display_panic_count,
+            package
+                .semantic
+                .integrated_display_panics
+                .iter()
+                .map(integrated_display_panic_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package
+                    .semantic
+                    .roots
+                    .integrated_display_panic_roots
+                    .len()
+            }),
+        ),
         "command" => (
             "command",
             package.semantic.command_result_count,
@@ -18834,6 +18992,9 @@ fn replay_until(
         .integrated_code_publish_smp_workload_roots
     {
         println!("replay integrated-code-publish-smp-workload {integrated}");
+    }
+    for integrated in &package.semantic.roots.integrated_display_panic_roots {
+        println!("replay integrated-display-panic {integrated}");
     }
     for device in &package.semantic.roots.device_object_roots {
         println!("replay device {device}");
@@ -23875,6 +24036,96 @@ mod tests {
             && edge["relation"] == "integrated-publish-rendezvous"
             && edge["to"]["kind"] == "stop-the-world-rendezvous"
             && edge["to"]["generation"] == 1));
+    }
+
+    fn test_integrated_display_panic_manifest() -> IntegratedDisplayPanicManifest {
+        IntegratedDisplayPanicManifest {
+            id: 26_801,
+            scenario: "x8-panic-ring-extraction-after-substrate-panic".to_owned(),
+            substrate_panic_event: 578,
+            substrate_panic_epoch: 1,
+            substrate_panic_cpu: 0,
+            substrate_panic_reason_code: 1,
+            display_panic_last_frame: 25_001,
+            display_panic_last_frame_generation: 1,
+            panic_ring_bytes: 65_536,
+            panic_record_max_bytes: 4_096,
+            panic_ring_oldest_seq: 1,
+            panic_ring_newest_seq: 3,
+            panic_ring_record_count: 3,
+            panic_ring_lost_count: 0,
+            jsonl_frame_count: 5,
+            contract_panic_summary_records: 1,
+            last_frame_summary_records: 1,
+            corrupt_record_count: 0,
+            truncated_record_count: 0,
+            summary_record_bytes: 128,
+            raw_framebuffer_bytes_exported: false,
+            panic_path_allocates: false,
+            invariant_checks: 8,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 579,
+            note: "x8 semantic panic ring extraction after substrate panic".to_owned(),
+        }
+    }
+
+    #[test]
+    fn integrated_display_panic_view_v1_exposes_panic_ring_and_last_frame_refs() {
+        let view = integrated_display_panic_view_v1(&test_integrated_display_panic_manifest());
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "integrated-display-panic");
+        assert_eq!(view["owner"]["panic_epoch"], 1);
+        assert_eq!(view["owner"]["panic_cpu"], 0);
+        assert_eq!(view["references"]["substrate_panic_event"]["id"], 578);
+        assert_eq!(view["references"]["display_panic_last_frame"]["id"], 25_001);
+        assert_eq!(
+            view["references"]["display_panic_last_frame"]["generation"],
+            1
+        );
+        assert_eq!(view["panic_ring"]["ring_bytes"], 65_536);
+        assert_eq!(view["panic_ring"]["record_max_bytes"], 4_096);
+        assert_eq!(view["panic_ring"]["record_count"], 3);
+        assert_eq!(view["panic_ring"]["jsonl_frame_count"], 5);
+        assert_eq!(view["panic_ring"]["contract_panic_summary_records"], 1);
+        assert_eq!(view["panic_ring"]["corrupt_record_count"], 0);
+        assert_eq!(view["panic_ring"]["truncated_record_count"], 0);
+        assert_eq!(view["panic_ring"]["raw_framebuffer_bytes_exported"], false);
+        assert_eq!(view["closure"]["requires_display_panic_last_frame"], true);
+        assert_eq!(view["closure"]["requires_no_raw_framebuffer_bytes"], true);
+        assert_eq!(view["authority"]["target_to_host_extraction_only"], true);
+        assert_eq!(view["authority"]["real_substrate_halt_executed"], false);
+        assert_eq!(view["last_transition"]["event"], 579);
+    }
+
+    #[test]
+    fn integrated_display_panic_graph_edges_are_history_only() {
+        let mut package = minimal_graph_package();
+        package.semantic.integrated_display_panic_count = 1;
+        package
+            .semantic
+            .integrated_display_panics
+            .push(test_integrated_display_panic_manifest());
+
+        let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
+        assert!(
+            !live
+                .iter()
+                .any(|edge| { edge["from"]["kind"] == "integrated-display-panic" })
+        );
+
+        let history = graph_edges_for_package(&package, GraphEdgeMode::History);
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-display-panic"
+            && edge["relation"] == "integrated-display-panic->display-panic-last-frame"
+            && edge["to"]["kind"] == "display-panic-last-frame"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-display-panic"
+            && edge["relation"] == "integrated-display-panic->substrate-panic-event"
+            && edge["to"]["kind"] == "substrate-event"
+            && edge["to"]["id"] == 578));
     }
 
     #[test]
