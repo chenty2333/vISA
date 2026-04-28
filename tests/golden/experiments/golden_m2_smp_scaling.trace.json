@@ -1,0 +1,99 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "M2-smp-scaling",
+  "name": "golden_m2_smp_scaling",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "calibrated hardware SMP scaling measurement",
+    "real SMP scheduler fairness tuning",
+    "NUMA or lock-free scheduler design",
+    "real target-side runtime execution",
+    "real SMP dynamic code publish"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "S16 recorded smp-scaling-benchmark:9601@1 as semantic SMP scaling evidence",
+      "stress-run smp-stress-run:9501@1 has clean safe point/rendezvous/property evidence",
+      "osctl smp-scaling-benchmark list --json exposes stable ViewV1 output"
+    ],
+    "commands": [
+      {
+        "command": "record-smp-scaling-benchmark",
+        "benchmark": "smp-scaling-benchmark:9601@1",
+        "stress_run": "smp-stress-run:9501@1",
+        "hart_count": 2,
+        "workload_units": 6,
+        "baseline_single_hart_nanos": 120000,
+        "measured_smp_nanos": 72000,
+        "budget_nanos": 90000
+      },
+      {
+        "command": "osctl experiment report --json tests/reports/experiments/m2_smp_scaling.experiment.json",
+        "result": "experiment report validates as vmos-experiment-report"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "SmpScalingBenchmarkRecorded",
+      "benchmark": "smp-scaling-benchmark:9601@1",
+      "event": 119,
+      "speedup_milli": 1666,
+      "efficiency_milli": 833
+    }
+  ],
+  "expected": {
+    "views": {
+      "smp-scaling-benchmark": {
+        "kind": "smp-scaling-benchmark",
+        "id": 9601,
+        "generation": 1,
+        "state": "recorded",
+        "hart_count": 2,
+        "workload_units": 6,
+        "baseline_single_hart_nanos": 120000,
+        "measured_smp_nanos": 72000,
+        "budget_nanos": 90000,
+        "speedup_milli": 1666,
+        "efficiency_milli": 833
+      },
+      "experiment_report": {
+        "schema": "vmos-experiment-report",
+        "name": "m2_smp_scaling_host_validation",
+        "checkpoint": "M2-smp-scaling",
+        "contract_ok": true,
+        "golden_replay_ok": true
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "M2 experiment evidence is backed by a first-class SmpScalingBenchmark ObjectRef",
+      "M2 reuses the S16 semantic command, event, ViewV1, and invariant rather than treating CLI logs as truth",
+      "stress run reference carries exact generation",
+      "stress property failures remain zero",
+      "speedup_milli and efficiency_milli are derived from stored metrics and measured_smp_nanos stays within budget"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "smp_runtime_s16_scaling_benchmark_records_semantic_metrics",
+      "smp_runtime_s16_rejects_unbacked_or_invalid_scaling_benchmark",
+      "preemptive_runtime_views_expose_task_activation_and_scheduler_state",
+      "semantic_roots_reject_smp_scaling_benchmark_root_mismatch"
+    ],
+    "experiment_report": "tests/reports/experiments/m2_smp_scaling.experiment.json",
+    "osctl_json_view": "smp-scaling-benchmark list --json",
+    "smp_scaling_benchmark": "smp-scaling-benchmark:9601@1"
+  }
+}

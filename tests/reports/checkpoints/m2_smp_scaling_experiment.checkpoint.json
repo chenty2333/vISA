@@ -1,0 +1,146 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "M2-smp-scaling-experiment",
+  "phase": "Phase 9 Final Experiment Matrix",
+  "status": "pass",
+  "scope": [
+    "Promote S16 SmpScalingBenchmark semantic evidence into the Phase 9 experiment matrix",
+    "Add machine-checkable vmos-experiment-report evidence for M2",
+    "Add golden trace tying M2 to the underlying semantic command, event, ViewV1, and invariant",
+    "Validate osctl experiment report JSON and osctl smp-scaling-benchmark stable ViewV1 evidence",
+    "Keep M2 as host-validation semantic harness evidence, not calibrated hardware throughput"
+  ],
+  "no_goals": [
+    "calibrated hardware SMP scaling measurement",
+    "real SMP scheduler fairness tuning",
+    "NUMA or lock-free scheduler design",
+    "runtime-only executor behavior change",
+    "real target-side runtime execution",
+    "real SMP dynamic code publish"
+  ],
+  "implemented_contract_clauses": [
+    {
+      "spec": "references/roadmap.md",
+      "clause": "M2 SMP scaling experiment"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+      "clause": "experiment evidence references smp-scaling-benchmark:9601@1 by exact kind/id/generation"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+      "clause": "SMP scaling benchmark references stress run through historical exact-generation edge"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+      "clause": "osctl exposes stable smp-scaling-benchmark ViewV1 and experiment report JSON"
+    },
+    {
+      "spec": "references/specs/execution-flow/agent-checkpoint-report.md",
+      "clause": "checkpoint report records scope, no-goals, validation, evidence, and next checkpoint"
+    }
+  ],
+  "changed_files": [
+    "tests/golden/experiments/golden_m2_smp_scaling.trace.json",
+    "tests/reports/experiments/m2_smp_scaling.experiment.json",
+    "tests/reports/checkpoints/m2_smp_scaling_experiment.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/experiments/golden_m2_smp_scaling.trace.json",
+    "tests/reports/experiments/m2_smp_scaling.experiment.json",
+    "tests/reports/checkpoints/m2_smp_scaling_experiment.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "M2 does not create a parallel SMP scaling truth source; it references the existing S16 SmpScalingBenchmark evidence",
+      "Experiment report uses vmos-experiment-report schema rather than vmos-benchmark-report",
+      "osctl experiment report --json validates the experiment report as stable control-plane evidence",
+      "No Rust runtime or adapter path changed for M2"
+    ],
+    "bad_smells_checked": [
+      "No CLI output string is treated as semantic truth",
+      "No calibrated hardware scaling claim is made",
+      "No third-party crate or adapter internal state appears in the experiment schema",
+      "No target-side execution path changed"
+    ],
+    "residual_notes": [
+      "M3 owns stop-the-world latency experiment evidence",
+      "A future target hardware benchmark can replace the measurement source while preserving the same experiment report shape"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- smp-scaling-benchmark list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- experiment report --json tests/reports/experiments/m2_smp_scaling.experiment.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "./scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "experiment_report": "tests/reports/experiments/m2_smp_scaling.experiment.json",
+    "golden_trace": "tests/golden/experiments/golden_m2_smp_scaling.trace.json",
+    "smp_scaling_benchmark": "smp-scaling-benchmark:9601@1",
+    "event": 119,
+    "hart_count": 2,
+    "workload_units": 6,
+    "baseline_single_hart_nanos": 120000,
+    "measured_smp_nanos": 72000,
+    "speedup_milli": 1666,
+    "efficiency_milli": 833,
+    "contract_validation": "ok"
+  },
+  "no_goals_respected": {
+    "no_real_target_side_cwasm_execution": true,
+    "no_full_wasi_component_runtime": true,
+    "no_real_smp_dynamic_code_publish": true,
+    "no_global_object_id_authority": true,
+    "no_substrate_mapping_as_semantic_truth": true,
+    "no_adapter_internal_state_as_semantic_truth": true
+  },
+  "residual_gaps": [
+    "M3 stop-the-world latency experiment remains",
+    "M2 is host-validation semantic harness evidence, not calibrated target hardware SMP scaling"
+  ],
+  "next_checkpoint": "M3-stop-the-world-latency-experiment"
+}

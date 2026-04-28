@@ -1,0 +1,94 @@
+{
+  "schema": "vmos-experiment-report",
+  "schema_version": 1,
+  "name": "m2_smp_scaling_host_validation",
+  "checkpoint": "M2-smp-scaling",
+  "commands": [
+    {
+      "command": "cargo run -p target_executor",
+      "purpose": "generate semantic package containing SmpScalingBenchmark evidence"
+    },
+    {
+      "command": "cargo run -p osctl -- smp-scaling-benchmark list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "inspect stable SMP scaling benchmark ViewV1 JSON"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "prove package-level contract and replay validation remain green"
+    },
+    {
+      "command": "cargo run -p osctl -- graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "prove SMP scaling evidence remains historical graph evidence"
+    }
+  ],
+  "events": [
+    {
+      "kind": "SmpScalingBenchmarkRecorded",
+      "source": "SemanticGraph::record_smp_scaling_benchmark_with_id",
+      "event": 119,
+      "object": "smp-scaling-benchmark:9601@1"
+    }
+  ],
+  "final_views": {
+    "smp_scaling": {
+      "schema": 1,
+      "kind": "smp-scaling-benchmark",
+      "id": 9601,
+      "generation": 1,
+      "state": "recorded",
+      "references": {
+        "stress_run": {
+          "kind": "smp-stress-run",
+          "id": 9501,
+          "generation": 1
+        }
+      },
+      "metrics": {
+        "hart_count": 2,
+        "workload_units": 6,
+        "baseline_single_hart_nanos": 120000,
+        "measured_smp_nanos": 72000,
+        "budget_nanos": 90000,
+        "speedup_milli": 1666,
+        "efficiency_milli": 833,
+        "within_budget": true
+      },
+      "coverage": {
+        "stress_safe_points": 3,
+        "stress_rendezvous": 3,
+        "stress_property_failures": 0
+      }
+    },
+    "contract_validation": {
+      "ok": true,
+      "violation_count": 0
+    },
+    "osctl": {
+      "schema": "vmos-osctl-json-v1",
+      "stable_view": "smp-scaling-benchmark.list",
+      "read_only": true
+    }
+  },
+  "metrics": {
+    "benchmark_count": 1,
+    "hart_count": 2,
+    "workload_units": 6,
+    "baseline_single_hart_nanos": 120000,
+    "measured_smp_nanos": 72000,
+    "budget_nanos": 90000,
+    "speedup_milli": 1666,
+    "efficiency_milli": 833,
+    "within_budget": true,
+    "measurement_source": "smp-scaling-benchmark:9601@1",
+    "hardware_dependency": "none"
+  },
+  "validation": {
+    "contract_ok": true,
+    "golden_replay_ok": true,
+    "osctl_view_ok": true,
+    "semantic_object": "SmpScalingBenchmark",
+    "semantic_command": "RecordSmpScalingBenchmark",
+    "semantic_event": "SmpScalingBenchmarkRecorded",
+    "semantic_invariant": "exact stress run generation, clean stress evidence, speedup/efficiency derivation, and budget"
+  }
+}
