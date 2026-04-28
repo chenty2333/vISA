@@ -1054,6 +1054,11 @@ fn activation_context_view_v1(context: &ActivationContextManifest) -> serde_json
 }
 
 fn saved_context_view_v1(saved: &SavedContextManifest) -> serde_json::Value {
+    let vector_status = if saved.vector_status.is_empty() {
+        "absent"
+    } else {
+        saved.vector_status.as_str()
+    };
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
         "kind": "saved-context",
@@ -1077,12 +1082,18 @@ fn saved_context_view_v1(saved: &SavedContextManifest) -> serde_json::Value {
                 "id": id,
                 "generation": saved.source_preemption_generation,
             })),
+            "vector_state": saved.vector_state.as_ref().map(object_ref_manifest_json),
         },
         "machine_frame": {
             "pc": saved.pc,
             "sp": saved.sp,
             "flags": saved.flags,
             "integer_registers": saved.integer_registers,
+        },
+        "vector_context": {
+            "status": vector_status,
+            "vector_state": saved.vector_state.as_ref().map(object_ref_manifest_json),
+            "saved_at_event": saved.vector_saved_at_event,
         },
         "reason": saved.reason,
         "note": saved.note,
@@ -5718,6 +5729,8 @@ fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
                 "generation": saved.generation,
                 "context": saved.context,
                 "context_generation": saved.context_generation,
+                "vector_status": saved.vector_status,
+                "vector_state": saved.vector_state.as_ref().map(object_ref_manifest_json),
             })).collect::<Vec<_>>(),
             "timer_interrupts": package.semantic.timer_interrupts.iter().map(|interrupt| serde_json::json!({
                 "id": interrupt.id,
@@ -11168,6 +11181,15 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "captured-from-preemption",
                 "historical",
                 Some(saved.saved_at_event),
+            ));
+        }
+        if let Some(vector_state) = &saved.vector_state {
+            edges.push(graph_edge(
+                object_ref_json("saved-context", saved.id, saved.generation),
+                object_ref_manifest_json(vector_state),
+                "saved-vector-state",
+                "historical",
+                saved.vector_saved_at_event.or(Some(saved.saved_at_event)),
             ));
         }
     }
@@ -17464,6 +17486,43 @@ mod tests {
     }
 
     #[test]
+    fn saved_context_view_v1_exposes_preempted_vector_state() {
+        let view = saved_context_view_v1(&SavedContextManifest {
+            id: 13,
+            context: 12,
+            context_generation: 4,
+            activation: 11,
+            activation_generation: 4,
+            owner_task: 7,
+            owner_task_generation: 1,
+            source_preemption: Some(6),
+            source_preemption_generation: Some(1),
+            generation: 2,
+            state: "captured".to_owned(),
+            reason: "timer-preempt".to_owned(),
+            pc: 0x2000,
+            sp: 0x9000,
+            flags: 0,
+            integer_registers: 33,
+            vector_state: Some(ContractObjectRefManifest {
+                kind: "vector-state".to_owned(),
+                id: 22_002,
+                generation: 1,
+            }),
+            vector_status: "clean".to_owned(),
+            vector_saved_at_event: Some(77),
+            saved_at_event: 41,
+            note: "preempted vector frame".to_owned(),
+        });
+
+        assert_eq!(view["kind"], "saved-context");
+        assert_eq!(view["references"]["vector_state"]["kind"], "vector-state");
+        assert_eq!(view["references"]["vector_state"]["id"], 22_002);
+        assert_eq!(view["vector_context"]["status"], "clean");
+        assert_eq!(view["vector_context"]["saved_at_event"], 77);
+    }
+
+    #[test]
     fn preemptive_runtime_views_expose_task_activation_and_scheduler_state() {
         let task = task_view_v1(&TaskRecordManifest {
             id: 7,
@@ -17657,6 +17716,9 @@ mod tests {
             sp: 0x8000,
             flags: 0,
             integer_registers: 33,
+            vector_state: None,
+            vector_status: "absent".to_owned(),
+            vector_saved_at_event: None,
             saved_at_event: 10,
             note: "preempted frame".to_owned(),
         });
@@ -18453,6 +18515,7 @@ mod tests {
         assert_eq!(saved["references"]["activation_context"]["generation"], 2);
         assert_eq!(saved["references"]["source_preemption"]["id"], 15);
         assert_eq!(saved["references"]["source_preemption"]["generation"], 1);
+        assert_eq!(saved["vector_context"]["status"], "absent");
         let timer = timer_interrupt_view_v1(&package.semantic.timer_interrupts[0]);
         assert_eq!(timer["kind"], "timer-interrupt");
         assert_eq!(timer["owner"]["timer_epoch"], 3);

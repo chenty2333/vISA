@@ -180,6 +180,9 @@ impl SemanticGraph {
             sp,
             flags,
             integer_registers: 33,
+            vector_state: None,
+            vector_status: ActivationVectorState::Absent,
+            vector_saved_at_event: None,
             saved_at_event: event,
             note: note.to_string(),
         });
@@ -328,9 +331,161 @@ impl SemanticGraph {
             sp,
             flags,
             integer_registers: 33,
+            vector_state: None,
+            vector_status: ActivationVectorState::Absent,
+            vector_saved_at_event: None,
             saved_at_event: saved_event,
             note: note.to_string(),
         });
+        true
+    }
+
+    pub(crate) fn validate_dirty_vector_state_preempt_save(
+        &self,
+        context: ActivationContextId,
+        context_generation: Generation,
+        saved_context: SavedContextId,
+        saved_context_generation: Generation,
+        preemption: PreemptionId,
+        preemption_generation: Generation,
+        vector_state: ContractObjectRef,
+    ) -> Result<(), &'static str> {
+        let Some(context_record) = self.activation_contexts.iter().find(|record| {
+            record.id == context
+                && record.generation == context_generation
+                && record.state == ActivationContextState::Saved
+        }) else {
+            return Err("saved activation context generation is missing");
+        };
+        if context_record.current_saved_context != Some(saved_context)
+            || context_record.current_saved_context_generation != Some(saved_context_generation)
+        {
+            return Err("saved activation context does not reference saved context generation");
+        }
+        if context_record.vector_status != ActivationVectorState::Dirty
+            || context_record.vector_state != Some(vector_state)
+        {
+            return Err("preempt vector save requires dirty activation vector state");
+        }
+
+        let Some(saved_record) = self.saved_contexts.iter().find(|record| {
+            record.id == saved_context
+                && record.generation == saved_context_generation
+                && record.state == SavedContextState::Captured
+        }) else {
+            return Err("saved context generation is missing or not captured");
+        };
+        if saved_record.vector_state.is_some()
+            || saved_record.vector_status != ActivationVectorState::Absent
+            || saved_record.vector_saved_at_event.is_some()
+        {
+            return Err("saved context already carries vector state");
+        }
+        if saved_record.context != context
+            || saved_record.context_generation != context_generation
+            || saved_record.activation != context_record.activation
+            || saved_record.activation_generation != context_record.activation_generation
+        {
+            return Err("saved context does not match activation context generation");
+        }
+        if saved_record.source_preemption != Some(preemption)
+            || saved_record.source_preemption_generation != Some(preemption_generation)
+        {
+            return Err("saved context preemption generation mismatch");
+        }
+
+        let Some(preemption_record) = self.preemptions.iter().find(|record| {
+            record.id == preemption
+                && record.generation == preemption_generation
+                && record.state == PreemptionState::Applied
+        }) else {
+            return Err("preemption generation is missing");
+        };
+        if preemption_record.activation != context_record.activation
+            || preemption_record.activation_generation_after != context_record.activation_generation
+            || preemption_record.activation != saved_record.activation
+            || preemption_record.activation_generation_after != saved_record.activation_generation
+        {
+            return Err("preempt vector save activation generation mismatch");
+        }
+
+        self.validate_activation_context_vector_state(
+            context,
+            context_generation,
+            Some(vector_state),
+            ActivationVectorState::Dirty,
+        )
+    }
+
+    pub fn save_dirty_vector_state_on_preempt(
+        &mut self,
+        context: ActivationContextId,
+        context_generation: Generation,
+        saved_context: SavedContextId,
+        saved_context_generation: Generation,
+        preemption: PreemptionId,
+        preemption_generation: Generation,
+        vector_state: ContractObjectRef,
+        _note: &str,
+    ) -> bool {
+        if self
+            .validate_dirty_vector_state_preempt_save(
+                context,
+                context_generation,
+                saved_context,
+                saved_context_generation,
+                preemption,
+                preemption_generation,
+                vector_state,
+            )
+            .is_err()
+        {
+            return false;
+        }
+        let Some(context_index) = self.activation_contexts.iter().position(|record| {
+            record.id == context
+                && record.generation == context_generation
+                && record.state == ActivationContextState::Saved
+        }) else {
+            return false;
+        };
+        let Some(saved_index) = self.saved_contexts.iter().position(|record| {
+            record.id == saved_context
+                && record.generation == saved_context_generation
+                && record.state == SavedContextState::Captured
+        }) else {
+            return false;
+        };
+
+        let context_generation_before = self.activation_contexts[context_index].generation;
+        self.activation_contexts[context_index].generation += 1;
+        let context_generation_after = self.activation_contexts[context_index].generation;
+        self.saved_contexts[saved_index].generation += 1;
+        let saved_context_generation_after = self.saved_contexts[saved_index].generation;
+        let event = self.event_log.push(
+            "scheduler",
+            EventKind::DirtyVectorStateSavedOnPreempt {
+                saved_context,
+                saved_context_generation: saved_context_generation_after,
+                context,
+                context_generation_before,
+                context_generation_after,
+                preemption,
+                preemption_generation,
+                vector_state,
+                generation: 1,
+            },
+        );
+
+        self.activation_contexts[context_index].vector_status = ActivationVectorState::Clean;
+        self.activation_contexts[context_index].vector_state_event = Some(event);
+        self.activation_contexts[context_index].last_event = Some(event);
+        self.activation_contexts[context_index].current_saved_context_generation =
+            Some(saved_context_generation_after);
+        self.saved_contexts[saved_index].context_generation = context_generation_after;
+        self.saved_contexts[saved_index].vector_state = Some(vector_state);
+        self.saved_contexts[saved_index].vector_status = ActivationVectorState::Clean;
+        self.saved_contexts[saved_index].vector_saved_at_event = Some(event);
         true
     }
 
@@ -437,6 +592,9 @@ impl SemanticGraph {
         let context_generation_before = self.activation_contexts[index].generation;
         self.activation_contexts[index].generation += 1;
         let context_generation_after = self.activation_contexts[index].generation;
+        let current_saved_context = self.activation_contexts[index].current_saved_context;
+        let current_saved_context_generation =
+            self.activation_contexts[index].current_saved_context_generation;
         let event = self.event_log.push(
             "scheduler",
             EventKind::ActivationContextVectorStateUpdated {
@@ -452,6 +610,14 @@ impl SemanticGraph {
         self.activation_contexts[index].vector_status = vector_status;
         self.activation_contexts[index].vector_state_event = Some(event);
         self.activation_contexts[index].last_event = Some(event);
+        if let (Some(saved_context), Some(saved_context_generation)) =
+            (current_saved_context, current_saved_context_generation)
+            && let Some(saved) = self.saved_contexts.iter_mut().find(|record| {
+                record.id == saved_context && record.generation == saved_context_generation
+            })
+        {
+            saved.context_generation = context_generation_after;
+        }
         true
     }
 
@@ -787,6 +953,17 @@ impl SemanticGraph {
                                     && Some(*event_vector_state) == context.vector_state
                                     && context.vector_status == ActivationVectorState::Dirty
                             }
+                            EventKind::DirtyVectorStateSavedOnPreempt {
+                                context: event_context,
+                                context_generation_after,
+                                vector_state: event_vector_state,
+                                ..
+                            } => {
+                                *event_context == context.id
+                                    && *context_generation_after <= context.generation
+                                    && Some(*event_vector_state) == context.vector_state
+                                    && context.vector_status == ActivationVectorState::Clean
+                            }
                             _ => false,
                         }
                     }) {
@@ -905,6 +1082,72 @@ impl SemanticGraph {
                             saved_context: saved.id,
                         },
                     );
+                }
+            }
+            match (
+                saved.vector_status.requires_vector_state(),
+                saved.vector_state,
+            ) {
+                (false, None) => {}
+                (false, Some(_)) | (true, None) => {
+                    return Err(SemanticInvariantError::SavedContextVectorStateInvalid {
+                        saved_context: saved.id,
+                    });
+                }
+                (true, Some(vector_state)) => {
+                    if vector_state.kind != ContractObjectKind::VectorState
+                        || vector_state.id == 0
+                        || vector_state.generation == 0
+                    {
+                        return Err(SemanticInvariantError::SavedContextVectorStateInvalid {
+                            saved_context: saved.id,
+                        });
+                    }
+                    let Some(vector_record) = self.vector_states.iter().find(|record| {
+                        record.id == vector_state.id && record.generation == vector_state.generation
+                    }) else {
+                        return Err(SemanticInvariantError::SavedContextVectorStateInvalid {
+                            saved_context: saved.id,
+                        });
+                    };
+                    if vector_record.owner_activation
+                        != ContractObjectRef::new(
+                            ContractObjectKind::Activation,
+                            saved.activation,
+                            saved.activation_generation,
+                        )
+                    {
+                        return Err(SemanticInvariantError::SavedContextVectorStateInvalid {
+                            saved_context: saved.id,
+                        });
+                    }
+                    let Some(vector_event) = saved.vector_saved_at_event else {
+                        return Err(SemanticInvariantError::SavedContextVectorStateInvalid {
+                            saved_context: saved.id,
+                        });
+                    };
+                    if !self.event_log.events.iter().any(|event| {
+                        event.id == vector_event
+                            && matches!(
+                                &event.kind,
+                                EventKind::DirtyVectorStateSavedOnPreempt {
+                                    saved_context,
+                                    saved_context_generation,
+                                    context,
+                                    context_generation_after,
+                                    vector_state: event_vector_state,
+                                    ..
+                                } if *saved_context == saved.id
+                                    && *saved_context_generation <= saved.generation
+                                    && *context == saved.context
+                                    && *context_generation_after <= saved.context_generation
+                                    && *event_vector_state == vector_state
+                            )
+                    }) {
+                        return Err(SemanticInvariantError::SavedContextVectorStateInvalid {
+                            saved_context: saved.id,
+                        });
+                    }
                 }
             }
         }

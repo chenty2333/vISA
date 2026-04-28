@@ -106,6 +106,17 @@ pub enum EventKind {
         reason: SavedContextReason,
         generation: Generation,
     },
+    DirtyVectorStateSavedOnPreempt {
+        saved_context: SavedContextId,
+        saved_context_generation: Generation,
+        context: ActivationContextId,
+        context_generation_before: Generation,
+        context_generation_after: Generation,
+        preemption: PreemptionId,
+        preemption_generation: Generation,
+        vector_state: ContractObjectRef,
+        generation: Generation,
+    },
     TimerInterruptRecorded {
         interrupt: TimerInterruptId,
         timer_epoch: u64,
@@ -1834,6 +1845,20 @@ impl EventKind {
             } => format!(
                 "SavedContextCaptured saved_context={saved_context} context={context}@{context_generation} activation={activation}@{activation_generation} reason={} generation={generation}",
                 reason.as_str()
+            ),
+            Self::DirtyVectorStateSavedOnPreempt {
+                saved_context,
+                saved_context_generation,
+                context,
+                context_generation_before,
+                context_generation_after,
+                preemption,
+                preemption_generation,
+                vector_state,
+                generation,
+            } => format!(
+                "DirtyVectorStateSavedOnPreempt saved_context={saved_context}@{saved_context_generation} context={context}@{context_generation_before}->{context_generation_after} preemption={preemption}@{preemption_generation} vector_state={} vector_status=clean generation={generation}",
+                vector_state.summary()
             ),
             Self::TimerInterruptRecorded {
                 interrupt,

@@ -97,6 +97,16 @@ pub enum SemanticCommand {
         flags: u64,
         note: String,
     },
+    SaveDirtyVectorStateOnPreempt {
+        context: ActivationContextId,
+        context_generation: Generation,
+        saved_context: SavedContextId,
+        saved_context_generation: Generation,
+        preemption: PreemptionId,
+        preemption_generation: Generation,
+        vector_state: ContractObjectRef,
+        note: String,
+    },
     RecordTimerInterrupt {
         interrupt: TimerInterruptId,
         timer_epoch: u64,
@@ -1362,6 +1372,7 @@ impl SemanticCommand {
             Self::EnableLazyVectorState { .. } => "enable-lazy-vector-state",
             Self::CaptureSavedContext { .. } => "capture-saved-context",
             Self::SavePreemptedContext { .. } => "save-preempted-context",
+            Self::SaveDirtyVectorStateOnPreempt { .. } => "save-dirty-vector-state-on-preempt",
             Self::RecordTimerInterrupt { .. } => "record-timer-interrupt",
             Self::RecordIpiEvent { .. } => "record-ipi-event",
             Self::RemotePreemptActivation { .. } => "remote-preempt-activation",
@@ -2076,6 +2087,26 @@ impl SemanticGraph {
                     }
                 }
             }
+            SemanticCommand::SaveDirtyVectorStateOnPreempt {
+                context,
+                context_generation,
+                saved_context,
+                saved_context_generation,
+                preemption,
+                preemption_generation,
+                vector_state,
+                ..
+            } => self
+                .validate_dirty_vector_state_preempt_save(
+                    *context,
+                    *context_generation,
+                    *saved_context,
+                    *saved_context_generation,
+                    *preemption,
+                    *preemption_generation,
+                    *vector_state,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::RecordTimerInterrupt {
                 interrupt,
                 timer_epoch,
@@ -5153,6 +5184,25 @@ impl SemanticGraph {
                 pc,
                 sp,
                 flags,
+                &note,
+            ),
+            SemanticCommand::SaveDirtyVectorStateOnPreempt {
+                context,
+                context_generation,
+                saved_context,
+                saved_context_generation,
+                preemption,
+                preemption_generation,
+                vector_state,
+                note,
+            } => self.save_dirty_vector_state_on_preempt(
+                context,
+                context_generation,
+                saved_context,
+                saved_context_generation,
+                preemption,
+                preemption_generation,
+                vector_state,
                 &note,
             ),
             SemanticCommand::RecordTimerInterrupt {

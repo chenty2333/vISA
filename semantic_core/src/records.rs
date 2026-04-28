@@ -212,6 +212,9 @@ pub struct SavedContextRecord {
     pub sp: u64,
     pub flags: u64,
     pub integer_registers: u16,
+    pub vector_state: Option<ContractObjectRef>,
+    pub vector_status: ActivationVectorState,
+    pub vector_saved_at_event: Option<EventId>,
     pub saved_at_event: EventId,
     pub note: String,
 }

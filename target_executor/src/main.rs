@@ -8334,6 +8334,14 @@ fn build_target_executor_v1(
         &mut store_manager,
         &mut executor,
     )?;
+    run_simd_preempt_vector_save_harness(
+        &verified_artifacts,
+        semantic,
+        &mut publisher,
+        &mut store_manager,
+        &mut executor,
+        &mut ledger,
+    )?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8785,6 +8793,334 @@ fn run_simd_lazy_vector_enable_harness(
         if result.status != CommandStatus::Applied {
             return Err(format!(
                 "simd runtime v6 command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn run_simd_preempt_vector_save_harness(
+    verified_artifacts: &[VerifiedArtifact],
+    semantic: &mut SemanticGraph,
+    publisher: &mut CodePublisher,
+    store_manager: &mut TargetStoreManager,
+    executor: &mut TargetExecutor,
+    ledger: &mut CapabilityLedger,
+) -> Result<(), Box<dyn Error>> {
+    let Some(artifact) = verified_artifacts.first() else {
+        return Ok(());
+    };
+    let feature_set = 21_002;
+    let feature_recorded = semantic.apply_envelope(CommandEnvelope::new(
+        70_010,
+        "simd-runtime-v7",
+        SemanticCommand::RecordTargetFeatureSet {
+            feature_set,
+            name: "v7-simd-preempt-save-fixture".to_owned(),
+            discovery_source: "target-executor-v7-preempt-vector-save-harness".to_owned(),
+            target_profile: "riscv64-vector-host-validation-fixture".to_owned(),
+            target_arch: "riscv64".to_owned(),
+            base_isa: "rv64gcv".to_owned(),
+            simd_abi: "riscv-v".to_owned(),
+            simd_supported: true,
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            scalar_fallback: false,
+            unsupported_reason: String::new(),
+            note: "v7 synthetic supported SIMD fixture for preempt vector save".to_owned(),
+        },
+    ));
+    if feature_recorded.status != CommandStatus::Applied {
+        return Err(format!(
+            "simd runtime v7 target feature command {} ({}) failed: status={} violations={:?}",
+            feature_recorded.command_id,
+            feature_recorded.command,
+            feature_recorded.status.as_str(),
+            feature_recorded.violations
+        )
+        .into());
+    }
+    let feature_ref = semantic
+        .target_feature_sets()
+        .iter()
+        .find(|feature| feature.id == feature_set)
+        .map(|feature| feature.object_ref())
+        .ok_or("v7 target feature fixture missing")?;
+
+    let store_id = store_manager.register_verified_artifact(
+        artifact,
+        "restartable",
+        "simd-preempt-vector-save",
+    );
+    store_manager
+        .set_running(store_id)
+        .map_err(|error| error.message())?;
+    let store = store_manager
+        .record(store_id)
+        .ok_or("SIMD preempt vector save store missing after registration")?
+        .store
+        .clone();
+    let code_id = publisher
+        .allocate(artifact)
+        .map_err(|error| error.message())?;
+    publisher
+        .declare_simd_requirement(
+            code_id,
+            feature_ref,
+            "riscv-v",
+            32,
+            128,
+            "v7 preempt vector save harness",
+        )
+        .map_err(|error| error.message())?;
+    publisher.fill(code_id).map_err(|error| error.message())?;
+    publisher.seal(code_id).map_err(|error| error.message())?;
+    publisher
+        .publish_rx(code_id)
+        .map_err(|error| error.message())?;
+    publisher
+        .bind_to_store(code_id, &store)
+        .map_err(|error| error.message())?;
+    let code = publisher
+        .object(code_id)
+        .ok_or("SIMD preempt vector save code missing after bind")?
+        .clone();
+    let activation = executor
+        .start_activation(
+            &store,
+            &code,
+            ActivationEntry::Symbol("simd_preempt_vector_save".to_owned()),
+        )
+        .map_err(|error| error.message())?;
+    let hostcall_spec = code
+        .hostcalls
+        .iter()
+        .find(|spec| {
+            spec.number == 1 && spec.object == "console.write" && spec.operation == "write"
+        })
+        .ok_or("SIMD preempt vector save hostcall spec missing")?;
+    ledger
+        .grant_manifest_binding(
+            &code.package,
+            &hostcall_spec.object,
+            &[hostcall_spec.operation.as_str()],
+            "activation",
+            CapabilityClass::ServiceImport,
+            Some(store.id),
+            Some(store.generation),
+            None,
+            "v7-preempt-vector-save-hostcall",
+        )
+        .map_err(|error| error.message())?;
+    for hostcall_seq in 1..=3 {
+        let activation_generation = executor
+            .activations()
+            .iter()
+            .find(|record| record.id == activation)
+            .map(|record| record.generation)
+            .ok_or("SIMD preempt vector activation missing before generation advance")?;
+        let mut frame = HostcallFrame::new_bound(
+            activation,
+            &store,
+            &code,
+            hostcall_spec.number,
+            &hostcall_spec.object,
+            &hostcall_spec.operation,
+            ledger
+                .generation_of(&code.package, &hostcall_spec.object)
+                .unwrap_or(1),
+        )
+        .with_hostcall_seq(hostcall_seq);
+        frame.activation_generation = activation_generation;
+        if let Some(cap_arg) = capability_handle_arg_for(ledger, &code.package, hostcall_spec) {
+            frame = frame.with_cap_args(vec![cap_arg]);
+        }
+        executor
+            .invoke_hostcall(&code, frame.to_wire_frame(), ledger)
+            .map_err(|error| error.message())?;
+    }
+
+    semantic.ensure_task(
+        9_070,
+        FrontendKind::WasmApp,
+        "v7-simd-preempt-vector-save-task",
+    );
+    let commands = [
+        CommandEnvelope::new(
+            70_011,
+            "simd-runtime-v7",
+            SemanticCommand::RegisterHart {
+                hart: 7,
+                hardware_id: 7,
+                label: "v7-vector-save-hart".to_owned(),
+                boot: false,
+                note: "v7 hart for timer preempt evidence".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            70_012,
+            "simd-runtime-v7",
+            SemanticCommand::SetHartState {
+                hart: 7,
+                hart_generation: 1,
+                state: HartState::Idle,
+                reason: "v7-scheduler-ready".to_owned(),
+                note: "v7 hart idle before dispatch".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            70_013,
+            "simd-runtime-v7",
+            SemanticCommand::CreateRunnableQueue {
+                queue: 9_070,
+                label: "v7-simd-preempt-runnable-queue".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            70_014,
+            "simd-runtime-v7",
+            SemanticCommand::BindRunnableQueueOwner {
+                queue: 9_070,
+                queue_generation: 1,
+                hart: 7,
+                hart_generation: 2,
+                note: "v7 queue owned by vector-save hart".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            70_015,
+            "simd-runtime-v7",
+            SemanticCommand::CreateRuntimeActivation {
+                activation,
+                owner_task: 9_070,
+                owner_task_generation: 1,
+                owner_store: None,
+                owner_store_generation: None,
+                code_object: Some(code.object_ref()),
+            },
+        ),
+        CommandEnvelope::new(
+            70_016,
+            "simd-runtime-v7",
+            SemanticCommand::EnqueueRunnable {
+                queue: 9_070,
+                activation,
+                activation_generation: 1,
+            },
+        ),
+        CommandEnvelope::new(
+            70_017,
+            "simd-runtime-v7",
+            SemanticCommand::DequeueRunnable {
+                queue: 9_070,
+                activation,
+            },
+        ),
+        CommandEnvelope::new(
+            70_018,
+            "simd-runtime-v7",
+            SemanticCommand::RecordTimerInterrupt {
+                interrupt: 9_070,
+                timer_epoch: 70,
+                hart: 7,
+                hart_generation: 2,
+                target_activation: Some(activation),
+                target_activation_generation: Some(3),
+                note: "v7 timer interrupt for dirty vector preempt".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            70_019,
+            "simd-runtime-v7",
+            SemanticCommand::PreemptActivation {
+                preemption: 9_070,
+                activation,
+                activation_generation: 3,
+                timer_interrupt: 9_070,
+                timer_interrupt_generation: 1,
+                queue: 9_070,
+                note: "v7 timer preempt before vector state save".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            70_020,
+            "simd-runtime-v7",
+            SemanticCommand::SavePreemptedContext {
+                context: 9_070,
+                saved_context: 9_070,
+                preemption: 9_070,
+                preemption_generation: 1,
+                pc: 0x7070,
+                sp: 0x9000,
+                flags: 0,
+                note: "v7 integer frame saved before vector state".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            70_021,
+            "simd-runtime-v7",
+            SemanticCommand::RecordVectorState {
+                vector_state: 22_002,
+                owner_activation: ContractObjectRef::new(
+                    ContractObjectKind::Activation,
+                    activation,
+                    4,
+                ),
+                owner_store: ContractObjectRef::new(
+                    ContractObjectKind::Store,
+                    store.id,
+                    store.generation,
+                ),
+                code_object: code.object_ref(),
+                target_feature_set: feature_ref,
+                simd_abi: "riscv-v".to_owned(),
+                vector_register_count: 32,
+                vector_register_bits: 128,
+                register_bytes: 512,
+                state: VectorStateState::Reserved,
+                note: "v7 reserved dirty vector state at preempt".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            70_022,
+            "simd-runtime-v7",
+            SemanticCommand::UpdateActivationContextVectorState {
+                context: 9_070,
+                context_generation: 2,
+                vector_state: Some(ContractObjectRef::new(
+                    ContractObjectKind::VectorState,
+                    22_002,
+                    1,
+                )),
+                vector_status: ActivationVectorState::Dirty,
+                note: "v7 context carries dirty vector state before save".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            70_023,
+            "simd-runtime-v7",
+            SemanticCommand::SaveDirtyVectorStateOnPreempt {
+                context: 9_070,
+                context_generation: 3,
+                saved_context: 9_070,
+                saved_context_generation: 1,
+                preemption: 9_070,
+                preemption_generation: 1,
+                vector_state: ContractObjectRef::new(ContractObjectKind::VectorState, 22_002, 1),
+                note: "v7 timer preempt saves dirty vector state".to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "simd runtime v7 command {} ({}) failed: status={} violations={:?}",
                 result.command_id,
                 result.command,
                 result.status.as_str(),
@@ -10171,7 +10507,7 @@ fn semantic_roots(
             .iter()
             .map(|saved| {
                 format!(
-                    "saved-context id={} context={}@{} activation={}@{} state={} reason={} pc={:#x} sp={:#x} generation={}",
+                    "saved-context id={} context={}@{} activation={}@{} state={} reason={} pc={:#x} sp={:#x} vector_status={} vector_state={} generation={}",
                     saved.id,
                     saved.context,
                     saved.context_generation,
@@ -10181,6 +10517,11 @@ fn semantic_roots(
                     saved.reason.as_str(),
                     saved.pc,
                     saved.sp,
+                    saved.vector_status.as_str(),
+                    saved
+                        .vector_state
+                        .map(|vector_state| vector_state.summary())
+                        .unwrap_or_else(|| "none".to_owned()),
                     saved.generation
                 )
             })
@@ -12692,6 +13033,9 @@ fn saved_context_manifest(saved: &semantic_core::SavedContextRecord) -> SavedCon
         sp: saved.sp,
         flags: saved.flags,
         integer_registers: saved.integer_registers,
+        vector_state: saved.vector_state.map(contract_object_ref_manifest),
+        vector_status: saved.vector_status.as_str().to_owned(),
+        vector_saved_at_event: saved.vector_saved_at_event,
         saved_at_event: saved.saved_at_event,
         note: saved.note.clone(),
     }

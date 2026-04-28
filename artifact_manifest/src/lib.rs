@@ -1075,6 +1075,12 @@ pub struct SavedContextManifest {
     pub sp: u64,
     pub flags: u64,
     pub integer_registers: u16,
+    #[serde(default)]
+    pub vector_state: Option<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub vector_status: String,
+    #[serde(default)]
+    pub vector_saved_at_event: Option<u64>,
     pub saved_at_event: u64,
     pub note: String,
 }

@@ -440,6 +440,9 @@ pub enum SemanticInvariantError {
         saved_context: SavedContextId,
         preemption: PreemptionId,
     },
+    SavedContextVectorStateInvalid {
+        saved_context: SavedContextId,
+    },
     TimerInterruptEpochNonMonotonic {
         interrupt: TimerInterruptId,
         timer_epoch: u64,

@@ -18043,7 +18043,12 @@ fn preemptive_runtime_p1_context_commands_emit_events_and_pass_invariants() {
             note: "initial frame".to_string(),
         },
     ));
-    assert_eq!(saved.status, CommandStatus::Applied);
+    assert_eq!(
+        saved.status,
+        CommandStatus::Applied,
+        "{:?}",
+        saved.violations
+    );
     assert_eq!(graph.activation_contexts()[0].generation, 2);
     assert_eq!(
         graph.activation_contexts()[0].state,
@@ -19519,6 +19524,154 @@ fn simd_runtime_v6_rejects_lazy_enable_with_unavailable_vector_state() {
     assert_eq!(
         rejected.violations,
         vec!["activation context vector state must be live-owned".to_string()]
+    );
+}
+
+fn v7_preempted_dirty_vector_context() -> SemanticGraph {
+    let mut graph = p4_preempted_activation();
+    assert!(graph.save_preempted_context_with_ids(12, 13, 6, 1, 0x2000, 0x9000, 0, "timer"));
+    assert!(graph.record_target_feature_set_with_id(
+        21_002,
+        "riscv64-vector-preempt-test-target",
+        "semantic-contract-v7-test",
+        "riscv64-vector-preempt-test",
+        "riscv64",
+        "rv64gcv",
+        "riscv-v",
+        true,
+        32,
+        128,
+        false,
+        "",
+        "v7 supported SIMD preempt fixture",
+    ));
+    assert!(graph.record_vector_state_with_id(
+        22_002,
+        ContractObjectRef::new(ContractObjectKind::Activation, 11, 4),
+        ContractObjectRef::new(ContractObjectKind::Store, 2, 5),
+        ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4),
+        ContractObjectRef::new(ContractObjectKind::TargetFeatureSet, 21_002, 1),
+        "riscv-v",
+        32,
+        128,
+        512,
+        VectorStateState::Reserved,
+        "v7 reserved vector state",
+    ));
+    assert!(graph.update_activation_context_vector_state(
+        12,
+        2,
+        Some(ContractObjectRef::new(
+            ContractObjectKind::VectorState,
+            22_002,
+            1,
+        )),
+        ActivationVectorState::Dirty,
+        "dirty vector state before preempt save",
+    ));
+    graph
+}
+
+#[test]
+fn simd_runtime_v7_preempt_saves_dirty_vector_state_as_clean_context() {
+    let mut graph = v7_preempted_dirty_vector_context();
+    let vector_ref = ContractObjectRef::new(ContractObjectKind::VectorState, 22_002, 1);
+
+    let saved = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v7-test",
+        SemanticCommand::SaveDirtyVectorStateOnPreempt {
+            context: 12,
+            context_generation: 3,
+            saved_context: 13,
+            saved_context_generation: 1,
+            preemption: 6,
+            preemption_generation: 1,
+            vector_state: vector_ref,
+            note: "timer preempt saves dirty vector state".to_string(),
+        },
+    ));
+
+    assert_eq!(
+        saved.status,
+        CommandStatus::Applied,
+        "{:?}",
+        saved.violations
+    );
+    assert_eq!(
+        graph.activation_contexts()[0].vector_status,
+        ActivationVectorState::Clean
+    );
+    assert_eq!(graph.activation_contexts()[0].generation, 4);
+    assert_eq!(
+        graph.activation_contexts()[0].current_saved_context_generation,
+        Some(2)
+    );
+    assert_eq!(graph.saved_contexts()[0].generation, 2);
+    assert_eq!(graph.saved_contexts()[0].context_generation, 4);
+    assert_eq!(graph.saved_contexts()[0].vector_state, Some(vector_ref));
+    assert_eq!(
+        graph.saved_contexts()[0].vector_status,
+        ActivationVectorState::Clean
+    );
+    assert!(graph.saved_contexts()[0].vector_saved_at_event.is_some());
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "DirtyVectorStateSavedOnPreempt saved_context=13@2 context=12@3->4 preemption=6@1 vector_state=vector-state:22002@1 vector_status=clean generation=1"
+    );
+}
+
+#[test]
+fn simd_runtime_v7_rejects_preempt_vector_save_without_dirty_context() {
+    let mut graph = p4_preempted_activation();
+    assert!(graph.save_preempted_context_with_ids(12, 13, 6, 1, 0x2000, 0x9000, 0, "timer"));
+
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v7-test",
+        SemanticCommand::SaveDirtyVectorStateOnPreempt {
+            context: 12,
+            context_generation: 2,
+            saved_context: 13,
+            saved_context_generation: 1,
+            preemption: 6,
+            preemption_generation: 1,
+            vector_state: ContractObjectRef::new(ContractObjectKind::VectorState, 22_002, 1),
+            note: "no dirty vector state".to_string(),
+        },
+    ));
+
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["preempt vector save requires dirty activation vector state".to_string()]
+    );
+}
+
+#[test]
+fn simd_runtime_v7_rejects_stale_saved_context_generation() {
+    let mut graph = v7_preempted_dirty_vector_context();
+
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v7-test",
+        SemanticCommand::SaveDirtyVectorStateOnPreempt {
+            context: 12,
+            context_generation: 3,
+            saved_context: 13,
+            saved_context_generation: 99,
+            preemption: 6,
+            preemption_generation: 1,
+            vector_state: ContractObjectRef::new(ContractObjectKind::VectorState, 22_002, 1),
+            note: "stale saved generation".to_string(),
+        },
+    ));
+
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["saved activation context does not reference saved context generation".to_string()]
     );
 }
 
