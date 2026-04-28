@@ -2873,6 +2873,40 @@ impl FramebufferDirtyRegionRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisplayEventLogRecord {
+    pub id: DisplayEventLogId,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub display_capability: DisplayCapabilityId,
+    pub display_capability_generation: Generation,
+    pub display: DisplayObjectId,
+    pub display_generation: Generation,
+    pub framebuffer: FramebufferObjectId,
+    pub framebuffer_generation: Generation,
+    pub framebuffer_dirty_region: FramebufferDirtyRegionId,
+    pub framebuffer_dirty_region_generation: Generation,
+    pub first_event: EventId,
+    pub last_event: EventId,
+    pub event_count: u64,
+    pub flush_count: u64,
+    pub dirty_region_count: u64,
+    pub generation: Generation,
+    pub state: DisplayEventLogState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl DisplayEventLogRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::DisplayEventLog,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

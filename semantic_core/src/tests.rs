@@ -22564,6 +22564,336 @@ fn display_runtime_g7_contract_graph_rejects_dirty_region_flush_binding_drift() 
     }));
 }
 
+fn g8_display_event_log_graph() -> (
+    SemanticGraph,
+    StoreId,
+    Generation,
+    FramebufferDirtyRegionId,
+    Generation,
+    EventId,
+    EventId,
+    u64,
+    u64,
+    u64,
+) {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        framebuffer_flush_region,
+        framebuffer_flush_region_generation,
+        payload_digest,
+    ) = g7_framebuffer_dirty_region_graph();
+    assert!(graph.record_framebuffer_dirty_region_with_id(
+        23_701,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        Some(framebuffer_flush_region),
+        Some(framebuffer_flush_region_generation),
+        FramebufferDirtyRegionState::Clean,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+        payload_digest,
+        "g7 dirty region for g8",
+    ));
+    let first_event = graph
+        .framebuffer_objects()
+        .iter()
+        .find(|record| record.id == 23_001)
+        .map(|record| record.recorded_at_event)
+        .expect("g0 framebuffer event exists");
+    let last_event = graph.framebuffer_dirty_regions()[0].recorded_at_event;
+    let display_events = graph
+        .event_log()
+        .events
+        .iter()
+        .filter(|event| {
+            event.source == "display" && event.id >= first_event && event.id <= last_event
+        })
+        .collect::<Vec<_>>();
+    let event_count = display_events.len() as u64;
+    let flush_count = display_events
+        .iter()
+        .filter(|event| matches!(event.kind, EventKind::FramebufferFlushRegionRecorded { .. }))
+        .count() as u64;
+    let dirty_region_count = display_events
+        .iter()
+        .filter(|event| matches!(event.kind, EventKind::FramebufferDirtyRegionTracked { .. }))
+        .count() as u64;
+    (
+        graph,
+        owner_store,
+        owner_store_generation,
+        23_701,
+        1,
+        first_event,
+        last_event,
+        event_count,
+        flush_count,
+        dirty_region_count,
+    )
+}
+
+#[test]
+fn display_runtime_g8_records_display_event_log_summary() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_dirty_region,
+        framebuffer_dirty_region_generation,
+        first_event,
+        last_event,
+        event_count,
+        flush_count,
+        dirty_region_count,
+    ) = g8_display_event_log_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        8,
+        "display-runtime-g8",
+        SemanticCommand::RecordDisplayEventLog {
+            display_event_log: 23_801,
+            owner_store,
+            owner_store_generation,
+            framebuffer_dirty_region,
+            framebuffer_dirty_region_generation,
+            first_event,
+            last_event,
+            event_count,
+            flush_count,
+            dirty_region_count,
+            note: "g8 display event log".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.display_event_log_count(), 1);
+    let log = &graph.display_event_logs()[0];
+    assert_eq!(
+        log.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::DisplayEventLog, 23_801, 1)
+    );
+    assert_eq!(log.framebuffer_dirty_region, framebuffer_dirty_region);
+    assert_eq!(log.first_event, first_event);
+    assert_eq!(log.last_event, last_event);
+    assert_eq!(log.event_count, event_count);
+    assert_eq!(log.flush_count, flush_count);
+    assert_eq!(log.dirty_region_count, dirty_region_count);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "DisplayEventLogRecorded display_event_log=23801 owner_store={owner_store}@{owner_store_generation} display_capability=23201@1 display=23101@1 framebuffer=23001@1 framebuffer_dirty_region={framebuffer_dirty_region}@{framebuffer_dirty_region_generation} events={first_event}..{last_event} event_count={event_count} flush_count={flush_count} dirty_region_count={dirty_region_count} state=recorded generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g8_rejects_bad_event_window_and_count() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_dirty_region,
+        framebuffer_dirty_region_generation,
+        first_event,
+        last_event,
+        event_count,
+        flush_count,
+        dirty_region_count,
+    ) = g8_display_event_log_graph();
+
+    let stale_dirty = graph.apply_envelope(CommandEnvelope::new(
+        8,
+        "display-runtime-g8",
+        SemanticCommand::RecordDisplayEventLog {
+            display_event_log: 23_802,
+            owner_store,
+            owner_store_generation,
+            framebuffer_dirty_region,
+            framebuffer_dirty_region_generation: framebuffer_dirty_region_generation + 1,
+            first_event,
+            last_event,
+            event_count,
+            flush_count,
+            dirty_region_count,
+            note: "g8 stale dirty region".to_string(),
+        },
+    ));
+    assert_eq!(stale_dirty.status, CommandStatus::Rejected);
+
+    let bad_window = graph.apply_envelope(CommandEnvelope::new(
+        9,
+        "display-runtime-g8",
+        SemanticCommand::RecordDisplayEventLog {
+            display_event_log: 23_803,
+            owner_store,
+            owner_store_generation,
+            framebuffer_dirty_region,
+            framebuffer_dirty_region_generation,
+            first_event: last_event + 1,
+            last_event,
+            event_count,
+            flush_count,
+            dirty_region_count,
+            note: "g8 bad window".to_string(),
+        },
+    ));
+    assert_eq!(bad_window.status, CommandStatus::Rejected);
+
+    let bad_count = graph.apply_envelope(CommandEnvelope::new(
+        10,
+        "display-runtime-g8",
+        SemanticCommand::RecordDisplayEventLog {
+            display_event_log: 23_804,
+            owner_store,
+            owner_store_generation,
+            framebuffer_dirty_region,
+            framebuffer_dirty_region_generation,
+            first_event,
+            last_event,
+            event_count: event_count + 1,
+            flush_count,
+            dirty_region_count,
+            note: "g8 bad count".to_string(),
+        },
+    ));
+    assert_eq!(bad_count.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn display_runtime_g8_invariants_reject_event_count_drift() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_dirty_region,
+        framebuffer_dirty_region_generation,
+        first_event,
+        last_event,
+        event_count,
+        flush_count,
+        dirty_region_count,
+    ) = g8_display_event_log_graph();
+    assert!(graph.record_display_event_log_with_id(
+        23_805,
+        owner_store,
+        owner_store_generation,
+        framebuffer_dirty_region,
+        framebuffer_dirty_region_generation,
+        first_event,
+        last_event,
+        event_count,
+        flush_count,
+        dirty_region_count,
+        "g8 invariant event log",
+    ));
+    graph.corrupt_display_event_log_event_count_for_test(23_805, event_count + 1);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::DisplayEventLogInvalid {
+            display_event_log: 23_805,
+        })
+    );
+}
+
+#[test]
+fn display_runtime_g8_contract_graph_rejects_missing_dirty_region_edge() {
+    let log = DisplayEventLogRecord {
+        id: 23_806,
+        owner_store: 1,
+        owner_store_generation: 1,
+        display_capability: 23_201,
+        display_capability_generation: 1,
+        display: 23_101,
+        display_generation: 1,
+        framebuffer: 23_001,
+        framebuffer_generation: 1,
+        framebuffer_dirty_region: 23_701,
+        framebuffer_dirty_region_generation: 9,
+        first_event: 1,
+        last_event: 8,
+        event_count: 8,
+        flush_count: 1,
+        dirty_region_count: 1,
+        generation: 1,
+        state: DisplayEventLogState::Recorded,
+        recorded_at_event: 9,
+        note: "g8 missing dirty region".to_string(),
+    };
+    let snapshot = ContractGraphSnapshot {
+        display_event_logs: Vec::from([log]),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "display-event-log->framebuffer-dirty-region"
+            && violation.kind == ContractViolationKind::DanglingEdge
+    }));
+}
+
+#[test]
+fn display_runtime_g8_contract_graph_rejects_dirty_region_binding_drift() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_dirty_region,
+        framebuffer_dirty_region_generation,
+        first_event,
+        last_event,
+        event_count,
+        flush_count,
+        dirty_region_count,
+    ) = g8_display_event_log_graph();
+    assert!(graph.record_display_event_log_with_id(
+        23_807,
+        owner_store,
+        owner_store_generation,
+        framebuffer_dirty_region,
+        framebuffer_dirty_region_generation,
+        first_event,
+        last_event,
+        event_count,
+        flush_count,
+        dirty_region_count,
+        "g8 contract graph event log",
+    ));
+    let mut display_event_logs = graph.display_event_logs().to_vec();
+    display_event_logs[0].last_event = first_event;
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        display_capabilities: graph.display_capabilities().to_vec(),
+        framebuffer_window_leases: graph.framebuffer_window_leases().to_vec(),
+        framebuffer_mappings: graph.framebuffer_mappings().to_vec(),
+        framebuffer_writes: graph.framebuffer_writes().to_vec(),
+        framebuffer_flush_regions: graph.framebuffer_flush_regions().to_vec(),
+        framebuffer_dirty_regions: graph.framebuffer_dirty_regions().to_vec(),
+        display_event_logs,
+        stores: graph.stores().to_vec(),
+        capabilities: graph.capabilities().records().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "display-event-log->dirty-region-binding"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();

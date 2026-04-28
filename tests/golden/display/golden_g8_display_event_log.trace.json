@@ -1,0 +1,154 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "G8-display-event-log",
+  "name": "golden_g8_display_event_log",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real framebuffer present or scanout flush",
+    "raw EventLog storage exposure",
+    "GPU or desktop graphics stack",
+    "new display driver backend"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "G0-G7 have produced display semantic evidence through framebuffer-dirty-region:23701@1",
+      "The target_executor display event cursor has advanced through event 562"
+    ],
+    "command": {
+      "name": "record-display-event-log",
+      "display_event_log": "display-event-log:23801@1",
+      "owner_store": "store:14@3",
+      "framebuffer_dirty_region": "framebuffer-dirty-region:23701@1",
+      "display_capability": "display-capability:23201@1",
+      "display": "display-object:23101@1",
+      "framebuffer": "framebuffer-object:23001@1",
+      "window": {
+        "first_event": 554,
+        "last_event": 562,
+        "event_count": 8,
+        "flush_count": 1,
+        "dirty_region_count": 1
+      },
+      "result": "display event-log summary records a bounded semantic event window without exposing raw log storage"
+    }
+  },
+  "events": [
+    {
+      "kind": "DisplayEventLogRecorded",
+      "source": "SemanticGraph::record_display_event_log_with_id",
+      "visible_as": "osctl display-event-log list --json",
+      "reason": "Display event-log summary is control-plane evidence and does not execute hardware present"
+    }
+  ],
+  "expected": {
+    "views": {
+      "display-event-log": {
+        "id": 23801,
+        "generation": 1,
+        "state": "recorded",
+        "owner": {
+          "store": {
+            "kind": "store",
+            "id": 14,
+            "generation": 3
+          }
+        },
+        "references": {
+          "framebuffer_dirty_region": {
+            "kind": "framebuffer-dirty-region",
+            "id": 23701,
+            "generation": 1
+          },
+          "display_capability": {
+            "kind": "display-capability",
+            "id": 23201,
+            "generation": 1
+          },
+          "display": {
+            "kind": "display-object",
+            "id": 23101,
+            "generation": 1
+          },
+          "framebuffer": {
+            "kind": "framebuffer-object",
+            "id": 23001,
+            "generation": 1
+          },
+          "event": {
+            "id": 563
+          }
+        },
+        "window": {
+          "first_event": 554,
+          "last_event": 562,
+          "event_count": 8,
+          "flush_count": 1,
+          "dirty_region_count": 1
+        },
+        "authority": {
+          "read_only_control_plane": true,
+          "raw_event_storage_exposed": false,
+          "raw_mapping_is_semantic_truth": false,
+          "real_present_executed": false
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "display-event-log:23801@1",
+          "relation": "display-event-log->framebuffer-dirty-region",
+          "to": "framebuffer-dirty-region:23701@1",
+          "mode": "historical"
+        },
+        {
+          "from": "display-event-log:23801@1",
+          "relation": "display-event-log->display-object",
+          "to": "display-object:23101@1",
+          "mode": "historical"
+        },
+        {
+          "from": "display-event-log:23801@1",
+          "relation": "display-event-log->event",
+          "to": "event:563@1",
+          "mode": "historical"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "DisplayEventLog id/generation is a first-class ObjectRef",
+      "DisplayEventLog must reference an exact clean FramebufferDirtyRegion generation",
+      "DisplayEventLog event window must cover the dirty-region lifecycle",
+      "DisplayEventLog counts only semantic display events in the window",
+      "DisplayEventLog exposes stable control-plane view without raw EventLog storage"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "display_runtime_g8_records_display_event_log_summary",
+      "display_runtime_g8_rejects_bad_event_window_and_count",
+      "display_runtime_g8_invariants_reject_event_count_drift",
+      "display_runtime_g8_contract_graph_rejects_missing_dirty_region_edge",
+      "display_runtime_g8_contract_graph_rejects_dirty_region_binding_drift",
+      "semantic_roots_reject_display_event_log_root_mismatch",
+      "display_event_log_view_v1_exposes_event_window_refs"
+    ],
+    "osctl_json_view": "display-event-log list --json",
+    "display_event_log": "display-event-log:23801@1",
+    "framebuffer_dirty_region": "framebuffer-dirty-region:23701@1",
+    "display_capability": "display-capability:23201@1",
+    "display_object": "display-object:23101@1",
+    "framebuffer_object": "framebuffer-object:23001@1",
+    "recorded_at_event": 563
+  }
+}

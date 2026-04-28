@@ -407,6 +407,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub framebuffer_dirty_region_count: usize,
     #[serde(default)]
+    pub display_event_log_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -665,6 +667,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub framebuffer_dirty_regions: Vec<FramebufferDirtyRegionManifest>,
     #[serde(default)]
+    pub display_event_logs: Vec<DisplayEventLogManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -902,6 +906,8 @@ pub struct SemanticRootSetManifest {
     pub framebuffer_flush_region_roots: Vec<String>,
     #[serde(default)]
     pub framebuffer_dirty_region_roots: Vec<String>,
+    #[serde(default)]
+    pub display_event_log_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -3244,6 +3250,30 @@ pub struct FramebufferDirtyRegionManifest {
     pub state: String,
     pub dirty_at_event: u64,
     pub cleaned_at_event: Option<u64>,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct DisplayEventLogManifest {
+    pub id: u64,
+    pub owner_store: u64,
+    pub owner_store_generation: u64,
+    pub display_capability: u64,
+    pub display_capability_generation: u64,
+    pub display: u64,
+    pub display_generation: u64,
+    pub framebuffer: u64,
+    pub framebuffer_generation: u64,
+    pub framebuffer_dirty_region: u64,
+    pub framebuffer_dirty_region_generation: u64,
+    pub first_event: u64,
+    pub last_event: u64,
+    pub event_count: u64,
+    pub flush_count: u64,
+    pub dirty_region_count: u64,
+    pub generation: u64,
+    pub state: String,
     pub recorded_at_event: u64,
     pub note: String,
 }

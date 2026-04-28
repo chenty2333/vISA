@@ -17,14 +17,14 @@ use artifact_manifest::{
     CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
     CommandResultManifest, ContractObjectRefManifest, CrossHartSchedulerDecisionManifest,
     DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
-    DirectoryObjectManifest, DisplayCapabilityManifest, DisplayObjectManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest,
-    FramebufferDirtyRegionManifest, FramebufferFlushRegionManifest, FramebufferMappingManifest,
-    FramebufferObjectManifest, FramebufferWindowLeaseManifest, FramebufferWriteManifest,
-    FsWaitManifest, HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    DirectoryObjectManifest, DisplayCapabilityManifest, DisplayEventLogManifest,
+    DisplayObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
+    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
+    FileObjectManifest, FramebufferDirtyRegionManifest, FramebufferFlushRegionManifest,
+    FramebufferMappingManifest, FramebufferObjectManifest, FramebufferWindowLeaseManifest,
+    FramebufferWriteManifest, FsWaitManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
@@ -441,6 +441,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "framebuffer-dirty-region"
         | "dirty-region"
         | "display-dirty"
+        | "display-event-log"
+        | "display-log"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -612,7 +614,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -620,7 +622,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -912,6 +914,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "framebuffer-write" | "fb-write" | "display-write" => "framebuffer-write",
         "framebuffer-flush-region" | "flush-region" | "display-flush" => "framebuffer-flush-region",
         "framebuffer-dirty-region" | "dirty-region" | "display-dirty" => "framebuffer-dirty-region",
+        "display-event-log" | "display-log" => "display-event-log",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -6183,6 +6186,71 @@ fn framebuffer_dirty_region_view_v1(dirty: &FramebufferDirtyRegionManifest) -> s
     })
 }
 
+fn display_event_log_view_v1(log: &DisplayEventLogManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "display-event-log",
+        "id": log.id,
+        "generation": log.generation,
+        "state": log.state,
+        "owner": {
+            "store": object_ref_json(
+                "store",
+                log.owner_store,
+                log.owner_store_generation,
+            ),
+        },
+        "references": {
+            "display_capability": object_ref_json(
+                "display-capability",
+                log.display_capability,
+                log.display_capability_generation,
+            ),
+            "display": object_ref_json(
+                "display-object",
+                log.display,
+                log.display_generation,
+            ),
+            "framebuffer": object_ref_json(
+                "framebuffer-object",
+                log.framebuffer,
+                log.framebuffer_generation,
+            ),
+            "framebuffer_dirty_region": object_ref_json(
+                "framebuffer-dirty-region",
+                log.framebuffer_dirty_region,
+                log.framebuffer_dirty_region_generation,
+            ),
+            "event": {
+                "id": log.recorded_at_event,
+            },
+        },
+        "window": {
+            "first_event": log.first_event,
+            "last_event": log.last_event,
+            "event_count": log.event_count,
+            "flush_count": log.flush_count,
+            "dirty_region_count": log.dirty_region_count,
+        },
+        "authority": {
+            "read_only_control_plane": true,
+            "raw_event_storage_exposed": false,
+            "raw_mapping_is_semantic_truth": false,
+            "real_present_executed": false,
+        },
+        "note": log.note,
+        "last_transition": {
+            "recorded_at_event": log.recorded_at_event,
+            "owner_store_generation": log.owner_store_generation,
+            "display_capability_generation": log.display_capability_generation,
+            "display_generation": log.display_generation,
+            "framebuffer_generation": log.framebuffer_generation,
+            "framebuffer_dirty_region_generation": log.framebuffer_dirty_region_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     let vector_status = if resume.vector_status.is_empty() {
         "absent"
@@ -7633,6 +7701,12 @@ fn stable_views_for_kind(
             .framebuffer_dirty_regions
             .iter()
             .map(framebuffer_dirty_region_view_v1)
+            .collect()),
+        "display-event-log" | "display-log" => Ok(package
+            .semantic
+            .display_event_logs
+            .iter()
+            .map(display_event_log_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -11468,6 +11542,64 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             event,
         ));
     }
+    for log in &package.semantic.display_event_logs {
+        let event = Some(log.recorded_at_event);
+        let from = object_ref_json("display-event-log", log.id, log.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("store", log.owner_store, log.owner_store_generation),
+            "display-event-log->owner-store",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "framebuffer-dirty-region",
+                log.framebuffer_dirty_region,
+                log.framebuffer_dirty_region_generation,
+            ),
+            "display-event-log->framebuffer-dirty-region",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "display-capability",
+                log.display_capability,
+                log.display_capability_generation,
+            ),
+            "display-event-log->display-capability",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("display-object", log.display, log.display_generation),
+            "display-event-log->display-object",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "framebuffer-object",
+                log.framebuffer,
+                log.framebuffer_generation,
+            ),
+            "display-event-log->framebuffer-object",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json("event", log.recorded_at_event, 1),
+            "display-event-log->event",
+            "historical",
+            event,
+        ));
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -14947,6 +15079,43 @@ fn inspect_package_object(
                 );
             }
         }
+        "display-event-log" | "display-log" => {
+            println!(
+                "inspect display-event-log package={} count={}",
+                package.package_id, package.semantic.display_event_log_count
+            );
+            for log in &package.semantic.display_event_logs {
+                let line = format!(
+                    "display-event-log id={} owner_store={}@{} display_capability={}@{} display={}@{} framebuffer={}@{} framebuffer_dirty_region={}@{} events={}..{} event_count={} flush_count={} dirty_region_count={} state={} generation={}",
+                    log.id,
+                    log.owner_store,
+                    log.owner_store_generation,
+                    log.display_capability,
+                    log.display_capability_generation,
+                    log.display,
+                    log.display_generation,
+                    log.framebuffer,
+                    log.framebuffer_generation,
+                    log.framebuffer_dirty_region,
+                    log.framebuffer_dirty_region_generation,
+                    log.first_event,
+                    log.last_event,
+                    log.event_count,
+                    log.flush_count,
+                    log.dirty_region_count,
+                    log.state,
+                    log.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.display_event_logs.is_empty() {
+                print_roots_filtered(
+                    "display-event-log",
+                    &package.semantic.roots.display_event_log_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -15364,6 +15533,19 @@ fn inspect_package_object_json(
                 .collect::<Vec<_>>(),
             serde_json::json!({
                 "root_count": package.semantic.roots.framebuffer_dirty_region_roots.len()
+            }),
+        ),
+        "display-event-log" | "display-log" => (
+            "display-event-log",
+            package.semantic.display_event_log_count,
+            package
+                .semantic
+                .display_event_logs
+                .iter()
+                .map(display_event_log_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package.semantic.roots.display_event_log_roots.len()
             }),
         ),
         "command" => (
@@ -19867,6 +20049,46 @@ mod tests {
         assert_eq!(view["authority"]["raw_pointer_exposed"], false);
         assert_eq!(view["authority"]["real_present_executed"], false);
         assert_eq!(view["last_transition"]["recorded_at_event"], 501);
+    }
+
+    #[test]
+    fn display_event_log_view_v1_exposes_event_window_refs() {
+        let view = display_event_log_view_v1(&DisplayEventLogManifest {
+            id: 23_801,
+            owner_store: 12,
+            owner_store_generation: 2,
+            display_capability: 23_201,
+            display_capability_generation: 1,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            framebuffer_dirty_region: 23_701,
+            framebuffer_dirty_region_generation: 1,
+            first_event: 494,
+            last_event: 501,
+            event_count: 8,
+            flush_count: 1,
+            dirty_region_count: 1,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 502,
+            note: "g8 display event log".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "display-event-log");
+        assert_eq!(view["owner"]["store"]["generation"], 2);
+        assert_eq!(view["references"]["framebuffer_dirty_region"]["id"], 23_701);
+        assert_eq!(view["window"]["first_event"], 494);
+        assert_eq!(view["window"]["last_event"], 501);
+        assert_eq!(view["window"]["event_count"], 8);
+        assert_eq!(view["window"]["flush_count"], 1);
+        assert_eq!(view["window"]["dirty_region_count"], 1);
+        assert_eq!(view["authority"]["read_only_control_plane"], true);
+        assert_eq!(view["authority"]["raw_event_storage_exposed"], false);
+        assert_eq!(view["authority"]["real_present_executed"], false);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 502);
     }
 
     #[test]

@@ -92,6 +92,7 @@ pub struct ContractGraphSnapshot {
     pub framebuffer_writes: Vec<FramebufferWriteRecord>,
     pub framebuffer_flush_regions: Vec<FramebufferFlushRegionRecord>,
     pub framebuffer_dirty_regions: Vec<FramebufferDirtyRegionRecord>,
+    pub display_event_logs: Vec<DisplayEventLogRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -203,6 +204,7 @@ impl ContractGraphValidator {
         Self::validate_framebuffer_writes(snapshot, &mut violations);
         Self::validate_framebuffer_flush_regions(snapshot, &mut violations);
         Self::validate_framebuffer_dirty_regions(snapshot, &mut violations);
+        Self::validate_display_event_logs(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -1738,6 +1740,107 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_display_event_logs(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for log in &snapshot.display_event_logs {
+            let from = log.object_ref();
+            if log.id == 0
+                || log.generation == 0
+                || log.owner_store_generation == 0
+                || log.framebuffer_dirty_region_generation == 0
+                || log.first_event == 0
+                || log.last_event < log.first_event
+                || log.event_count == 0
+                || log.state != DisplayEventLogState::Recorded
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "display-event-log->contract",
+                    from,
+                    None,
+                    "display event log requires exact refs, recorded state, and nonempty event window",
+                ));
+                continue;
+            }
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-event-log->owner-store",
+                ContractObjectKind::Store,
+                log.owner_store,
+                log.owner_store_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-event-log->framebuffer-dirty-region",
+                ContractObjectKind::FramebufferDirtyRegion,
+                log.framebuffer_dirty_region,
+                log.framebuffer_dirty_region_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-event-log->display-capability",
+                ContractObjectKind::DisplayCapability,
+                log.display_capability,
+                log.display_capability_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-event-log->display-object",
+                ContractObjectKind::DisplayObject,
+                log.display,
+                log.display_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-event-log->framebuffer-object",
+                ContractObjectKind::FramebufferObject,
+                log.framebuffer,
+                log.framebuffer_generation,
+                ContractEdgeMode::Historical,
+            );
+            if let Some(dirty) = snapshot.framebuffer_dirty_regions.iter().find(|dirty| {
+                dirty.id == log.framebuffer_dirty_region
+                    && dirty.generation == log.framebuffer_dirty_region_generation
+            }) {
+                if dirty.owner_store != log.owner_store
+                    || dirty.owner_store_generation != log.owner_store_generation
+                    || dirty.display_capability != log.display_capability
+                    || dirty.display_capability_generation != log.display_capability_generation
+                    || dirty.display != log.display
+                    || dirty.display_generation != log.display_generation
+                    || dirty.framebuffer != log.framebuffer
+                    || dirty.framebuffer_generation != log.framebuffer_generation
+                    || dirty.dirty_at_event < log.first_event
+                    || dirty.recorded_at_event > log.last_event
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "display-event-log->dirty-region-binding",
+                        from,
+                        Some(dirty.object_ref()),
+                        "display event log window or refs do not match the dirty region lifecycle",
+                    ));
+                }
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -2941,6 +3044,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|dirty| dirty.id == id && dirty.generation == generation)
                 .map(FramebufferDirtyRegionRecord::object_ref),
+            ContractObjectKind::DisplayEventLog => snapshot
+                .display_event_logs
+                .iter()
+                .find(|log| log.id == id && log.generation == generation)
+                .map(DisplayEventLogRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -3106,6 +3214,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|dirty| dirty.id == id)
                 .map(FramebufferDirtyRegionRecord::object_ref),
+            ContractObjectKind::DisplayEventLog => snapshot
+                .display_event_logs
+                .iter()
+                .find(|log| log.id == id)
+                .map(DisplayEventLogRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -3266,6 +3379,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::FramebufferWrite
                 | ContractObjectKind::FramebufferFlushRegion
                 | ContractObjectKind::FramebufferDirtyRegion
+                | ContractObjectKind::DisplayEventLog
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -3427,6 +3541,14 @@ impl ContractGraphValidator {
                 .and_then(|dirty| {
                     (dirty.state != FramebufferDirtyRegionState::Dirty)
                         .then_some("live edge references clean framebuffer dirty region")
+                }),
+            ContractObjectKind::DisplayEventLog => snapshot
+                .display_event_logs
+                .iter()
+                .find(|log| log.id == object.id && log.generation == object.generation)
+                .and_then(|log| {
+                    (log.state != DisplayEventLogState::Recorded)
+                        .then_some("live edge references unrecorded display event log")
                 }),
             _ => None,
         }

@@ -21,25 +21,25 @@ use artifact_manifest::{
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
     ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
     DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
-    DisplayCapabilityManifest, DisplayObjectManifest, DmaBufferObjectManifest,
-    DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
-    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
-    FileHandleCapabilityManifest, FileObjectManifest, FramebufferDirtyRegionManifest,
-    FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
-    FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    DisplayCapabilityManifest, DisplayEventLogManifest, DisplayObjectManifest,
+    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
+    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest,
+    FramebufferDirtyRegionManifest, FramebufferFlushRegionManifest, FramebufferMappingManifest,
+    FramebufferObjectManifest, FramebufferWindowLeaseManifest, FramebufferWriteManifest,
+    FsWaitManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8385,6 +8385,7 @@ fn build_target_executor_v1(
     run_framebuffer_write_harness(semantic)?;
     run_framebuffer_flush_region_harness(semantic)?;
     run_framebuffer_dirty_region_harness(semantic)?;
+    run_display_event_log_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8469,6 +8470,7 @@ fn build_target_executor_v1(
         framebuffer_writes: semantic.framebuffer_writes().to_vec(),
         framebuffer_flush_regions: semantic.framebuffer_flush_regions().to_vec(),
         framebuffer_dirty_regions: semantic.framebuffer_dirty_regions().to_vec(),
+        display_event_logs: semantic.display_event_logs().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: contract_stores,
@@ -10381,6 +10383,86 @@ fn run_framebuffer_dirty_region_harness(
     Ok(())
 }
 
+fn run_display_event_log_harness(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let dirty = semantic
+        .framebuffer_dirty_regions()
+        .iter()
+        .find(|record| record.id == 23_701)
+        .cloned()
+        .ok_or("display runtime g8 requires g7 framebuffer dirty region evidence")?;
+    let first_event = semantic
+        .framebuffer_objects()
+        .iter()
+        .find(|record| record.id == dirty.framebuffer)
+        .map(|record| record.recorded_at_event)
+        .ok_or("display runtime g8 requires g0 framebuffer object evidence")?;
+    let last_event = dirty.recorded_at_event;
+    let event_count = semantic
+        .event_log()
+        .events()
+        .iter()
+        .filter(|event| {
+            event.source == "display" && event.id >= first_event && event.id <= last_event
+        })
+        .count() as u64;
+    let flush_count = semantic
+        .event_log()
+        .events()
+        .iter()
+        .filter(|event| {
+            event.source == "display"
+                && event.id >= first_event
+                && event.id <= last_event
+                && matches!(
+                    event.kind,
+                    semantic_core::EventKind::FramebufferFlushRegionRecorded { .. }
+                )
+        })
+        .count() as u64;
+    let dirty_region_count = semantic
+        .event_log()
+        .events()
+        .iter()
+        .filter(|event| {
+            event.source == "display"
+                && event.id >= first_event
+                && event.id <= last_event
+                && matches!(
+                    event.kind,
+                    semantic_core::EventKind::FramebufferDirtyRegionTracked { .. }
+                )
+        })
+        .count() as u64;
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_028,
+        "display-runtime-g8",
+        SemanticCommand::RecordDisplayEventLog {
+            display_event_log: 23_801,
+            owner_store: dirty.owner_store,
+            owner_store_generation: dirty.owner_store_generation,
+            framebuffer_dirty_region: dirty.id,
+            framebuffer_dirty_region_generation: dirty.generation,
+            first_event,
+            last_event,
+            event_count,
+            flush_count,
+            dirty_region_count,
+            note: "g8 records display event-log summary for semantic display evidence".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g8 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11223,6 +11305,7 @@ fn demo_migration_package(
             framebuffer_write_count: semantic.framebuffer_write_count(),
             framebuffer_flush_region_count: semantic.framebuffer_flush_region_count(),
             framebuffer_dirty_region_count: semantic.framebuffer_dirty_region_count(),
+            display_event_log_count: semantic.display_event_log_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11705,6 +11788,11 @@ fn demo_migration_package(
                 .framebuffer_dirty_regions()
                 .iter()
                 .map(framebuffer_dirty_region_manifest)
+                .collect(),
+            display_event_logs: semantic
+                .display_event_logs()
+                .iter()
+                .map(display_event_log_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -14021,6 +14109,33 @@ fn semantic_roots(
                         .unwrap_or_else(|| "none".to_owned()),
                     dirty.state.as_str(),
                     dirty.generation
+                )
+            })
+            .collect(),
+        display_event_log_roots: semantic
+            .display_event_logs()
+            .iter()
+            .map(|log| {
+                format!(
+                    "display-event-log id={} owner_store={}@{} display_capability={}@{} display={}@{} framebuffer={}@{} framebuffer_dirty_region={}@{} events={}..{} event_count={} flush_count={} dirty_region_count={} state={} generation={}",
+                    log.id,
+                    log.owner_store,
+                    log.owner_store_generation,
+                    log.display_capability,
+                    log.display_capability_generation,
+                    log.display,
+                    log.display_generation,
+                    log.framebuffer,
+                    log.framebuffer_generation,
+                    log.framebuffer_dirty_region,
+                    log.framebuffer_dirty_region_generation,
+                    log.first_event,
+                    log.last_event,
+                    log.event_count,
+                    log.flush_count,
+                    log.dirty_region_count,
+                    log.state.as_str(),
+                    log.generation
                 )
             })
             .collect(),
@@ -17096,6 +17211,33 @@ fn framebuffer_dirty_region_manifest(
         cleaned_at_event: dirty.cleaned_at_event,
         recorded_at_event: dirty.recorded_at_event,
         note: dirty.note.clone(),
+    }
+}
+
+fn display_event_log_manifest(
+    log: &semantic_core::DisplayEventLogRecord,
+) -> DisplayEventLogManifest {
+    DisplayEventLogManifest {
+        id: log.id,
+        owner_store: log.owner_store,
+        owner_store_generation: log.owner_store_generation,
+        display_capability: log.display_capability,
+        display_capability_generation: log.display_capability_generation,
+        display: log.display,
+        display_generation: log.display_generation,
+        framebuffer: log.framebuffer,
+        framebuffer_generation: log.framebuffer_generation,
+        framebuffer_dirty_region: log.framebuffer_dirty_region,
+        framebuffer_dirty_region_generation: log.framebuffer_dirty_region_generation,
+        first_event: log.first_event,
+        last_event: log.last_event,
+        event_count: log.event_count,
+        flush_count: log.flush_count,
+        dirty_region_count: log.dirty_region_count,
+        generation: log.generation,
+        state: log.state.as_str().to_owned(),
+        recorded_at_event: log.recorded_at_event,
+        note: log.note.clone(),
     }
 }
 

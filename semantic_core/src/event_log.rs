@@ -883,6 +883,26 @@ pub enum EventKind {
         state: FramebufferDirtyRegionState,
         generation: Generation,
     },
+    DisplayEventLogRecorded {
+        display_event_log: DisplayEventLogId,
+        owner_store: StoreId,
+        owner_store_generation: Generation,
+        display_capability: DisplayCapabilityId,
+        display_capability_generation: Generation,
+        display: DisplayObjectId,
+        display_generation: Generation,
+        framebuffer: FramebufferObjectId,
+        framebuffer_generation: Generation,
+        framebuffer_dirty_region: FramebufferDirtyRegionId,
+        framebuffer_dirty_region_generation: Generation,
+        first_event: EventId,
+        last_event: EventId,
+        event_count: u64,
+        flush_count: u64,
+        dirty_region_count: u64,
+        state: DisplayEventLogState,
+        generation: Generation,
+    },
     FakeBlockBackendObjectBound {
         fake_block_backend: FakeBlockBackendObjectId,
         block_device: BlockDeviceObjectId,
@@ -3063,6 +3083,29 @@ impl EventKind {
                     .unwrap_or_else(|| "none".to_string()),
                 state.as_str()
             ),
+            Self::DisplayEventLogRecorded {
+                display_event_log,
+                owner_store,
+                owner_store_generation,
+                display_capability,
+                display_capability_generation,
+                display,
+                display_generation,
+                framebuffer,
+                framebuffer_generation,
+                framebuffer_dirty_region,
+                framebuffer_dirty_region_generation,
+                first_event,
+                last_event,
+                event_count,
+                flush_count,
+                dirty_region_count,
+                state,
+                generation,
+            } => format!(
+                "DisplayEventLogRecorded display_event_log={display_event_log} owner_store={owner_store}@{owner_store_generation} display_capability={display_capability}@{display_capability_generation} display={display}@{display_generation} framebuffer={framebuffer}@{framebuffer_generation} framebuffer_dirty_region={framebuffer_dirty_region}@{framebuffer_dirty_region_generation} events={first_event}..{last_event} event_count={event_count} flush_count={flush_count} dirty_region_count={dirty_region_count} state={} generation={generation}",
+                state.as_str()
+            ),
             Self::FakeBlockBackendObjectBound {
                 fake_block_backend,
                 block_device,
@@ -4595,6 +4638,10 @@ impl EventLog {
 
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
+    }
+
+    pub fn events(&self) -> &[EventRecord] {
+        &self.events
     }
 
     pub fn tail(&self, count: usize) -> &[EventRecord] {

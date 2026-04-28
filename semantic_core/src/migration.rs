@@ -1665,6 +1665,20 @@ pub enum SemanticInvariantError {
     FramebufferDirtyRegionMissingEvent {
         framebuffer_dirty_region: FramebufferDirtyRegionId,
     },
+    DisplayEventLogInvalid {
+        display_event_log: DisplayEventLogId,
+    },
+    DisplayEventLogMissingStore {
+        display_event_log: DisplayEventLogId,
+        store: StoreId,
+    },
+    DisplayEventLogMissingDirtyRegion {
+        display_event_log: DisplayEventLogId,
+        framebuffer_dirty_region: FramebufferDirtyRegionId,
+    },
+    DisplayEventLogMissingEvent {
+        display_event_log: DisplayEventLogId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },
