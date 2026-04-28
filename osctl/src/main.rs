@@ -28,11 +28,12 @@ use artifact_manifest::{
     HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
     IntegratedCodePublishSmpWorkloadManifest, IntegratedDiskPreemptFaultManifest,
     IntegratedDisplayPanicManifest, IntegratedDisplaySchedulerLoadManifest,
-    IntegratedNetworkDiskIoManifest, IntegratedSimdMigrationManifest,
-    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
-    IntegratedSnapshotIoLeaseBarrierManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    IntegratedNetworkDiskIoManifest, IntegratedOsctlTraceReplayManifest,
+    IntegratedSimdMigrationManifest, IntegratedSmpNetworkFaultManifest,
+    IntegratedSmpPreemptionCleanupManifest, IntegratedSnapshotIoLeaseBarrierManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -307,6 +308,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "integrated-display-panic"
         | "display-panic"
         | "panic-ring-extraction"
+        | "integrated-osctl-trace-replay"
+        | "osctl-trace-replay"
+        | "full-osctl-trace-replay"
         | "device"
         | "device-object"
         | "queue"
@@ -655,7 +659,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|integrated-code-publish-smp-workload|integrated-display-panic|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|integrated-code-publish-smp-workload|integrated-display-panic|integrated-osctl-trace-replay|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -663,7 +667,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|integrated-code-publish-smp-workload|integrated-display-panic|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|integrated-code-publish-smp-workload|integrated-display-panic|integrated-osctl-trace-replay|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -986,6 +990,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         | "integrated-code-publish-workload" => "integrated-code-publish-smp-workload",
         "integrated-display-panic" | "display-panic" | "panic-ring-extraction" => {
             "integrated-display-panic"
+        }
+        "integrated-osctl-trace-replay" | "osctl-trace-replay" | "full-osctl-trace-replay" => {
+            "integrated-osctl-trace-replay"
         }
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
@@ -2718,6 +2725,104 @@ fn integrated_display_panic_view_v1(record: &IntegratedDisplayPanicManifest) -> 
             "raw_framebuffer_bytes_exported": record.raw_framebuffer_bytes_exported,
             "real_substrate_halt_executed": false,
             "adapter_internal_state_is_not_semantic_truth": true,
+        },
+        "note": record.note,
+        "last_transition": {
+            "event": record.recorded_at_event,
+            "state": record.state,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn integrated_osctl_trace_replay_view_v1(
+    record: &IntegratedOsctlTraceReplayManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "integrated-osctl-trace-replay",
+        "id": record.id,
+        "generation": record.generation,
+        "state": record.state,
+        "owner": {
+            "scenario": record.scenario,
+            "integrated_scenario_count": record.integrated_scenario_count,
+        },
+        "references": {
+            "x0_smp_preemption_cleanup": object_ref_json(
+                "integrated-smp-preemption-cleanup",
+                record.integrated_smp_preemption_cleanup,
+                record.integrated_smp_preemption_cleanup_generation,
+            ),
+            "x1_smp_network_fault": object_ref_json(
+                "integrated-smp-network-fault",
+                record.integrated_smp_network_fault,
+                record.integrated_smp_network_fault_generation,
+            ),
+            "x2_disk_preempt_fault": object_ref_json(
+                "integrated-disk-preempt-fault",
+                record.integrated_disk_preempt_fault,
+                record.integrated_disk_preempt_fault_generation,
+            ),
+            "x3_simd_migration": object_ref_json(
+                "integrated-simd-migration",
+                record.integrated_simd_migration,
+                record.integrated_simd_migration_generation,
+            ),
+            "x4_network_disk_io": object_ref_json(
+                "integrated-network-disk-io",
+                record.integrated_network_disk_io,
+                record.integrated_network_disk_io_generation,
+            ),
+            "x5_display_scheduler_load": object_ref_json(
+                "integrated-display-scheduler-load",
+                record.integrated_display_scheduler_load,
+                record.integrated_display_scheduler_load_generation,
+            ),
+            "x6_snapshot_io_lease_barrier": object_ref_json(
+                "integrated-snapshot-io-lease-barrier",
+                record.integrated_snapshot_io_lease_barrier,
+                record.integrated_snapshot_io_lease_barrier_generation,
+            ),
+            "x7_code_publish_smp_workload": object_ref_json(
+                "integrated-code-publish-smp-workload",
+                record.integrated_code_publish_smp_workload,
+                record.integrated_code_publish_smp_workload_generation,
+            ),
+            "x8_display_panic": object_ref_json(
+                "integrated-display-panic",
+                record.integrated_display_panic,
+                record.integrated_display_panic_generation,
+            ),
+            "event": {
+                "id": record.recorded_at_event,
+            },
+        },
+        "replay": {
+            "event_cursor": record.replay_event_cursor,
+            "stable_view_count": record.stable_view_count,
+            "historical_edge_count": record.historical_edge_count,
+            "replayed_root_count": record.replayed_root_count,
+            "integrated_scenario_count": record.integrated_scenario_count,
+            "golden_trace_count": record.golden_trace_count,
+            "contract_validation_ok": record.contract_validation_ok,
+            "replay_validation_ok": record.replay_validation_ok,
+            "graph_history_ok": record.graph_history_ok,
+            "roots_match_counts": record.roots_match_counts,
+        },
+        "closure": {
+            "scenario": record.scenario,
+            "requires_x0_to_x8_integrated_evidence": true,
+            "requires_stable_osctl_view_v1": true,
+            "requires_historical_graph_edges": true,
+            "requires_contract_validate_ok": true,
+            "requires_replay_validate_ok": true,
+            "invariant_checks": record.invariant_checks,
+        },
+        "authority": {
+            "osctl_is_read_only_control_plane": true,
+            "adapter_internal_state_is_not_semantic_truth": true,
+            "no_substrate_mapping_as_semantic_truth": true,
         },
         "note": record.note,
         "last_transition": {
@@ -8454,6 +8559,14 @@ fn stable_views_for_kind(
             .iter()
             .map(integrated_display_panic_view_v1)
             .collect()),
+        "integrated-osctl-trace-replay" | "osctl-trace-replay" | "full-osctl-trace-replay" => {
+            Ok(package
+                .semantic
+                .integrated_osctl_trace_replays
+                .iter()
+                .map(integrated_osctl_trace_replay_view_v1)
+                .collect())
+        }
         "device" | "device-object" => Ok(package
             .semantic
             .device_objects
@@ -9917,6 +10030,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "integrated-display-panic",
         &package.semantic.roots.integrated_display_panic_roots,
+    );
+    print_roots(
+        "integrated-osctl-trace-replay",
+        &package.semantic.roots.integrated_osctl_trace_replay_roots,
     );
     print_roots("device", &package.semantic.roots.device_object_roots);
     print_roots("queue", &package.semantic.roots.queue_object_roots);
@@ -12089,6 +12206,77 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "historical",
             Some(record.recorded_at_event),
         ));
+    }
+    for record in &package.semantic.integrated_osctl_trace_replays {
+        let from = object_ref_json(
+            "integrated-osctl-trace-replay",
+            record.id,
+            record.generation,
+        );
+        for (label, kind, id, generation) in [
+            (
+                "integrated-osctl-trace-replay->x0-smp-preemption-cleanup",
+                "integrated-smp-preemption-cleanup",
+                record.integrated_smp_preemption_cleanup,
+                record.integrated_smp_preemption_cleanup_generation,
+            ),
+            (
+                "integrated-osctl-trace-replay->x1-smp-network-fault",
+                "integrated-smp-network-fault",
+                record.integrated_smp_network_fault,
+                record.integrated_smp_network_fault_generation,
+            ),
+            (
+                "integrated-osctl-trace-replay->x2-disk-preempt-fault",
+                "integrated-disk-preempt-fault",
+                record.integrated_disk_preempt_fault,
+                record.integrated_disk_preempt_fault_generation,
+            ),
+            (
+                "integrated-osctl-trace-replay->x3-simd-migration",
+                "integrated-simd-migration",
+                record.integrated_simd_migration,
+                record.integrated_simd_migration_generation,
+            ),
+            (
+                "integrated-osctl-trace-replay->x4-network-disk-io",
+                "integrated-network-disk-io",
+                record.integrated_network_disk_io,
+                record.integrated_network_disk_io_generation,
+            ),
+            (
+                "integrated-osctl-trace-replay->x5-display-scheduler-load",
+                "integrated-display-scheduler-load",
+                record.integrated_display_scheduler_load,
+                record.integrated_display_scheduler_load_generation,
+            ),
+            (
+                "integrated-osctl-trace-replay->x6-snapshot-io-lease-barrier",
+                "integrated-snapshot-io-lease-barrier",
+                record.integrated_snapshot_io_lease_barrier,
+                record.integrated_snapshot_io_lease_barrier_generation,
+            ),
+            (
+                "integrated-osctl-trace-replay->x7-code-publish-smp-workload",
+                "integrated-code-publish-smp-workload",
+                record.integrated_code_publish_smp_workload,
+                record.integrated_code_publish_smp_workload_generation,
+            ),
+            (
+                "integrated-osctl-trace-replay->x8-display-panic",
+                "integrated-display-panic",
+                record.integrated_display_panic,
+                record.integrated_display_panic_generation,
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(kind, id, generation),
+                label,
+                "historical",
+                Some(record.recorded_at_event),
+            ));
+        }
     }
     for completion in &package.semantic.block_completion_objects {
         if completion.state != "recorded" {
@@ -17811,6 +17999,39 @@ fn inspect_package_object(
                 );
             }
         }
+        "integrated-osctl-trace-replay" | "osctl-trace-replay" | "full-osctl-trace-replay" => {
+            println!(
+                "inspect integrated-osctl-trace-replay package={} count={}",
+                package.package_id, package.semantic.integrated_osctl_trace_replay_count
+            );
+            for record in &package.semantic.integrated_osctl_trace_replays {
+                let line = format!(
+                    "integrated-osctl-trace-replay id={} scenario={} replay_event_cursor={} integrated_scenarios={} replayed_roots={} stable_views={} historical_edges={} golden_traces={} contract_ok={} replay_ok={} graph_history_ok={} roots_match_counts={} state={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.replay_event_cursor,
+                    record.integrated_scenario_count,
+                    record.replayed_root_count,
+                    record.stable_view_count,
+                    record.historical_edge_count,
+                    record.golden_trace_count,
+                    record.contract_validation_ok,
+                    record.replay_validation_ok,
+                    record.graph_history_ok,
+                    record.roots_match_counts,
+                    record.state,
+                    record.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.integrated_osctl_trace_replays.is_empty() {
+                print_roots_filtered(
+                    "integrated-osctl-trace-replay",
+                    &package.semantic.roots.integrated_osctl_trace_replay_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -18458,6 +18679,23 @@ fn inspect_package_object_json(
                     .len()
             }),
         ),
+        "integrated-osctl-trace-replay" | "osctl-trace-replay" | "full-osctl-trace-replay" => (
+            "integrated-osctl-trace-replay",
+            package.semantic.integrated_osctl_trace_replay_count,
+            package
+                .semantic
+                .integrated_osctl_trace_replays
+                .iter()
+                .map(integrated_osctl_trace_replay_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package
+                    .semantic
+                    .roots
+                    .integrated_osctl_trace_replay_roots
+                    .len()
+            }),
+        ),
         "command" => (
             "command",
             package.semantic.command_result_count,
@@ -18995,6 +19233,9 @@ fn replay_until(
     }
     for integrated in &package.semantic.roots.integrated_display_panic_roots {
         println!("replay integrated-display-panic {integrated}");
+    }
+    for integrated in &package.semantic.roots.integrated_osctl_trace_replay_roots {
+        println!("replay integrated-osctl-trace-replay {integrated}");
     }
     for device in &package.semantic.roots.device_object_roots {
         println!("replay device {device}");
@@ -24126,6 +24367,116 @@ mod tests {
             && edge["relation"] == "integrated-display-panic->substrate-panic-event"
             && edge["to"]["kind"] == "substrate-event"
             && edge["to"]["id"] == 578));
+    }
+
+    fn test_integrated_osctl_trace_replay_manifest() -> IntegratedOsctlTraceReplayManifest {
+        IntegratedOsctlTraceReplayManifest {
+            id: 26_901,
+            scenario: "x9-full-osctl-trace-replay".to_owned(),
+            integrated_smp_preemption_cleanup: 26_001,
+            integrated_smp_preemption_cleanup_generation: 1,
+            integrated_smp_network_fault: 26_101,
+            integrated_smp_network_fault_generation: 1,
+            integrated_disk_preempt_fault: 26_201,
+            integrated_disk_preempt_fault_generation: 1,
+            integrated_simd_migration: 26_301,
+            integrated_simd_migration_generation: 1,
+            integrated_network_disk_io: 26_401,
+            integrated_network_disk_io_generation: 1,
+            integrated_display_scheduler_load: 26_501,
+            integrated_display_scheduler_load_generation: 1,
+            integrated_snapshot_io_lease_barrier: 26_601,
+            integrated_snapshot_io_lease_barrier_generation: 1,
+            integrated_code_publish_smp_workload: 26_701,
+            integrated_code_publish_smp_workload_generation: 1,
+            integrated_display_panic: 26_801,
+            integrated_display_panic_generation: 1,
+            replay_event_cursor: 579,
+            stable_view_count: 9,
+            historical_edge_count: 9,
+            replayed_root_count: 9,
+            integrated_scenario_count: 9,
+            golden_trace_count: 9,
+            contract_validation_ok: true,
+            replay_validation_ok: true,
+            graph_history_ok: true,
+            roots_match_counts: true,
+            invariant_checks: 9,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 580,
+            note: "x9 full osctl trace replay closure across integrated scenarios".to_owned(),
+        }
+    }
+
+    #[test]
+    fn integrated_osctl_trace_replay_view_v1_exposes_replay_closure() {
+        let view =
+            integrated_osctl_trace_replay_view_v1(&test_integrated_osctl_trace_replay_manifest());
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "integrated-osctl-trace-replay");
+        assert_eq!(view["id"], 26_901);
+        assert_eq!(view["generation"], 1);
+        assert_eq!(view["owner"]["scenario"], "x9-full-osctl-trace-replay");
+        assert_eq!(view["owner"]["integrated_scenario_count"], 9);
+        assert_eq!(
+            view["references"]["x0_smp_preemption_cleanup"]["kind"],
+            "integrated-smp-preemption-cleanup"
+        );
+        assert_eq!(
+            view["references"]["x0_smp_preemption_cleanup"]["id"],
+            26_001
+        );
+        assert_eq!(view["references"]["x8_display_panic"]["id"], 26_801);
+        assert_eq!(view["references"]["x8_display_panic"]["generation"], 1);
+        assert_eq!(view["replay"]["event_cursor"], 579);
+        assert_eq!(view["replay"]["stable_view_count"], 9);
+        assert_eq!(view["replay"]["historical_edge_count"], 9);
+        assert_eq!(view["replay"]["golden_trace_count"], 9);
+        assert_eq!(view["replay"]["contract_validation_ok"], true);
+        assert_eq!(view["replay"]["replay_validation_ok"], true);
+        assert_eq!(view["replay"]["graph_history_ok"], true);
+        assert_eq!(
+            view["closure"]["requires_x0_to_x8_integrated_evidence"],
+            true
+        );
+        assert_eq!(view["authority"]["osctl_is_read_only_control_plane"], true);
+        assert_eq!(
+            view["authority"]["adapter_internal_state_is_not_semantic_truth"],
+            true
+        );
+        assert_eq!(view["last_transition"]["event"], 580);
+    }
+
+    #[test]
+    fn integrated_osctl_trace_replay_graph_edges_are_history_only() {
+        let mut package = minimal_graph_package();
+        package.semantic.integrated_osctl_trace_replay_count = 1;
+        package
+            .semantic
+            .integrated_osctl_trace_replays
+            .push(test_integrated_osctl_trace_replay_manifest());
+
+        let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
+        assert!(
+            !live
+                .iter()
+                .any(|edge| { edge["from"]["kind"] == "integrated-osctl-trace-replay" })
+        );
+
+        let history = graph_edges_for_package(&package, GraphEdgeMode::History);
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-osctl-trace-replay"
+            && edge["relation"] == "integrated-osctl-trace-replay->x0-smp-preemption-cleanup"
+            && edge["to"]["kind"] == "integrated-smp-preemption-cleanup"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-osctl-trace-replay"
+            && edge["relation"] == "integrated-osctl-trace-replay->x8-display-panic"
+            && edge["to"]["kind"] == "integrated-display-panic"
+            && edge["to"]["id"] == 26_801
+            && edge["to"]["generation"] == 1));
     }
 
     #[test]

@@ -27458,6 +27458,151 @@ fn integrated_runtime_x8_contract_graph_rejects_last_frame_drift() {
     }));
 }
 
+#[test]
+fn integrated_runtime_x9_rejects_missing_or_incomplete_replay_evidence() {
+    let missing_sources = SemanticGraph::new().apply_envelope(CommandEnvelope::new(
+        1,
+        "x9-test",
+        SemanticCommand::RecordIntegratedOsctlTraceReplay {
+            integrated: 904,
+            scenario: "x9-full-osctl-trace-replay".to_string(),
+            integrated_smp_preemption_cleanup: 301,
+            integrated_smp_preemption_cleanup_generation: 1,
+            integrated_smp_network_fault: 401,
+            integrated_smp_network_fault_generation: 1,
+            integrated_disk_preempt_fault: 501,
+            integrated_disk_preempt_fault_generation: 1,
+            integrated_simd_migration: 601,
+            integrated_simd_migration_generation: 1,
+            integrated_network_disk_io: 701,
+            integrated_network_disk_io_generation: 1,
+            integrated_display_scheduler_load: 801,
+            integrated_display_scheduler_load_generation: 1,
+            integrated_snapshot_io_lease_barrier: 901,
+            integrated_snapshot_io_lease_barrier_generation: 1,
+            integrated_code_publish_smp_workload: 902,
+            integrated_code_publish_smp_workload_generation: 1,
+            integrated_display_panic: 903,
+            integrated_display_panic_generation: 1,
+            replay_event_cursor: 1,
+            stable_view_count: 9,
+            historical_edge_count: 9,
+            replayed_root_count: 9,
+            integrated_scenario_count: 9,
+            golden_trace_count: 9,
+            contract_validation_ok: true,
+            replay_validation_ok: true,
+            graph_history_ok: true,
+            roots_match_counts: true,
+            invariant_checks: 9,
+            note: "missing integrated scenario evidence rejects".to_string(),
+        },
+    ));
+    assert_eq!(missing_sources.status, CommandStatus::Rejected);
+    assert_eq!(
+        missing_sources.violations,
+        vec!["integrated osctl trace replay missing integrated scenario evidence".to_string()]
+    );
+
+    let incomplete_evidence = SemanticGraph::new().apply_envelope(CommandEnvelope::new(
+        1,
+        "x9-test",
+        SemanticCommand::RecordIntegratedOsctlTraceReplay {
+            integrated: 904,
+            scenario: "x9-full-osctl-trace-replay".to_string(),
+            integrated_smp_preemption_cleanup: 301,
+            integrated_smp_preemption_cleanup_generation: 1,
+            integrated_smp_network_fault: 401,
+            integrated_smp_network_fault_generation: 1,
+            integrated_disk_preempt_fault: 501,
+            integrated_disk_preempt_fault_generation: 1,
+            integrated_simd_migration: 601,
+            integrated_simd_migration_generation: 1,
+            integrated_network_disk_io: 701,
+            integrated_network_disk_io_generation: 1,
+            integrated_display_scheduler_load: 801,
+            integrated_display_scheduler_load_generation: 1,
+            integrated_snapshot_io_lease_barrier: 901,
+            integrated_snapshot_io_lease_barrier_generation: 1,
+            integrated_code_publish_smp_workload: 902,
+            integrated_code_publish_smp_workload_generation: 1,
+            integrated_display_panic: 903,
+            integrated_display_panic_generation: 1,
+            replay_event_cursor: 1,
+            stable_view_count: 8,
+            historical_edge_count: 9,
+            replayed_root_count: 9,
+            integrated_scenario_count: 9,
+            golden_trace_count: 9,
+            contract_validation_ok: true,
+            replay_validation_ok: true,
+            graph_history_ok: true,
+            roots_match_counts: true,
+            invariant_checks: 9,
+            note: "incomplete stable view evidence rejects".to_string(),
+        },
+    ));
+    assert_eq!(incomplete_evidence.status, CommandStatus::Rejected);
+    assert_eq!(
+        incomplete_evidence.violations,
+        vec!["integrated osctl trace replay requires complete stable evidence".to_string()]
+    );
+}
+
+#[test]
+fn integrated_runtime_x9_contract_graph_rejects_dangling_integrated_history() {
+    let snapshot = ContractGraphSnapshot {
+        integrated_osctl_trace_replays: vec![IntegratedOsctlTraceReplayRecord {
+            id: 904,
+            scenario: "x9-full-osctl-trace-replay".to_string(),
+            integrated_smp_preemption_cleanup: 301,
+            integrated_smp_preemption_cleanup_generation: 1,
+            integrated_smp_network_fault: 401,
+            integrated_smp_network_fault_generation: 1,
+            integrated_disk_preempt_fault: 501,
+            integrated_disk_preempt_fault_generation: 1,
+            integrated_simd_migration: 601,
+            integrated_simd_migration_generation: 1,
+            integrated_network_disk_io: 701,
+            integrated_network_disk_io_generation: 1,
+            integrated_display_scheduler_load: 801,
+            integrated_display_scheduler_load_generation: 1,
+            integrated_snapshot_io_lease_barrier: 901,
+            integrated_snapshot_io_lease_barrier_generation: 1,
+            integrated_code_publish_smp_workload: 902,
+            integrated_code_publish_smp_workload_generation: 1,
+            integrated_display_panic: 903,
+            integrated_display_panic_generation: 1,
+            replay_event_cursor: 579,
+            stable_view_count: 9,
+            historical_edge_count: 9,
+            replayed_root_count: 9,
+            integrated_scenario_count: 9,
+            golden_trace_count: 9,
+            contract_validation_ok: true,
+            replay_validation_ok: true,
+            graph_history_ok: true,
+            roots_match_counts: true,
+            invariant_checks: 9,
+            generation: 1,
+            state: IntegratedOsctlTraceReplayState::Recorded,
+            recorded_at_event: 580,
+            note: "missing referenced integrated history rejects".to_string(),
+        }],
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "integrated-osctl-trace-replay->x0-smp-preemption-cleanup"
+            && violation.kind == ContractViolationKind::DanglingEdge
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "integrated-osctl-trace-replay->x8-display-panic"
+            && violation.kind == ContractViolationKind::DanglingEdge
+    }));
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

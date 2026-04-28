@@ -1,0 +1,166 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "X9-full-osctl-trace-replay",
+  "name": "golden_x9_full_osctl_trace_replay",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real target-side cwasm execution",
+    "full WASI/component runtime",
+    "substrate mapping as semantic truth",
+    "adapter-internal state as osctl schema",
+    "mutable osctl control-plane behavior"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "X0 through X8 integrated scenario evidence exists as first-class semantic objects",
+      "each integrated scenario carries exact kind/id/generation identity",
+      "osctl stable ViewV1 can inspect integrated scenario evidence without dumping adapter internals",
+      "contract graph history can emit historical edges for integrated evidence"
+    ],
+    "command": {
+      "name": "record-integrated-osctl-trace-replay",
+      "integrated": "integrated-osctl-trace-replay:26901@1",
+      "scenario": "x9-full-osctl-trace-replay",
+      "replay_event_cursor": 579,
+      "stable_view_count": 9,
+      "historical_edge_count": 9,
+      "replayed_root_count": 9,
+      "integrated_scenario_count": 9,
+      "golden_trace_count": 9,
+      "result": "semantic evidence proves full osctl trace replay sees X0-X8 integrated scenario roots, stable views, history edges, golden traces, and contract validation"
+    }
+  },
+  "events": [
+    {
+      "kind": "IntegratedOsctlTraceReplayRecorded",
+      "source": "SemanticGraph::record_integrated_osctl_trace_replay_with_id",
+      "visible_as": "osctl integrated-osctl-trace-replay list --json",
+      "event": 580
+    }
+  ],
+  "expected": {
+    "views": {
+      "integrated-osctl-trace-replay": {
+        "id": 26901,
+        "generation": 1,
+        "state": "recorded",
+        "owner": {
+          "scenario": "x9-full-osctl-trace-replay",
+          "integrated_scenario_count": 9
+        },
+        "references": {
+          "x0_smp_preemption_cleanup": {
+            "kind": "integrated-smp-preemption-cleanup",
+            "id": 26001,
+            "generation": 1
+          },
+          "x1_smp_network_fault": {
+            "kind": "integrated-smp-network-fault",
+            "id": 26101,
+            "generation": 1
+          },
+          "x2_disk_preempt_fault": {
+            "kind": "integrated-disk-preempt-fault",
+            "id": 26201,
+            "generation": 1
+          },
+          "x3_simd_migration": {
+            "kind": "integrated-simd-migration",
+            "id": 26301,
+            "generation": 1
+          },
+          "x4_network_disk_io": {
+            "kind": "integrated-network-disk-io",
+            "id": 26401,
+            "generation": 1
+          },
+          "x5_display_scheduler_load": {
+            "kind": "integrated-display-scheduler-load",
+            "id": 26501,
+            "generation": 1
+          },
+          "x6_snapshot_io_lease_barrier": {
+            "kind": "integrated-snapshot-io-lease-barrier",
+            "id": 26601,
+            "generation": 1
+          },
+          "x7_code_publish_smp_workload": {
+            "kind": "integrated-code-publish-smp-workload",
+            "id": 26701,
+            "generation": 1
+          },
+          "x8_display_panic": {
+            "kind": "integrated-display-panic",
+            "id": 26801,
+            "generation": 1
+          }
+        },
+        "replay": {
+          "event_cursor": 579,
+          "stable_view_count": 9,
+          "historical_edge_count": 9,
+          "replayed_root_count": 9,
+          "integrated_scenario_count": 9,
+          "golden_trace_count": 9,
+          "contract_validation_ok": true,
+          "replay_validation_ok": true,
+          "graph_history_ok": true,
+          "roots_match_counts": true
+        },
+        "authority": {
+          "osctl_is_read_only_control_plane": true,
+          "adapter_internal_state_is_not_semantic_truth": true,
+          "no_substrate_mapping_as_semantic_truth": true
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "integrated-osctl-trace-replay:26901@1",
+          "relation": "integrated-osctl-trace-replay->x0-smp-preemption-cleanup",
+          "to": "integrated-smp-preemption-cleanup:26001@1",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-osctl-trace-replay:26901@1",
+          "relation": "integrated-osctl-trace-replay->x8-display-panic",
+          "to": "integrated-display-panic:26801@1",
+          "mode": "historical"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "X9 is a first-class integrated osctl trace replay ObjectRef",
+      "X9 references X0-X8 by exact kind/id/generation",
+      "X9 graph edges are historical only and do not create live ownership",
+      "osctl stable ViewV1 is the control-plane ABI",
+      "osctl remains read-only and cannot become semantic truth",
+      "adapter and substrate internals remain outside stable osctl views",
+      "contract validation, replay validation, graph history, root/count matching, and golden trace coverage must all be true"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "integrated_runtime_x9_rejects_missing_or_incomplete_replay_evidence",
+      "integrated_runtime_x9_contract_graph_rejects_dangling_integrated_history",
+      "semantic_roots_reject_integrated_osctl_trace_replay_root_mismatch",
+      "integrated_osctl_trace_replay_view_v1_exposes_replay_closure",
+      "integrated_osctl_trace_replay_graph_edges_are_history_only"
+    ],
+    "osctl_json_view": "integrated-osctl-trace-replay list --json",
+    "integrated_osctl_trace_replay": "integrated-osctl-trace-replay:26901@1",
+    "replay_event_cursor": 579,
+    "event": 580
+  }
+}

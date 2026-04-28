@@ -101,6 +101,7 @@ pub struct ContractGraphSnapshot {
     pub integrated_snapshot_io_lease_barriers: Vec<IntegratedSnapshotIoLeaseBarrierRecord>,
     pub integrated_code_publish_smp_workloads: Vec<IntegratedCodePublishSmpWorkloadRecord>,
     pub integrated_display_panics: Vec<IntegratedDisplayPanicRecord>,
+    pub integrated_osctl_trace_replays: Vec<IntegratedOsctlTraceReplayRecord>,
     pub integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
     pub integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
     pub integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultRecord>,
@@ -260,6 +261,7 @@ impl ContractGraphValidator {
         Self::validate_integrated_snapshot_io_lease_barriers(snapshot, &mut violations);
         Self::validate_integrated_code_publish_smp_workloads(snapshot, &mut violations);
         Self::validate_integrated_display_panics(snapshot, &mut violations);
+        Self::validate_integrated_osctl_trace_replays(snapshot, &mut violations);
         Self::validate_integrated_smp_preemption_cleanups(snapshot, &mut violations);
         Self::validate_integrated_smp_network_faults(snapshot, &mut violations);
         Self::validate_integrated_disk_preempt_faults(snapshot, &mut violations);
@@ -4281,6 +4283,109 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_integrated_osctl_trace_replays(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for record in &snapshot.integrated_osctl_trace_replays {
+            let from = record.object_ref();
+            if record.id == 0
+                || record.generation == 0
+                || record.scenario.is_empty()
+                || record.state != IntegratedOsctlTraceReplayState::Recorded
+                || record.replay_event_cursor == 0
+                || record.integrated_scenario_count != 9
+                || record.stable_view_count < 9
+                || record.historical_edge_count < 9
+                || record.replayed_root_count < 9
+                || record.golden_trace_count < 9
+                || !record.contract_validation_ok
+                || !record.replay_validation_ok
+                || !record.graph_history_ok
+                || !record.roots_match_counts
+                || record.invariant_checks == 0
+                || record.recorded_at_event == 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "integrated-osctl-trace-replay->contract",
+                    from,
+                    None,
+                    "integrated osctl trace replay requires complete stable replay evidence",
+                ));
+                continue;
+            }
+
+            for (label, kind, id, generation) in [
+                (
+                    "integrated-osctl-trace-replay->x0-smp-preemption-cleanup",
+                    ContractObjectKind::IntegratedSmpPreemptionCleanup,
+                    record.integrated_smp_preemption_cleanup,
+                    record.integrated_smp_preemption_cleanup_generation,
+                ),
+                (
+                    "integrated-osctl-trace-replay->x1-smp-network-fault",
+                    ContractObjectKind::IntegratedSmpNetworkFault,
+                    record.integrated_smp_network_fault,
+                    record.integrated_smp_network_fault_generation,
+                ),
+                (
+                    "integrated-osctl-trace-replay->x2-disk-preempt-fault",
+                    ContractObjectKind::IntegratedDiskPreemptFault,
+                    record.integrated_disk_preempt_fault,
+                    record.integrated_disk_preempt_fault_generation,
+                ),
+                (
+                    "integrated-osctl-trace-replay->x3-simd-migration",
+                    ContractObjectKind::IntegratedSimdMigration,
+                    record.integrated_simd_migration,
+                    record.integrated_simd_migration_generation,
+                ),
+                (
+                    "integrated-osctl-trace-replay->x4-network-disk-io",
+                    ContractObjectKind::IntegratedNetworkDiskIo,
+                    record.integrated_network_disk_io,
+                    record.integrated_network_disk_io_generation,
+                ),
+                (
+                    "integrated-osctl-trace-replay->x5-display-scheduler-load",
+                    ContractObjectKind::IntegratedDisplaySchedulerLoad,
+                    record.integrated_display_scheduler_load,
+                    record.integrated_display_scheduler_load_generation,
+                ),
+                (
+                    "integrated-osctl-trace-replay->x6-snapshot-io-lease-barrier",
+                    ContractObjectKind::IntegratedSnapshotIoLeaseBarrier,
+                    record.integrated_snapshot_io_lease_barrier,
+                    record.integrated_snapshot_io_lease_barrier_generation,
+                ),
+                (
+                    "integrated-osctl-trace-replay->x7-code-publish-smp-workload",
+                    ContractObjectKind::IntegratedCodePublishSmpWorkload,
+                    record.integrated_code_publish_smp_workload,
+                    record.integrated_code_publish_smp_workload_generation,
+                ),
+                (
+                    "integrated-osctl-trace-replay->x8-display-panic",
+                    ContractObjectKind::IntegratedDisplayPanic,
+                    record.integrated_display_panic,
+                    record.integrated_display_panic_generation,
+                ),
+            ] {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    kind,
+                    id,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -5608,6 +5713,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id && record.generation == generation)
                 .map(IntegratedDisplayPanicRecord::object_ref),
+            ContractObjectKind::IntegratedOsctlTraceReplay => snapshot
+                .integrated_osctl_trace_replays
+                .iter()
+                .find(|record| record.id == id && record.generation == generation)
+                .map(IntegratedOsctlTraceReplayRecord::object_ref),
             ContractObjectKind::SmpSafePoint => snapshot
                 .smp_safe_points
                 .iter()
@@ -6010,6 +6120,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id)
                 .map(IntegratedDisplayPanicRecord::object_ref),
+            ContractObjectKind::IntegratedOsctlTraceReplay => snapshot
+                .integrated_osctl_trace_replays
+                .iter()
+                .find(|record| record.id == id)
+                .map(IntegratedOsctlTraceReplayRecord::object_ref),
             ContractObjectKind::SmpSafePoint => snapshot
                 .smp_safe_points
                 .iter()
@@ -6567,6 +6682,15 @@ impl ContractGraphValidator {
                 .and_then(|record| {
                     (record.state != IntegratedDisplayPanicState::Recorded)
                         .then_some("live edge references unrecorded integrated display panic evidence")
+                }),
+            ContractObjectKind::IntegratedOsctlTraceReplay => snapshot
+                .integrated_osctl_trace_replays
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != IntegratedOsctlTraceReplayState::Recorded).then_some(
+                        "live edge references unrecorded integrated osctl trace replay evidence",
+                    )
                 }),
             ContractObjectKind::SmpCodePublishBarrier => snapshot
                 .smp_code_publish_barriers

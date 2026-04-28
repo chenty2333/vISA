@@ -32,20 +32,21 @@ use artifact_manifest::{
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
     IntegratedCodePublishSmpWorkloadManifest, IntegratedDiskPreemptFaultManifest,
     IntegratedDisplayPanicManifest, IntegratedDisplaySchedulerLoadManifest,
-    IntegratedNetworkDiskIoManifest, IntegratedSimdMigrationManifest,
-    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
-    IntegratedSnapshotIoLeaseBarrierManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    IntegratedNetworkDiskIoManifest, IntegratedOsctlTraceReplayManifest,
+    IntegratedSimdMigrationManifest, IntegratedSmpNetworkFaultManifest,
+    IntegratedSmpPreemptionCleanupManifest, IntegratedSnapshotIoLeaseBarrierManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8406,6 +8407,7 @@ fn build_target_executor_v1(
     run_integrated_snapshot_io_lease_barrier_harness(semantic)?;
     run_integrated_code_publish_smp_workload_harness(semantic)?;
     run_integrated_display_panic_harness(semantic)?;
+    run_integrated_osctl_trace_replay_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8505,6 +8507,7 @@ fn build_target_executor_v1(
             .integrated_code_publish_smp_workloads()
             .to_vec(),
         integrated_display_panics: semantic.integrated_display_panics().to_vec(),
+        integrated_osctl_trace_replays: semantic.integrated_osctl_trace_replays().to_vec(),
         integrated_smp_preemption_cleanups: semantic.integrated_smp_preemption_cleanups().to_vec(),
         integrated_smp_network_faults: semantic.integrated_smp_network_faults().to_vec(),
         integrated_disk_preempt_faults: semantic.integrated_disk_preempt_faults().to_vec(),
@@ -11116,6 +11119,61 @@ fn run_integrated_display_panic_harness(
     Ok(())
 }
 
+fn run_integrated_osctl_trace_replay_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        100_010,
+        "integrated-runtime-x9",
+        SemanticCommand::RecordIntegratedOsctlTraceReplay {
+            integrated: 26_901,
+            scenario: "x9-full-osctl-trace-replay".to_owned(),
+            integrated_smp_preemption_cleanup: 26_001,
+            integrated_smp_preemption_cleanup_generation: 1,
+            integrated_smp_network_fault: 26_101,
+            integrated_smp_network_fault_generation: 1,
+            integrated_disk_preempt_fault: 26_201,
+            integrated_disk_preempt_fault_generation: 1,
+            integrated_simd_migration: 26_301,
+            integrated_simd_migration_generation: 1,
+            integrated_network_disk_io: 26_401,
+            integrated_network_disk_io_generation: 1,
+            integrated_display_scheduler_load: 26_501,
+            integrated_display_scheduler_load_generation: 1,
+            integrated_snapshot_io_lease_barrier: 26_601,
+            integrated_snapshot_io_lease_barrier_generation: 1,
+            integrated_code_publish_smp_workload: 26_701,
+            integrated_code_publish_smp_workload_generation: 1,
+            integrated_display_panic: 26_801,
+            integrated_display_panic_generation: 1,
+            replay_event_cursor: semantic.event_log().cursor(),
+            stable_view_count: 9,
+            historical_edge_count: 9,
+            replayed_root_count: 9,
+            integrated_scenario_count: 9,
+            golden_trace_count: 9,
+            contract_validation_ok: true,
+            replay_validation_ok: true,
+            graph_history_ok: true,
+            roots_match_counts: true,
+            invariant_checks: 9,
+            note: "x9 records full osctl trace replay closure across integrated scenarios"
+                .to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "integrated runtime x9 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11952,6 +12010,7 @@ fn demo_migration_package(
             integrated_code_publish_smp_workload_count: semantic
                 .integrated_code_publish_smp_workload_count(),
             integrated_display_panic_count: semantic.integrated_display_panic_count(),
+            integrated_osctl_trace_replay_count: semantic.integrated_osctl_trace_replay_count(),
             device_object_count: semantic.device_object_count(),
             queue_object_count: semantic.queue_object_count(),
             descriptor_object_count: semantic.descriptor_object_count(),
@@ -12208,6 +12267,11 @@ fn demo_migration_package(
                 .integrated_display_panics()
                 .iter()
                 .map(integrated_display_panic_manifest)
+                .collect(),
+            integrated_osctl_trace_replays: semantic
+                .integrated_osctl_trace_replays()
+                .iter()
+                .map(integrated_osctl_trace_replay_manifest)
                 .collect(),
             device_objects: semantic
                 .device_objects()
@@ -13314,6 +13378,22 @@ fn semantic_roots(
                     record.panic_ring_record_count,
                     record.panic_ring_lost_count,
                     record.jsonl_frame_count,
+                    record.generation
+                )
+            })
+            .collect(),
+        integrated_osctl_trace_replay_roots: semantic
+            .integrated_osctl_trace_replays()
+            .iter()
+            .map(|record| {
+                format!(
+                    "integrated-osctl-trace-replay id={} scenario={} replay_event_cursor={} integrated_scenarios={} stable_views={} historical_edges={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.replay_event_cursor,
+                    record.integrated_scenario_count,
+                    record.stable_view_count,
+                    record.historical_edge_count,
                     record.generation
                 )
             })
@@ -16776,6 +16856,52 @@ fn integrated_display_panic_manifest(
         summary_record_bytes: record.summary_record_bytes,
         raw_framebuffer_bytes_exported: record.raw_framebuffer_bytes_exported,
         panic_path_allocates: record.panic_path_allocates,
+        invariant_checks: record.invariant_checks,
+        generation: record.generation,
+        state: record.state.as_str().to_owned(),
+        recorded_at_event: record.recorded_at_event,
+        note: record.note.clone(),
+    }
+}
+
+fn integrated_osctl_trace_replay_manifest(
+    record: &semantic_core::IntegratedOsctlTraceReplayRecord,
+) -> IntegratedOsctlTraceReplayManifest {
+    IntegratedOsctlTraceReplayManifest {
+        id: record.id,
+        scenario: record.scenario.clone(),
+        integrated_smp_preemption_cleanup: record.integrated_smp_preemption_cleanup,
+        integrated_smp_preemption_cleanup_generation: record
+            .integrated_smp_preemption_cleanup_generation,
+        integrated_smp_network_fault: record.integrated_smp_network_fault,
+        integrated_smp_network_fault_generation: record.integrated_smp_network_fault_generation,
+        integrated_disk_preempt_fault: record.integrated_disk_preempt_fault,
+        integrated_disk_preempt_fault_generation: record.integrated_disk_preempt_fault_generation,
+        integrated_simd_migration: record.integrated_simd_migration,
+        integrated_simd_migration_generation: record.integrated_simd_migration_generation,
+        integrated_network_disk_io: record.integrated_network_disk_io,
+        integrated_network_disk_io_generation: record.integrated_network_disk_io_generation,
+        integrated_display_scheduler_load: record.integrated_display_scheduler_load,
+        integrated_display_scheduler_load_generation: record
+            .integrated_display_scheduler_load_generation,
+        integrated_snapshot_io_lease_barrier: record.integrated_snapshot_io_lease_barrier,
+        integrated_snapshot_io_lease_barrier_generation: record
+            .integrated_snapshot_io_lease_barrier_generation,
+        integrated_code_publish_smp_workload: record.integrated_code_publish_smp_workload,
+        integrated_code_publish_smp_workload_generation: record
+            .integrated_code_publish_smp_workload_generation,
+        integrated_display_panic: record.integrated_display_panic,
+        integrated_display_panic_generation: record.integrated_display_panic_generation,
+        replay_event_cursor: record.replay_event_cursor,
+        stable_view_count: record.stable_view_count,
+        historical_edge_count: record.historical_edge_count,
+        replayed_root_count: record.replayed_root_count,
+        integrated_scenario_count: record.integrated_scenario_count,
+        golden_trace_count: record.golden_trace_count,
+        contract_validation_ok: record.contract_validation_ok,
+        replay_validation_ok: record.replay_validation_ok,
+        graph_history_ok: record.graph_history_ok,
+        roots_match_counts: record.roots_match_counts,
         invariant_checks: record.invariant_checks,
         generation: record.generation,
         state: record.state.as_str().to_owned(),

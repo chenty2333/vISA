@@ -283,6 +283,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_display_panic_count: usize,
     #[serde(default)]
+    pub integrated_osctl_trace_replay_count: usize,
+    #[serde(default)]
     pub device_object_count: usize,
     #[serde(default)]
     pub queue_object_count: usize,
@@ -569,6 +571,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_display_panics: Vec<IntegratedDisplayPanicManifest>,
     #[serde(default)]
+    pub integrated_osctl_trace_replays: Vec<IntegratedOsctlTraceReplayManifest>,
+    #[serde(default)]
     pub device_objects: Vec<DeviceObjectManifest>,
     #[serde(default)]
     pub queue_objects: Vec<QueueObjectManifest>,
@@ -834,6 +838,8 @@ pub struct SemanticRootSetManifest {
     pub integrated_code_publish_smp_workload_roots: Vec<String>,
     #[serde(default)]
     pub integrated_display_panic_roots: Vec<String>,
+    #[serde(default)]
+    pub integrated_osctl_trace_replay_roots: Vec<String>,
     #[serde(default)]
     pub device_object_roots: Vec<String>,
     #[serde(default)]
@@ -1948,6 +1954,45 @@ pub struct IntegratedDisplayPanicManifest {
     pub summary_record_bytes: u32,
     pub raw_framebuffer_bytes_exported: bool,
     pub panic_path_allocates: bool,
+    pub invariant_checks: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IntegratedOsctlTraceReplayManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub integrated_smp_preemption_cleanup: u64,
+    pub integrated_smp_preemption_cleanup_generation: u64,
+    pub integrated_smp_network_fault: u64,
+    pub integrated_smp_network_fault_generation: u64,
+    pub integrated_disk_preempt_fault: u64,
+    pub integrated_disk_preempt_fault_generation: u64,
+    pub integrated_simd_migration: u64,
+    pub integrated_simd_migration_generation: u64,
+    pub integrated_network_disk_io: u64,
+    pub integrated_network_disk_io_generation: u64,
+    pub integrated_display_scheduler_load: u64,
+    pub integrated_display_scheduler_load_generation: u64,
+    pub integrated_snapshot_io_lease_barrier: u64,
+    pub integrated_snapshot_io_lease_barrier_generation: u64,
+    pub integrated_code_publish_smp_workload: u64,
+    pub integrated_code_publish_smp_workload_generation: u64,
+    pub integrated_display_panic: u64,
+    pub integrated_display_panic_generation: u64,
+    pub replay_event_cursor: u64,
+    pub stable_view_count: u32,
+    pub historical_edge_count: u32,
+    pub replayed_root_count: u32,
+    pub integrated_scenario_count: u32,
+    pub golden_trace_count: u32,
+    pub contract_validation_ok: bool,
+    pub replay_validation_ok: bool,
+    pub graph_history_ok: bool,
+    pub roots_match_counts: bool,
     pub invariant_checks: u32,
     pub generation: u64,
     pub state: String,

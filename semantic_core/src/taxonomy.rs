@@ -544,6 +544,21 @@ impl IntegratedDisplayPanicState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntegratedOsctlTraceReplayState {
+    Recorded,
+    Rejected,
+}
+
+impl IntegratedOsctlTraceReplayState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceObjectState {
     Registered,
     Removed,

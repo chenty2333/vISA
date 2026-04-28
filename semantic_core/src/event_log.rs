@@ -490,6 +490,22 @@ pub enum EventKind {
         invariant_checks: u32,
         generation: Generation,
     },
+    IntegratedOsctlTraceReplayRecorded {
+        scenario: String,
+        integrated: IntegratedOsctlTraceReplayId,
+        replay_event_cursor: EventId,
+        integrated_scenario_count: u32,
+        replayed_root_count: u32,
+        stable_view_count: u32,
+        historical_edge_count: u32,
+        golden_trace_count: u32,
+        contract_validation_ok: bool,
+        replay_validation_ok: bool,
+        graph_history_ok: bool,
+        roots_match_counts: bool,
+        invariant_checks: u32,
+        generation: Generation,
+    },
     DeviceObjectRecorded {
         device: DeviceObjectId,
         resource: ResourceId,
@@ -2843,6 +2859,24 @@ impl EventKind {
                 generation,
             } => format!(
                 "IntegratedDisplayPanicRecorded integrated={integrated} scenario={scenario} substrate_panic_event={substrate_panic_event} display_panic_last_frame={display_panic_last_frame}@{display_panic_last_frame_generation} panic_ring_records={panic_ring_record_count} lost={panic_ring_lost_count} jsonl_frames={jsonl_frame_count} contract_panic_summary_records={contract_panic_summary_records} last_frame_summary_records={last_frame_summary_records} corrupt_records={corrupt_record_count} truncated_records={truncated_record_count} invariant_checks={invariant_checks} generation={generation}"
+            ),
+            Self::IntegratedOsctlTraceReplayRecorded {
+                scenario,
+                integrated,
+                replay_event_cursor,
+                integrated_scenario_count,
+                replayed_root_count,
+                stable_view_count,
+                historical_edge_count,
+                golden_trace_count,
+                contract_validation_ok,
+                replay_validation_ok,
+                graph_history_ok,
+                roots_match_counts,
+                invariant_checks,
+                generation,
+            } => format!(
+                "IntegratedOsctlTraceReplayRecorded integrated={integrated} scenario={scenario} replay_event_cursor={replay_event_cursor} integrated_scenarios={integrated_scenario_count} replayed_roots={replayed_root_count} stable_views={stable_view_count} historical_edges={historical_edge_count} golden_traces={golden_trace_count} contract_validation_ok={contract_validation_ok} replay_validation_ok={replay_validation_ok} graph_history_ok={graph_history_ok} roots_match_counts={roots_match_counts} invariant_checks={invariant_checks} generation={generation}"
             ),
             Self::DeviceObjectRecorded {
                 device,

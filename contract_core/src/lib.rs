@@ -95,6 +95,7 @@ pub enum ObjectKind {
     IntegratedSnapshotIoLeaseBarrier,
     IntegratedCodePublishSmpWorkload,
     IntegratedDisplayPanic,
+    IntegratedOsctlTraceReplay,
     DeviceObject,
     QueueObject,
     DescriptorObject,
@@ -231,6 +232,7 @@ impl ObjectKind {
             Self::IntegratedSnapshotIoLeaseBarrier => "integrated-snapshot-io-lease-barrier",
             Self::IntegratedCodePublishSmpWorkload => "integrated-code-publish-smp-workload",
             Self::IntegratedDisplayPanic => "integrated-display-panic",
+            Self::IntegratedOsctlTraceReplay => "integrated-osctl-trace-replay",
             Self::DeviceObject => "device-object",
             Self::QueueObject => "queue-object",
             Self::DescriptorObject => "descriptor-object",
@@ -553,6 +555,10 @@ typed_ref!(
 typed_ref!(
     IntegratedDisplayPanicRef,
     ObjectKind::IntegratedDisplayPanic
+);
+typed_ref!(
+    IntegratedOsctlTraceReplayRef,
+    ObjectKind::IntegratedOsctlTraceReplay
 );
 typed_ref!(DeviceObjectRef, ObjectKind::DeviceObject);
 typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
@@ -2504,6 +2510,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "integrated display panic root/count mismatch",
         ));
     }
+    if roots.integrated_osctl_trace_replay_roots.len()
+        != package.semantic.integrated_osctl_trace_replay_count
+        || package.semantic.integrated_osctl_trace_replays.len()
+            != package.semantic.integrated_osctl_trace_replay_count
+    {
+        return Err(ContractError::new(
+            "integrated osctl trace replay root/count mismatch",
+        ));
+    }
     if roots.framebuffer_benchmark_roots.len() != package.semantic.framebuffer_benchmark_count
         || package.semantic.framebuffer_benchmarks.len()
             != package.semantic.framebuffer_benchmark_count
@@ -3138,6 +3153,7 @@ mod tests {
                 display_snapshot_barrier_count: 0,
                 display_panic_last_frame_count: 0,
                 integrated_display_panic_count: 0,
+                integrated_osctl_trace_replay_count: 0,
                 framebuffer_benchmark_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
@@ -3283,6 +3299,7 @@ mod tests {
                 display_snapshot_barriers: Vec::new(),
                 display_panic_last_frames: Vec::new(),
                 integrated_display_panics: Vec::new(),
+                integrated_osctl_trace_replays: Vec::new(),
                 framebuffer_benchmarks: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
@@ -4443,6 +4460,57 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "integrated display panic root/count mismatch"
+        );
+    }
+
+    #[test]
+    fn semantic_roots_reject_integrated_osctl_trace_replay_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.integrated_osctl_trace_replay_count = 1;
+        package.semantic.integrated_osctl_trace_replays.push(
+            artifact_manifest::IntegratedOsctlTraceReplayManifest {
+                id: 26_901,
+                scenario: "x9-full-osctl-trace-replay".to_owned(),
+                integrated_smp_preemption_cleanup: 26_001,
+                integrated_smp_preemption_cleanup_generation: 1,
+                integrated_smp_network_fault: 26_101,
+                integrated_smp_network_fault_generation: 1,
+                integrated_disk_preempt_fault: 26_201,
+                integrated_disk_preempt_fault_generation: 1,
+                integrated_simd_migration: 26_301,
+                integrated_simd_migration_generation: 1,
+                integrated_network_disk_io: 26_401,
+                integrated_network_disk_io_generation: 1,
+                integrated_display_scheduler_load: 26_501,
+                integrated_display_scheduler_load_generation: 1,
+                integrated_snapshot_io_lease_barrier: 26_601,
+                integrated_snapshot_io_lease_barrier_generation: 1,
+                integrated_code_publish_smp_workload: 26_701,
+                integrated_code_publish_smp_workload_generation: 1,
+                integrated_display_panic: 26_801,
+                integrated_display_panic_generation: 1,
+                replay_event_cursor: 579,
+                stable_view_count: 9,
+                historical_edge_count: 9,
+                replayed_root_count: 9,
+                integrated_scenario_count: 9,
+                golden_trace_count: 9,
+                contract_validation_ok: true,
+                replay_validation_ok: true,
+                graph_history_ok: true,
+                roots_match_counts: true,
+                invariant_checks: 9,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 580,
+                note: "x9 full osctl trace replay".to_owned(),
+            },
+        );
+
+        let err = validate_semantic_roots(&package).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "integrated osctl trace replay root/count mismatch"
         );
     }
 
@@ -7705,6 +7773,9 @@ mod tests {
         let integrated_display_panic =
             ObjectRef::new(ObjectKind::IntegratedDisplayPanic, 25, 1).unwrap();
         assert!(IntegratedDisplayPanicRef::try_from_ref(integrated_display_panic).is_ok());
+        let integrated_osctl_trace_replay =
+            ObjectRef::new(ObjectKind::IntegratedOsctlTraceReplay, 26, 1).unwrap();
+        assert!(IntegratedOsctlTraceReplayRef::try_from_ref(integrated_osctl_trace_replay).is_ok());
         let device_object = ObjectRef::new(ObjectKind::DeviceObject, 17, 1).unwrap();
         assert!(DeviceObjectRef::try_from_ref(device_object).is_ok());
         let packet_device_object = ObjectRef::new(ObjectKind::PacketDeviceObject, 30, 1).unwrap();

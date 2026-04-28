@@ -868,6 +868,16 @@ pub enum SemanticInvariantError {
     IntegratedDisplayPanicMissingEvent {
         integrated: IntegratedDisplayPanicId,
     },
+    IntegratedOsctlTraceReplayInvalid {
+        integrated: IntegratedOsctlTraceReplayId,
+    },
+    IntegratedOsctlTraceReplayMissingEvidence {
+        integrated: IntegratedOsctlTraceReplayId,
+        evidence: &'static str,
+    },
+    IntegratedOsctlTraceReplayMissingEvent {
+        integrated: IntegratedOsctlTraceReplayId,
+    },
     DeviceObjectInvalid {
         device: DeviceObjectId,
     },
