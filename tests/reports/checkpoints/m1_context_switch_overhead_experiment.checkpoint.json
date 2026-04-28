@@ -1,0 +1,147 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "M1-context-switch-overhead-experiment",
+  "phase": "Phase 9 Final Experiment Matrix",
+  "status": "pass",
+  "scope": [
+    "Promote V12 SimdContextSwitchBenchmark semantic evidence into the Phase 9 experiment matrix",
+    "Add machine-checkable vmos-experiment-report evidence for M1",
+    "Add golden trace tying M1 to the underlying semantic command, event, ViewV1, and invariant",
+    "Validate osctl experiment report JSON and osctl simd-context-switch-benchmark stable ViewV1 evidence",
+    "Use scalar_context_switch_nanos as the M1 baseline while leaving SIMD speedup/context overhead synthesis for M8"
+  ],
+  "no_goals": [
+    "hardware vector instruction execution",
+    "raw vector register payload storage",
+    "runtime-only executor behavior change",
+    "target-side cwasm execution",
+    "target hardware SIMD enablement",
+    "production scheduler fairness tuning"
+  ],
+  "implemented_contract_clauses": [
+    {
+      "spec": "references/roadmap.md",
+      "clause": "M1 context switch overhead experiment"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+      "clause": "experiment evidence references simd-context-switch-benchmark:22012@1 by exact kind/id/generation"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+      "clause": "context-switch benchmark references preemption, resume, vector state, and target feature set through historical exact-generation edges"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+      "clause": "osctl exposes stable simd-context-switch-benchmark ViewV1 and experiment report JSON"
+    },
+    {
+      "spec": "references/specs/execution-flow/agent-checkpoint-report.md",
+      "clause": "checkpoint report records scope, no-goals, validation, evidence, and next checkpoint"
+    }
+  ],
+  "changed_files": [
+    "tests/golden/experiments/golden_m1_context_switch_overhead.trace.json",
+    "tests/reports/experiments/m1_context_switch_overhead.experiment.json",
+    "tests/reports/checkpoints/m1_context_switch_overhead_experiment.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/experiments/golden_m1_context_switch_overhead.trace.json",
+    "tests/reports/experiments/m1_context_switch_overhead.experiment.json",
+    "tests/reports/checkpoints/m1_context_switch_overhead_experiment.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "M1 does not create a parallel context-switch truth source; it references the existing V12 SimdContextSwitchBenchmark evidence",
+      "Experiment report uses vmos-experiment-report schema rather than vmos-benchmark-report",
+      "osctl experiment report --json validates the experiment report as stable control-plane evidence",
+      "No Rust runtime or adapter path changed for M1"
+    ],
+    "bad_smells_checked": [
+      "No CLI output string is treated as semantic truth",
+      "No raw vector register payload is exported",
+      "No target hardware SIMD enablement is claimed",
+      "No third-party crate or adapter internal state appears in the experiment schema",
+      "No target-side execution path changed"
+    ],
+    "residual_notes": [
+      "M2 owns SMP scaling experiment evidence",
+      "M8 will combine SIMD speedup and context overhead evidence rather than replacing this M1 baseline"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- simd-context-switch-benchmark list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- experiment report --json tests/reports/experiments/m1_context_switch_overhead.experiment.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "./scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "experiment_report": "tests/reports/experiments/m1_context_switch_overhead.experiment.json",
+    "golden_trace": "tests/golden/experiments/golden_m1_context_switch_overhead.trace.json",
+    "simd_context_switch_benchmark": "simd-context-switch-benchmark:22012@1",
+    "event": 552,
+    "sample_count": 64,
+    "scalar_context_switch_nanos": 30000,
+    "vector_context_switch_nanos": 46384,
+    "overhead_nanos": 16384,
+    "budget_nanos": 50000,
+    "within_budget": true,
+    "contract_validation": "ok"
+  },
+  "no_goals_respected": {
+    "no_real_target_side_cwasm_execution": true,
+    "no_full_wasi_component_runtime": true,
+    "no_real_smp_dynamic_code_publish": true,
+    "no_global_object_id_authority": true,
+    "no_substrate_mapping_as_semantic_truth": true,
+    "no_adapter_internal_state_as_semantic_truth": true
+  },
+  "residual_gaps": [
+    "M2 SMP scaling experiment remains",
+    "M1 is host-validation semantic harness evidence, not calibrated target hardware context switch timing"
+  ],
+  "next_checkpoint": "M2-smp-scaling-experiment"
+}

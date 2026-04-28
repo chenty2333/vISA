@@ -1,0 +1,103 @@
+{
+  "schema": "vmos-experiment-report",
+  "schema_version": 1,
+  "name": "m1_context_switch_overhead_host_validation",
+  "checkpoint": "M1-context-switch-overhead",
+  "commands": [
+    {
+      "command": "cargo run -p target_executor",
+      "purpose": "generate semantic package containing SimdContextSwitchBenchmark evidence"
+    },
+    {
+      "command": "cargo run -p osctl -- simd-context-switch-benchmark list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "inspect stable context-switch benchmark ViewV1 JSON"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "prove package-level contract and replay validation remain green"
+    },
+    {
+      "command": "cargo run -p osctl -- graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "prove context-switch benchmark references are historical exact-generation edges"
+    }
+  ],
+  "events": [
+    {
+      "kind": "SimdContextSwitchBenchmarkRecorded",
+      "source": "SemanticGraph::record_simd_context_switch_benchmark_with_id",
+      "event": 552,
+      "object": "simd-context-switch-benchmark:22012@1"
+    }
+  ],
+  "final_views": {
+    "context_switch_overhead": {
+      "schema": 1,
+      "kind": "simd-context-switch-benchmark",
+      "id": 22012,
+      "generation": 1,
+      "state": "recorded",
+      "references": {
+        "preemption": {
+          "kind": "preemption",
+          "id": 9070,
+          "generation": 1
+        },
+        "activation_resume": {
+          "kind": "activation-resume",
+          "id": 9071,
+          "generation": 1
+        },
+        "saved_vector_state": {
+          "kind": "vector-state",
+          "id": 22002,
+          "generation": 1
+        },
+        "restored_vector_state": {
+          "kind": "vector-state",
+          "id": 22003,
+          "generation": 1
+        },
+        "target_feature_set": {
+          "kind": "target-feature-set",
+          "id": 21002,
+          "generation": 1
+        }
+      },
+      "metrics": {
+        "sample_count": 64,
+        "scalar_context_switch_nanos": 30000,
+        "vector_context_switch_nanos": 46384,
+        "overhead_nanos": 16384,
+        "budget_nanos": 50000
+      }
+    },
+    "contract_validation": {
+      "ok": true,
+      "violation_count": 0
+    },
+    "osctl": {
+      "schema": "vmos-osctl-json-v1",
+      "stable_view": "simd-context-switch-benchmark.list",
+      "read_only": true
+    }
+  },
+  "metrics": {
+    "sample_count": 64,
+    "scalar_context_switch_nanos": 30000,
+    "vector_context_switch_nanos": 46384,
+    "overhead_nanos": 16384,
+    "budget_nanos": 50000,
+    "within_budget": true,
+    "measurement_source": "simd-context-switch-benchmark:22012@1",
+    "hardware_dependency": "none"
+  },
+  "validation": {
+    "contract_ok": true,
+    "golden_replay_ok": true,
+    "osctl_view_ok": true,
+    "semantic_object": "SimdContextSwitchBenchmark",
+    "semantic_command": "RecordSimdContextSwitchBenchmark",
+    "semantic_event": "SimdContextSwitchBenchmarkRecorded",
+    "semantic_invariant": "exact preemption/resume/vector refs and overhead budget"
+  }
+}
