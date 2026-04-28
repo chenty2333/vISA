@@ -1,0 +1,156 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "M6-disk-iops-experiment",
+  "phase": "Phase 9 Final Experiment Matrix",
+  "status": "pass",
+  "scope": [
+    "Promote B22 BlockBenchmark semantic evidence into the Phase 9 experiment matrix",
+    "Add machine-checkable vmos-experiment-report evidence for M6",
+    "Add golden trace tying M6 to the underlying semantic command, event, ViewV1, and invariant",
+    "Validate osctl experiment report JSON and osctl block-benchmark stable ViewV1 evidence",
+    "Keep M6 as host-validation semantic benchmark evidence, not calibrated virtio-blk or disk scheduler performance"
+  ],
+  "no_goals": [
+    "real virtio-blk MMIO/DMA/IRQ execution",
+    "real disk scheduler",
+    "adapter-local disk state as semantic truth",
+    "calibrated target disk IOPS",
+    "runtime-only executor behavior change",
+    "target-side cwasm execution"
+  ],
+  "implemented_contract_clauses": [
+    {
+      "spec": "references/roadmap.md",
+      "clause": "M6 disk IOPS experiment"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+      "clause": "experiment evidence references block-benchmark:20132@1 by exact kind/id/generation"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+      "clause": "BlockBenchmark references block backend, block device, range, read path, write path, request queue, and DMA buffer through historical exact-generation edges"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+      "clause": "osctl exposes stable block-benchmark ViewV1 and experiment report JSON"
+    },
+    {
+      "spec": "references/specs/execution-flow/agent-checkpoint-report.md",
+      "clause": "checkpoint report records scope, no-goals, validation, evidence, and next checkpoint"
+    }
+  ],
+  "changed_files": [
+    "tests/golden/experiments/golden_m6_disk_iops.trace.json",
+    "tests/reports/experiments/m6_disk_iops.experiment.json",
+    "tests/reports/checkpoints/m6_disk_iops_experiment.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/experiments/golden_m6_disk_iops.trace.json",
+    "tests/reports/experiments/m6_disk_iops.experiment.json",
+    "tests/reports/checkpoints/m6_disk_iops_experiment.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "M6 does not create a parallel disk benchmark truth source; it references existing B22 BlockBenchmark evidence",
+      "Experiment report uses vmos-experiment-report schema rather than vmos-benchmark-report",
+      "osctl command-result negative evidence remains visible for stale read path and latency-budget cases",
+      "No Rust runtime, filesystem adapter, virtio, or substrate path changed for M6"
+    ],
+    "bad_smells_checked": [
+      "No CLI output string is treated as semantic truth",
+      "No calibrated target disk IOPS claim is made",
+      "No third-party crate or adapter internal state appears in the experiment schema",
+      "No target-side execution path changed"
+    ],
+    "residual_notes": [
+      "M7 owns disk recovery time experiment evidence",
+      "A future target hardware benchmark can replace the measurement source while preserving the same experiment report shape"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- block-benchmark list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 328",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 329",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- experiment report --json tests/reports/experiments/m6_disk_iops.experiment.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "./scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "experiment_report": "tests/reports/experiments/m6_disk_iops.experiment.json",
+    "golden_trace": "tests/golden/experiments/golden_m6_disk_iops.trace.json",
+    "block_benchmark": "block-benchmark:20132@1",
+    "event": 485,
+    "sample_requests": 2,
+    "sample_bytes": 8192,
+    "measured_nanos": 40000,
+    "budget_nanos": 80000,
+    "iops": 50000,
+    "throughput_bytes_per_sec": 204800000,
+    "p50_latency_nanos": 18000,
+    "p99_latency_nanos": 35000,
+    "contract_validation": "ok"
+  },
+  "no_goals_respected": {
+    "no_real_target_side_cwasm_execution": true,
+    "no_full_wasi_component_runtime": true,
+    "no_real_smp_dynamic_code_publish": true,
+    "no_global_object_id_authority": true,
+    "no_substrate_mapping_as_semantic_truth": true,
+    "no_adapter_internal_state_as_semantic_truth": true
+  },
+  "residual_gaps": [
+    "M7 disk recovery time experiment remains",
+    "M6 is host-validation semantic harness evidence, not calibrated target hardware disk IOPS"
+  ],
+  "next_checkpoint": "M7-disk-recovery-time-experiment"
+}
