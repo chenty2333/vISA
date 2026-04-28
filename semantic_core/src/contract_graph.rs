@@ -89,6 +89,7 @@ pub struct ContractGraphSnapshot {
     pub display_capabilities: Vec<DisplayCapabilityRecord>,
     pub framebuffer_window_leases: Vec<FramebufferWindowLeaseRecord>,
     pub framebuffer_mappings: Vec<FramebufferMappingRecord>,
+    pub framebuffer_writes: Vec<FramebufferWriteRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -197,6 +198,7 @@ impl ContractGraphValidator {
         Self::validate_display_capabilities(snapshot, &mut violations);
         Self::validate_framebuffer_window_leases(snapshot, &mut violations);
         Self::validate_framebuffer_mappings(snapshot, &mut violations);
+        Self::validate_framebuffer_writes(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -1298,6 +1300,148 @@ impl ContractGraphValidator {
                         from,
                         Some(lease.object_ref()),
                         "framebuffer mapping does not match the active framebuffer window lease",
+                    ));
+                }
+            }
+        }
+    }
+
+    fn validate_framebuffer_writes(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for write in &snapshot.framebuffer_writes {
+            let from = write.object_ref();
+            if write.id == 0
+                || write.generation == 0
+                || write.owner_store_generation == 0
+                || write.framebuffer_mapping_generation == 0
+                || write.map_handle_slot == 0
+                || write.map_handle_generation == 0
+                || write.map_handle_tag == 0
+                || write.width == 0
+                || write.height == 0
+                || write.byte_len == 0
+                || write.pixel_format.is_empty()
+                || write.payload_digest == 0
+                || write.state != FramebufferWriteState::Applied
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "framebuffer-write->contract",
+                    from,
+                    None,
+                    "framebuffer write requires exact refs, applied state, handle identity, payload digest, and byte window",
+                ));
+                continue;
+            }
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-write->owner-store",
+                ContractObjectKind::Store,
+                write.owner_store,
+                write.owner_store_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-write->framebuffer-mapping",
+                ContractObjectKind::FramebufferMapping,
+                write.framebuffer_mapping,
+                write.framebuffer_mapping_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-write->framebuffer-window-lease",
+                ContractObjectKind::FramebufferWindowLease,
+                write.framebuffer_window_lease,
+                write.framebuffer_window_lease_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-write->display-capability",
+                ContractObjectKind::DisplayCapability,
+                write.display_capability,
+                write.display_capability_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-write->display-object",
+                ContractObjectKind::DisplayObject,
+                write.display,
+                write.display_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-write->framebuffer-object",
+                ContractObjectKind::FramebufferObject,
+                write.framebuffer,
+                write.framebuffer_generation,
+                ContractEdgeMode::Historical,
+            );
+            if let Some(mapping) = snapshot.framebuffer_mappings.iter().find(|mapping| {
+                mapping.id == write.framebuffer_mapping
+                    && mapping.generation == write.framebuffer_mapping_generation
+            }) {
+                let region_mismatch = write.x < mapping.x
+                    || write.y < mapping.y
+                    || write
+                        .x
+                        .checked_add(write.width)
+                        .zip(mapping.x.checked_add(mapping.width))
+                        .is_none_or(|(write_right, mapping_right)| write_right > mapping_right)
+                    || write
+                        .y
+                        .checked_add(write.height)
+                        .zip(mapping.y.checked_add(mapping.height))
+                        .is_none_or(|(write_bottom, mapping_bottom)| write_bottom > mapping_bottom);
+                let byte_mismatch = write.byte_offset < mapping.byte_offset
+                    || write
+                        .byte_offset
+                        .checked_add(write.byte_len)
+                        .zip(mapping.byte_offset.checked_add(mapping.byte_len))
+                        .is_none_or(|(write_end, mapping_end)| write_end > mapping_end);
+                if mapping.owner_store != write.owner_store
+                    || mapping.owner_store_generation != write.owner_store_generation
+                    || mapping.framebuffer_window_lease != write.framebuffer_window_lease
+                    || mapping.framebuffer_window_lease_generation
+                        != write.framebuffer_window_lease_generation
+                    || mapping.display_capability != write.display_capability
+                    || mapping.display_capability_generation != write.display_capability_generation
+                    || mapping.display != write.display
+                    || mapping.display_generation != write.display_generation
+                    || mapping.framebuffer != write.framebuffer
+                    || mapping.framebuffer_generation != write.framebuffer_generation
+                    || mapping.map_handle_slot != write.map_handle_slot
+                    || mapping.map_handle_generation != write.map_handle_generation
+                    || mapping.map_handle_tag != write.map_handle_tag
+                    || mapping.access != "write"
+                    || mapping.mode != "handle-mode"
+                    || region_mismatch
+                    || byte_mismatch
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "framebuffer-write->mapping-binding",
+                        from,
+                        Some(mapping.object_ref()),
+                        "framebuffer write does not match the mapped framebuffer lease authority",
                     ));
                 }
             }
@@ -2492,6 +2636,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|mapping| mapping.id == id && mapping.generation == generation)
                 .map(FramebufferMappingRecord::object_ref),
+            ContractObjectKind::FramebufferWrite => snapshot
+                .framebuffer_writes
+                .iter()
+                .find(|write| write.id == id && write.generation == generation)
+                .map(FramebufferWriteRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2642,6 +2791,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|mapping| mapping.id == id)
                 .map(FramebufferMappingRecord::object_ref),
+            ContractObjectKind::FramebufferWrite => snapshot
+                .framebuffer_writes
+                .iter()
+                .find(|write| write.id == id)
+                .map(FramebufferWriteRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2799,6 +2953,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::DisplayCapability
                 | ContractObjectKind::FramebufferWindowLease
                 | ContractObjectKind::FramebufferMapping
+                | ContractObjectKind::FramebufferWrite
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -2936,6 +3091,14 @@ impl ContractGraphValidator {
                 .and_then(|mapping| {
                     (mapping.state != FramebufferMappingState::Active)
                         .then_some("live edge references inactive framebuffer mapping")
+                }),
+            ContractObjectKind::FramebufferWrite => snapshot
+                .framebuffer_writes
+                .iter()
+                .find(|write| write.id == object.id && write.generation == object.generation)
+                .and_then(|write| {
+                    (write.state != FramebufferWriteState::Applied)
+                        .then_some("live edge references unapplied framebuffer write")
                 }),
             _ => None,
         }

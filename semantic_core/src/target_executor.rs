@@ -100,6 +100,7 @@ pub enum ContractObjectKind {
     DisplayCapability,
     FramebufferWindowLease,
     FramebufferMapping,
+    FramebufferWrite,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -216,6 +217,7 @@ impl ContractObjectKind {
             Self::DisplayCapability => "display-capability",
             Self::FramebufferWindowLease => "framebuffer-window-lease",
             Self::FramebufferMapping => "framebuffer-mapping",
+            Self::FramebufferWrite => "framebuffer-write",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -5714,6 +5716,7 @@ mod tests {
             display_capabilities: Vec::new(),
             framebuffer_window_leases: Vec::new(),
             framebuffer_mappings: Vec::new(),
+            framebuffer_writes: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -5819,6 +5822,7 @@ mod tests {
             display_capabilities: Vec::new(),
             framebuffer_window_leases: Vec::new(),
             framebuffer_mappings: Vec::new(),
+            framebuffer_writes: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6058,6 +6062,7 @@ mod tests {
             display_capabilities: Vec::new(),
             framebuffer_window_leases: Vec::new(),
             framebuffer_mappings: Vec::new(),
+            framebuffer_writes: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6167,6 +6172,7 @@ mod tests {
             display_capabilities: Vec::new(),
             framebuffer_window_leases: Vec::new(),
             framebuffer_mappings: Vec::new(),
+            framebuffer_writes: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6363,6 +6369,7 @@ mod tests {
             display_capabilities: Vec::new(),
             framebuffer_window_leases: Vec::new(),
             framebuffer_mappings: Vec::new(),
+            framebuffer_writes: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {

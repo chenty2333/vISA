@@ -1900,6 +1900,19 @@ impl FramebufferMappingState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FramebufferWriteState {
+    Applied,
+}
+
+impl FramebufferWriteState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

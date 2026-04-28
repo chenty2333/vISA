@@ -21623,6 +21623,313 @@ fn display_runtime_g4_contract_graph_rejects_mapping_lease_binding_drift() {
     }));
 }
 
+fn g5_framebuffer_write_graph() -> (
+    SemanticGraph,
+    StoreId,
+    Generation,
+    FramebufferMappingId,
+    Generation,
+) {
+    let (mut graph, owner_store, owner_store_generation, lease, lease_generation) =
+        g4_framebuffer_mapping_graph();
+    assert!(graph.record_framebuffer_mapping_with_id(
+        23_401,
+        owner_store,
+        owner_store_generation,
+        lease,
+        lease_generation,
+        3,
+        1,
+        0x4d41505f4642,
+        0,
+        0,
+        800,
+        600,
+        0,
+        1_920_000,
+        "write",
+        "handle-mode",
+        "g4 framebuffer mapping for g5",
+    ));
+    (graph, owner_store, owner_store_generation, 23_401, 1)
+}
+
+#[test]
+fn display_runtime_g5_framebuffer_write_records_semantic_pixel_write() {
+    let (mut graph, owner_store, owner_store_generation, mapping, mapping_generation) =
+        g5_framebuffer_write_graph();
+    let payload_digest = SemanticGraph::expected_framebuffer_write_payload_digest_v1(
+        mapping,
+        mapping_generation,
+        23_001,
+        1,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+    );
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        7,
+        "display-runtime-g5",
+        SemanticCommand::RecordFramebufferWrite {
+            framebuffer_write: 23_501,
+            owner_store,
+            owner_store_generation,
+            framebuffer_mapping: mapping,
+            framebuffer_mapping_generation: mapping_generation,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3_200,
+            payload_digest,
+            note: "g5 framebuffer write".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.framebuffer_write_count(), 1);
+    let write = &graph.framebuffer_writes()[0];
+    assert_eq!(
+        write.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::FramebufferWrite, 23_501, 1)
+    );
+    assert_eq!(write.framebuffer_mapping, mapping);
+    assert_eq!(write.framebuffer_mapping_generation, mapping_generation);
+    assert_eq!(write.pixel_format, "xrgb8888");
+    assert_eq!(write.payload_digest, payload_digest);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "FramebufferWriteRecorded framebuffer_write=23501 owner_store={owner_store}@{owner_store_generation} framebuffer_mapping={mapping}@{mapping_generation} framebuffer_window_lease=23301@1 display_capability=23201@1 display=23101@1 framebuffer=23001@1 map_handle_slot=3 map_handle_generation=1 map_handle_tag=84942916634178 region=0,0 800x1 byte_range=0+3200 pixel_format=xrgb8888 payload_digest={payload_digest} state=applied generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g5_rejects_stale_mapping_bad_region_and_digest() {
+    let (mut graph, owner_store, owner_store_generation, mapping, mapping_generation) =
+        g5_framebuffer_write_graph();
+    let digest = SemanticGraph::expected_framebuffer_write_payload_digest_v1(
+        mapping,
+        mapping_generation,
+        23_001,
+        1,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+    );
+
+    let stale_mapping = graph.apply_envelope(CommandEnvelope::new(
+        7,
+        "display-runtime-g5",
+        SemanticCommand::RecordFramebufferWrite {
+            framebuffer_write: 23_502,
+            owner_store,
+            owner_store_generation,
+            framebuffer_mapping: mapping,
+            framebuffer_mapping_generation: mapping_generation + 1,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3_200,
+            payload_digest: digest,
+            note: "g5 stale mapping".to_string(),
+        },
+    ));
+    assert_eq!(stale_mapping.status, CommandStatus::Rejected);
+
+    let bad_region = graph.apply_envelope(CommandEnvelope::new(
+        8,
+        "display-runtime-g5",
+        SemanticCommand::RecordFramebufferWrite {
+            framebuffer_write: 23_503,
+            owner_store,
+            owner_store_generation,
+            framebuffer_mapping: mapping,
+            framebuffer_mapping_generation: mapping_generation,
+            x: 799,
+            y: 0,
+            width: 2,
+            height: 1,
+            byte_offset: 3_196,
+            byte_len: 8,
+            payload_digest: digest,
+            note: "g5 bad region".to_string(),
+        },
+    ));
+    assert_eq!(bad_region.status, CommandStatus::Rejected);
+
+    let bad_digest = graph.apply_envelope(CommandEnvelope::new(
+        9,
+        "display-runtime-g5",
+        SemanticCommand::RecordFramebufferWrite {
+            framebuffer_write: 23_504,
+            owner_store,
+            owner_store_generation,
+            framebuffer_mapping: mapping,
+            framebuffer_mapping_generation: mapping_generation,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3_200,
+            payload_digest: digest + 1,
+            note: "g5 bad digest".to_string(),
+        },
+    ));
+    assert_eq!(bad_digest.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn display_runtime_g5_invariants_reject_mapping_generation_leak() {
+    let (mut graph, owner_store, owner_store_generation, mapping, mapping_generation) =
+        g5_framebuffer_write_graph();
+    let payload_digest = SemanticGraph::expected_framebuffer_write_payload_digest_v1(
+        mapping,
+        mapping_generation,
+        23_001,
+        1,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+    );
+    assert!(graph.record_framebuffer_write_with_id(
+        23_505,
+        owner_store,
+        owner_store_generation,
+        mapping,
+        mapping_generation,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+        payload_digest,
+        "g5 invariant write",
+    ));
+    graph.corrupt_framebuffer_write_mapping_generation_for_test(23_505, mapping_generation + 1);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::FramebufferWriteMissingMapping {
+            framebuffer_write: 23_505,
+            framebuffer_mapping: mapping,
+        })
+    );
+}
+
+#[test]
+fn display_runtime_g5_contract_graph_rejects_missing_mapping_edge() {
+    let write = FramebufferWriteRecord {
+        id: 23_506,
+        owner_store: 1,
+        owner_store_generation: 1,
+        framebuffer_mapping: 23_401,
+        framebuffer_mapping_generation: 7,
+        framebuffer_window_lease: 23_301,
+        framebuffer_window_lease_generation: 1,
+        display_capability: 23_201,
+        display_capability_generation: 1,
+        display: 23_101,
+        display_generation: 1,
+        framebuffer: 23_001,
+        framebuffer_generation: 1,
+        map_handle_slot: 3,
+        map_handle_generation: 1,
+        map_handle_tag: 0x4d41505f4642,
+        x: 0,
+        y: 0,
+        width: 16,
+        height: 1,
+        byte_offset: 0,
+        byte_len: 64,
+        pixel_format: "xrgb8888".to_string(),
+        payload_digest: 1,
+        generation: 1,
+        state: FramebufferWriteState::Applied,
+        recorded_at_event: 1,
+        note: "g5 missing mapping".to_string(),
+    };
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_writes: Vec::from([write]),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-write->framebuffer-mapping"
+            && violation.kind == ContractViolationKind::DanglingEdge
+    }));
+}
+
+#[test]
+fn display_runtime_g5_contract_graph_rejects_write_mapping_binding_drift() {
+    let (mut graph, owner_store, owner_store_generation, mapping, mapping_generation) =
+        g5_framebuffer_write_graph();
+    let payload_digest = SemanticGraph::expected_framebuffer_write_payload_digest_v1(
+        mapping,
+        mapping_generation,
+        23_001,
+        1,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+    );
+    assert!(graph.record_framebuffer_write_with_id(
+        23_507,
+        owner_store,
+        owner_store_generation,
+        mapping,
+        mapping_generation,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+        payload_digest,
+        "g5 contract graph write",
+    ));
+    let mut framebuffer_writes = graph.framebuffer_writes().to_vec();
+    framebuffer_writes[0].map_handle_generation = 2;
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        display_capabilities: graph.display_capabilities().to_vec(),
+        framebuffer_window_leases: graph.framebuffer_window_leases().to_vec(),
+        framebuffer_mappings: graph.framebuffer_mappings().to_vec(),
+        framebuffer_writes,
+        stores: graph.stores().to_vec(),
+        capabilities: graph.capabilities().records().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-write->mapping-binding"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();

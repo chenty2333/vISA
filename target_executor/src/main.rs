@@ -25,20 +25,20 @@ use artifact_manifest::{
     DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
     FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
     FileHandleCapabilityManifest, FileObjectManifest, FramebufferMappingManifest,
-    FramebufferObjectManifest, FramebufferWindowLeaseManifest, FsWaitManifest, GuestStateManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    FramebufferObjectManifest, FramebufferWindowLeaseManifest, FramebufferWriteManifest,
+    FsWaitManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8381,6 +8381,7 @@ fn build_target_executor_v1(
     run_display_capability_harness(semantic)?;
     run_framebuffer_window_lease_harness(semantic)?;
     run_framebuffer_mapping_harness(semantic)?;
+    run_framebuffer_write_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8462,6 +8463,7 @@ fn build_target_executor_v1(
         display_capabilities: semantic.display_capabilities().to_vec(),
         framebuffer_window_leases: semantic.framebuffer_window_leases().to_vec(),
         framebuffer_mappings: semantic.framebuffer_mappings().to_vec(),
+        framebuffer_writes: semantic.framebuffer_writes().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: contract_stores,
@@ -10236,6 +10238,58 @@ fn run_framebuffer_mapping_harness(semantic: &mut SemanticGraph) -> Result<(), B
     Ok(())
 }
 
+fn run_framebuffer_write_harness(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let mapping = semantic
+        .framebuffer_mappings()
+        .iter()
+        .find(|record| record.id == 23_401)
+        .cloned()
+        .ok_or("display runtime g5 requires g4 framebuffer mapping evidence")?;
+    let byte_len = 800 * 4;
+    let payload_digest = SemanticGraph::expected_framebuffer_write_payload_digest_v1(
+        mapping.id,
+        mapping.generation,
+        mapping.framebuffer,
+        mapping.framebuffer_generation,
+        0,
+        0,
+        800,
+        1,
+        0,
+        byte_len,
+    );
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_025,
+        "display-runtime-g5",
+        SemanticCommand::RecordFramebufferWrite {
+            framebuffer_write: 23_501,
+            owner_store: mapping.owner_store,
+            owner_store_generation: mapping.owner_store_generation,
+            framebuffer_mapping: mapping.id,
+            framebuffer_mapping_generation: mapping.generation,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len,
+            payload_digest,
+            note: "g5 records semantic pixel write evidence through handle-mode mapping".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g5 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11075,6 +11129,7 @@ fn demo_migration_package(
             display_capability_count: semantic.display_capability_count(),
             framebuffer_window_lease_count: semantic.framebuffer_window_lease_count(),
             framebuffer_mapping_count: semantic.framebuffer_mapping_count(),
+            framebuffer_write_count: semantic.framebuffer_write_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11542,6 +11597,11 @@ fn demo_migration_package(
                 .framebuffer_mappings()
                 .iter()
                 .map(framebuffer_mapping_manifest)
+                .collect(),
+            framebuffer_writes: semantic
+                .framebuffer_writes()
+                .iter()
+                .map(framebuffer_write_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -13751,6 +13811,40 @@ fn semantic_roots(
                     mapping.mode,
                     mapping.state.as_str(),
                     mapping.generation
+                )
+            })
+            .collect(),
+        framebuffer_write_roots: semantic
+            .framebuffer_writes()
+            .iter()
+            .map(|write| {
+                format!(
+                    "framebuffer-write id={} owner_store={}@{} framebuffer_mapping={}@{} framebuffer_window_lease={}@{} display_capability={}@{} display={}@{} framebuffer={}@{} map_handle_slot={} map_handle_generation={} region={},{} {}x{} byte_range={}+{} pixel_format={} payload_digest={} state={} generation={}",
+                    write.id,
+                    write.owner_store,
+                    write.owner_store_generation,
+                    write.framebuffer_mapping,
+                    write.framebuffer_mapping_generation,
+                    write.framebuffer_window_lease,
+                    write.framebuffer_window_lease_generation,
+                    write.display_capability,
+                    write.display_capability_generation,
+                    write.display,
+                    write.display_generation,
+                    write.framebuffer,
+                    write.framebuffer_generation,
+                    write.map_handle_slot,
+                    write.map_handle_generation,
+                    write.x,
+                    write.y,
+                    write.width,
+                    write.height,
+                    write.byte_offset,
+                    write.byte_len,
+                    write.pixel_format,
+                    write.payload_digest,
+                    write.state.as_str(),
+                    write.generation
                 )
             })
             .collect(),
@@ -16727,6 +16821,41 @@ fn framebuffer_mapping_manifest(
         state: mapping.state.as_str().to_owned(),
         recorded_at_event: mapping.recorded_at_event,
         note: mapping.note.clone(),
+    }
+}
+
+fn framebuffer_write_manifest(
+    write: &semantic_core::FramebufferWriteRecord,
+) -> FramebufferWriteManifest {
+    FramebufferWriteManifest {
+        id: write.id,
+        owner_store: write.owner_store,
+        owner_store_generation: write.owner_store_generation,
+        framebuffer_mapping: write.framebuffer_mapping,
+        framebuffer_mapping_generation: write.framebuffer_mapping_generation,
+        framebuffer_window_lease: write.framebuffer_window_lease,
+        framebuffer_window_lease_generation: write.framebuffer_window_lease_generation,
+        display_capability: write.display_capability,
+        display_capability_generation: write.display_capability_generation,
+        display: write.display,
+        display_generation: write.display_generation,
+        framebuffer: write.framebuffer,
+        framebuffer_generation: write.framebuffer_generation,
+        map_handle_slot: write.map_handle_slot,
+        map_handle_generation: write.map_handle_generation,
+        map_handle_tag: write.map_handle_tag,
+        x: write.x,
+        y: write.y,
+        width: write.width,
+        height: write.height,
+        byte_offset: write.byte_offset,
+        byte_len: write.byte_len,
+        pixel_format: write.pixel_format.clone(),
+        payload_digest: write.payload_digest,
+        generation: write.generation,
+        state: write.state.as_str().to_owned(),
+        recorded_at_event: write.recorded_at_event,
+        note: write.note.clone(),
     }
 }
 

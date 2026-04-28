@@ -1,0 +1,125 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "G5-write-pixels",
+  "phase": "Phase 7 Display / Graphics Minimal Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add FramebufferWriteRecord as first-class semantic pixel write evidence",
+    "Add RecordFramebufferWrite command and FramebufferWriteRecorded event",
+    "Validate write owner Store and active FramebufferMapping exact generations",
+    "Reject stale mapping references, out-of-window write regions, byte-range drift, and payload digest mismatch",
+    "Record deterministic host-validation framebuffer write evidence in target_executor",
+    "Expose framebuffer-write stable ViewV1 and historical graph edges through osctl"
+  ],
+  "no_goals": [
+    "real framebuffer memory mutation",
+    "raw framebuffer pointer exposure",
+    "flush or present command execution",
+    "DMW pointer-mode framebuffer mapping",
+    "GPU or desktop graphics stack"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/framebuffer_write.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/display/golden_g5_framebuffer_write.trace.json",
+    "tests/reports/checkpoints/g5_framebuffer_write.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/display/golden_g5_framebuffer_write.trace.json",
+    "tests/reports/checkpoints/g5_framebuffer_write.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "FramebufferWrite validates exact FramebufferMapping generation instead of authorizing by global framebuffer id",
+      "FramebufferWrite rejects stale mapping generations, out-of-window regions, and mismatched payload digest",
+      "FramebufferWrite validates byte ranges with checked arithmetic rather than saturating upper bounds",
+      "ContractGraph models write references as historical edges to avoid false live ownership",
+      "osctl ViewV1 exposes write evidence without leaking substrate mappings or raw pixel memory"
+    ],
+    "bad_smells_checked": [
+      "No raw framebuffer pointer or DMW pointer-mode mapping was added",
+      "No real MMIO/framebuffer memory write was added",
+      "No flush or present authority was added in G5",
+      "No third-party graphics crate was added",
+      "The payload digest is semantic evidence, not adapter-internal state"
+    ],
+    "residual_notes": [
+      "G6 owns FlushRegion command semantics",
+      "G7 owns dirty region tracking",
+      "G10 owns snapshot barrier enforcement for active framebuffer leases and mappings"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core display_runtime_g5 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core semantic_roots_reject_framebuffer_write_root_mismatch -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl framebuffer_write_view_v1_exposes_semantic_pixel_write_refs -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl framebuffer-write list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect framebuffer-write --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "framebuffer_write": "framebuffer-write:23501@1",
+    "owner_store": "store:14@3",
+    "framebuffer_mapping": "framebuffer-mapping:23401@1",
+    "framebuffer_window_lease": "framebuffer-window-lease:23301@1",
+    "display_capability": "display-capability:23201@1",
+    "display_object": "display-object:23101@1",
+    "framebuffer_object": "framebuffer-object:23001@1",
+    "recorded_at_event": 560,
+    "payload_digest": 9562158844241690816,
+    "contract_validation": "ok"
+  },
+  "residual_gaps": [
+    "G6 owns FlushRegion command semantics",
+    "G7 owns dirty region tracking",
+    "G10 owns snapshot barrier enforcement for active framebuffer leases and mappings"
+  ],
+  "next_checkpoint": "G6-flush-region-command"
+}

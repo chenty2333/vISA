@@ -2753,6 +2753,48 @@ impl FramebufferMappingRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FramebufferWriteRecord {
+    pub id: FramebufferWriteId,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub framebuffer_mapping: FramebufferMappingId,
+    pub framebuffer_mapping_generation: Generation,
+    pub framebuffer_window_lease: FramebufferWindowLeaseId,
+    pub framebuffer_window_lease_generation: Generation,
+    pub display_capability: DisplayCapabilityId,
+    pub display_capability_generation: Generation,
+    pub display: DisplayObjectId,
+    pub display_generation: Generation,
+    pub framebuffer: FramebufferObjectId,
+    pub framebuffer_generation: Generation,
+    pub map_handle_slot: u32,
+    pub map_handle_generation: u32,
+    pub map_handle_tag: u64,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub byte_offset: u64,
+    pub byte_len: u64,
+    pub pixel_format: String,
+    pub payload_digest: u64,
+    pub generation: Generation,
+    pub state: FramebufferWriteState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl FramebufferWriteRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::FramebufferWrite,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

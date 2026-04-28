@@ -1619,6 +1619,20 @@ pub enum SemanticInvariantError {
     FramebufferMappingMissingEvent {
         framebuffer_mapping: FramebufferMappingId,
     },
+    FramebufferWriteInvalid {
+        framebuffer_write: FramebufferWriteId,
+    },
+    FramebufferWriteMissingStore {
+        framebuffer_write: FramebufferWriteId,
+        store: StoreId,
+    },
+    FramebufferWriteMissingMapping {
+        framebuffer_write: FramebufferWriteId,
+        framebuffer_mapping: FramebufferMappingId,
+    },
+    FramebufferWriteMissingEvent {
+        framebuffer_write: FramebufferWriteId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },
