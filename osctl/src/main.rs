@@ -18,13 +18,13 @@ use artifact_manifest::{
     CommandResultManifest, ContractObjectRefManifest, CrossHartSchedulerDecisionManifest,
     DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
     DirectoryObjectManifest, DisplayCapabilityManifest, DisplayCleanupManifest,
-    DisplayEventLogManifest, DisplayObjectManifest, DmaBufferObjectManifest,
-    DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
-    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
-    FileHandleCapabilityManifest, FileObjectManifest, FramebufferDirtyRegionManifest,
-    FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
-    FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
+    DisplayEventLogManifest, DisplayObjectManifest, DisplaySnapshotBarrierManifest,
+    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
+    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest,
+    FramebufferDirtyRegionManifest, FramebufferFlushRegionManifest, FramebufferMappingManifest,
+    FramebufferObjectManifest, FramebufferWindowLeaseManifest, FramebufferWriteManifest,
+    FsWaitManifest, HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
     InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
@@ -445,6 +445,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "display-event-log"
         | "display-log"
         | "display-cleanup"
+        | "display-snapshot-barrier"
+        | "display-snapshot"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -616,7 +618,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -624,7 +626,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -918,6 +920,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "framebuffer-dirty-region" | "dirty-region" | "display-dirty" => "framebuffer-dirty-region",
         "display-event-log" | "display-log" => "display-event-log",
         "display-cleanup" => "display-cleanup",
+        "display-snapshot-barrier" | "display-snapshot" => "display-snapshot-barrier",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -6313,6 +6316,63 @@ fn display_cleanup_view_v1(cleanup: &DisplayCleanupManifest) -> serde_json::Valu
     })
 }
 
+fn display_snapshot_barrier_view_v1(barrier: &DisplaySnapshotBarrierManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "display-snapshot-barrier",
+        "id": barrier.id,
+        "generation": barrier.generation,
+        "state": barrier.state,
+        "owner": {
+            "store": object_ref_json(
+                "store",
+                barrier.owner_store,
+                barrier.owner_store_generation,
+            ),
+        },
+        "references": {
+            "display": object_ref_json(
+                "display-object",
+                barrier.display,
+                barrier.display_generation,
+            ),
+            "framebuffer": object_ref_json(
+                "framebuffer-object",
+                barrier.framebuffer,
+                barrier.framebuffer_generation,
+            ),
+            "display_cleanup": optional_object_ref_json(
+                "display-cleanup",
+                barrier.display_cleanup,
+                barrier.display_cleanup_generation,
+            ),
+        },
+        "snapshot": {
+            "reason": barrier.reason,
+            "snapshot_validation_ok": barrier.snapshot_validation_ok,
+            "active_framebuffer_window_lease_count": barrier.active_framebuffer_window_lease_count,
+            "active_framebuffer_mapping_count": barrier.active_framebuffer_mapping_count,
+            "dirty_framebuffer_region_count": barrier.dirty_framebuffer_region_count,
+            "validated_at_event": barrier.validated_at_event,
+        },
+        "authority": {
+            "requires_no_active_framebuffer_lease": true,
+            "requires_no_active_framebuffer_mapping": true,
+            "requires_no_dirty_framebuffer_region": true,
+            "real_snapshot_cow_executed": false,
+            "real_present_executed": false,
+        },
+        "note": barrier.note,
+        "last_transition": {
+            "validated_at_event": barrier.validated_at_event,
+            "owner_store_generation": barrier.owner_store_generation,
+            "display_generation": barrier.display_generation,
+            "framebuffer_generation": barrier.framebuffer_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     let vector_status = if resume.vector_status.is_empty() {
         "absent"
@@ -7775,6 +7835,12 @@ fn stable_views_for_kind(
             .display_cleanups
             .iter()
             .map(display_cleanup_view_v1)
+            .collect()),
+        "display-snapshot-barrier" | "display-snapshot" => Ok(package
+            .semantic
+            .display_snapshot_barriers
+            .iter()
+            .map(display_snapshot_barrier_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -11752,6 +11818,50 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             ));
         }
     }
+    for barrier in &package.semantic.display_snapshot_barriers {
+        let event = Some(barrier.validated_at_event);
+        let from = object_ref_json("display-snapshot-barrier", barrier.id, barrier.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("store", barrier.owner_store, barrier.owner_store_generation),
+            "display-snapshot-barrier->owner-store",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "display-object",
+                barrier.display,
+                barrier.display_generation,
+            ),
+            "display-snapshot-barrier->display-object",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "framebuffer-object",
+                barrier.framebuffer,
+                barrier.framebuffer_generation,
+            ),
+            "display-snapshot-barrier->framebuffer-object",
+            "historical",
+            event,
+        ));
+        if let (Some(cleanup), Some(cleanup_generation)) =
+            (barrier.display_cleanup, barrier.display_cleanup_generation)
+        {
+            edges.push(graph_edge(
+                from,
+                object_ref_json("display-cleanup", cleanup, cleanup_generation),
+                "display-snapshot-barrier->display-cleanup",
+                "historical",
+                event,
+            ));
+        }
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -15301,6 +15411,46 @@ fn inspect_package_object(
                 );
             }
         }
+        "display-snapshot-barrier" | "display-snapshot" => {
+            println!(
+                "inspect display-snapshot-barrier package={} count={}",
+                package.package_id, package.semantic.display_snapshot_barrier_count
+            );
+            for barrier in &package.semantic.display_snapshot_barriers {
+                let line = format!(
+                    "display-snapshot-barrier id={} owner_store={}@{} display={}@{} framebuffer={}@{} cleanup={}:{} active_leases={} active_mappings={} dirty_regions={} snapshot_ok={} state={} generation={}",
+                    barrier.id,
+                    barrier.owner_store,
+                    barrier.owner_store_generation,
+                    barrier.display,
+                    barrier.display_generation,
+                    barrier.framebuffer,
+                    barrier.framebuffer_generation,
+                    barrier
+                        .display_cleanup
+                        .map(|cleanup| cleanup.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    barrier
+                        .display_cleanup_generation
+                        .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    barrier.active_framebuffer_window_lease_count,
+                    barrier.active_framebuffer_mapping_count,
+                    barrier.dirty_framebuffer_region_count,
+                    barrier.snapshot_validation_ok,
+                    barrier.state,
+                    barrier.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.display_snapshot_barriers.is_empty() {
+                print_roots_filtered(
+                    "display-snapshot-barrier",
+                    &package.semantic.roots.display_snapshot_barrier_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -15744,6 +15894,19 @@ fn inspect_package_object_json(
                 .collect::<Vec<_>>(),
             serde_json::json!({
                 "root_count": package.semantic.roots.display_cleanup_roots.len()
+            }),
+        ),
+        "display-snapshot-barrier" | "display-snapshot" => (
+            "display-snapshot-barrier",
+            package.semantic.display_snapshot_barrier_count,
+            package
+                .semantic
+                .display_snapshot_barriers
+                .iter()
+                .map(display_snapshot_barrier_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package.semantic.roots.display_snapshot_barrier_roots.len()
             }),
         ),
         "command" => (
@@ -20351,6 +20514,43 @@ mod tests {
         assert_eq!(view["authority"]["releases_handle_mode_mappings"], true);
         assert_eq!(view["authority"]["real_present_executed"], false);
         assert_eq!(view["last_transition"]["completed_at_event"], 505);
+    }
+
+    #[test]
+    fn display_snapshot_barrier_view_v1_exposes_quiescent_display_boundary() {
+        let view = display_snapshot_barrier_view_v1(&DisplaySnapshotBarrierManifest {
+            id: 24_001,
+            owner_store: 12,
+            owner_store_generation: 2,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            display_cleanup: Some(23_901),
+            display_cleanup_generation: Some(1),
+            active_framebuffer_window_lease_count: 0,
+            active_framebuffer_mapping_count: 0,
+            dirty_framebuffer_region_count: 0,
+            snapshot_validation_ok: true,
+            generation: 1,
+            state: "validated".to_owned(),
+            validated_at_event: 506,
+            reason: "display-snapshot-barrier".to_owned(),
+            note: "g10 display snapshot".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "display-snapshot-barrier");
+        assert_eq!(view["owner"]["store"]["generation"], 2);
+        assert_eq!(view["references"]["display_cleanup"]["id"], 23_901);
+        assert_eq!(view["snapshot"]["snapshot_validation_ok"], true);
+        assert_eq!(view["snapshot"]["active_framebuffer_window_lease_count"], 0);
+        assert_eq!(
+            view["authority"]["requires_no_active_framebuffer_lease"],
+            true
+        );
+        assert_eq!(view["authority"]["real_snapshot_cow_executed"], false);
+        assert_eq!(view["last_transition"]["validated_at_event"], 506);
     }
 
     #[test]

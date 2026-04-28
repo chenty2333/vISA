@@ -1,0 +1,130 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "G10-display-snapshot-barrier-interaction",
+  "phase": "Phase 7 Display / Graphics Minimal Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add DisplaySnapshotBarrierRecord as first-class semantic snapshot barrier evidence for display resources",
+    "Add ValidateDisplaySnapshotBarrier command and DisplaySnapshotBarrierValidated event",
+    "Reject active FramebufferWindowLease objects at snapshot barrier validation",
+    "Reject active FramebufferMapping objects at snapshot barrier validation",
+    "Reject dirty FramebufferDirtyRegion objects at snapshot barrier validation",
+    "Tie valid display snapshot barriers to exact Store, DisplayObject, FramebufferObject, and optional DisplayCleanup generations",
+    "Expose display-snapshot-barrier stable ViewV1 and graph historical edges through osctl"
+  ],
+  "no_goals": [
+    "real framebuffer present or scanout flush",
+    "real snapshot COW or page freezing",
+    "panic last-frame summary",
+    "GPU or desktop graphics stack"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/display_snapshot_barrier.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/memory_boundary.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/display/golden_g10_display_snapshot_barrier.trace.json",
+    "tests/reports/checkpoints/g10_display_snapshot_barrier.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/display/golden_g10_display_snapshot_barrier.trace.json",
+    "tests/reports/checkpoints/g10_display_snapshot_barrier.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "Display snapshot barrier validation consumes exact object refs and generations instead of display/debug labels",
+      "Active framebuffer leases, mappings, and dirty regions are rejected before snapshot validation succeeds",
+      "Display cleanup remains historical evidence and does not become a live ownership edge",
+      "ContractGraph validates display snapshot barrier refs and stale cleanup refs",
+      "osctl ViewV1 reports the barrier authority requirements and zero active display boundary counts"
+    ],
+    "bad_smells_checked": [
+      "No real snapshot COW implementation was added under this semantic checkpoint",
+      "No raw framebuffer mapping became semantic truth",
+      "No third-party graphics dependency was introduced",
+      "osctl emits ViewV1 JSON rather than internal Rust structs",
+      "display snapshot barrier history is represented with historical graph edges"
+    ],
+    "residual_notes": [
+      "G11 owns panic last-frame summary",
+      "G12 owns framebuffer benchmark",
+      "Future real snapshot implementation must rebuild substrate display mappings from semantic framebuffer objects"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core display_runtime_g10 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core display_snapshot_barrier -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl display_snapshot_barrier_view_v1 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl display-snapshot-barrier list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect display-snapshot-barrier --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "./scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "display_snapshot_barrier": "display-snapshot-barrier:24001@1",
+    "owner_store": "store:14@3",
+    "display_cleanup": "display-cleanup:23901@1",
+    "display_object": "display-object:23101@1",
+    "framebuffer_object": "framebuffer-object:23001@1",
+    "active_framebuffer_window_lease_count": 0,
+    "active_framebuffer_mapping_count": 0,
+    "dirty_framebuffer_region_count": 0,
+    "validated_at_event": 567,
+    "contract_validation": "ok"
+  },
+  "residual_gaps": [
+    "G11 owns panic last-frame summary",
+    "G12 owns framebuffer benchmark",
+    "Future real snapshot implementation must rebuild substrate display mappings from semantic framebuffer objects"
+  ],
+  "next_checkpoint": "G11-panic-last-frame-summary"
+}

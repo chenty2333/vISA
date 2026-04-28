@@ -930,6 +930,21 @@ pub enum EventKind {
         revoked_display_capabilities: usize,
         generation: Generation,
     },
+    DisplaySnapshotBarrierValidated {
+        barrier: DisplaySnapshotBarrierId,
+        owner_store: StoreId,
+        owner_store_generation: Generation,
+        display: DisplayObjectId,
+        display_generation: Generation,
+        framebuffer: FramebufferObjectId,
+        framebuffer_generation: Generation,
+        display_cleanup: Option<DisplayCleanupId>,
+        display_cleanup_generation: Option<Generation>,
+        active_framebuffer_window_lease_count: u32,
+        active_framebuffer_mapping_count: u32,
+        dirty_framebuffer_region_count: u32,
+        generation: Generation,
+    },
     FakeBlockBackendObjectBound {
         fake_block_backend: FakeBlockBackendObjectId,
         block_device: BlockDeviceObjectId,
@@ -3163,6 +3178,29 @@ impl EventKind {
                 generation,
             } => format!(
                 "DisplayCleanupCompleted cleanup={cleanup} owner_store={owner_store}@{owner_store_generation} display_capability={display_capability}@{display_capability_generation} display={display}@{display_generation} framebuffer={framebuffer}@{framebuffer_generation} unmapped_framebuffer_mappings={unmapped_framebuffer_mappings} released_framebuffer_window_leases={released_framebuffer_window_leases} revoked_display_capabilities={revoked_display_capabilities} generation={generation}"
+            ),
+            Self::DisplaySnapshotBarrierValidated {
+                barrier,
+                owner_store,
+                owner_store_generation,
+                display,
+                display_generation,
+                framebuffer,
+                framebuffer_generation,
+                display_cleanup,
+                display_cleanup_generation,
+                active_framebuffer_window_lease_count,
+                active_framebuffer_mapping_count,
+                dirty_framebuffer_region_count,
+                generation,
+            } => format!(
+                "DisplaySnapshotBarrierValidated barrier={barrier} owner_store={owner_store}@{owner_store_generation} display={display}@{display_generation} framebuffer={framebuffer}@{framebuffer_generation} display_cleanup={}:{} active_framebuffer_window_leases={active_framebuffer_window_lease_count} active_framebuffer_mappings={active_framebuffer_mapping_count} dirty_framebuffer_regions={dirty_framebuffer_region_count} generation={generation}",
+                display_cleanup
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                display_cleanup_generation
+                    .map(|generation| generation.to_string())
+                    .unwrap_or_else(|| "none".to_string())
             ),
             Self::FakeBlockBackendObjectBound {
                 fake_block_backend,

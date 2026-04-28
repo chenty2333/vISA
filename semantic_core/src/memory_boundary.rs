@@ -358,6 +358,9 @@ pub enum BoundaryValidationErrorKind {
     NativeActivationStackLive,
     RawHostPointer,
     RawReturnAddress,
+    ActiveFramebufferWindowLease,
+    ActiveFramebufferMapping,
+    DirtyFramebufferRegion,
     UnknownObjectClass,
     StaleGeneration,
     MissingArtifactIdentity,
@@ -380,6 +383,9 @@ impl BoundaryValidationErrorKind {
             Self::NativeActivationStackLive => "native-activation-stack-live",
             Self::RawHostPointer => "raw-host-pointer",
             Self::RawReturnAddress => "raw-return-address",
+            Self::ActiveFramebufferWindowLease => "active-framebuffer-window-lease",
+            Self::ActiveFramebufferMapping => "active-framebuffer-mapping",
+            Self::DirtyFramebufferRegion => "dirty-framebuffer-region",
             Self::UnknownObjectClass => "unknown-object-class",
             Self::StaleGeneration => "stale-generation",
             Self::MissingArtifactIdentity => "missing-artifact-identity",
@@ -468,6 +474,9 @@ pub struct SnapshotBarrierValidationState {
     pub native_activation_stack_live: bool,
     pub raw_dma_binding_count: u32,
     pub raw_mmio_binding_count: u32,
+    pub active_framebuffer_window_lease_count: u32,
+    pub active_framebuffer_mapping_count: u32,
+    pub dirty_framebuffer_region_count: u32,
 }
 
 pub struct SnapshotBarrierValidator;
@@ -546,6 +555,30 @@ impl SnapshotBarrierValidator {
                 BoundaryValidationErrorKind::RawMmioBinding,
                 "mmio",
                 "raw MMIO bindings cannot be serialized",
+            ));
+        }
+        if state.active_framebuffer_window_lease_count != 0 {
+            violations.push(BoundaryValidationViolation::new(
+                validator,
+                BoundaryValidationErrorKind::ActiveFramebufferWindowLease,
+                "display",
+                "active framebuffer window leases cannot cross snapshot barrier",
+            ));
+        }
+        if state.active_framebuffer_mapping_count != 0 {
+            violations.push(BoundaryValidationViolation::new(
+                validator,
+                BoundaryValidationErrorKind::ActiveFramebufferMapping,
+                "display",
+                "active framebuffer mappings cannot cross snapshot barrier",
+            ));
+        }
+        if state.dirty_framebuffer_region_count != 0 {
+            violations.push(BoundaryValidationViolation::new(
+                validator,
+                BoundaryValidationErrorKind::DirtyFramebufferRegion,
+                "display",
+                "dirty framebuffer regions must be flushed before snapshot",
             ));
         }
         BoundaryValidationReport::new(validator, violations)
@@ -789,6 +822,9 @@ mod tests {
             native_activation_stack_live: true,
             raw_dma_binding_count: 1,
             raw_mmio_binding_count: 1,
+            active_framebuffer_window_lease_count: 1,
+            active_framebuffer_mapping_count: 1,
+            dirty_framebuffer_region_count: 1,
         };
         let report = SnapshotBarrierValidator::validate(&state);
         assert!(!report.is_ok());
@@ -802,6 +838,9 @@ mod tests {
             BoundaryValidationErrorKind::NativeActivationStackLive,
             BoundaryValidationErrorKind::RawDmaBinding,
             BoundaryValidationErrorKind::RawMmioBinding,
+            BoundaryValidationErrorKind::ActiveFramebufferWindowLease,
+            BoundaryValidationErrorKind::ActiveFramebufferMapping,
+            BoundaryValidationErrorKind::DirtyFramebufferRegion,
         ] {
             assert!(
                 report

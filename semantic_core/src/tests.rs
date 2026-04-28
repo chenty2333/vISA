@@ -23165,6 +23165,267 @@ fn display_runtime_g9_contract_graph_rejects_missing_cleanup_effect() {
 }
 
 #[test]
+fn display_runtime_g10_snapshot_barrier_rejects_active_display_leases() {
+    let (mut graph, owner_store, owner_store_generation) = g9_display_cleanup_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        12,
+        "display-runtime-g10",
+        SemanticCommand::ValidateDisplaySnapshotBarrier {
+            barrier: 24_001,
+            owner_store,
+            owner_store_generation,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            display_cleanup: None,
+            display_cleanup_generation: None,
+            reason: "display-snapshot-barrier".to_string(),
+            note: "g10 active lease must block snapshot".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Rejected);
+    assert!(
+        result
+            .violations
+            .iter()
+            .any(|violation| violation.contains("display state is not quiescent"))
+    );
+    assert_eq!(graph.display_snapshot_barrier_count(), 0);
+}
+
+#[test]
+fn display_runtime_g10_snapshot_barrier_validates_after_cleanup() {
+    let (mut graph, owner_store, owner_store_generation) = g9_display_cleanup_graph();
+    assert!(graph.cleanup_display_for_store_with_id(
+        23_907,
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_101,
+        1,
+        23_001,
+        1,
+        "display-window-cleanup",
+        "g10 cleanup before snapshot",
+    ));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        12,
+        "display-runtime-g10",
+        SemanticCommand::ValidateDisplaySnapshotBarrier {
+            barrier: 24_002,
+            owner_store,
+            owner_store_generation,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            display_cleanup: Some(23_907),
+            display_cleanup_generation: Some(1),
+            reason: "display-snapshot-barrier".to_string(),
+            note: "g10 display snapshot after cleanup".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    let barrier = &graph.display_snapshot_barriers()[0];
+    assert_eq!(
+        barrier.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::DisplaySnapshotBarrier, 24_002, 1)
+    );
+    assert_eq!(barrier.active_framebuffer_window_lease_count, 0);
+    assert_eq!(barrier.active_framebuffer_mapping_count, 0);
+    assert_eq!(barrier.dirty_framebuffer_region_count, 0);
+    assert!(barrier.snapshot_validation_ok);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "DisplaySnapshotBarrierValidated barrier=24002 owner_store={owner_store}@{owner_store_generation} display=23101@1 framebuffer=23001@1 display_cleanup=23907:1 active_framebuffer_window_leases=0 active_framebuffer_mappings=0 dirty_framebuffer_regions=0 generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g10_snapshot_barrier_rejects_dirty_framebuffer_region_after_cleanup() {
+    let (mut graph, owner_store, owner_store_generation, mapping, mapping_generation) =
+        g5_framebuffer_write_graph();
+    let payload_digest = SemanticGraph::expected_framebuffer_write_payload_digest_v1(
+        mapping,
+        mapping_generation,
+        23_001,
+        1,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+    );
+    assert!(graph.record_framebuffer_write_with_id(
+        23_508,
+        owner_store,
+        owner_store_generation,
+        mapping,
+        mapping_generation,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+        payload_digest,
+        "g10 dirty write",
+    ));
+    assert!(graph.record_framebuffer_dirty_region_with_id(
+        23_708,
+        owner_store,
+        owner_store_generation,
+        23_508,
+        1,
+        None,
+        None,
+        FramebufferDirtyRegionState::Dirty,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+        payload_digest,
+        "g10 dirty region must block snapshot",
+    ));
+    assert!(graph.cleanup_display_for_store_with_id(
+        23_908,
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_101,
+        1,
+        23_001,
+        1,
+        "display-window-cleanup",
+        "g10 cleanup leaves dirty region",
+    ));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        12,
+        "display-runtime-g10",
+        SemanticCommand::ValidateDisplaySnapshotBarrier {
+            barrier: 24_003,
+            owner_store,
+            owner_store_generation,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            display_cleanup: Some(23_908),
+            display_cleanup_generation: Some(1),
+            reason: "display-snapshot-barrier".to_string(),
+            note: "g10 dirty framebuffer region rejects snapshot".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Rejected);
+    assert!(
+        result
+            .violations
+            .iter()
+            .any(|violation| violation.contains("display state is not quiescent"))
+    );
+    assert_eq!(graph.display_snapshot_barrier_count(), 0);
+}
+
+#[test]
+fn display_runtime_g10_invariants_reject_snapshot_barrier_dirty_count_drift() {
+    let (mut graph, owner_store, owner_store_generation) = g9_display_cleanup_graph();
+    assert!(graph.cleanup_display_for_store_with_id(
+        23_909,
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_101,
+        1,
+        23_001,
+        1,
+        "display-window-cleanup",
+        "g10 cleanup before corrupt barrier",
+    ));
+    assert!(graph.validate_display_snapshot_barrier_with_id(
+        24_004,
+        owner_store,
+        owner_store_generation,
+        23_101,
+        1,
+        23_001,
+        1,
+        Some(23_909),
+        Some(1),
+        "display-snapshot-barrier",
+        "g10 corrupt barrier",
+    ));
+    graph.corrupt_display_snapshot_barrier_dirty_count_for_test(24_004, 1);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::DisplaySnapshotBarrierInvalid { barrier: 24_004 })
+    );
+}
+
+#[test]
+fn display_runtime_g10_contract_graph_rejects_stale_cleanup_ref() {
+    let (mut graph, owner_store, owner_store_generation) = g9_display_cleanup_graph();
+    assert!(graph.cleanup_display_for_store_with_id(
+        23_910,
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_101,
+        1,
+        23_001,
+        1,
+        "display-window-cleanup",
+        "g10 cleanup before graph validation",
+    ));
+    assert!(graph.validate_display_snapshot_barrier_with_id(
+        24_005,
+        owner_store,
+        owner_store_generation,
+        23_101,
+        1,
+        23_001,
+        1,
+        Some(23_910),
+        Some(1),
+        "display-snapshot-barrier",
+        "g10 graph barrier",
+    ));
+    let mut barriers = graph.display_snapshot_barriers().to_vec();
+    barriers[0].display_cleanup_generation = Some(99);
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        display_cleanups: graph.display_cleanups().to_vec(),
+        display_snapshot_barriers: barriers,
+        stores: graph.stores().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "display-snapshot-barrier->display-cleanup"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
+#[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();
     let blocker = ContractObjectRef::new(ContractObjectKind::TimerInterrupt, 5, 1);

@@ -94,6 +94,7 @@ pub struct ContractGraphSnapshot {
     pub framebuffer_dirty_regions: Vec<FramebufferDirtyRegionRecord>,
     pub display_event_logs: Vec<DisplayEventLogRecord>,
     pub display_cleanups: Vec<DisplayCleanupRecord>,
+    pub display_snapshot_barriers: Vec<DisplaySnapshotBarrierRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -207,6 +208,7 @@ impl ContractGraphValidator {
         Self::validate_framebuffer_dirty_regions(snapshot, &mut violations);
         Self::validate_display_event_logs(snapshot, &mut violations);
         Self::validate_display_cleanups(snapshot, &mut violations);
+        Self::validate_display_snapshot_barriers(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -2060,6 +2062,112 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_display_snapshot_barriers(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for barrier in &snapshot.display_snapshot_barriers {
+            let from = barrier.object_ref();
+            if barrier.id == 0
+                || barrier.generation == 0
+                || barrier.owner_store_generation == 0
+                || barrier.display_generation == 0
+                || barrier.framebuffer_generation == 0
+                || barrier.reason.is_empty()
+                || !barrier.snapshot_validation_ok
+                || barrier.state != DisplaySnapshotBarrierState::Validated
+                || barrier.active_framebuffer_window_lease_count != 0
+                || barrier.active_framebuffer_mapping_count != 0
+                || barrier.dirty_framebuffer_region_count != 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "display-snapshot-barrier->contract",
+                    from,
+                    None,
+                    "display snapshot barrier requires exact refs and quiescent display state",
+                ));
+                continue;
+            }
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-snapshot-barrier->owner-store",
+                ContractObjectKind::Store,
+                barrier.owner_store,
+                barrier.owner_store_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-snapshot-barrier->display-object",
+                ContractObjectKind::DisplayObject,
+                barrier.display,
+                barrier.display_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-snapshot-barrier->framebuffer-object",
+                ContractObjectKind::FramebufferObject,
+                barrier.framebuffer,
+                barrier.framebuffer_generation,
+                ContractEdgeMode::Historical,
+            );
+            match (barrier.display_cleanup, barrier.display_cleanup_generation) {
+                (Some(cleanup), Some(generation)) => {
+                    Self::check_generation_edge(
+                        snapshot,
+                        violations,
+                        from,
+                        "display-snapshot-barrier->display-cleanup",
+                        ContractObjectKind::DisplayCleanup,
+                        cleanup,
+                        generation,
+                        ContractEdgeMode::Historical,
+                    );
+                    if let Some(cleanup_record) = snapshot
+                        .display_cleanups
+                        .iter()
+                        .find(|record| record.id == cleanup && record.generation == generation)
+                    {
+                        if cleanup_record.owner_store != barrier.owner_store
+                            || cleanup_record.owner_store_generation
+                                != barrier.owner_store_generation
+                            || cleanup_record.display != barrier.display
+                            || cleanup_record.display_generation != barrier.display_generation
+                            || cleanup_record.framebuffer != barrier.framebuffer
+                            || cleanup_record.framebuffer_generation
+                                != barrier.framebuffer_generation
+                            || cleanup_record.state != DisplayCleanupState::Completed
+                        {
+                            violations.push(ContractViolation::new(
+                                ContractViolationKind::GenerationMismatch,
+                                "display-snapshot-barrier->cleanup-binding",
+                                from,
+                                Some(cleanup_record.object_ref()),
+                                "display snapshot barrier cleanup does not match the barrier target",
+                            ));
+                        }
+                    }
+                }
+                (None, None) => {}
+                _ => violations.push(ContractViolation::new(
+                    ContractViolationKind::GenerationMismatch,
+                    "display-snapshot-barrier->cleanup-ref",
+                    from,
+                    None,
+                    "display snapshot barrier cleanup ref must be exact or absent",
+                )),
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -3273,6 +3381,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|cleanup| cleanup.id == id && cleanup.generation == generation)
                 .map(DisplayCleanupRecord::object_ref),
+            ContractObjectKind::DisplaySnapshotBarrier => snapshot
+                .display_snapshot_barriers
+                .iter()
+                .find(|barrier| barrier.id == id && barrier.generation == generation)
+                .map(DisplaySnapshotBarrierRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -3448,6 +3561,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|cleanup| cleanup.id == id)
                 .map(DisplayCleanupRecord::object_ref),
+            ContractObjectKind::DisplaySnapshotBarrier => snapshot
+                .display_snapshot_barriers
+                .iter()
+                .find(|barrier| barrier.id == id)
+                .map(DisplaySnapshotBarrierRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -3610,6 +3728,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::FramebufferDirtyRegion
                 | ContractObjectKind::DisplayEventLog
                 | ContractObjectKind::DisplayCleanup
+                | ContractObjectKind::DisplaySnapshotBarrier
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -3787,6 +3906,14 @@ impl ContractGraphValidator {
                 .and_then(|cleanup| {
                     (cleanup.state != DisplayCleanupState::Completed)
                         .then_some("live edge references incomplete display cleanup")
+                }),
+            ContractObjectKind::DisplaySnapshotBarrier => snapshot
+                .display_snapshot_barriers
+                .iter()
+                .find(|barrier| barrier.id == object.id && barrier.generation == object.generation)
+                .and_then(|barrier| {
+                    (barrier.state != DisplaySnapshotBarrierState::Validated)
+                        .then_some("live edge references unvalidated display snapshot barrier")
                 }),
             _ => None,
         }

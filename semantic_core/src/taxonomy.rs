@@ -1967,6 +1967,19 @@ impl DisplayCleanupState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplaySnapshotBarrierState {
+    Validated,
+}
+
+impl DisplaySnapshotBarrierState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Validated => "validated",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayCleanupStepKind {
     UnmapFramebufferMappings,
     ReleaseFramebufferWindowLeases,

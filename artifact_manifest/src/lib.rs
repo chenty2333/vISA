@@ -411,6 +411,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub display_cleanup_count: usize,
     #[serde(default)]
+    pub display_snapshot_barrier_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -673,6 +675,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub display_cleanups: Vec<DisplayCleanupManifest>,
     #[serde(default)]
+    pub display_snapshot_barriers: Vec<DisplaySnapshotBarrierManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -914,6 +918,8 @@ pub struct SemanticRootSetManifest {
     pub display_event_log_roots: Vec<String>,
     #[serde(default)]
     pub display_cleanup_roots: Vec<String>,
+    #[serde(default)]
+    pub display_snapshot_barrier_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -3314,6 +3320,28 @@ pub struct DisplayCleanupManifest {
     pub revoked_display_capabilities: Vec<ContractObjectRefManifest>,
     pub revoked_capabilities: Vec<ContractObjectRefManifest>,
     pub steps: Vec<DisplayCleanupStepManifest>,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct DisplaySnapshotBarrierManifest {
+    pub id: u64,
+    pub owner_store: u64,
+    pub owner_store_generation: u64,
+    pub display: u64,
+    pub display_generation: u64,
+    pub framebuffer: u64,
+    pub framebuffer_generation: u64,
+    pub display_cleanup: Option<u64>,
+    pub display_cleanup_generation: Option<u64>,
+    pub active_framebuffer_window_lease_count: u32,
+    pub active_framebuffer_mapping_count: u32,
+    pub dirty_framebuffer_region_count: u32,
+    pub snapshot_validation_ok: bool,
+    pub generation: u64,
+    pub state: String,
+    pub validated_at_event: u64,
+    pub reason: String,
     pub note: String,
 }
 

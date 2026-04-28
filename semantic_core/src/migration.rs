@@ -1697,6 +1697,28 @@ pub enum SemanticInvariantError {
     DisplayCleanupMissingEvent {
         cleanup: DisplayCleanupId,
     },
+    DisplaySnapshotBarrierInvalid {
+        barrier: DisplaySnapshotBarrierId,
+    },
+    DisplaySnapshotBarrierMissingStore {
+        barrier: DisplaySnapshotBarrierId,
+        store: StoreId,
+    },
+    DisplaySnapshotBarrierMissingDisplay {
+        barrier: DisplaySnapshotBarrierId,
+        display: DisplayObjectId,
+    },
+    DisplaySnapshotBarrierMissingFramebuffer {
+        barrier: DisplaySnapshotBarrierId,
+        framebuffer: FramebufferObjectId,
+    },
+    DisplaySnapshotBarrierMissingCleanup {
+        barrier: DisplaySnapshotBarrierId,
+        cleanup: DisplayCleanupId,
+    },
+    DisplaySnapshotBarrierMissingEvent {
+        barrier: DisplaySnapshotBarrierId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

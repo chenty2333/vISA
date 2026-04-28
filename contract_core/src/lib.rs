@@ -159,6 +159,7 @@ pub enum ObjectKind {
     FramebufferDirtyRegion,
     DisplayEventLog,
     DisplayCleanup,
+    DisplaySnapshotBarrier,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -283,6 +284,7 @@ impl ObjectKind {
             Self::FramebufferDirtyRegion => "framebuffer-dirty-region",
             Self::DisplayEventLog => "display-event-log",
             Self::DisplayCleanup => "display-cleanup",
+            Self::DisplaySnapshotBarrier => "display-snapshot-barrier",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -608,6 +610,10 @@ typed_ref!(
 );
 typed_ref!(DisplayEventLogRef, ObjectKind::DisplayEventLog);
 typed_ref!(DisplayCleanupRef, ObjectKind::DisplayCleanup);
+typed_ref!(
+    DisplaySnapshotBarrierRef,
+    ObjectKind::DisplaySnapshotBarrier
+);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2342,6 +2348,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("display cleanup root/count mismatch"));
     }
+    if roots.display_snapshot_barrier_roots.len() != package.semantic.display_snapshot_barrier_count
+        || package.semantic.display_snapshot_barriers.len()
+            != package.semantic.display_snapshot_barrier_count
+    {
+        return Err(ContractError::new(
+            "display snapshot barrier root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2957,6 +2971,7 @@ mod tests {
                 framebuffer_dirty_region_count: 0,
                 display_event_log_count: 0,
                 display_cleanup_count: 0,
+                display_snapshot_barrier_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -3090,6 +3105,7 @@ mod tests {
                 framebuffer_dirty_regions: Vec::new(),
                 display_event_logs: Vec::new(),
                 display_cleanups: Vec::new(),
+                display_snapshot_barriers: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -5699,6 +5715,40 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_display_snapshot_barrier_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.display_snapshot_barrier_count = 1;
+        package.semantic.display_snapshot_barriers.push(
+            artifact_manifest::DisplaySnapshotBarrierManifest {
+                id: 100,
+                owner_store: 7,
+                owner_store_generation: 1,
+                display: 91,
+                display_generation: 1,
+                framebuffer: 90,
+                framebuffer_generation: 1,
+                display_cleanup: Some(99),
+                display_cleanup_generation: Some(1),
+                active_framebuffer_window_lease_count: 0,
+                active_framebuffer_mapping_count: 0,
+                dirty_framebuffer_region_count: 0,
+                snapshot_validation_ok: true,
+                generation: 1,
+                state: "validated".to_owned(),
+                validated_at_event: 103,
+                reason: "test".to_owned(),
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "display snapshot barrier root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -7050,6 +7100,9 @@ mod tests {
         assert!(DisplayEventLogRef::try_from_ref(display_event_log).is_ok());
         let display_cleanup = ObjectRef::new(ObjectKind::DisplayCleanup, 89, 1).unwrap();
         assert!(DisplayCleanupRef::try_from_ref(display_cleanup).is_ok());
+        let display_snapshot_barrier =
+            ObjectRef::new(ObjectKind::DisplaySnapshotBarrier, 90, 1).unwrap();
+        assert!(DisplaySnapshotBarrierRef::try_from_ref(display_snapshot_barrier).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

@@ -22,25 +22,25 @@ use artifact_manifest::{
     ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
     DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
     DisplayCapabilityManifest, DisplayCleanupManifest, DisplayCleanupStepManifest,
-    DisplayEventLogManifest, DisplayObjectManifest, DmaBufferObjectManifest,
-    DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
-    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
-    FileHandleCapabilityManifest, FileObjectManifest, FramebufferDirtyRegionManifest,
-    FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
-    FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    DisplayEventLogManifest, DisplayObjectManifest, DisplaySnapshotBarrierManifest,
+    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
+    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest,
+    FramebufferDirtyRegionManifest, FramebufferFlushRegionManifest, FramebufferMappingManifest,
+    FramebufferObjectManifest, FramebufferWindowLeaseManifest, FramebufferWriteManifest,
+    FsWaitManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8388,6 +8388,7 @@ fn build_target_executor_v1(
     run_framebuffer_dirty_region_harness(semantic)?;
     run_display_event_log_harness(semantic)?;
     run_display_cleanup_harness(semantic)?;
+    run_display_snapshot_barrier_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8474,6 +8475,7 @@ fn build_target_executor_v1(
         framebuffer_dirty_regions: semantic.framebuffer_dirty_regions().to_vec(),
         display_event_logs: semantic.display_event_logs().to_vec(),
         display_cleanups: semantic.display_cleanups().to_vec(),
+        display_snapshot_barriers: semantic.display_snapshot_barriers().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: contract_stores,
@@ -10504,6 +10506,47 @@ fn run_display_cleanup_harness(semantic: &mut SemanticGraph) -> Result<(), Box<d
     Ok(())
 }
 
+fn run_display_snapshot_barrier_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let cleanup = semantic
+        .display_cleanups()
+        .iter()
+        .find(|record| record.id == 23_901)
+        .cloned()
+        .ok_or("display runtime g10 requires g9 display cleanup evidence")?;
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_030,
+        "display-runtime-g10",
+        SemanticCommand::ValidateDisplaySnapshotBarrier {
+            barrier: 24_001,
+            owner_store: cleanup.owner_store,
+            owner_store_generation: cleanup.owner_store_generation,
+            display: cleanup.display,
+            display_generation: cleanup.display_generation,
+            framebuffer: cleanup.framebuffer,
+            framebuffer_generation: cleanup.framebuffer_generation,
+            display_cleanup: Some(cleanup.id),
+            display_cleanup_generation: Some(cleanup.generation),
+            reason: "display-snapshot-barrier".to_owned(),
+            note:
+                "g10 validates snapshot barrier after display cleanup released leases and mappings"
+                    .to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g10 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11348,6 +11391,7 @@ fn demo_migration_package(
             framebuffer_dirty_region_count: semantic.framebuffer_dirty_region_count(),
             display_event_log_count: semantic.display_event_log_count(),
             display_cleanup_count: semantic.display_cleanup_count(),
+            display_snapshot_barrier_count: semantic.display_snapshot_barrier_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11840,6 +11884,11 @@ fn demo_migration_package(
                 .display_cleanups()
                 .iter()
                 .map(display_cleanup_manifest)
+                .collect(),
+            display_snapshot_barriers: semantic
+                .display_snapshot_barriers()
+                .iter()
+                .map(display_snapshot_barrier_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -14206,6 +14255,36 @@ fn semantic_roots(
                     cleanup.revoked_display_capabilities.len(),
                     cleanup.state.as_str(),
                     cleanup.generation
+                )
+            })
+            .collect(),
+        display_snapshot_barrier_roots: semantic
+            .display_snapshot_barriers()
+            .iter()
+            .map(|barrier| {
+                format!(
+                    "display-snapshot-barrier id={} owner_store={}@{} display={}@{} framebuffer={}@{} cleanup={}:{} active_leases={} active_mappings={} dirty_regions={} snapshot_ok={} state={} generation={}",
+                    barrier.id,
+                    barrier.owner_store,
+                    barrier.owner_store_generation,
+                    barrier.display,
+                    barrier.display_generation,
+                    barrier.framebuffer,
+                    barrier.framebuffer_generation,
+                    barrier
+                        .display_cleanup
+                        .map(|cleanup| cleanup.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    barrier
+                        .display_cleanup_generation
+                        .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    barrier.active_framebuffer_window_lease_count,
+                    barrier.active_framebuffer_mapping_count,
+                    barrier.dirty_framebuffer_region_count,
+                    barrier.snapshot_validation_ok,
+                    barrier.state.as_str(),
+                    barrier.generation
                 )
             })
             .collect(),
@@ -17371,6 +17450,31 @@ fn display_cleanup_manifest(
             .map(display_cleanup_step_manifest)
             .collect(),
         note: cleanup.note.clone(),
+    }
+}
+
+fn display_snapshot_barrier_manifest(
+    barrier: &semantic_core::DisplaySnapshotBarrierRecord,
+) -> DisplaySnapshotBarrierManifest {
+    DisplaySnapshotBarrierManifest {
+        id: barrier.id,
+        owner_store: barrier.owner_store,
+        owner_store_generation: barrier.owner_store_generation,
+        display: barrier.display,
+        display_generation: barrier.display_generation,
+        framebuffer: barrier.framebuffer,
+        framebuffer_generation: barrier.framebuffer_generation,
+        display_cleanup: barrier.display_cleanup,
+        display_cleanup_generation: barrier.display_cleanup_generation,
+        active_framebuffer_window_lease_count: barrier.active_framebuffer_window_lease_count,
+        active_framebuffer_mapping_count: barrier.active_framebuffer_mapping_count,
+        dirty_framebuffer_region_count: barrier.dirty_framebuffer_region_count,
+        snapshot_validation_ok: barrier.snapshot_validation_ok,
+        generation: barrier.generation,
+        state: barrier.state.as_str().to_owned(),
+        validated_at_event: barrier.validated_at_event,
+        reason: barrier.reason.clone(),
+        note: barrier.note.clone(),
     }
 }
 

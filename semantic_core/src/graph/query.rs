@@ -161,6 +161,7 @@ impl SemanticGraph {
         self.check_framebuffer_dirty_region_invariants()?;
         self.check_display_event_log_invariants()?;
         self.check_display_cleanup_invariants()?;
+        self.check_display_snapshot_barrier_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;

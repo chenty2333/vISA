@@ -2946,6 +2946,38 @@ impl DisplayCleanupRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisplaySnapshotBarrierRecord {
+    pub id: DisplaySnapshotBarrierId,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub display: DisplayObjectId,
+    pub display_generation: Generation,
+    pub framebuffer: FramebufferObjectId,
+    pub framebuffer_generation: Generation,
+    pub display_cleanup: Option<DisplayCleanupId>,
+    pub display_cleanup_generation: Option<Generation>,
+    pub active_framebuffer_window_lease_count: u32,
+    pub active_framebuffer_mapping_count: u32,
+    pub dirty_framebuffer_region_count: u32,
+    pub snapshot_validation_ok: bool,
+    pub generation: Generation,
+    pub state: DisplaySnapshotBarrierState,
+    pub validated_at_event: EventId,
+    pub reason: String,
+    pub note: String,
+}
+
+impl DisplaySnapshotBarrierRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::DisplaySnapshotBarrier,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,
