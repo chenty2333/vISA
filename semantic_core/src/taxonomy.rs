@@ -1954,6 +1954,51 @@ impl DisplayEventLogState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayCleanupState {
+    Completed,
+}
+
+impl DisplayCleanupState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayCleanupStepKind {
+    UnmapFramebufferMappings,
+    ReleaseFramebufferWindowLeases,
+    RevokeDisplayCapabilities,
+}
+
+impl DisplayCleanupStepKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UnmapFramebufferMappings => "unmap-framebuffer-mappings",
+            Self::ReleaseFramebufferWindowLeases => "release-framebuffer-window-leases",
+            Self::RevokeDisplayCapabilities => "revoke-display-capabilities",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayCleanupStepStatus {
+    Done,
+    SkippedNotPresent,
+}
+
+impl DisplayCleanupStepStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::SkippedNotPresent => "skipped-not-present",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

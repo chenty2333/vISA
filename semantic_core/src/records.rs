@@ -2907,6 +2907,45 @@ impl DisplayEventLogRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisplayCleanupStepRecord {
+    pub kind: DisplayCleanupStepKind,
+    pub target: ContractObjectRef,
+    pub observed_generation: Generation,
+    pub status: DisplayCleanupStepStatus,
+    pub event: Option<EventId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisplayCleanupRecord {
+    pub id: DisplayCleanupId,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub display_capability: DisplayCapabilityId,
+    pub display_capability_generation: Generation,
+    pub display: DisplayObjectId,
+    pub display_generation: Generation,
+    pub framebuffer: FramebufferObjectId,
+    pub framebuffer_generation: Generation,
+    pub generation: Generation,
+    pub state: DisplayCleanupState,
+    pub reason: String,
+    pub started_at_event: EventId,
+    pub completed_at_event: EventId,
+    pub unmapped_framebuffer_mappings: Vec<ContractObjectRef>,
+    pub released_framebuffer_window_leases: Vec<ContractObjectRef>,
+    pub revoked_display_capabilities: Vec<ContractObjectRef>,
+    pub revoked_capabilities: Vec<ContractObjectRef>,
+    pub steps: Vec<DisplayCleanupStepRecord>,
+    pub note: String,
+}
+
+impl DisplayCleanupRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::DisplayCleanup, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

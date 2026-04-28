@@ -265,7 +265,8 @@ impl SemanticGraph {
                 || capability_record.object_ref != Some(authority)
                 || capability_record.owner_store != Some(record.owner_store)
                 || capability_record.owner_store_generation != Some(record.owner_store_generation)
-                || capability_record.generation != record.capability_generation
+                || (active && capability_record.generation != record.capability_generation)
+                || (revoked && capability_record.generation <= record.capability_generation)
                 || capability_record.handle_slot != record.handle_slot
                 || (active && capability_record.handle_generation != record.handle_generation)
                 || (active && capability_record.handle_tag != record.handle_tag)
@@ -327,7 +328,7 @@ impl SemanticGraph {
                             && *handle_generation == record.handle_generation
                             && *handle_tag == record.handle_tag
                             && operations == &record.operations
-                            && *state == record.state
+                            && *state == DisplayCapabilityState::Active
                             && *generation == record.generation
                     )
             }) {

@@ -1679,6 +1679,24 @@ pub enum SemanticInvariantError {
     DisplayEventLogMissingEvent {
         display_event_log: DisplayEventLogId,
     },
+    DisplayCleanupInvalid {
+        cleanup: DisplayCleanupId,
+    },
+    DisplayCleanupMissingStore {
+        cleanup: DisplayCleanupId,
+        store: StoreId,
+    },
+    DisplayCleanupMissingDisplayCapability {
+        cleanup: DisplayCleanupId,
+        display_capability: DisplayCapabilityId,
+    },
+    DisplayCleanupMissingEffectTarget {
+        cleanup: DisplayCleanupId,
+        target: ContractObjectRef,
+    },
+    DisplayCleanupMissingEvent {
+        cleanup: DisplayCleanupId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

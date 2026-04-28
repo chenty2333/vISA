@@ -260,7 +260,7 @@ impl SemanticGraph {
                 || (record.access != "write" && record.access != "read")
                 || (!active && !unmapped)
                 || (active && store_record.state == StoreState::Dead)
-                || lease_record.state != FramebufferWindowLeaseState::Active
+                || (active && lease_record.state != FramebufferWindowLeaseState::Active)
                 || lease_record.owner_store != record.owner_store
                 || lease_record.owner_store_generation != record.owner_store_generation
                 || lease_record.display_capability != record.display_capability
@@ -347,7 +347,7 @@ impl SemanticGraph {
                             && *byte_len == record.byte_len
                             && access == &record.access
                             && mode == &record.mode
-                            && *state == record.state
+                            && *state == FramebufferMappingState::Active
                             && *generation == record.generation
                     )
             }) {

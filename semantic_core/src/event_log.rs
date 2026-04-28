@@ -903,6 +903,33 @@ pub enum EventKind {
         state: DisplayEventLogState,
         generation: Generation,
     },
+    DisplayCleanupStarted {
+        cleanup: DisplayCleanupId,
+        owner_store: StoreId,
+        owner_store_generation: Generation,
+        display_capability: DisplayCapabilityId,
+        display_capability_generation: Generation,
+        display: DisplayObjectId,
+        display_generation: Generation,
+        framebuffer: FramebufferObjectId,
+        framebuffer_generation: Generation,
+        generation: Generation,
+    },
+    DisplayCleanupCompleted {
+        cleanup: DisplayCleanupId,
+        owner_store: StoreId,
+        owner_store_generation: Generation,
+        display_capability: DisplayCapabilityId,
+        display_capability_generation: Generation,
+        display: DisplayObjectId,
+        display_generation: Generation,
+        framebuffer: FramebufferObjectId,
+        framebuffer_generation: Generation,
+        unmapped_framebuffer_mappings: usize,
+        released_framebuffer_window_leases: usize,
+        revoked_display_capabilities: usize,
+        generation: Generation,
+    },
     FakeBlockBackendObjectBound {
         fake_block_backend: FakeBlockBackendObjectId,
         block_device: BlockDeviceObjectId,
@@ -3105,6 +3132,37 @@ impl EventKind {
             } => format!(
                 "DisplayEventLogRecorded display_event_log={display_event_log} owner_store={owner_store}@{owner_store_generation} display_capability={display_capability}@{display_capability_generation} display={display}@{display_generation} framebuffer={framebuffer}@{framebuffer_generation} framebuffer_dirty_region={framebuffer_dirty_region}@{framebuffer_dirty_region_generation} events={first_event}..{last_event} event_count={event_count} flush_count={flush_count} dirty_region_count={dirty_region_count} state={} generation={generation}",
                 state.as_str()
+            ),
+            Self::DisplayCleanupStarted {
+                cleanup,
+                owner_store,
+                owner_store_generation,
+                display_capability,
+                display_capability_generation,
+                display,
+                display_generation,
+                framebuffer,
+                framebuffer_generation,
+                generation,
+            } => format!(
+                "DisplayCleanupStarted cleanup={cleanup} owner_store={owner_store}@{owner_store_generation} display_capability={display_capability}@{display_capability_generation} display={display}@{display_generation} framebuffer={framebuffer}@{framebuffer_generation} generation={generation}"
+            ),
+            Self::DisplayCleanupCompleted {
+                cleanup,
+                owner_store,
+                owner_store_generation,
+                display_capability,
+                display_capability_generation,
+                display,
+                display_generation,
+                framebuffer,
+                framebuffer_generation,
+                unmapped_framebuffer_mappings,
+                released_framebuffer_window_leases,
+                revoked_display_capabilities,
+                generation,
+            } => format!(
+                "DisplayCleanupCompleted cleanup={cleanup} owner_store={owner_store}@{owner_store_generation} display_capability={display_capability}@{display_capability_generation} display={display}@{display_generation} framebuffer={framebuffer}@{framebuffer_generation} unmapped_framebuffer_mappings={unmapped_framebuffer_mappings} released_framebuffer_window_leases={released_framebuffer_window_leases} revoked_display_capabilities={revoked_display_capabilities} generation={generation}"
             ),
             Self::FakeBlockBackendObjectBound {
                 fake_block_backend,

@@ -345,7 +345,6 @@ impl SemanticGraph {
                 || record.payload_digest == 0
                 || record.state != FramebufferWriteState::Applied
                 || store_record.state == StoreState::Dead
-                || mapping_record.state != FramebufferMappingState::Active
                 || mapping_record.access != "write"
                 || mapping_record.mode != "handle-mode"
                 || mapping_record.owner_store != record.owner_store

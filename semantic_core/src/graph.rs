@@ -99,6 +99,7 @@ pub struct SemanticGraph {
     framebuffer_flush_regions: Vec<FramebufferFlushRegionRecord>,
     framebuffer_dirty_regions: Vec<FramebufferDirtyRegionRecord>,
     display_event_logs: Vec<DisplayEventLogRecord>,
+    display_cleanups: Vec<DisplayCleanupRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -209,6 +210,7 @@ pub struct SemanticGraph {
     next_framebuffer_flush_region_id: FramebufferFlushRegionId,
     next_framebuffer_dirty_region_id: FramebufferDirtyRegionId,
     next_display_event_log_id: DisplayEventLogId,
+    next_display_cleanup_id: DisplayCleanupId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -253,6 +255,7 @@ mod device_capability;
 mod device_object;
 mod directory_object;
 mod display_capability;
+mod display_cleanup;
 mod display_event_log;
 mod display_object;
 mod dma_buffer_object;
@@ -431,6 +434,7 @@ impl SemanticGraph {
             framebuffer_flush_regions: Vec::new(),
             framebuffer_dirty_regions: Vec::new(),
             display_event_logs: Vec::new(),
+            display_cleanups: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -541,6 +545,7 @@ impl SemanticGraph {
             next_framebuffer_flush_region_id: 1,
             next_framebuffer_dirty_region_id: 1,
             next_display_event_log_id: 1,
+            next_display_cleanup_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

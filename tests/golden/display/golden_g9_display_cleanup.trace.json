@@ -1,0 +1,150 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "G9-display-cleanup",
+  "name": "golden_g9_display_cleanup",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/06-store-fault-cleanup.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real framebuffer present or scanout flush",
+    "snapshot barrier enforcement for active framebuffer leases",
+    "panic last-frame summary",
+    "GPU or desktop graphics stack"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "G0-G8 have produced display semantic evidence through display-event-log:23801@1",
+      "framebuffer-mapping:23401@1 and framebuffer-window-lease:23301@1 are active before cleanup",
+      "display-capability:23201@1 is backed by a store-local Display capability handle"
+    ],
+    "command": {
+      "name": "cleanup-display",
+      "cleanup": "display-cleanup:23901@1",
+      "owner_store": "store:14@3",
+      "display_capability": "display-capability:23201@1",
+      "display": "display-object:23101@1",
+      "framebuffer": "framebuffer-object:23001@1",
+      "reason": "display-window-cleanup",
+      "result": "mapping is unmapped, lease is released, and display capability is revoked"
+    }
+  },
+  "events": [
+    {
+      "kind": "DisplayCleanupStarted",
+      "source": "SemanticGraph::cleanup_display_for_store_with_id",
+      "visible_as": "osctl display-cleanup list --json",
+      "event": 564
+    },
+    {
+      "kind": "DisplayCleanupCompleted",
+      "source": "SemanticGraph::cleanup_display_for_store_with_id",
+      "visible_as": "osctl inspect display-cleanup --json",
+      "event": 566
+    }
+  ],
+  "expected": {
+    "views": {
+      "display-cleanup": {
+        "id": 23901,
+        "generation": 1,
+        "state": "completed",
+        "owner": {
+          "store": {
+            "kind": "store",
+            "id": 14,
+            "generation": 3
+          }
+        },
+        "references": {
+          "display_capability": {
+            "kind": "display-capability",
+            "id": 23201,
+            "generation": 1
+          },
+          "display": {
+            "kind": "display-object",
+            "id": 23101,
+            "generation": 1
+          },
+          "framebuffer": {
+            "kind": "framebuffer-object",
+            "id": 23001,
+            "generation": 1
+          }
+        },
+        "cleanup": {
+          "reason": "display-window-cleanup",
+          "started_at_event": 564,
+          "completed_at_event": 566,
+          "unmapped_framebuffer_mappings": [
+            "framebuffer-mapping:23401@1"
+          ],
+          "released_framebuffer_window_leases": [
+            "framebuffer-window-lease:23301@1"
+          ],
+          "revoked_display_capabilities": [
+            "display-capability:23201@1"
+          ],
+          "revoked_capabilities": [
+            "capability:34@2"
+          ]
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "display-cleanup:23901@1",
+          "relation": "display-cleanup->unmapped-framebuffer-mapping",
+          "to": "framebuffer-mapping:23401@1",
+          "mode": "cleanup-effect"
+        },
+        {
+          "from": "display-cleanup:23901@1",
+          "relation": "display-cleanup->released-framebuffer-window-lease",
+          "to": "framebuffer-window-lease:23301@1",
+          "mode": "cleanup-effect"
+        },
+        {
+          "from": "display-cleanup:23901@1",
+          "relation": "display-cleanup->revoked-display-capability",
+          "to": "display-capability:23201@1",
+          "mode": "cleanup-effect"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "DisplayCleanup id/generation is a first-class ObjectRef",
+      "DisplayCleanup targets exact Store, DisplayCapability, DisplayObject, and FramebufferObject generations",
+      "cleanup releases active handle-mode framebuffer mappings",
+      "cleanup releases active framebuffer window leases",
+      "cleanup revokes display capability without using debug labels as authority",
+      "post-cleanup framebuffer writes through the old mapping are rejected"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "display_runtime_g9_cleanup_releases_leases_mappings_and_revokes_capability",
+      "display_runtime_g9_rejects_stale_cleanup_and_blocks_post_cleanup_write",
+      "display_runtime_g9_invariants_reject_cleanup_effect_generation_drift",
+      "display_runtime_g9_contract_graph_rejects_missing_cleanup_effect",
+      "semantic_roots_reject_display_cleanup_root_mismatch",
+      "display_cleanup_view_v1_exposes_cleanup_effects_and_generations"
+    ],
+    "osctl_json_view": "display-cleanup list --json",
+    "display_cleanup": "display-cleanup:23901@1",
+    "unmapped_framebuffer_mapping": "framebuffer-mapping:23401@1",
+    "released_framebuffer_window_lease": "framebuffer-window-lease:23301@1",
+    "revoked_display_capability": "display-capability:23201@1",
+    "revoked_capability": "capability:34@2"
+  }
+}

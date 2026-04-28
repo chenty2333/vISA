@@ -22894,6 +22894,276 @@ fn display_runtime_g8_contract_graph_rejects_dirty_region_binding_drift() {
     }));
 }
 
+fn g9_display_cleanup_graph() -> (SemanticGraph, StoreId, Generation) {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_dirty_region,
+        framebuffer_dirty_region_generation,
+        first_event,
+        last_event,
+        event_count,
+        flush_count,
+        dirty_region_count,
+    ) = g8_display_event_log_graph();
+    assert!(graph.record_display_event_log_with_id(
+        23_801,
+        owner_store,
+        owner_store_generation,
+        framebuffer_dirty_region,
+        framebuffer_dirty_region_generation,
+        first_event,
+        last_event,
+        event_count,
+        flush_count,
+        dirty_region_count,
+        "g8 display event log for g9",
+    ));
+    (graph, owner_store, owner_store_generation)
+}
+
+#[test]
+fn display_runtime_g9_cleanup_releases_leases_mappings_and_revokes_capability() {
+    let (mut graph, owner_store, owner_store_generation) = g9_display_cleanup_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        11,
+        "display-runtime-g9",
+        SemanticCommand::CleanupDisplay {
+            cleanup: 23_901,
+            owner_store,
+            owner_store_generation,
+            display_capability: 23_201,
+            display_capability_generation: 1,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            reason: "display-window-cleanup".to_string(),
+            note: "g9 display cleanup".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.display_cleanup_count(), 1);
+    assert_eq!(graph.active_framebuffer_mapping_count(), 0);
+    assert_eq!(graph.active_framebuffer_window_lease_count(), 0);
+    assert_eq!(
+        graph.framebuffer_mappings()[0].state,
+        FramebufferMappingState::Unmapped
+    );
+    assert_eq!(
+        graph.framebuffer_window_leases()[0].state,
+        FramebufferWindowLeaseState::Released
+    );
+    assert_eq!(
+        graph.display_capabilities()[0].state,
+        DisplayCapabilityState::Revoked
+    );
+    let cleanup = &graph.display_cleanups()[0];
+    assert_eq!(
+        cleanup.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::DisplayCleanup, 23_901, 1)
+    );
+    assert_eq!(cleanup.unmapped_framebuffer_mappings.len(), 1);
+    assert_eq!(cleanup.released_framebuffer_window_leases.len(), 1);
+    assert_eq!(cleanup.revoked_display_capabilities.len(), 1);
+    assert_eq!(cleanup.revoked_capabilities.len(), 1);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "DisplayCleanupCompleted cleanup=23901 owner_store={owner_store}@{owner_store_generation} display_capability=23201@1 display=23101@1 framebuffer=23001@1 unmapped_framebuffer_mappings=1 released_framebuffer_window_leases=1 revoked_display_capabilities=1 generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g9_rejects_stale_cleanup_and_blocks_post_cleanup_write() {
+    let (mut graph, owner_store, owner_store_generation) = g9_display_cleanup_graph();
+
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        11,
+        "display-runtime-g9",
+        SemanticCommand::CleanupDisplay {
+            cleanup: 23_902,
+            owner_store,
+            owner_store_generation,
+            display_capability: 23_201,
+            display_capability_generation: 2,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            reason: "display-window-cleanup".to_string(),
+            note: "g9 stale display cleanup".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+
+    assert!(graph.cleanup_display_for_store_with_id(
+        23_903,
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_101,
+        1,
+        23_001,
+        1,
+        "display-window-cleanup",
+        "g9 cleanup before write rejection",
+    ));
+    let blocked_write = graph.apply_envelope(CommandEnvelope::new(
+        12,
+        "display-runtime-g9",
+        SemanticCommand::RecordFramebufferWrite {
+            framebuffer_write: 23_902,
+            owner_store,
+            owner_store_generation,
+            framebuffer_mapping: 23_401,
+            framebuffer_mapping_generation: 1,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3_200,
+            payload_digest: SemanticGraph::expected_framebuffer_write_payload_digest_v1(
+                23_401, 1, 23_001, 1, 0, 0, 800, 1, 0, 3_200,
+            ),
+            note: "g9 post-cleanup write must fail".to_string(),
+        },
+    ));
+    assert_eq!(blocked_write.status, CommandStatus::Rejected);
+
+    assert!(graph.cleanup_display_for_store_with_id(
+        23_903,
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_101,
+        1,
+        23_001,
+        1,
+        "display-window-cleanup",
+        "g9 idempotent cleanup",
+    ));
+    assert_eq!(graph.display_cleanup_count(), 1);
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g9_rejects_cleanup_when_underlying_capability_is_not_active() {
+    let (mut graph, owner_store, owner_store_generation) = g9_display_cleanup_graph();
+    let display_capability = graph.display_capabilities()[0].clone();
+    let subject = graph
+        .capabilities()
+        .record(display_capability.capability)
+        .unwrap()
+        .subject
+        .clone();
+
+    graph.revoke_capabilities_for_subject(&subject);
+
+    assert!(!graph.cleanup_display_for_store_with_id(
+        23_906,
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_101,
+        1,
+        23_001,
+        1,
+        "display-window-cleanup",
+        "g9 reject cleanup with stale ledger cap",
+    ));
+    assert_eq!(graph.display_cleanup_count(), 0);
+    assert_eq!(
+        graph.framebuffer_mappings()[0].state,
+        FramebufferMappingState::Active
+    );
+    assert_eq!(
+        graph.framebuffer_window_leases()[0].state,
+        FramebufferWindowLeaseState::Active
+    );
+    assert_eq!(
+        graph.display_capabilities()[0].state,
+        DisplayCapabilityState::Active
+    );
+}
+
+#[test]
+fn display_runtime_g9_invariants_reject_cleanup_effect_generation_drift() {
+    let (mut graph, owner_store, owner_store_generation) = g9_display_cleanup_graph();
+    assert!(graph.cleanup_display_for_store_with_id(
+        23_904,
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_101,
+        1,
+        23_001,
+        1,
+        "display-window-cleanup",
+        "g9 corrupt cleanup",
+    ));
+    graph.corrupt_display_cleanup_mapping_effect_for_test(23_904, 99);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::DisplayCleanupMissingEffectTarget {
+            cleanup: 23_904,
+            target: ContractObjectRef::new(ContractObjectKind::FramebufferMapping, 23_401, 99),
+        })
+    );
+}
+
+#[test]
+fn display_runtime_g9_contract_graph_rejects_missing_cleanup_effect() {
+    let (mut graph, owner_store, owner_store_generation) = g9_display_cleanup_graph();
+    assert!(graph.cleanup_display_for_store_with_id(
+        23_905,
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_101,
+        1,
+        23_001,
+        1,
+        "display-window-cleanup",
+        "g9 graph cleanup",
+    ));
+    let mut display_cleanups = graph.display_cleanups().to_vec();
+    display_cleanups[0].released_framebuffer_window_leases[0].generation = 99;
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        display_capabilities: graph.display_capabilities().to_vec(),
+        framebuffer_window_leases: graph.framebuffer_window_leases().to_vec(),
+        framebuffer_mappings: graph.framebuffer_mappings().to_vec(),
+        framebuffer_writes: graph.framebuffer_writes().to_vec(),
+        framebuffer_flush_regions: graph.framebuffer_flush_regions().to_vec(),
+        framebuffer_dirty_regions: graph.framebuffer_dirty_regions().to_vec(),
+        display_event_logs: graph.display_event_logs().to_vec(),
+        display_cleanups,
+        stores: graph.stores().to_vec(),
+        capabilities: graph.capabilities().records().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "display-cleanup->released-framebuffer-window-lease"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();

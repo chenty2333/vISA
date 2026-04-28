@@ -21,25 +21,26 @@ use artifact_manifest::{
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
     ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
     DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
-    DisplayCapabilityManifest, DisplayEventLogManifest, DisplayObjectManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest,
-    FramebufferDirtyRegionManifest, FramebufferFlushRegionManifest, FramebufferMappingManifest,
-    FramebufferObjectManifest, FramebufferWindowLeaseManifest, FramebufferWriteManifest,
-    FsWaitManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    DisplayCapabilityManifest, DisplayCleanupManifest, DisplayCleanupStepManifest,
+    DisplayEventLogManifest, DisplayObjectManifest, DmaBufferObjectManifest,
+    DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
+    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
+    FileHandleCapabilityManifest, FileObjectManifest, FramebufferDirtyRegionManifest,
+    FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
+    FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8386,6 +8387,7 @@ fn build_target_executor_v1(
     run_framebuffer_flush_region_harness(semantic)?;
     run_framebuffer_dirty_region_harness(semantic)?;
     run_display_event_log_harness(semantic)?;
+    run_display_cleanup_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8471,6 +8473,7 @@ fn build_target_executor_v1(
         framebuffer_flush_regions: semantic.framebuffer_flush_regions().to_vec(),
         framebuffer_dirty_regions: semantic.framebuffer_dirty_regions().to_vec(),
         display_event_logs: semantic.display_event_logs().to_vec(),
+        display_cleanups: semantic.display_cleanups().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: contract_stores,
@@ -10463,6 +10466,44 @@ fn run_display_event_log_harness(semantic: &mut SemanticGraph) -> Result<(), Box
     Ok(())
 }
 
+fn run_display_cleanup_harness(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let display_capability = semantic
+        .display_capabilities()
+        .iter()
+        .find(|record| record.id == 23_201)
+        .cloned()
+        .ok_or("display runtime g9 requires g2 display capability evidence")?;
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_029,
+        "display-runtime-g9",
+        SemanticCommand::CleanupDisplay {
+            cleanup: 23_901,
+            owner_store: display_capability.owner_store,
+            owner_store_generation: display_capability.owner_store_generation,
+            display_capability: display_capability.id,
+            display_capability_generation: display_capability.generation,
+            display: display_capability.display,
+            display_generation: display_capability.display_generation,
+            framebuffer: display_capability.framebuffer,
+            framebuffer_generation: display_capability.framebuffer_generation,
+            reason: "display-window-cleanup".to_owned(),
+            note: "g9 releases framebuffer mapping and lease before revoking display capability"
+                .to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g9 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11306,6 +11347,7 @@ fn demo_migration_package(
             framebuffer_flush_region_count: semantic.framebuffer_flush_region_count(),
             framebuffer_dirty_region_count: semantic.framebuffer_dirty_region_count(),
             display_event_log_count: semantic.display_event_log_count(),
+            display_cleanup_count: semantic.display_cleanup_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11793,6 +11835,11 @@ fn demo_migration_package(
                 .display_event_logs()
                 .iter()
                 .map(display_event_log_manifest)
+                .collect(),
+            display_cleanups: semantic
+                .display_cleanups()
+                .iter()
+                .map(display_cleanup_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -14136,6 +14183,29 @@ fn semantic_roots(
                     log.dirty_region_count,
                     log.state.as_str(),
                     log.generation
+                )
+            })
+            .collect(),
+        display_cleanup_roots: semantic
+            .display_cleanups()
+            .iter()
+            .map(|cleanup| {
+                format!(
+                    "display-cleanup id={} owner_store={}@{} display_capability={}@{} display={}@{} framebuffer={}@{} unmapped_mappings={} released_leases={} revoked_display_capabilities={} state={} generation={}",
+                    cleanup.id,
+                    cleanup.owner_store,
+                    cleanup.owner_store_generation,
+                    cleanup.display_capability,
+                    cleanup.display_capability_generation,
+                    cleanup.display,
+                    cleanup.display_generation,
+                    cleanup.framebuffer,
+                    cleanup.framebuffer_generation,
+                    cleanup.unmapped_framebuffer_mappings.len(),
+                    cleanup.released_framebuffer_window_leases.len(),
+                    cleanup.revoked_display_capabilities.len(),
+                    cleanup.state.as_str(),
+                    cleanup.generation
                 )
             })
             .collect(),
@@ -17238,6 +17308,69 @@ fn display_event_log_manifest(
         state: log.state.as_str().to_owned(),
         recorded_at_event: log.recorded_at_event,
         note: log.note.clone(),
+    }
+}
+
+fn display_cleanup_step_manifest(
+    step: &semantic_core::DisplayCleanupStepRecord,
+) -> DisplayCleanupStepManifest {
+    DisplayCleanupStepManifest {
+        kind: step.kind.as_str().to_owned(),
+        target: contract_object_ref_manifest(step.target),
+        observed_generation: step.observed_generation,
+        status: step.status.as_str().to_owned(),
+        event: step.event,
+    }
+}
+
+fn display_cleanup_manifest(
+    cleanup: &semantic_core::DisplayCleanupRecord,
+) -> DisplayCleanupManifest {
+    DisplayCleanupManifest {
+        id: cleanup.id,
+        owner_store: cleanup.owner_store,
+        owner_store_generation: cleanup.owner_store_generation,
+        display_capability: cleanup.display_capability,
+        display_capability_generation: cleanup.display_capability_generation,
+        display: cleanup.display,
+        display_generation: cleanup.display_generation,
+        framebuffer: cleanup.framebuffer,
+        framebuffer_generation: cleanup.framebuffer_generation,
+        generation: cleanup.generation,
+        state: cleanup.state.as_str().to_owned(),
+        reason: cleanup.reason.clone(),
+        started_at_event: cleanup.started_at_event,
+        completed_at_event: cleanup.completed_at_event,
+        unmapped_framebuffer_mappings: cleanup
+            .unmapped_framebuffer_mappings
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        released_framebuffer_window_leases: cleanup
+            .released_framebuffer_window_leases
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        revoked_display_capabilities: cleanup
+            .revoked_display_capabilities
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        revoked_capabilities: cleanup
+            .revoked_capabilities
+            .iter()
+            .copied()
+            .map(contract_object_ref_manifest)
+            .collect(),
+        steps: cleanup
+            .steps
+            .iter()
+            .map(display_cleanup_step_manifest)
+            .collect(),
+        note: cleanup.note.clone(),
     }
 }
 

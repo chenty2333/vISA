@@ -93,6 +93,7 @@ pub struct ContractGraphSnapshot {
     pub framebuffer_flush_regions: Vec<FramebufferFlushRegionRecord>,
     pub framebuffer_dirty_regions: Vec<FramebufferDirtyRegionRecord>,
     pub display_event_logs: Vec<DisplayEventLogRecord>,
+    pub display_cleanups: Vec<DisplayCleanupRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -205,6 +206,7 @@ impl ContractGraphValidator {
         Self::validate_framebuffer_flush_regions(snapshot, &mut violations);
         Self::validate_framebuffer_dirty_regions(snapshot, &mut violations);
         Self::validate_display_event_logs(snapshot, &mut violations);
+        Self::validate_display_cleanups(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -972,17 +974,24 @@ impl ContractGraphValidator {
                     .operations
                     .iter()
                     .any(|operation| operation.is_empty())
-                || capability.state != DisplayCapabilityState::Active
+                || (capability.state != DisplayCapabilityState::Active
+                    && capability.state != DisplayCapabilityState::Revoked)
             {
                 violations.push(ContractViolation::new(
                     ContractViolationKind::ExternalEdgeMetadataMismatch,
                     "display-capability->contract",
                     from,
                     None,
-                    "display capability requires nonzero owner, display, framebuffer, capability, operations, and active state",
+                    "display capability requires nonzero owner, display, framebuffer, capability, operations, and known state",
                 ));
                 continue;
             }
+            let active = capability.state == DisplayCapabilityState::Active;
+            let edge_mode = if active {
+                ContractEdgeMode::Live
+            } else {
+                ContractEdgeMode::Historical
+            };
             Self::check_generation_edge(
                 snapshot,
                 violations,
@@ -991,7 +1000,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::Store,
                 capability.owner_store,
                 capability.owner_store_generation,
-                ContractEdgeMode::Live,
+                edge_mode,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -1001,7 +1010,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::DisplayObject,
                 capability.display,
                 capability.display_generation,
-                ContractEdgeMode::Live,
+                edge_mode,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -1011,18 +1020,32 @@ impl ContractGraphValidator {
                 ContractObjectKind::FramebufferObject,
                 capability.framebuffer,
                 capability.framebuffer_generation,
-                ContractEdgeMode::Live,
+                edge_mode,
             );
-            Self::check_generation_edge(
-                snapshot,
-                violations,
-                from,
-                "display-capability->capability",
-                ContractObjectKind::Capability,
-                capability.capability,
-                capability.capability_generation,
-                ContractEdgeMode::Live,
-            );
+            if active {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "display-capability->capability",
+                    ContractObjectKind::Capability,
+                    capability.capability,
+                    capability.capability_generation,
+                    ContractEdgeMode::Live,
+                );
+            } else if !snapshot.capabilities.iter().any(|record| {
+                record.id == capability.capability
+                    && record.revoked
+                    && record.generation > capability.capability_generation
+            }) {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::GenerationMismatch,
+                    "display-capability->revoked-capability",
+                    from,
+                    None,
+                    "revoked display capability must point to an advanced revoked capability generation",
+                ));
+            }
 
             if let Some(display) = snapshot.display_objects.iter().find(|display| {
                 display.id == capability.display
@@ -1059,17 +1082,29 @@ impl ContractGraphValidator {
                 || lease.height == 0
                 || lease.byte_len == 0
                 || lease.access.is_empty()
-                || lease.state != FramebufferWindowLeaseState::Active
+                || (lease.state != FramebufferWindowLeaseState::Active
+                    && lease.state != FramebufferWindowLeaseState::Released)
             {
                 violations.push(ContractViolation::new(
                     ContractViolationKind::ExternalEdgeMetadataMismatch,
                     "framebuffer-window-lease->contract",
                     from,
                     None,
-                    "framebuffer window lease requires nonzero exact refs, window, byte range, access, and active state",
+                    "framebuffer window lease requires nonzero exact refs, window, byte range, access, and known state",
                 ));
                 continue;
             }
+            let active = lease.state == FramebufferWindowLeaseState::Active;
+            let owner_mode = if active {
+                ContractEdgeMode::Live
+            } else {
+                ContractEdgeMode::Historical
+            };
+            let capability_mode = if active {
+                ContractEdgeMode::Live
+            } else {
+                ContractEdgeMode::CleanupEffect
+            };
             Self::check_generation_edge(
                 snapshot,
                 violations,
@@ -1078,7 +1113,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::Store,
                 lease.owner_store,
                 lease.owner_store_generation,
-                ContractEdgeMode::Live,
+                owner_mode,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -1088,7 +1123,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::DisplayCapability,
                 lease.display_capability,
                 lease.display_capability_generation,
-                ContractEdgeMode::Live,
+                capability_mode,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -1098,7 +1133,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::DisplayObject,
                 lease.display,
                 lease.display_generation,
-                ContractEdgeMode::Live,
+                owner_mode,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -1108,7 +1143,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::FramebufferObject,
                 lease.framebuffer,
                 lease.framebuffer_generation,
-                ContractEdgeMode::Live,
+                owner_mode,
             );
 
             let display_capability = snapshot.display_capabilities.iter().find(|capability| {
@@ -1219,17 +1254,29 @@ impl ContractGraphValidator {
                 || mapping.byte_len == 0
                 || mapping.mode != "handle-mode"
                 || (mapping.access != "write" && mapping.access != "read")
-                || mapping.state != FramebufferMappingState::Active
+                || (mapping.state != FramebufferMappingState::Active
+                    && mapping.state != FramebufferMappingState::Unmapped)
             {
                 violations.push(ContractViolation::new(
                     ContractViolationKind::ExternalEdgeMetadataMismatch,
                     "framebuffer-mapping->contract",
                     from,
                     None,
-                    "framebuffer mapping requires exact refs, active handle-mode state, handle identity, and byte window",
+                    "framebuffer mapping requires exact refs, handle-mode state, handle identity, and byte window",
                 ));
                 continue;
             }
+            let active = mapping.state == FramebufferMappingState::Active;
+            let owner_mode = if active {
+                ContractEdgeMode::Live
+            } else {
+                ContractEdgeMode::Historical
+            };
+            let cleanup_mode = if active {
+                ContractEdgeMode::Live
+            } else {
+                ContractEdgeMode::CleanupEffect
+            };
             Self::check_generation_edge(
                 snapshot,
                 violations,
@@ -1238,7 +1285,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::Store,
                 mapping.owner_store,
                 mapping.owner_store_generation,
-                ContractEdgeMode::Live,
+                owner_mode,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -1248,7 +1295,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::FramebufferWindowLease,
                 mapping.framebuffer_window_lease,
                 mapping.framebuffer_window_lease_generation,
-                ContractEdgeMode::Live,
+                cleanup_mode,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -1258,7 +1305,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::DisplayCapability,
                 mapping.display_capability,
                 mapping.display_capability_generation,
-                ContractEdgeMode::Live,
+                cleanup_mode,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -1268,7 +1315,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::DisplayObject,
                 mapping.display,
                 mapping.display_generation,
-                ContractEdgeMode::Live,
+                owner_mode,
             );
             Self::check_generation_edge(
                 snapshot,
@@ -1278,7 +1325,7 @@ impl ContractGraphValidator {
                 ContractObjectKind::FramebufferObject,
                 mapping.framebuffer,
                 mapping.framebuffer_generation,
-                ContractEdgeMode::Live,
+                owner_mode,
             );
             if let Some(lease) = snapshot.framebuffer_window_leases.iter().find(|lease| {
                 lease.id == mapping.framebuffer_window_lease
@@ -1837,6 +1884,178 @@ impl ContractGraphValidator {
                         "display event log window or refs do not match the dirty region lifecycle",
                     ));
                 }
+            }
+        }
+    }
+
+    fn validate_display_cleanups(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for cleanup in &snapshot.display_cleanups {
+            let from = cleanup.object_ref();
+            if cleanup.id == 0
+                || cleanup.generation == 0
+                || cleanup.owner_store_generation == 0
+                || cleanup.display_capability_generation == 0
+                || cleanup.display_generation == 0
+                || cleanup.framebuffer_generation == 0
+                || cleanup.reason.is_empty()
+                || cleanup.state != DisplayCleanupState::Completed
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "display-cleanup->contract",
+                    from,
+                    None,
+                    "display cleanup requires exact refs, completed state, and reason",
+                ));
+                continue;
+            }
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-cleanup->owner-store",
+                ContractObjectKind::Store,
+                cleanup.owner_store,
+                cleanup.owner_store_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-cleanup->display-capability",
+                ContractObjectKind::DisplayCapability,
+                cleanup.display_capability,
+                cleanup.display_capability_generation,
+                ContractEdgeMode::CleanupEffect,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-cleanup->display-object",
+                ContractObjectKind::DisplayObject,
+                cleanup.display,
+                cleanup.display_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-cleanup->framebuffer-object",
+                ContractObjectKind::FramebufferObject,
+                cleanup.framebuffer,
+                cleanup.framebuffer_generation,
+                ContractEdgeMode::Historical,
+            );
+            for mapping in &cleanup.unmapped_framebuffer_mappings {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "display-cleanup->unmapped-framebuffer-mapping",
+                    ContractObjectKind::FramebufferMapping,
+                    mapping.id,
+                    mapping.generation,
+                    ContractEdgeMode::CleanupEffect,
+                );
+                if let Some(record) = snapshot.framebuffer_mappings.iter().find(|record| {
+                    record.id == mapping.id && record.generation == mapping.generation
+                }) {
+                    if record.state != FramebufferMappingState::Unmapped
+                        || record.owner_store != cleanup.owner_store
+                        || record.owner_store_generation != cleanup.owner_store_generation
+                        || record.display_capability != cleanup.display_capability
+                        || record.display_capability_generation
+                            != cleanup.display_capability_generation
+                    {
+                        violations.push(ContractViolation::new(
+                            ContractViolationKind::GenerationMismatch,
+                            "display-cleanup->mapping-effect",
+                            from,
+                            Some(record.object_ref()),
+                            "display cleanup mapping effect does not match the cleanup target",
+                        ));
+                    }
+                }
+            }
+            for lease in &cleanup.released_framebuffer_window_leases {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "display-cleanup->released-framebuffer-window-lease",
+                    ContractObjectKind::FramebufferWindowLease,
+                    lease.id,
+                    lease.generation,
+                    ContractEdgeMode::CleanupEffect,
+                );
+                if let Some(record) = snapshot
+                    .framebuffer_window_leases
+                    .iter()
+                    .find(|record| record.id == lease.id && record.generation == lease.generation)
+                {
+                    if record.state != FramebufferWindowLeaseState::Released
+                        || record.owner_store != cleanup.owner_store
+                        || record.owner_store_generation != cleanup.owner_store_generation
+                        || record.display_capability != cleanup.display_capability
+                        || record.display_capability_generation
+                            != cleanup.display_capability_generation
+                    {
+                        violations.push(ContractViolation::new(
+                            ContractViolationKind::GenerationMismatch,
+                            "display-cleanup->lease-effect",
+                            from,
+                            Some(record.object_ref()),
+                            "display cleanup lease effect does not match the cleanup target",
+                        ));
+                    }
+                }
+            }
+            for display_capability in &cleanup.revoked_display_capabilities {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "display-cleanup->revoked-display-capability",
+                    ContractObjectKind::DisplayCapability,
+                    display_capability.id,
+                    display_capability.generation,
+                    ContractEdgeMode::CleanupEffect,
+                );
+                if let Some(record) = snapshot.display_capabilities.iter().find(|record| {
+                    record.id == display_capability.id
+                        && record.generation == display_capability.generation
+                }) {
+                    if record.state != DisplayCapabilityState::Revoked
+                        || record.owner_store != cleanup.owner_store
+                        || record.owner_store_generation != cleanup.owner_store_generation
+                    {
+                        violations.push(ContractViolation::new(
+                            ContractViolationKind::GenerationMismatch,
+                            "display-cleanup->display-capability-effect",
+                            from,
+                            Some(record.object_ref()),
+                            "display cleanup display-capability effect does not match the cleanup target",
+                        ));
+                    }
+                }
+            }
+            for capability in &cleanup.revoked_capabilities {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "display-cleanup->revoked-capability",
+                    ContractObjectKind::Capability,
+                    capability.id,
+                    capability.generation,
+                    ContractEdgeMode::CleanupEffect,
+                );
             }
         }
     }
@@ -3049,6 +3268,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|log| log.id == id && log.generation == generation)
                 .map(DisplayEventLogRecord::object_ref),
+            ContractObjectKind::DisplayCleanup => snapshot
+                .display_cleanups
+                .iter()
+                .find(|cleanup| cleanup.id == id && cleanup.generation == generation)
+                .map(DisplayCleanupRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -3219,6 +3443,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|log| log.id == id)
                 .map(DisplayEventLogRecord::object_ref),
+            ContractObjectKind::DisplayCleanup => snapshot
+                .display_cleanups
+                .iter()
+                .find(|cleanup| cleanup.id == id)
+                .map(DisplayCleanupRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -3380,6 +3609,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::FramebufferFlushRegion
                 | ContractObjectKind::FramebufferDirtyRegion
                 | ContractObjectKind::DisplayEventLog
+                | ContractObjectKind::DisplayCleanup
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -3549,6 +3779,14 @@ impl ContractGraphValidator {
                 .and_then(|log| {
                     (log.state != DisplayEventLogState::Recorded)
                         .then_some("live edge references unrecorded display event log")
+                }),
+            ContractObjectKind::DisplayCleanup => snapshot
+                .display_cleanups
+                .iter()
+                .find(|cleanup| cleanup.id == object.id && cleanup.generation == object.generation)
+                .and_then(|cleanup| {
+                    (cleanup.state != DisplayCleanupState::Completed)
+                        .then_some("live edge references incomplete display cleanup")
                 }),
             _ => None,
         }
