@@ -1,0 +1,121 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "B22-disk-benchmark-iops-latency",
+  "name": "golden_b22_disk_benchmark_iops_latency",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/10-command-transaction-surface.md"
+  ],
+  "no_goals": [
+    "real virtio-blk MMIO/DMA/IRQ execution",
+    "real disk scheduler",
+    "adapter-local disk state as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "B7 already records block-read-path:20039@1",
+      "B8 already records block-write-path:20048@1",
+      "B9 already records completed block-request-queue:20053@1",
+      "B10 already records block-dma-buffer:20061@1"
+    ],
+    "commands": [
+      {
+        "id": 327,
+        "command": "record-block-benchmark",
+        "benchmark": "block-benchmark:20132@1",
+        "scenario": "fake-block-read-write-iops-latency-v1",
+        "expected": "applied"
+      },
+      {
+        "id": 328,
+        "command": "record-block-benchmark",
+        "scenario": "stale read path generation cannot benchmark",
+        "read_path": "block-read-path:20039@2",
+        "expected": "rejected",
+        "violation": "block benchmark read path generation is missing or inactive"
+      },
+      {
+        "id": 329,
+        "command": "record-block-benchmark",
+        "scenario": "latency budget violation cannot benchmark",
+        "expected": "rejected",
+        "violation": "block benchmark exceeds latency budget"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 485,
+      "kind": "BlockBenchmarkRecorded",
+      "benchmark": "block-benchmark:20132@1",
+      "read_path": "block-read-path:20039@1",
+      "write_path": "block-write-path:20048@1",
+      "request_queue": "block-request-queue:20053@1",
+      "block_dma_buffer": "block-dma-buffer:20061@1"
+    }
+  ],
+  "expected": {
+    "views": {
+      "block-benchmark": {
+        "count": 1,
+        "benchmark": "block-benchmark:20132@1",
+        "backend": "fake-block-backend-object:20026@1",
+        "block_device": "block-device-object:20002@1",
+        "read_path": "block-read-path:20039@1",
+        "write_path": "block-write-path:20048@1",
+        "request_queue": "block-request-queue:20053@1",
+        "block_dma_buffer": "block-dma-buffer:20061@1",
+        "sample_requests": 2,
+        "sample_bytes": 8192,
+        "iops": 50000,
+        "throughput_bytes_per_sec": 204800000,
+        "p50_latency_nanos": 18000,
+        "p99_latency_nanos": 35000
+      },
+      "command": {
+        "benchmark_applied": "command-result:327:record-block-benchmark:applied",
+        "stale_read_path_rejected": "command-result:328:record-block-benchmark:rejected",
+        "latency_budget_rejected": "command-result:329:record-block-benchmark:rejected"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "historical_edges": [
+          "block-benchmark->backend",
+          "block-benchmark->block-device",
+          "block-benchmark->block-range",
+          "block-benchmark->read-path",
+          "block-benchmark->write-path",
+          "block-benchmark->request-queue",
+          "block-benchmark->block-dma-buffer"
+        ]
+      }
+    },
+    "invariants": [
+      "Disk benchmark evidence is derived from semantic BlockReadPath, BlockWritePath, BlockRequestQueue, and BlockDmaBuffer objects",
+      "Benchmark refs carry exact generations and are historical evidence only",
+      "IOPS and throughput are recomputed by semantic_core invariants",
+      "Stale read path generation and latency budget violations reject before mutation",
+      "osctl exposes stable ViewV1 evidence for benchmark metrics, graph edges, replay roots, and command results"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "semantic_roots_reject_block_benchmark_root_mismatch",
+      "block_runtime_b22_disk_benchmark_records_iops_latency_evidence",
+      "block_runtime_b22_rejects_stale_refs_and_invalid_metrics",
+      "block_runtime_b22_invariants_reject_iops_metric_drift",
+      "block_benchmark_view_v1_exposes_iops_latency_and_exact_refs"
+    ],
+    "osctl_json_view": "block-benchmark list --json",
+    "target_executor_event_cursor": 487
+  }
+}

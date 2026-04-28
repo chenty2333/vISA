@@ -2364,6 +2364,46 @@ impl BlockRequestGenerationAuditRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockBenchmarkRecord {
+    pub id: BlockBenchmarkId,
+    pub scenario: String,
+    pub backend: ContractObjectRef,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub block_range: BlockRangeObjectId,
+    pub block_range_generation: Generation,
+    pub read_path: BlockReadPathId,
+    pub read_path_generation: Generation,
+    pub write_path: BlockWritePathId,
+    pub write_path_generation: Generation,
+    pub request_queue: BlockRequestQueueId,
+    pub request_queue_generation: Generation,
+    pub block_dma_buffer: BlockDmaBufferId,
+    pub block_dma_buffer_generation: Generation,
+    pub sample_requests: u32,
+    pub sample_bytes: u64,
+    pub read_completed_requests: u32,
+    pub write_completed_requests: u32,
+    pub queue_completed_requests: u32,
+    pub measured_nanos: u64,
+    pub budget_nanos: u64,
+    pub iops: u64,
+    pub throughput_bytes_per_sec: u64,
+    pub p50_latency_nanos: u64,
+    pub p99_latency_nanos: u64,
+    pub generation: Generation,
+    pub state: BlockBenchmarkState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl BlockBenchmarkRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::BlockBenchmark, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

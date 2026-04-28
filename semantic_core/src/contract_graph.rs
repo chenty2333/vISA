@@ -1457,6 +1457,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::BlockDriverCleanup
             | ContractObjectKind::BlockPendingIoPolicy
             | ContractObjectKind::BlockRequestGenerationAudit
+            | ContractObjectKind::BlockBenchmark
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

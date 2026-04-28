@@ -15606,6 +15606,254 @@ fn block_runtime_b21_invariants_reject_stale_audit_request_generation() {
     );
 }
 
+fn setup_b22_disk_benchmark_graph() -> SemanticGraph {
+    let mut graph = setup_b10_block_dma_buffer_graph(DmaBufferObjectAccess::ReadWrite);
+    let backend = ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1);
+    let read_digest = SemanticGraph::expected_block_read_digest_v1(
+        0x766d_6f73_626c_6b39,
+        1824,
+        1,
+        1825,
+        1,
+        128,
+        8,
+        1,
+        4096,
+    );
+    let write_digest = SemanticGraph::expected_block_write_payload_digest_v1(
+        0x766d_6f73_626c_6b39,
+        1824,
+        1,
+        1825,
+        1,
+        128,
+        8,
+        2,
+        4096,
+    );
+    assert!(graph.record_block_read_path_with_id(
+        1846,
+        backend,
+        1826,
+        1,
+        1827,
+        1,
+        read_digest,
+        "b22 benchmark read path",
+    ));
+    assert!(graph.record_block_write_path_with_id(
+        1847,
+        backend,
+        1828,
+        1,
+        1830,
+        1,
+        write_digest,
+        "b22 benchmark write path",
+    ));
+    assert!(graph.record_block_request_queue_with_id(
+        1848,
+        backend,
+        1824,
+        1,
+        4,
+        &[
+            BlockRequestQueueEntryRef::completed(1826, 1, 1827, 1),
+            BlockRequestQueueEntryRef::completed(1828, 1, 1830, 1),
+        ],
+        "b22 benchmark completed queue",
+    ));
+    assert!(graph.record_block_dma_buffer_with_id(
+        1849,
+        backend,
+        1828,
+        1,
+        1833,
+        1,
+        b10_expected_digest(DmaBufferObjectAccess::ReadWrite),
+        "b22 benchmark dma-backed write",
+    ));
+    graph
+}
+
+#[test]
+fn block_runtime_b22_disk_benchmark_records_iops_latency_evidence() {
+    let mut graph = setup_b22_disk_benchmark_graph();
+    let backend = ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1);
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b22-test",
+        SemanticCommand::RecordBlockBenchmark {
+            benchmark: 1850,
+            scenario: "fake block read/write benchmark".to_string(),
+            backend,
+            block_device: 1824,
+            block_device_generation: 1,
+            block_range: 1825,
+            block_range_generation: 1,
+            read_path: 1846,
+            read_path_generation: 1,
+            write_path: 1847,
+            write_path_generation: 1,
+            request_queue: 1848,
+            request_queue_generation: 1,
+            block_dma_buffer: 1849,
+            block_dma_buffer_generation: 1,
+            sample_requests: 2,
+            sample_bytes: 8192,
+            read_completed_requests: 1,
+            write_completed_requests: 1,
+            queue_completed_requests: 2,
+            measured_nanos: 40_000,
+            budget_nanos: 80_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 35_000,
+            note: "b22 disk benchmark".to_string(),
+        },
+    ));
+    assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    assert_eq!(graph.block_benchmark_count(), 1);
+    let benchmark = &graph.block_benchmarks()[0];
+    assert_eq!(
+        benchmark.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BlockBenchmark, 1850, 1)
+    );
+    assert_eq!(benchmark.backend, backend);
+    assert_eq!(benchmark.read_path, 1846);
+    assert_eq!(benchmark.write_path, 1847);
+    assert_eq!(benchmark.request_queue, 1848);
+    assert_eq!(benchmark.block_dma_buffer, 1849);
+    assert_eq!(benchmark.sample_requests, 2);
+    assert_eq!(benchmark.sample_bytes, 8192);
+    assert_eq!(benchmark.iops, 50_000);
+    assert_eq!(benchmark.throughput_bytes_per_sec, 204_800_000);
+    assert_eq!(benchmark.p50_latency_nanos, 18_000);
+    assert_eq!(benchmark.p99_latency_nanos, 35_000);
+    assert!(
+        graph.event_log_tail(1)[0]
+            .kind
+            .summary()
+            .contains("BlockBenchmarkRecorded benchmark=1850")
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b22_rejects_stale_refs_and_invalid_metrics() {
+    let mut graph = setup_b22_disk_benchmark_graph();
+    let backend = ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1);
+    let stale_read_path = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b22-test",
+        SemanticCommand::RecordBlockBenchmark {
+            benchmark: 1850,
+            scenario: "stale read path".to_string(),
+            backend,
+            block_device: 1824,
+            block_device_generation: 1,
+            block_range: 1825,
+            block_range_generation: 1,
+            read_path: 1846,
+            read_path_generation: 2,
+            write_path: 1847,
+            write_path_generation: 1,
+            request_queue: 1848,
+            request_queue_generation: 1,
+            block_dma_buffer: 1849,
+            block_dma_buffer_generation: 1,
+            sample_requests: 2,
+            sample_bytes: 8192,
+            read_completed_requests: 1,
+            write_completed_requests: 1,
+            queue_completed_requests: 2,
+            measured_nanos: 40_000,
+            budget_nanos: 80_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 35_000,
+            note: "b22 stale read path".to_string(),
+        },
+    ));
+    assert_eq!(stale_read_path.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_read_path.violations,
+        vec!["block benchmark read path generation is missing or inactive".to_string()]
+    );
+
+    let over_budget = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b22-test",
+        SemanticCommand::RecordBlockBenchmark {
+            benchmark: 1851,
+            scenario: "over budget".to_string(),
+            backend,
+            block_device: 1824,
+            block_device_generation: 1,
+            block_range: 1825,
+            block_range_generation: 1,
+            read_path: 1846,
+            read_path_generation: 1,
+            write_path: 1847,
+            write_path_generation: 1,
+            request_queue: 1848,
+            request_queue_generation: 1,
+            block_dma_buffer: 1849,
+            block_dma_buffer_generation: 1,
+            sample_requests: 2,
+            sample_bytes: 8192,
+            read_completed_requests: 1,
+            write_completed_requests: 1,
+            queue_completed_requests: 2,
+            measured_nanos: 90_000,
+            budget_nanos: 80_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 35_000,
+            note: "b22 over budget".to_string(),
+        },
+    ));
+    assert_eq!(over_budget.status, CommandStatus::Rejected);
+    assert_eq!(
+        over_budget.violations,
+        vec!["block benchmark exceeds latency budget".to_string()]
+    );
+}
+
+#[test]
+fn block_runtime_b22_invariants_reject_iops_metric_drift() {
+    let mut graph = setup_b22_disk_benchmark_graph();
+    assert!(graph.record_block_benchmark_with_id(
+        1850,
+        "b22 benchmark",
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1),
+        1824,
+        1,
+        1825,
+        1,
+        1846,
+        1,
+        1847,
+        1,
+        1848,
+        1,
+        1849,
+        1,
+        2,
+        8192,
+        1,
+        1,
+        2,
+        40_000,
+        80_000,
+        18_000,
+        35_000,
+        "b22 invariant benchmark",
+    ));
+    graph.corrupt_block_benchmark_iops_for_test(1850, 50_001);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::BlockBenchmarkInvalid { benchmark: 1850 })
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

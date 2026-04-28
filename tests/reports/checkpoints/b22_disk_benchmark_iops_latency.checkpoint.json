@@ -1,0 +1,188 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "B22-disk-benchmark-iops-latency",
+  "phase": "Phase 5 Block / Disk Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add BlockBenchmark as stable semantic evidence for disk IOPS/latency measurements",
+    "Bind benchmark evidence to exact-generation BlockReadPath, BlockWritePath, BlockRequestQueue, BlockDmaBuffer, BlockDevice, BlockRange, and FakeBlockBackend refs",
+    "Recompute IOPS and throughput from sample_requests, sample_bytes, and measured_nanos inside semantic_core invariants",
+    "Reject stale benchmark refs and latency budget violations before mutation",
+    "Expose BlockBenchmark roots/counts through semantic package, osctl ViewV1, graph history, replay roots, inspect JSON, direct list JSON, and command evidence"
+  ],
+  "no_goals": [
+    "real virtio-blk MMIO/DMA/IRQ execution",
+    "real disk scheduler",
+    "adapter-local disk state as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/block_benchmark.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/io_validator.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/block/golden_b22_disk_benchmark_iops_latency.trace.json",
+    "tests/reports/checkpoints/b22_disk_benchmark_iops_latency.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/block/golden_b22_disk_benchmark_iops_latency.trace.json",
+    "tests/reports/checkpoints/b22_disk_benchmark_iops_latency.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "BlockBenchmark is a historical evidence object and has no live graph ownership edges",
+      "All benchmark inputs are exact-generation semantic refs instead of adapter-local state",
+      "IOPS and throughput are invariant-checked, so package metric drift is rejected",
+      "Stale read path generation and over-budget latency probes reject before mutation",
+      "Root/count validation covers block_benchmarks so package tampering is rejected"
+    ],
+    "residual_notes": [
+      "B22 does not implement a real disk scheduler or real hardware timing path",
+      "B23 still owns disk recovery benchmark evidence",
+      "The block vertical still uses fake semantic backend evidence rather than real virtio-blk execution"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo check -p semantic_core",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p semantic_core block_runtime_b22 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl block_benchmark -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core block_benchmark -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl block-benchmark list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect block-benchmark --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 327",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 328",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 329",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl replay --until 487 --manifest target/aotc/wasmtime/host-validation/debug/manifest.json --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "target_executor_event_cursor": 487,
+    "block_benchmark_count": 1,
+    "block_benchmark_roots": [
+      "block-benchmark id=20132 scenario=fake-block-read-write-iops-latency-v1 backend=fake-block-backend-object:20026@1 block_device=20002@1 block_range=20005@1 read_path=20039@1 write_path=20048@1 request_queue=20053@1 block_dma_buffer=20061@1 sample_requests=2 sample_bytes=8192 iops=50000 throughput_bytes_per_sec=204800000 p50_latency_nanos=18000 p99_latency_nanos=35000 state=recorded generation=1"
+    ],
+    "metrics": {
+      "sample_requests": 2,
+      "sample_bytes": 8192,
+      "measured_nanos": 40000,
+      "budget_nanos": 80000,
+      "iops": 50000,
+      "throughput_bytes_per_sec": 204800000,
+      "p50_latency_nanos": 18000,
+      "p99_latency_nanos": 35000
+    },
+    "command_results": {
+      "benchmark_applied": 327,
+      "stale_read_path_rejected": 328,
+      "latency_budget_rejected": 329
+    },
+    "historical_graph_edges": 7
+  },
+  "residual_gaps": [
+    "B23 disk recovery benchmark remains pending",
+    "The block vertical still uses fake semantic backend evidence rather than real virtio-blk execution",
+    "Final experiment matrix M6 will own cross-scenario disk IOPS reporting"
+  ],
+  "next_checkpoint": "B23-disk-recovery-benchmark"
+}

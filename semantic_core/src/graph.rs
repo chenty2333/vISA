@@ -83,6 +83,7 @@ pub struct SemanticGraph {
     block_driver_cleanups: Vec<BlockDriverCleanupRecord>,
     block_pending_io_policies: Vec<BlockPendingIoPolicyRecord>,
     block_request_generation_audits: Vec<BlockRequestGenerationAuditRecord>,
+    block_benchmarks: Vec<BlockBenchmarkRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -177,6 +178,7 @@ pub struct SemanticGraph {
     next_block_driver_cleanup_id: BlockDriverCleanupId,
     next_block_pending_io_policy_id: BlockPendingIoPolicyId,
     next_block_request_generation_audit_id: BlockRequestGenerationAuditId,
+    next_block_benchmark_id: BlockBenchmarkId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -194,6 +196,7 @@ pub struct SemanticGraph {
 
 mod activation_migration;
 mod authority;
+mod block_benchmark;
 mod block_completion_object;
 mod block_device_object;
 mod block_dma_buffer;
@@ -367,6 +370,7 @@ impl SemanticGraph {
             block_driver_cleanups: Vec::new(),
             block_pending_io_policies: Vec::new(),
             block_request_generation_audits: Vec::new(),
+            block_benchmarks: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -461,6 +465,7 @@ impl SemanticGraph {
             next_block_driver_cleanup_id: 1,
             next_block_pending_io_policy_id: 1,
             next_block_request_generation_audit_id: 1,
+            next_block_benchmark_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

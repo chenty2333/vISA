@@ -9,32 +9,33 @@ use artifact_manifest::{
     ActivationCleanupManifest, ActivationCleanupStepManifest, ActivationContextManifest,
     ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
-    BlockCompletionObjectManifest, BlockDeviceObjectManifest, BlockDmaBufferManifest,
-    BlockDriverCleanupManifest, BlockPageObjectManifest, BlockPendingIoPolicyManifest,
-    BlockRangeObjectManifest, BlockReadPathManifest, BlockRequestGenerationAuditManifest,
-    BlockRequestObjectManifest, BlockRequestQueueEntryManifest, BlockRequestQueueManifest,
-    BlockWaitManifest, BlockWritePathManifest, BoundaryValidationReportManifest,
-    BoundaryValidationViolationManifest, BufferCacheObjectManifest, CapabilityHandleArgManifest,
-    CapabilityRecordManifest, CleanupEffectManifest, CleanupStepManifest,
-    CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest, CommandResultManifest,
-    ContractObjectRefManifest, ContractViolationManifest, CrossHartSchedulerDecisionManifest,
-    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
-    DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
-    EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
-    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
-    FileObjectManifest, FsWaitManifest, GuestStateManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    BlockBenchmarkManifest, BlockCompletionObjectManifest, BlockDeviceObjectManifest,
+    BlockDmaBufferManifest, BlockDriverCleanupManifest, BlockPageObjectManifest,
+    BlockPendingIoPolicyManifest, BlockRangeObjectManifest, BlockReadPathManifest,
+    BlockRequestGenerationAuditManifest, BlockRequestObjectManifest,
+    BlockRequestQueueEntryManifest, BlockRequestQueueManifest, BlockWaitManifest,
+    BlockWritePathManifest, BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
+    BufferCacheObjectManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
+    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
+    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
+    ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
+    DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
+    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
+    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest, FsWaitManifest,
+    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
+    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
+    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -235,6 +236,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b19_evidence(&mut semantic)?;
     record_block_runtime_b20_evidence(&mut semantic)?;
     record_block_runtime_b21_evidence(&mut semantic)?;
+    record_block_runtime_b22_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -6369,6 +6371,160 @@ fn record_block_runtime_b21_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_block_runtime_b22_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let backend = ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 20_026, 1);
+    let benchmark = semantic.apply_envelope(CommandEnvelope::new(
+        327,
+        "target-executor-b22",
+        SemanticCommand::RecordBlockBenchmark {
+            benchmark: 20_132,
+            scenario: "fake-block-read-write-iops-latency-v1".to_owned(),
+            backend,
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_range: 20_005,
+            block_range_generation: 1,
+            read_path: 20_039,
+            read_path_generation: 1,
+            write_path: 20_048,
+            write_path_generation: 1,
+            request_queue: 20_053,
+            request_queue_generation: 1,
+            block_dma_buffer: 20_061,
+            block_dma_buffer_generation: 1,
+            sample_requests: 2,
+            sample_bytes: 8192,
+            read_completed_requests: 1,
+            write_completed_requests: 1,
+            queue_completed_requests: 2,
+            measured_nanos: 40_000,
+            budget_nanos: 80_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 35_000,
+            note: "b22-record-disk-iops-latency-benchmark".to_owned(),
+        },
+    ));
+    if benchmark.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b22 benchmark command {} ({}) failed: status={} violations={:?}",
+            benchmark.command_id,
+            benchmark.command,
+            benchmark.status.as_str(),
+            benchmark.violations
+        )
+        .into());
+    }
+
+    let stale_read_path = semantic.apply_envelope(CommandEnvelope::new(
+        328,
+        "target-executor-b22",
+        SemanticCommand::RecordBlockBenchmark {
+            benchmark: 20_133,
+            scenario: "stale read path generation cannot benchmark".to_owned(),
+            backend,
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_range: 20_005,
+            block_range_generation: 1,
+            read_path: 20_039,
+            read_path_generation: 2,
+            write_path: 20_048,
+            write_path_generation: 1,
+            request_queue: 20_053,
+            request_queue_generation: 1,
+            block_dma_buffer: 20_061,
+            block_dma_buffer_generation: 1,
+            sample_requests: 2,
+            sample_bytes: 8192,
+            read_completed_requests: 1,
+            write_completed_requests: 1,
+            queue_completed_requests: 2,
+            measured_nanos: 40_000,
+            budget_nanos: 80_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 35_000,
+            note: "b22-reject-stale-read-path-generation".to_owned(),
+        },
+    ));
+    if stale_read_path.status != CommandStatus::Rejected
+        || !stale_read_path
+            .violations
+            .iter()
+            .any(|violation| violation.contains("read path generation"))
+    {
+        return Err(format!(
+            "block runtime b22 stale read path command {} ({}) was not rejected: status={} violations={:?}",
+            stale_read_path.command_id,
+            stale_read_path.command,
+            stale_read_path.status.as_str(),
+            stale_read_path.violations
+        )
+        .into());
+    }
+
+    let over_budget = semantic.apply_envelope(CommandEnvelope::new(
+        329,
+        "target-executor-b22",
+        SemanticCommand::RecordBlockBenchmark {
+            benchmark: 20_134,
+            scenario: "latency budget violation cannot benchmark".to_owned(),
+            backend,
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_range: 20_005,
+            block_range_generation: 1,
+            read_path: 20_039,
+            read_path_generation: 1,
+            write_path: 20_048,
+            write_path_generation: 1,
+            request_queue: 20_053,
+            request_queue_generation: 1,
+            block_dma_buffer: 20_061,
+            block_dma_buffer_generation: 1,
+            sample_requests: 2,
+            sample_bytes: 8192,
+            read_completed_requests: 1,
+            write_completed_requests: 1,
+            queue_completed_requests: 2,
+            measured_nanos: 90_000,
+            budget_nanos: 80_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 35_000,
+            note: "b22-reject-disk-benchmark-over-budget".to_owned(),
+        },
+    ));
+    if over_budget.status != CommandStatus::Rejected
+        || !over_budget
+            .violations
+            .iter()
+            .any(|violation| violation.contains("latency budget"))
+    {
+        return Err(format!(
+            "block runtime b22 over-budget command {} ({}) was not rejected: status={} violations={:?}",
+            over_budget.command_id,
+            over_budget.command,
+            over_budget.status.as_str(),
+            over_budget.violations
+        )
+        .into());
+    }
+
+    let record = semantic
+        .block_benchmarks()
+        .iter()
+        .find(|record| record.id == 20_132 && record.generation == 1)
+        .ok_or("block runtime b22 benchmark evidence is missing")?;
+    if record.iops != 50_000 || record.throughput_bytes_per_sec != 204_800_000 {
+        return Err(format!(
+            "block runtime b22 benchmark metrics drifted: iops={} throughput={}",
+            record.iops, record.throughput_bytes_per_sec
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -8781,6 +8937,7 @@ fn demo_migration_package(
             block_driver_cleanup_count: semantic.block_driver_cleanup_count(),
             block_pending_io_policy_count: semantic.block_pending_io_policy_count(),
             block_request_generation_audit_count: semantic.block_request_generation_audit_count(),
+            block_benchmark_count: semantic.block_benchmark_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -9188,6 +9345,11 @@ fn demo_migration_package(
                 .block_request_generation_audits()
                 .iter()
                 .map(block_request_generation_audit_manifest)
+                .collect(),
+            block_benchmarks: semantic
+                .block_benchmarks()
+                .iter()
+                .map(block_benchmark_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -11067,6 +11229,40 @@ fn semantic_roots(
                     audit.rejected_queue_generation_probes,
                     audit.state.as_str(),
                     audit.generation
+                )
+            })
+            .collect(),
+        block_benchmark_roots: semantic
+            .block_benchmarks()
+            .iter()
+            .map(|benchmark| {
+                format!(
+                    "block-benchmark id={} scenario={} backend={}:{}@{} block_device={}@{} block_range={}@{} read_path={}@{} write_path={}@{} request_queue={}@{} block_dma_buffer={}@{} sample_requests={} sample_bytes={} iops={} throughput_bytes_per_sec={} p50_latency_nanos={} p99_latency_nanos={} state={} generation={}",
+                    benchmark.id,
+                    benchmark.scenario,
+                    benchmark.backend.kind.as_str(),
+                    benchmark.backend.id,
+                    benchmark.backend.generation,
+                    benchmark.block_device,
+                    benchmark.block_device_generation,
+                    benchmark.block_range,
+                    benchmark.block_range_generation,
+                    benchmark.read_path,
+                    benchmark.read_path_generation,
+                    benchmark.write_path,
+                    benchmark.write_path_generation,
+                    benchmark.request_queue,
+                    benchmark.request_queue_generation,
+                    benchmark.block_dma_buffer,
+                    benchmark.block_dma_buffer_generation,
+                    benchmark.sample_requests,
+                    benchmark.sample_bytes,
+                    benchmark.iops,
+                    benchmark.throughput_bytes_per_sec,
+                    benchmark.p50_latency_nanos,
+                    benchmark.p99_latency_nanos,
+                    benchmark.state.as_str(),
+                    benchmark.generation
                 )
             })
             .collect(),
@@ -13694,6 +13890,43 @@ fn block_request_generation_audit_manifest(
         state: audit.state.as_str().to_owned(),
         recorded_at_event: audit.recorded_at_event,
         note: audit.note.clone(),
+    }
+}
+
+fn block_benchmark_manifest(
+    benchmark: &semantic_core::BlockBenchmarkRecord,
+) -> BlockBenchmarkManifest {
+    BlockBenchmarkManifest {
+        id: benchmark.id,
+        scenario: benchmark.scenario.clone(),
+        backend: contract_object_ref_manifest(benchmark.backend),
+        block_device: benchmark.block_device,
+        block_device_generation: benchmark.block_device_generation,
+        block_range: benchmark.block_range,
+        block_range_generation: benchmark.block_range_generation,
+        read_path: benchmark.read_path,
+        read_path_generation: benchmark.read_path_generation,
+        write_path: benchmark.write_path,
+        write_path_generation: benchmark.write_path_generation,
+        request_queue: benchmark.request_queue,
+        request_queue_generation: benchmark.request_queue_generation,
+        block_dma_buffer: benchmark.block_dma_buffer,
+        block_dma_buffer_generation: benchmark.block_dma_buffer_generation,
+        sample_requests: benchmark.sample_requests,
+        sample_bytes: benchmark.sample_bytes,
+        read_completed_requests: benchmark.read_completed_requests,
+        write_completed_requests: benchmark.write_completed_requests,
+        queue_completed_requests: benchmark.queue_completed_requests,
+        measured_nanos: benchmark.measured_nanos,
+        budget_nanos: benchmark.budget_nanos,
+        iops: benchmark.iops,
+        throughput_bytes_per_sec: benchmark.throughput_bytes_per_sec,
+        p50_latency_nanos: benchmark.p50_latency_nanos,
+        p99_latency_nanos: benchmark.p99_latency_nanos,
+        generation: benchmark.generation,
+        state: benchmark.state.as_str().to_owned(),
+        recorded_at_event: benchmark.recorded_at_event,
+        note: benchmark.note.clone(),
     }
 }
 

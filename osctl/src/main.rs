@@ -8,21 +8,22 @@ use std::path::Path;
 use artifact_manifest::{
     ActivationCleanupManifest, ActivationContextManifest, ActivationMigrationManifest,
     ActivationRecordManifest, ActivationResumeManifest, ActivationWaitManifest,
-    ArtifactBundleManifest, BlockCompletionObjectManifest, BlockDeviceObjectManifest,
-    BlockDmaBufferManifest, BlockDriverCleanupManifest, BlockPageObjectManifest,
-    BlockPendingIoPolicyManifest, BlockRangeObjectManifest, BlockReadPathManifest,
-    BlockRequestGenerationAuditManifest, BlockRequestObjectManifest, BlockRequestQueueManifest,
-    BlockWaitManifest, BlockWritePathManifest, BoundaryValidationReportManifest,
-    BufferCacheObjectManifest, CapabilityRecordManifest, CleanupTransactionManifest,
-    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest,
-    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
-    DeviceObjectManifest, DirectoryObjectManifest, DmaBufferObjectManifest,
-    DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
-    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
-    FileHandleCapabilityManifest, FileObjectManifest, FsWaitManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    ArtifactBundleManifest, BlockBenchmarkManifest, BlockCompletionObjectManifest,
+    BlockDeviceObjectManifest, BlockDmaBufferManifest, BlockDriverCleanupManifest,
+    BlockPageObjectManifest, BlockPendingIoPolicyManifest, BlockRangeObjectManifest,
+    BlockReadPathManifest, BlockRequestGenerationAuditManifest, BlockRequestObjectManifest,
+    BlockRequestQueueManifest, BlockWaitManifest, BlockWritePathManifest,
+    BoundaryValidationReportManifest, BufferCacheObjectManifest, CapabilityRecordManifest,
+    CleanupTransactionManifest, CodeObjectManifest, CommandResultManifest,
+    ContractObjectRefManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
+    DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
+    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
+    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest, FsWaitManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -393,6 +394,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-request-generation-audit"
         | "stale-block-request-generation"
         | "block-generation-audit"
+        | "block-benchmark"
+        | "disk-benchmark"
+        | "block-iops"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -564,7 +568,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -572,7 +576,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -841,6 +845,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "block-request-generation-audit"
         | "stale-block-request-generation"
         | "block-generation-audit" => "block-request-generation-audit",
+        "block-benchmark" | "disk-benchmark" | "block-iops" => "block-benchmark",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3798,6 +3803,86 @@ fn block_request_generation_audit_view_v1(
     })
 }
 
+fn block_benchmark_view_v1(benchmark: &BlockBenchmarkManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "block-benchmark",
+        "id": benchmark.id,
+        "generation": benchmark.generation,
+        "state": benchmark.state,
+        "owner": {
+            "backend": object_ref_manifest_json(&benchmark.backend),
+            "block_device": object_ref_json(
+                "block-device",
+                benchmark.block_device,
+                benchmark.block_device_generation,
+            ),
+        },
+        "references": {
+            "backend": object_ref_manifest_json(&benchmark.backend),
+            "block_device": object_ref_json(
+                "block-device",
+                benchmark.block_device,
+                benchmark.block_device_generation,
+            ),
+            "block_range": object_ref_json(
+                "block-range",
+                benchmark.block_range,
+                benchmark.block_range_generation,
+            ),
+            "read_path": object_ref_json(
+                "block-read-path",
+                benchmark.read_path,
+                benchmark.read_path_generation,
+            ),
+            "write_path": object_ref_json(
+                "block-write-path",
+                benchmark.write_path,
+                benchmark.write_path_generation,
+            ),
+            "request_queue": object_ref_json(
+                "block-request-queue",
+                benchmark.request_queue,
+                benchmark.request_queue_generation,
+            ),
+            "block_dma_buffer": object_ref_json(
+                "block-dma-buffer",
+                benchmark.block_dma_buffer,
+                benchmark.block_dma_buffer_generation,
+            ),
+            "event": {
+                "id": benchmark.recorded_at_event,
+            },
+        },
+        "benchmark": {
+            "scenario": benchmark.scenario,
+            "sample_requests": benchmark.sample_requests,
+            "sample_bytes": benchmark.sample_bytes,
+            "read_completed_requests": benchmark.read_completed_requests,
+            "write_completed_requests": benchmark.write_completed_requests,
+            "queue_completed_requests": benchmark.queue_completed_requests,
+            "measured_nanos": benchmark.measured_nanos,
+            "budget_nanos": benchmark.budget_nanos,
+            "iops": benchmark.iops,
+            "throughput_bytes_per_sec": benchmark.throughput_bytes_per_sec,
+            "p50_latency_nanos": benchmark.p50_latency_nanos,
+            "p99_latency_nanos": benchmark.p99_latency_nanos,
+        },
+        "note": benchmark.note,
+        "last_transition": {
+            "recorded_at_event": benchmark.recorded_at_event,
+            "backend_generation": benchmark.backend.generation,
+            "block_device_generation": benchmark.block_device_generation,
+            "block_range_generation": benchmark.block_range_generation,
+            "read_path_generation": benchmark.read_path_generation,
+            "write_path_generation": benchmark.write_path_generation,
+            "request_queue_generation": benchmark.request_queue_generation,
+            "block_dma_buffer_generation": benchmark.block_dma_buffer_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn packet_buffer_object_view_v1(packet_buffer: &PacketBufferObjectManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -6515,6 +6600,12 @@ fn stable_views_for_kind(
             .block_request_generation_audits
             .iter()
             .map(block_request_generation_audit_view_v1)
+            .collect()),
+        "block-benchmark" | "disk-benchmark" | "block-iops" => Ok(package
+            .semantic
+            .block_benchmarks
+            .iter()
+            .map(block_benchmark_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -9590,6 +9681,83 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             event,
         ));
     }
+    for benchmark in &package.semantic.block_benchmarks {
+        let event = Some(benchmark.recorded_at_event);
+        let from = object_ref_json("block-benchmark", benchmark.id, benchmark.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_manifest_json(&benchmark.backend),
+            "block-benchmark->backend",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-device",
+                benchmark.block_device,
+                benchmark.block_device_generation,
+            ),
+            "block-benchmark->block-device",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-range",
+                benchmark.block_range,
+                benchmark.block_range_generation,
+            ),
+            "block-benchmark->block-range",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-read-path",
+                benchmark.read_path,
+                benchmark.read_path_generation,
+            ),
+            "block-benchmark->read-path",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-write-path",
+                benchmark.write_path,
+                benchmark.write_path_generation,
+            ),
+            "block-benchmark->write-path",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-request-queue",
+                benchmark.request_queue,
+                benchmark.request_queue_generation,
+            ),
+            "block-benchmark->request-queue",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "block-dma-buffer",
+                benchmark.block_dma_buffer,
+                benchmark.block_dma_buffer_generation,
+            ),
+            "block-benchmark->block-dma-buffer",
+            "historical",
+            event,
+        ));
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -12403,6 +12571,50 @@ fn inspect_package_object(
                 );
             }
         }
+        "block-benchmark" | "disk-benchmark" | "block-iops" => {
+            println!(
+                "inspect block-benchmark package={} count={}",
+                package.package_id, package.semantic.block_benchmark_count
+            );
+            for benchmark in &package.semantic.block_benchmarks {
+                let line = format!(
+                    "block-benchmark id={} scenario={} backend={}:{}@{} block_device={}@{} block_range={}@{} read_path={}@{} write_path={}@{} request_queue={}@{} block_dma_buffer={}@{} sample_requests={} sample_bytes={} iops={} throughput_bytes_per_sec={} p50_latency_nanos={} p99_latency_nanos={} state={} generation={}",
+                    benchmark.id,
+                    benchmark.scenario,
+                    benchmark.backend.kind,
+                    benchmark.backend.id,
+                    benchmark.backend.generation,
+                    benchmark.block_device,
+                    benchmark.block_device_generation,
+                    benchmark.block_range,
+                    benchmark.block_range_generation,
+                    benchmark.read_path,
+                    benchmark.read_path_generation,
+                    benchmark.write_path,
+                    benchmark.write_path_generation,
+                    benchmark.request_queue,
+                    benchmark.request_queue_generation,
+                    benchmark.block_dma_buffer,
+                    benchmark.block_dma_buffer_generation,
+                    benchmark.sample_requests,
+                    benchmark.sample_bytes,
+                    benchmark.iops,
+                    benchmark.throughput_bytes_per_sec,
+                    benchmark.p50_latency_nanos,
+                    benchmark.p99_latency_nanos,
+                    benchmark.state,
+                    benchmark.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.block_benchmarks.is_empty() {
+                print_roots_filtered(
+                    "block-benchmark",
+                    &package.semantic.roots.block_benchmark_roots,
+                    filter,
+                );
+            }
+        }
         "command" => {
             println!(
                 "inspect command package={} count={}",
@@ -12660,6 +12872,17 @@ fn inspect_package_object_json(
                 .map(block_request_generation_audit_view_v1)
                 .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.block_request_generation_audit_roots.len() }),
+        ),
+        "block-benchmark" | "disk-benchmark" | "block-iops" => (
+            "block-benchmark",
+            package.semantic.block_benchmark_count,
+            package
+                .semantic
+                .block_benchmarks
+                .iter()
+                .map(block_benchmark_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "root_count": package.semantic.roots.block_benchmark_roots.len() }),
         ),
         "command" => (
             "command",
@@ -13262,6 +13485,9 @@ fn replay_until(
     for audit in &package.semantic.roots.block_request_generation_audit_roots {
         println!("replay block-request-generation-audit {audit}");
     }
+    for benchmark in &package.semantic.roots.block_benchmark_roots {
+        println!("replay block-benchmark {benchmark}");
+    }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
     }
@@ -13639,6 +13865,10 @@ fn print_replay_json(
                 .block_request_generation_audit_roots
                 .len()
         ),
+    );
+    roots.insert(
+        "block_benchmarks".to_owned(),
+        serde_json::json!(package.semantic.roots.block_benchmark_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -14059,6 +14289,10 @@ fn print_replay_json(
     roots.insert(
         "block_request_generation_audit_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.block_request_generation_audit_roots),
+    );
+    roots.insert(
+        "block_benchmark_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.block_benchmark_roots),
     );
 
     let value = serde_json::json!({
@@ -16435,6 +16669,61 @@ mod tests {
         assert_eq!(view["audit"]["rejected_dma_generation_probes"], 3);
         assert_eq!(view["audit"]["rejected_queue_generation_probes"], 4);
         assert_eq!(view["last_transition"]["recorded_at_event"], 31);
+    }
+
+    #[test]
+    fn block_benchmark_view_v1_exposes_iops_latency_and_exact_refs() {
+        let view = block_benchmark_view_v1(&BlockBenchmarkManifest {
+            id: 132,
+            scenario: "fake-block-read-write-iops-latency-v1".to_owned(),
+            backend: ContractObjectRefManifest {
+                kind: "fake-block-backend-object".to_owned(),
+                id: 26,
+                generation: 1,
+            },
+            block_device: 2,
+            block_device_generation: 1,
+            block_range: 5,
+            block_range_generation: 1,
+            read_path: 39,
+            read_path_generation: 1,
+            write_path: 48,
+            write_path_generation: 1,
+            request_queue: 53,
+            request_queue_generation: 1,
+            block_dma_buffer: 61,
+            block_dma_buffer_generation: 1,
+            sample_requests: 2,
+            sample_bytes: 8192,
+            read_completed_requests: 1,
+            write_completed_requests: 1,
+            queue_completed_requests: 2,
+            measured_nanos: 40_000,
+            budget_nanos: 80_000,
+            iops: 50_000,
+            throughput_bytes_per_sec: 204_800_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 35_000,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 487,
+            note: "disk benchmark".to_owned(),
+        });
+        assert_eq!(view["kind"], "block-benchmark");
+        assert_eq!(
+            view["references"]["backend"]["kind"],
+            "fake-block-backend-object"
+        );
+        assert_eq!(view["references"]["block_device"]["generation"], 1);
+        assert_eq!(view["references"]["read_path"]["id"], 39);
+        assert_eq!(view["references"]["write_path"]["id"], 48);
+        assert_eq!(view["references"]["request_queue"]["id"], 53);
+        assert_eq!(view["references"]["block_dma_buffer"]["id"], 61);
+        assert_eq!(view["benchmark"]["sample_requests"], 2);
+        assert_eq!(view["benchmark"]["iops"], 50_000);
+        assert_eq!(view["benchmark"]["throughput_bytes_per_sec"], 204_800_000);
+        assert_eq!(view["benchmark"]["p99_latency_nanos"], 35_000);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 487);
     }
 
     #[test]

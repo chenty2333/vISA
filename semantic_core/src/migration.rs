@@ -1442,6 +1442,20 @@ pub enum SemanticInvariantError {
         audit: BlockRequestGenerationAuditId,
         event: EventId,
     },
+    BlockBenchmarkInvalid {
+        benchmark: BlockBenchmarkId,
+    },
+    BlockBenchmarkMissingTarget {
+        benchmark: BlockBenchmarkId,
+        target: ContractObjectRef,
+    },
+    BlockBenchmarkMetricMismatch {
+        benchmark: BlockBenchmarkId,
+    },
+    BlockBenchmarkMissingEvent {
+        benchmark: BlockBenchmarkId,
+        event: EventId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

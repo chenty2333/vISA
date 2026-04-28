@@ -377,6 +377,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_request_generation_audit_count: usize,
     #[serde(default)]
+    pub block_benchmark_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -605,6 +607,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_request_generation_audits: Vec<BlockRequestGenerationAuditManifest>,
     #[serde(default)]
+    pub block_benchmarks: Vec<BlockBenchmarkManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -812,6 +816,8 @@ pub struct SemanticRootSetManifest {
     pub block_pending_io_policy_roots: Vec<String>,
     #[serde(default)]
     pub block_request_generation_audit_roots: Vec<String>,
+    #[serde(default)]
+    pub block_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2764,6 +2770,40 @@ pub struct BlockRequestGenerationAuditManifest {
     pub rejected_wait_generation_probes: u32,
     pub rejected_dma_generation_probes: u32,
     pub rejected_queue_generation_probes: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct BlockBenchmarkManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub backend: ContractObjectRefManifest,
+    pub block_device: u64,
+    pub block_device_generation: u64,
+    pub block_range: u64,
+    pub block_range_generation: u64,
+    pub read_path: u64,
+    pub read_path_generation: u64,
+    pub write_path: u64,
+    pub write_path_generation: u64,
+    pub request_queue: u64,
+    pub request_queue_generation: u64,
+    pub block_dma_buffer: u64,
+    pub block_dma_buffer_generation: u64,
+    pub sample_requests: u32,
+    pub sample_bytes: u64,
+    pub read_completed_requests: u32,
+    pub write_completed_requests: u32,
+    pub queue_completed_requests: u32,
+    pub measured_nanos: u64,
+    pub budget_nanos: u64,
+    pub iops: u64,
+    pub throughput_bytes_per_sec: u64,
+    pub p50_latency_nanos: u64,
+    pub p99_latency_nanos: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
