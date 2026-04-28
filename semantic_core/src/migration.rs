@@ -1539,6 +1539,16 @@ pub enum SemanticInvariantError {
     FramebufferObjectMissingEvent {
         framebuffer: FramebufferObjectId,
     },
+    DisplayObjectInvalid {
+        display: DisplayObjectId,
+    },
+    DisplayObjectMissingFramebuffer {
+        display: DisplayObjectId,
+        framebuffer: FramebufferObjectId,
+    },
+    DisplayObjectMissingEvent {
+        display: DisplayObjectId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

@@ -85,6 +85,7 @@ pub struct ContractGraphSnapshot {
     pub simd_benchmarks: Vec<SimdBenchmarkRecord>,
     pub simd_context_switch_benchmarks: Vec<SimdContextSwitchBenchmarkRecord>,
     pub framebuffer_objects: Vec<FramebufferObjectRecord>,
+    pub display_objects: Vec<DisplayObjectRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -189,6 +190,7 @@ impl ContractGraphValidator {
         Self::validate_simd_benchmarks(snapshot, &mut violations);
         Self::validate_simd_context_switch_benchmarks(snapshot, &mut violations);
         Self::validate_framebuffer_objects(snapshot, &mut violations);
+        Self::validate_display_objects(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -877,6 +879,64 @@ impl ContractGraphValidator {
                     None,
                     "framebuffer object stride/byte length do not cover visible geometry",
                 ));
+            }
+        }
+    }
+
+    fn validate_display_objects(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for display in &snapshot.display_objects {
+            let from = display.object_ref();
+            if display.id == 0
+                || display.generation == 0
+                || display.framebuffer == 0
+                || display.framebuffer_generation == 0
+                || display.name.is_empty()
+                || display.mode_name.is_empty()
+                || display.width == 0
+                || display.height == 0
+                || display.refresh_millihz == 0
+                || display.state != DisplayObjectState::Registered
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "display-object->contract",
+                    from,
+                    None,
+                    "display object requires nonzero identity, framebuffer generation, mode, refresh, and registered state",
+                ));
+                continue;
+            }
+
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-object->framebuffer-object",
+                ContractObjectKind::FramebufferObject,
+                display.framebuffer,
+                display.framebuffer_generation,
+                ContractEdgeMode::Live,
+            );
+
+            if let Some(framebuffer) = snapshot.framebuffer_objects.iter().find(|framebuffer| {
+                framebuffer.id == display.framebuffer
+                    && framebuffer.generation == display.framebuffer_generation
+            }) {
+                if framebuffer.state != FramebufferObjectState::Registered
+                    || display.width > framebuffer.width
+                    || display.height > framebuffer.height
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "display-object->framebuffer-geometry",
+                        from,
+                        Some(framebuffer.object_ref()),
+                        "display object mode must fit its registered framebuffer generation",
+                    ));
+                }
             }
         }
     }
@@ -1957,6 +2017,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|framebuffer| framebuffer.id == id)
                 .map(FramebufferObjectRecord::object_ref),
+            ContractObjectKind::DisplayObject => snapshot
+                .display_objects
+                .iter()
+                .find(|display| display.id == id)
+                .map(DisplayObjectRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2160,6 +2225,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|framebuffer| framebuffer.id == id)
                 .map(FramebufferObjectRecord::object_ref),
+            ContractObjectKind::DisplayObject => snapshot
+                .display_objects
+                .iter()
+                .find(|display| display.id == id)
+                .map(DisplayObjectRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2313,6 +2383,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::SimdBenchmark
                 | ContractObjectKind::SimdContextSwitchBenchmark
                 | ContractObjectKind::FramebufferObject
+                | ContractObjectKind::DisplayObject
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -2416,6 +2487,14 @@ impl ContractGraphValidator {
                 .and_then(|framebuffer| {
                     (framebuffer.state != FramebufferObjectState::Registered)
                         .then_some("live edge references inactive framebuffer object")
+                }),
+            ContractObjectKind::DisplayObject => snapshot
+                .display_objects
+                .iter()
+                .find(|display| display.id == object.id && display.generation == object.generation)
+                .and_then(|display| {
+                    (display.state != DisplayObjectState::Registered)
+                        .then_some("live edge references inactive display object")
                 }),
             _ => None,
         }

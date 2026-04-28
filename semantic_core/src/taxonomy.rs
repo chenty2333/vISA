@@ -1825,6 +1825,21 @@ impl FramebufferObjectState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayObjectState {
+    Registered,
+    Retired,
+}
+
+impl DisplayObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Registered => "registered",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockDmaBufferState {
     Bound,
     Released,

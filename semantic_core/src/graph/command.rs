@@ -1077,6 +1077,17 @@ pub enum SemanticCommand {
         byte_len: u64,
         note: String,
     },
+    RecordDisplayObject {
+        display: DisplayObjectId,
+        name: String,
+        framebuffer: FramebufferObjectId,
+        framebuffer_generation: Generation,
+        mode_name: String,
+        width: u32,
+        height: u32,
+        refresh_millihz: u32,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -1511,6 +1522,7 @@ impl SemanticCommand {
             Self::RecordSimdBenchmark { .. } => "record-simd-benchmark",
             Self::RecordSimdContextSwitchBenchmark { .. } => "record-simd-context-switch-benchmark",
             Self::RecordFramebufferObject { .. } => "record-framebuffer-object",
+            Self::RecordDisplayObject { .. } => "record-display-object",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -4451,6 +4463,28 @@ impl SemanticGraph {
                     *byte_len,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordDisplayObject {
+                display,
+                name,
+                framebuffer,
+                framebuffer_generation,
+                mode_name,
+                width,
+                height,
+                refresh_millihz,
+                ..
+            } => self
+                .validate_display_object(
+                    *display,
+                    name,
+                    *framebuffer,
+                    *framebuffer_generation,
+                    mode_name,
+                    *width,
+                    *height,
+                    *refresh_millihz,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
                 queue,
                 name,
@@ -7284,6 +7318,27 @@ impl SemanticGraph {
                 stride_bytes,
                 &pixel_format,
                 byte_len,
+                &note,
+            ),
+            SemanticCommand::RecordDisplayObject {
+                display,
+                name,
+                framebuffer,
+                framebuffer_generation,
+                mode_name,
+                width,
+                height,
+                refresh_millihz,
+                note,
+            } => self.record_display_object_with_id(
+                display,
+                &name,
+                framebuffer,
+                framebuffer_generation,
+                &mode_name,
+                width,
+                height,
+                refresh_millihz,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

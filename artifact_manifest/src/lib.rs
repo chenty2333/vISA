@@ -393,6 +393,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub framebuffer_object_count: usize,
     #[serde(default)]
+    pub display_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -637,6 +639,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub framebuffer_objects: Vec<FramebufferObjectManifest>,
     #[serde(default)]
+    pub display_objects: Vec<DisplayObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -860,6 +864,8 @@ pub struct SemanticRootSetManifest {
     pub simd_context_switch_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub framebuffer_object_roots: Vec<String>,
+    #[serde(default)]
+    pub display_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -3019,6 +3025,22 @@ pub struct FramebufferObjectManifest {
     pub stride_bytes: u32,
     pub pixel_format: String,
     pub byte_len: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct DisplayObjectManifest {
+    pub id: u64,
+    pub name: String,
+    pub framebuffer: u64,
+    pub framebuffer_generation: u64,
+    pub mode_name: String,
+    pub width: u32,
+    pub height: u32,
+    pub refresh_millihz: u32,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

@@ -20652,6 +20652,155 @@ fn display_runtime_g0_contract_graph_rejects_bad_framebuffer_geometry() {
     }));
 }
 
+fn g1_framebuffer_graph() -> SemanticGraph {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::Framebuffer, None, "framebuffer:fb0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_framebuffer_object_with_id(
+        23_001,
+        "fb0",
+        resource,
+        resource_generation,
+        800,
+        600,
+        3200,
+        "xrgb8888",
+        1_920_000,
+        "g0 framebuffer object",
+    ));
+    graph
+}
+
+#[test]
+fn display_runtime_g1_display_object_records_framebuffer_mode() {
+    let mut graph = g1_framebuffer_graph();
+    let framebuffer = graph.framebuffer_objects()[0].object_ref();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "display-runtime-g1",
+        SemanticCommand::RecordDisplayObject {
+            display: 23_101,
+            name: "display0".to_string(),
+            framebuffer: framebuffer.id,
+            framebuffer_generation: framebuffer.generation,
+            mode_name: "800x600@60".to_string(),
+            width: 800,
+            height: 600,
+            refresh_millihz: 60_000,
+            note: "g1 display object".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.display_object_count(), 1);
+    let display = &graph.display_objects()[0];
+    assert_eq!(
+        display.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::DisplayObject, 23_101, 1)
+    );
+    assert_eq!(display.framebuffer, 23_001);
+    assert_eq!(display.framebuffer_generation, 1);
+    assert_eq!(display.mode_name, "800x600@60");
+    assert_eq!(display.refresh_millihz, 60_000);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "DisplayObjectRecorded display=23101 framebuffer=23001@1 mode_name=800x600@60 width=800 height=600 refresh_millihz=60000 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g1_rejects_stale_or_oversized_framebuffer_mode() {
+    let mut graph = g1_framebuffer_graph();
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "display-runtime-g1",
+        SemanticCommand::RecordDisplayObject {
+            display: 23_102,
+            name: "display0".to_string(),
+            framebuffer: 23_001,
+            framebuffer_generation: 2,
+            mode_name: "800x600@60".to_string(),
+            width: 800,
+            height: 600,
+            refresh_millihz: 60_000,
+            note: "g1 stale framebuffer generation".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+
+    let oversized = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "display-runtime-g1",
+        SemanticCommand::RecordDisplayObject {
+            display: 23_103,
+            name: "display0".to_string(),
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            mode_name: "1024x768@60".to_string(),
+            width: 1024,
+            height: 768,
+            refresh_millihz: 60_000,
+            note: "g1 oversized mode".to_string(),
+        },
+    ));
+    assert_eq!(oversized.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn display_runtime_g1_invariants_reject_framebuffer_generation_leak() {
+    let mut graph = g1_framebuffer_graph();
+    assert!(graph.record_display_object_with_id(
+        23_104,
+        "display0",
+        23_001,
+        1,
+        "800x600@60",
+        800,
+        600,
+        60_000,
+        "g1 invariant display",
+    ));
+    graph.corrupt_display_object_framebuffer_generation_for_test(23_104, 2);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::DisplayObjectMissingFramebuffer {
+            display: 23_104,
+            framebuffer: 23_001,
+        })
+    );
+}
+
+#[test]
+fn display_runtime_g1_contract_graph_rejects_missing_framebuffer_edge() {
+    let display = DisplayObjectRecord {
+        id: 23_105,
+        name: "display0".to_string(),
+        framebuffer: 23_001,
+        framebuffer_generation: 9,
+        mode_name: "800x600@60".to_string(),
+        width: 800,
+        height: 600,
+        refresh_millihz: 60_000,
+        generation: 1,
+        state: DisplayObjectState::Registered,
+        recorded_at_event: 1,
+        note: "g1 bad framebuffer edge".to_string(),
+    };
+    let snapshot = ContractGraphSnapshot {
+        display_objects: Vec::from([display]),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "display-object->framebuffer-object"
+            && violation.kind == ContractViolationKind::DanglingEdge
+    }));
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();

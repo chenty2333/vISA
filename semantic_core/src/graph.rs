@@ -91,6 +91,7 @@ pub struct SemanticGraph {
     simd_benchmarks: Vec<SimdBenchmarkRecord>,
     simd_context_switch_benchmarks: Vec<SimdContextSwitchBenchmarkRecord>,
     framebuffer_objects: Vec<FramebufferObjectRecord>,
+    display_objects: Vec<DisplayObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -193,6 +194,7 @@ pub struct SemanticGraph {
     next_simd_benchmark_id: SimdBenchmarkId,
     next_simd_context_switch_benchmark_id: SimdContextSwitchBenchmarkId,
     next_framebuffer_object_id: FramebufferObjectId,
+    next_display_object_id: DisplayObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -236,6 +238,7 @@ mod descriptor_object;
 mod device_capability;
 mod device_object;
 mod directory_object;
+mod display_object;
 mod dma_buffer_object;
 mod driver_store_binding;
 mod endpoint_object;
@@ -399,6 +402,7 @@ impl SemanticGraph {
             simd_benchmarks: Vec::new(),
             simd_context_switch_benchmarks: Vec::new(),
             framebuffer_objects: Vec::new(),
+            display_objects: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -501,6 +505,7 @@ impl SemanticGraph {
             next_simd_benchmark_id: 1,
             next_simd_context_switch_benchmark_id: 1,
             next_framebuffer_object_id: 1,
+            next_display_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

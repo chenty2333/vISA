@@ -20,7 +20,7 @@ use artifact_manifest::{
     CleanupTransactionManifest, CodeObjectManifest, CodeObjectSimdRequirementManifest,
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
     ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
+    DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest, DisplayObjectManifest,
     DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
     Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
     FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest,
@@ -8374,6 +8374,7 @@ fn build_target_executor_v1(
     )?;
     run_simd_context_switch_benchmark_harness(semantic)?;
     run_framebuffer_object_harness(semantic)?;
+    run_display_object_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8444,6 +8445,7 @@ fn build_target_executor_v1(
         simd_benchmarks: semantic.simd_benchmarks().to_vec(),
         simd_context_switch_benchmarks: semantic.simd_context_switch_benchmarks().to_vec(),
         framebuffer_objects: semantic.framebuffer_objects().to_vec(),
+        display_objects: semantic.display_objects().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: store_manager
@@ -10006,6 +10008,42 @@ fn run_framebuffer_object_harness(semantic: &mut SemanticGraph) -> Result<(), Bo
     Ok(())
 }
 
+fn run_display_object_harness(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let framebuffer = semantic
+        .framebuffer_objects()
+        .iter()
+        .find(|record| record.id == 23_001)
+        .map(|record| record.object_ref())
+        .ok_or("display runtime g1 requires g0 framebuffer evidence")?;
+
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_021,
+        "display-runtime-g1",
+        SemanticCommand::RecordDisplayObject {
+            display: 23_101,
+            name: "display0".to_owned(),
+            framebuffer: framebuffer.id,
+            framebuffer_generation: framebuffer.generation,
+            mode_name: "800x600@60".to_owned(),
+            width: 800,
+            height: 600,
+            refresh_millihz: 60_000,
+            note: "g1 records semantic display object bound to framebuffer generation".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g1 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn declared_authority_objects(capabilities: &[CapabilityRecord]) -> Vec<ExternalObjectDeclaration> {
     let mut declarations = Vec::new();
     for capability in capabilities {
@@ -10766,6 +10804,7 @@ fn demo_migration_package(
             simd_benchmark_count: semantic.simd_benchmark_count(),
             simd_context_switch_benchmark_count: semantic.simd_context_switch_benchmark_count(),
             framebuffer_object_count: semantic.framebuffer_object_count(),
+            display_object_count: semantic.display_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11213,6 +11252,11 @@ fn demo_migration_package(
                 .framebuffer_objects()
                 .iter()
                 .map(framebuffer_object_manifest)
+                .collect(),
+            display_objects: semantic
+                .display_objects()
+                .iter()
+                .map(display_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -13321,6 +13365,25 @@ fn semantic_roots(
                     framebuffer.byte_len,
                     framebuffer.state.as_str(),
                     framebuffer.generation
+                )
+            })
+            .collect(),
+        display_object_roots: semantic
+            .display_objects()
+            .iter()
+            .map(|display| {
+                format!(
+                    "display-object id={} name={} framebuffer={}@{} mode_name={} width={} height={} refresh_millihz={} state={} generation={}",
+                    display.id,
+                    display.name,
+                    display.framebuffer,
+                    display.framebuffer_generation,
+                    display.mode_name,
+                    display.width,
+                    display.height,
+                    display.refresh_millihz,
+                    display.state.as_str(),
+                    display.generation
                 )
             })
             .collect(),
@@ -16196,6 +16259,23 @@ fn framebuffer_object_manifest(
         state: framebuffer.state.as_str().to_owned(),
         recorded_at_event: framebuffer.recorded_at_event,
         note: framebuffer.note.clone(),
+    }
+}
+
+fn display_object_manifest(display: &semantic_core::DisplayObjectRecord) -> DisplayObjectManifest {
+    DisplayObjectManifest {
+        id: display.id,
+        name: display.name.clone(),
+        framebuffer: display.framebuffer,
+        framebuffer_generation: display.framebuffer_generation,
+        mode_name: display.mode_name.clone(),
+        width: display.width,
+        height: display.height,
+        refresh_millihz: display.refresh_millihz,
+        generation: display.generation,
+        state: display.state.as_str().to_owned(),
+        recorded_at_event: display.recorded_at_event,
+        note: display.note.clone(),
     }
 }
 

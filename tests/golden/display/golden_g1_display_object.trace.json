@@ -1,0 +1,119 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "G1-display-object",
+  "name": "golden_g1_display_object",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/10-command-transaction-surface.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "DisplayCapability grant or enforcement",
+    "FramebufferWindowLease mapping",
+    "pixel writes or flush command execution",
+    "real framebuffer MMIO mapping",
+    "GPU or desktop graphics stack"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "G0 has recorded framebuffer-object:23001@1 backed by resource:27@1",
+      "No DisplayCapability or FramebufferWindowLease has been granted in G1"
+    ],
+    "command": {
+      "name": "record-display-object",
+      "display": "display-object:23101@1",
+      "framebuffer": "framebuffer-object:23001@1",
+      "mode": {
+        "name": "800x600@60",
+        "width": 800,
+        "height": 600,
+        "refresh_millihz": 60000
+      },
+      "result": "registered semantic display object bound to framebuffer generation"
+    }
+  },
+  "events": [
+    {
+      "kind": "DisplayObjectRecorded",
+      "source": "SemanticGraph::record_display_object_with_id",
+      "visible_as": "osctl display-object list --json",
+      "reason": "Display mode identity is semantic evidence and references the exact framebuffer generation"
+    }
+  ],
+  "expected": {
+    "views": {
+      "display-object": {
+        "id": 23101,
+        "generation": 1,
+        "state": "registered",
+        "identity": {
+          "name": "display0"
+        },
+        "mode": {
+          "name": "800x600@60",
+          "width": 800,
+          "height": 600,
+          "refresh_millihz": 60000
+        },
+        "authority": {
+          "write_requires": "display-capability-and-framebuffer-window-lease",
+          "flush_requires": "display-capability",
+          "raw_mapping_is_semantic_truth": false
+        },
+        "references": {
+          "framebuffer": {
+            "kind": "framebuffer-object",
+            "id": 23001,
+            "generation": 1
+          },
+          "event": {
+            "id": 555
+          }
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "display-object:23101@1",
+          "relation": "display-object->framebuffer-object",
+          "to": "framebuffer-object:23001@1",
+          "mode": "live"
+        },
+        {
+          "from": "display-object:23101@1",
+          "relation": "display-object->event",
+          "to": "event:555@1",
+          "mode": "historical"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "DisplayObject id/generation is a first-class ObjectRef",
+      "DisplayObject must reference a registered FramebufferObject generation",
+      "DisplayObject mode dimensions must fit the referenced framebuffer geometry",
+      "DisplayObject cannot authorize writes or flush without later capability checkpoints",
+      "raw substrate mapping is not semantic truth"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "display_runtime_g1_display_object_records_framebuffer_mode",
+      "display_runtime_g1_rejects_stale_or_oversized_framebuffer_mode",
+      "display_runtime_g1_invariants_reject_framebuffer_generation_leak",
+      "display_runtime_g1_contract_graph_rejects_missing_framebuffer_edge",
+      "semantic_roots_reject_display_object_root_mismatch",
+      "display_object_view_v1_exposes_mode_and_framebuffer_ref"
+    ],
+    "osctl_json_view": "display-object list --json",
+    "display_object": "display-object:23101@1",
+    "framebuffer_object": "framebuffer-object:23001@1",
+    "recorded_at_event": 555
+  }
+}

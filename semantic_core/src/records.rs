@@ -2626,6 +2626,28 @@ impl FramebufferObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisplayObjectRecord {
+    pub id: DisplayObjectId,
+    pub name: String,
+    pub framebuffer: FramebufferObjectId,
+    pub framebuffer_generation: Generation,
+    pub mode_name: String,
+    pub width: u32,
+    pub height: u32,
+    pub refresh_millihz: u32,
+    pub generation: Generation,
+    pub state: DisplayObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl DisplayObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::DisplayObject, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

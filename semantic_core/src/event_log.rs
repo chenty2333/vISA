@@ -734,6 +734,16 @@ pub enum EventKind {
         byte_len: u64,
         generation: Generation,
     },
+    DisplayObjectRecorded {
+        display: DisplayObjectId,
+        framebuffer: FramebufferObjectId,
+        framebuffer_generation: Generation,
+        mode_name: String,
+        width: u32,
+        height: u32,
+        refresh_millihz: u32,
+        generation: Generation,
+    },
     FakeBlockBackendObjectBound {
         fake_block_backend: FakeBlockBackendObjectId,
         block_device: BlockDeviceObjectId,
@@ -2737,6 +2747,18 @@ impl EventKind {
                 generation,
             } => format!(
                 "FramebufferObjectRecorded framebuffer={framebuffer} resource={resource}@{resource_generation} width={width} height={height} stride_bytes={stride_bytes} pixel_format={pixel_format} byte_len={byte_len} generation={generation}"
+            ),
+            Self::DisplayObjectRecorded {
+                display,
+                framebuffer,
+                framebuffer_generation,
+                mode_name,
+                width,
+                height,
+                refresh_millihz,
+                generation,
+            } => format!(
+                "DisplayObjectRecorded display={display} framebuffer={framebuffer}@{framebuffer_generation} mode_name={mode_name} width={width} height={height} refresh_millihz={refresh_millihz} generation={generation}"
             ),
             Self::FakeBlockBackendObjectBound {
                 fake_block_backend,
