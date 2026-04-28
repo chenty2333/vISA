@@ -81,6 +81,7 @@ pub struct ContractGraphSnapshot {
     pub code_objects: Vec<CodeObject>,
     pub target_feature_sets: Vec<TargetFeatureSetRecord>,
     pub vector_states: Vec<VectorStateRecord>,
+    pub simd_fault_injections: Vec<SimdFaultInjectionRecord>,
     pub stores: Vec<StoreRecord>,
     pub activations: Vec<ActivationRecord>,
     pub traps: Vec<TargetTrapRecord>,
@@ -179,6 +180,7 @@ impl ContractGraphValidator {
         let mut violations = Vec::new();
         Self::validate_code_objects(snapshot, &mut violations);
         Self::validate_vector_states(snapshot, &mut violations);
+        Self::validate_simd_fault_injections(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -332,6 +334,155 @@ impl ContractGraphValidator {
                         "unavailable vector state cannot point at a supported SIMD feature set",
                     ));
                 }
+            }
+        }
+    }
+
+    fn validate_simd_fault_injections(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for injection in &snapshot.simd_fault_injections {
+            let from = injection.object_ref();
+            for (label, target, expected_kind) in [
+                (
+                    "simd-fault-injection->activation",
+                    injection.activation,
+                    ContractObjectKind::Activation,
+                ),
+                (
+                    "simd-fault-injection->code",
+                    injection.code_object,
+                    ContractObjectKind::CodeObject,
+                ),
+                (
+                    "simd-fault-injection->trap",
+                    injection.trap,
+                    ContractObjectKind::Trap,
+                ),
+                (
+                    "simd-fault-injection->target-feature-set",
+                    injection.target_feature_set,
+                    ContractObjectKind::TargetFeatureSet,
+                ),
+            ] {
+                if target.kind != expected_kind {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        label,
+                        from,
+                        Some(target),
+                        "SIMD fault injection edge uses the wrong object kind",
+                    ));
+                    continue;
+                }
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    expected_kind,
+                    target.id,
+                    target.generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            if let Some(vector_state) = injection.vector_state {
+                if vector_state.kind != ContractObjectKind::VectorState {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "simd-fault-injection->vector-state",
+                        from,
+                        Some(vector_state),
+                        "SIMD fault injection vector state edge uses the wrong object kind",
+                    ));
+                    continue;
+                }
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "simd-fault-injection->vector-state",
+                    ContractObjectKind::VectorState,
+                    vector_state.id,
+                    vector_state.generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            let Some(trap) = snapshot
+                .traps
+                .iter()
+                .find(|trap| trap.id == injection.trap.id)
+            else {
+                continue;
+            };
+            if trap.generation != injection.trap.generation {
+                continue;
+            }
+            if trap.trap_kind.as_deref() != Some(injection.kind.trap_kind()) {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "simd-fault-injection->trap",
+                    from,
+                    Some(trap.object_ref()),
+                    "SIMD fault injection kind does not match the classified trap kind",
+                ));
+            }
+            let Some(simd) = &trap.simd_attribution else {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "simd-fault-injection->trap",
+                    from,
+                    Some(trap.object_ref()),
+                    "SIMD fault injection trap is missing SIMD attribution",
+                ));
+                continue;
+            };
+            if simd.required_abi != injection.required_abi
+                || simd.min_vector_register_count != injection.vector_register_count
+                || simd.min_vector_register_bits != injection.vector_register_bits
+                || simd.target_feature_set != Some(injection.target_feature_set)
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "simd-fault-injection->trap",
+                    from,
+                    Some(trap.object_ref()),
+                    "SIMD fault injection metadata does not match trap SIMD attribution",
+                ));
+            }
+            if let Some(feature_set) = snapshot
+                .target_feature_sets
+                .iter()
+                .find(|feature_set| feature_set.object_ref() == injection.target_feature_set)
+            {
+                if feature_set.simd_abi != injection.required_abi
+                    || (injection.kind == SimdFaultInjectionKind::UnsupportedFeature
+                        && feature_set.simd_supported)
+                    || (injection.kind == SimdFaultInjectionKind::IllegalInstruction
+                        && !feature_set.simd_supported)
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "simd-fault-injection->target-feature-set",
+                        from,
+                        Some(feature_set.object_ref()),
+                        "SIMD fault injection target feature set does not match injected fault class",
+                    ));
+                }
+            }
+            if trap.code_object != Some(injection.code_object.id)
+                || trap.code_generation != Some(injection.code_object.generation)
+                || trap.activation != Some(injection.activation.id)
+                || trap.activation_generation != Some(injection.activation.generation)
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::GenerationMismatch,
+                    "simd-fault-injection->trap",
+                    from,
+                    Some(trap.object_ref()),
+                    "SIMD fault injection trap attribution does not match exact activation/code refs",
+                ));
             }
         }
     }
@@ -1392,6 +1543,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|vector_state| vector_state.id == id)
                 .map(VectorStateRecord::object_ref),
+            ContractObjectKind::SimdFaultInjection => snapshot
+                .simd_fault_injections
+                .iter()
+                .find(|injection| injection.id == id)
+                .map(SimdFaultInjectionRecord::object_ref),
             ContractObjectKind::Artifact => snapshot
                 .artifacts
                 .iter()
@@ -1565,6 +1721,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|vector_state| vector_state.id == id)
                 .map(VectorStateRecord::object_ref),
+            ContractObjectKind::SimdFaultInjection => snapshot
+                .simd_fault_injections
+                .iter()
+                .find(|injection| injection.id == id)
+                .map(SimdFaultInjectionRecord::object_ref),
             ContractObjectKind::Store => snapshot
                 .stores
                 .iter()
@@ -1706,6 +1867,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::CodeObject
                 | ContractObjectKind::TargetFeatureSet
                 | ContractObjectKind::VectorState
+                | ContractObjectKind::SimdFaultInjection
                 | ContractObjectKind::Store
                 | ContractObjectKind::Activation
                 | ContractObjectKind::Trap

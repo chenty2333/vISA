@@ -32,9 +32,9 @@ use artifact_manifest::{
     PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
     QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
-    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
-    SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
+    SimdFaultInjectionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
+    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
+    SmpStressRunManifest, SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
     StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
     TargetArtifactImageManifest, TargetFeatureSetManifest, TaskRecordManifest,
     TimerInterruptManifest, TrapRecordManifest, VectorStateManifest,
@@ -407,6 +407,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "vector-state"
         | "vector"
         | "simd-vector-state"
+        | "simd-fault-injection"
+        | "simd-fault"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -578,7 +580,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -586,7 +588,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -863,6 +865,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
             "target-feature-set"
         }
         "vector-state" | "vector" | "simd-vector-state" => "vector-state",
+        "simd-fault-injection" | "simd-fault" => "simd-fault-injection",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -4097,6 +4100,43 @@ fn vector_state_view_v1(vector_state: &VectorStateManifest) -> serde_json::Value
     })
 }
 
+fn simd_fault_injection_view_v1(injection: &SimdFaultInjectionManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "simd-fault-injection",
+        "id": injection.id,
+        "generation": injection.generation,
+        "state": injection.state,
+        "owner": {
+            "activation": object_ref_manifest_json(&injection.activation),
+        },
+        "references": {
+            "activation": object_ref_manifest_json(&injection.activation),
+            "code_object": object_ref_manifest_json(&injection.code_object),
+            "trap": object_ref_manifest_json(&injection.trap),
+            "target_feature_set": object_ref_manifest_json(&injection.target_feature_set),
+            "vector_state": injection.vector_state.as_ref().map(object_ref_manifest_json),
+            "event": {
+                "id": injection.recorded_at_event,
+            },
+        },
+        "fault": {
+            "kind": injection.kind,
+            "effect": injection.effect,
+            "required_abi": injection.required_abi,
+            "vector_register_count": injection.vector_register_count,
+            "vector_register_bits": injection.vector_register_bits,
+            "injected_faults": injection.injected_faults,
+        },
+        "note": injection.note,
+        "last_transition": {
+            "recorded_at_event": injection.recorded_at_event,
+            "effect": injection.effect,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn packet_buffer_object_view_v1(packet_buffer: &PacketBufferObjectManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -6880,6 +6920,12 @@ fn stable_views_for_kind(
             .vector_states
             .iter()
             .map(vector_state_view_v1)
+            .collect()),
+        "simd-fault-injection" | "simd-fault" => Ok(package
+            .semantic
+            .simd_fault_injections
+            .iter()
+            .map(simd_fault_injection_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -10190,6 +10236,43 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             event,
         ));
     }
+    for injection in &package.semantic.simd_fault_injections {
+        let event = Some(injection.recorded_at_event);
+        let from = object_ref_json("simd-fault-injection", injection.id, injection.generation);
+        for (target, label) in [
+            (&injection.activation, "simd-fault-injection->activation"),
+            (&injection.code_object, "simd-fault-injection->code-object"),
+            (&injection.trap, "simd-fault-injection->trap"),
+            (
+                &injection.target_feature_set,
+                "simd-fault-injection->target-feature-set",
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(target),
+                label,
+                "historical",
+                event,
+            ));
+        }
+        if let Some(vector_state) = &injection.vector_state {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(vector_state),
+                "simd-fault-injection->vector-state",
+                "historical",
+                event,
+            ));
+        }
+        edges.push(graph_edge(
+            from,
+            object_ref_json("event", injection.recorded_at_event, 1),
+            "simd-fault-injection->event",
+            "historical",
+            event,
+        ));
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -13208,6 +13291,53 @@ fn inspect_package_object(
                 print_roots_filtered(
                     "vector-state",
                     &package.semantic.roots.vector_state_roots,
+                    filter,
+                );
+            }
+        }
+        "simd-fault-injection" | "simd-fault" => {
+            println!(
+                "inspect simd-fault-injection package={} count={}",
+                package.package_id, package.semantic.simd_fault_injection_count
+            );
+            for injection in &package.semantic.simd_fault_injections {
+                let vector_state = injection
+                    .vector_state
+                    .as_ref()
+                    .map(|reference| {
+                        format!(
+                            "{}:{}@{}",
+                            reference.kind, reference.id, reference.generation
+                        )
+                    })
+                    .unwrap_or_else(|| "none".to_owned());
+                let line = format!(
+                    "simd-fault-injection id={} activation={}@{} code_object={}@{} trap={}@{} target_feature_set={}@{} vector_state={} kind={} effect={} required_abi={} vector_register_count={} vector_register_bits={} injected_faults={} state={} generation={}",
+                    injection.id,
+                    injection.activation.id,
+                    injection.activation.generation,
+                    injection.code_object.id,
+                    injection.code_object.generation,
+                    injection.trap.id,
+                    injection.trap.generation,
+                    injection.target_feature_set.id,
+                    injection.target_feature_set.generation,
+                    vector_state,
+                    injection.kind,
+                    injection.effect,
+                    injection.required_abi,
+                    injection.vector_register_count,
+                    injection.vector_register_bits,
+                    injection.injected_faults,
+                    injection.state,
+                    injection.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.simd_fault_injections.is_empty() {
+                print_roots_filtered(
+                    "simd-fault-injection",
+                    &package.semantic.roots.simd_fault_injection_roots,
                     filter,
                 );
             }
@@ -17523,6 +17653,59 @@ mod tests {
         assert_eq!(view["references"]["target_feature_set"]["generation"], 1);
         assert_eq!(view["simd"]["register_bytes"], 512);
         assert_eq!(view["last_error"], "simd-unavailable");
+    }
+
+    #[test]
+    fn simd_fault_injection_view_v1_exposes_fault_and_exact_refs() {
+        let view = simd_fault_injection_view_v1(&SimdFaultInjectionManifest {
+            id: 22_010,
+            activation: ContractObjectRefManifest {
+                kind: "activation".to_owned(),
+                id: 11,
+                generation: 4,
+            },
+            code_object: ContractObjectRefManifest {
+                kind: "code-object".to_owned(),
+                id: 9,
+                generation: 4,
+            },
+            trap: ContractObjectRefManifest {
+                kind: "trap".to_owned(),
+                id: 33,
+                generation: 1,
+            },
+            target_feature_set: ContractObjectRefManifest {
+                kind: "target-feature-set".to_owned(),
+                id: 21_010,
+                generation: 1,
+            },
+            vector_state: None,
+            kind: "unsupported-feature".to_owned(),
+            effect: "activation-trapped".to_owned(),
+            required_abi: "riscv-v".to_owned(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            injected_faults: 1,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 491,
+            note: "v10 SIMD fault injection".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "simd-fault-injection");
+        assert_eq!(view["owner"]["activation"]["generation"], 4);
+        assert_eq!(view["references"]["code_object"]["id"], 9);
+        assert_eq!(view["references"]["trap"]["generation"], 1);
+        assert_eq!(view["references"]["target_feature_set"]["id"], 21_010);
+        assert!(view["references"]["vector_state"].is_null());
+        assert_eq!(view["fault"]["kind"], "unsupported-feature");
+        assert_eq!(view["fault"]["effect"], "activation-trapped");
+        assert_eq!(view["fault"]["required_abi"], "riscv-v");
+        assert_eq!(view["fault"]["vector_register_count"], 32);
+        assert_eq!(view["fault"]["vector_register_bits"], 128);
+        assert_eq!(view["fault"]["injected_faults"], 1);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 491);
     }
 
     #[test]

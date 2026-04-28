@@ -1734,6 +1734,56 @@ impl VectorStateState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimdFaultInjectionKind {
+    UnsupportedFeature,
+    IllegalInstruction,
+}
+
+impl SimdFaultInjectionKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UnsupportedFeature => "unsupported-feature",
+            Self::IllegalInstruction => "illegal-instruction",
+        }
+    }
+
+    pub const fn trap_kind(self) -> &'static str {
+        match self {
+            Self::UnsupportedFeature => "simd-unsupported",
+            Self::IllegalInstruction => "simd-illegal-instruction",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimdFaultInjectionEffect {
+    TrapRecorded,
+    ActivationTrapped,
+}
+
+impl SimdFaultInjectionEffect {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TrapRecorded => "trap-recorded",
+            Self::ActivationTrapped => "activation-trapped",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimdFaultInjectionState {
+    Recorded,
+}
+
+impl SimdFaultInjectionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockDmaBufferState {
     Bound,
     Released,

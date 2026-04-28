@@ -92,6 +92,7 @@ pub enum ContractObjectKind {
     BlockRecoveryBenchmark,
     TargetFeatureSet,
     VectorState,
+    SimdFaultInjection,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -200,6 +201,7 @@ impl ContractObjectKind {
             Self::BlockRecoveryBenchmark => "block-recovery-benchmark",
             Self::TargetFeatureSet => "target-feature-set",
             Self::VectorState => "vector-state",
+            Self::SimdFaultInjection => "simd-fault-injection",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -5685,6 +5687,7 @@ mod tests {
             },
             target_feature_sets: Vec::new(),
             vector_states: Vec::new(),
+            simd_fault_injections: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(stale_store);
@@ -5780,6 +5783,7 @@ mod tests {
             },
             target_feature_sets: Vec::new(),
             vector_states: Vec::new(),
+            simd_fault_injections: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(store.store);
@@ -6009,6 +6013,7 @@ mod tests {
             },
             target_feature_sets: Vec::new(),
             vector_states: Vec::new(),
+            simd_fault_injections: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(store.store);
@@ -6108,6 +6113,7 @@ mod tests {
             },
             target_feature_sets: Vec::new(),
             vector_states: Vec::new(),
+            simd_fault_injections: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(dead_store.clone());
@@ -6294,6 +6300,7 @@ mod tests {
             },
             target_feature_sets: Vec::new(),
             vector_states: Vec::new(),
+            simd_fault_injections: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(current_store.clone());
@@ -6935,6 +6942,211 @@ mod tests {
         let violations = validate_contract_graph(&snapshot);
         assert!(violations.iter().any(|violation| {
             violation.edge == "trap->simd-requirement"
+                && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+        }));
+    }
+
+    #[test]
+    fn simd_runtime_v10_fault_injection_validates_exact_trap_attribution() {
+        let (artifact, store, mut code, _capabilities) = running_store_and_code();
+        let mut feature_set = target_feature_set_record();
+        feature_set.simd_supported = false;
+        feature_set.vector_register_count = 0;
+        feature_set.vector_register_bits = 0;
+        feature_set.unsupported_reason = "RVV disabled for fault injection".to_string();
+        code.simd_requirement = CodeObjectSimdRequirement::declared_simd(
+            "riscv-v",
+            32,
+            128,
+            feature_set.object_ref(),
+            "v10 simd fault injection attribution",
+        );
+        code.generation += 1;
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("simd_fault_injection".to_string()),
+            )
+            .unwrap();
+        let offset = 0x48;
+        let trap_map = [TrapMapEntryV1::new(
+            ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, code.id, code.generation),
+            offset,
+            offset + 4,
+            TrapKindV1::SimdUnsupported,
+            9,
+            0x88,
+            15,
+        )];
+        let trap_id = executor
+            .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
+            .unwrap();
+        let trap = executor
+            .traps()
+            .iter()
+            .find(|trap| trap.id == trap_id)
+            .unwrap();
+        let injection = SimdFaultInjectionRecord {
+            id: 22_010,
+            activation: ContractObjectRef::new(
+                ContractObjectKind::Activation,
+                activation,
+                trap.activation_generation.unwrap(),
+            ),
+            code_object: code.object_ref(),
+            trap: trap.object_ref(),
+            target_feature_set: feature_set.object_ref(),
+            vector_state: None,
+            kind: SimdFaultInjectionKind::UnsupportedFeature,
+            effect: SimdFaultInjectionEffect::ActivationTrapped,
+            required_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            injected_faults: 1,
+            generation: 1,
+            state: SimdFaultInjectionState::Recorded,
+            recorded_at_event: 99,
+            note: "v10 SIMD fault injection".to_string(),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([artifact]),
+            code_objects: Vec::from([code]),
+            target_feature_sets: Vec::from([feature_set]),
+            stores: Vec::from([store.store]),
+            activations: executor.activations().to_vec(),
+            traps: executor.traps().to_vec(),
+            simd_fault_injections: Vec::from([injection]),
+            ..ContractGraphSnapshot::default()
+        };
+
+        assert_eq!(validate_contract_graph(&snapshot), Vec::new());
+    }
+
+    #[test]
+    fn simd_runtime_v10_rejects_fault_injection_trap_kind_mismatch() {
+        let (artifact, store, mut code, _capabilities) = running_store_and_code();
+        let mut feature_set = target_feature_set_record();
+        feature_set.simd_supported = false;
+        feature_set.vector_register_count = 0;
+        feature_set.vector_register_bits = 0;
+        feature_set.unsupported_reason = "RVV disabled for fault injection".to_string();
+        code.simd_requirement = CodeObjectSimdRequirement::declared_simd(
+            "riscv-v",
+            32,
+            128,
+            feature_set.object_ref(),
+            "v10 simd fault injection attribution",
+        );
+        code.generation += 1;
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("simd_fault_injection".to_string()),
+            )
+            .unwrap();
+        let trap_map = [TrapMapEntryV1::new(
+            ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, code.id, code.generation),
+            0x48,
+            0x4c,
+            TrapKindV1::SimdUnsupported,
+            9,
+            0x88,
+            15,
+        )];
+        let trap_id = executor
+            .trap_exit_by_pc(activation, &code, code.text.start + 0x48, &trap_map)
+            .unwrap();
+        let trap = executor
+            .traps()
+            .iter()
+            .find(|trap| trap.id == trap_id)
+            .unwrap();
+        let injection = SimdFaultInjectionRecord {
+            id: 22_010,
+            activation: ContractObjectRef::new(
+                ContractObjectKind::Activation,
+                activation,
+                trap.activation_generation.unwrap(),
+            ),
+            code_object: code.object_ref(),
+            trap: trap.object_ref(),
+            target_feature_set: feature_set.object_ref(),
+            vector_state: None,
+            kind: SimdFaultInjectionKind::IllegalInstruction,
+            effect: SimdFaultInjectionEffect::ActivationTrapped,
+            required_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            injected_faults: 1,
+            generation: 1,
+            state: SimdFaultInjectionState::Recorded,
+            recorded_at_event: 99,
+            note: "bad V10 SIMD fault injection".to_string(),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([artifact]),
+            code_objects: Vec::from([code]),
+            target_feature_sets: Vec::from([feature_set]),
+            stores: Vec::from([store.store]),
+            activations: executor.activations().to_vec(),
+            traps: executor.traps().to_vec(),
+            simd_fault_injections: Vec::from([injection]),
+            ..ContractGraphSnapshot::default()
+        };
+        let violations = validate_contract_graph(&snapshot);
+
+        assert!(violations.iter().any(|violation| {
+            violation.edge == "simd-fault-injection->trap"
+                && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.edge == "simd-fault-injection->target-feature-set"
+                && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+        }));
+    }
+
+    #[test]
+    fn simd_runtime_v10_rejects_fault_injection_wrong_ref_kind() {
+        let (artifact, store, code, _capabilities) = running_store_and_code();
+        let mut feature_set = target_feature_set_record();
+        feature_set.simd_supported = false;
+        feature_set.vector_register_count = 0;
+        feature_set.vector_register_bits = 0;
+        feature_set.unsupported_reason = "RVV disabled for fault injection".to_string();
+        let injection = SimdFaultInjectionRecord {
+            id: 22_010,
+            activation: store.store.object_ref(),
+            code_object: code.object_ref(),
+            trap: ContractObjectRef::new(ContractObjectKind::Trap, 33, 1),
+            target_feature_set: feature_set.object_ref(),
+            vector_state: None,
+            kind: SimdFaultInjectionKind::UnsupportedFeature,
+            effect: SimdFaultInjectionEffect::ActivationTrapped,
+            required_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            injected_faults: 1,
+            generation: 1,
+            state: SimdFaultInjectionState::Recorded,
+            recorded_at_event: 99,
+            note: "bad V10 SIMD fault injection ref kind".to_string(),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([artifact]),
+            code_objects: Vec::from([code]),
+            target_feature_sets: Vec::from([feature_set]),
+            stores: Vec::from([store.store]),
+            simd_fault_injections: Vec::from([injection]),
+            ..ContractGraphSnapshot::default()
+        };
+        let violations = validate_contract_graph(&snapshot);
+
+        assert!(violations.iter().any(|violation| {
+            violation.edge == "simd-fault-injection->activation"
                 && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
         }));
     }

@@ -1,0 +1,133 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "V10-simd-fault-injection",
+  "phase": "Phase 6 SIMD Full Runtime Contract",
+  "status": "pass",
+  "scope": [
+    "Add SimdFaultInjectionRecord as a semantic evidence object with generation-exact refs",
+    "Add RecordSimdFaultInjection command and SimdFaultInjectionRecorded event",
+    "Validate SIMD fault injection edges and trap metadata in ContractGraph",
+    "Record host-validation SIMD unsupported fault evidence in target_executor",
+    "Expose simd-fault-injection stable ViewV1 and history graph edges through osctl"
+  ],
+  "no_goals": [
+    "hardware vector trap delivery",
+    "raw vector register payload storage",
+    "real target-side cwasm execution",
+    "target hardware SIMD enablement"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/graph/simd_fault_injection.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/simd/golden_v10_simd_fault_injection.trace.json",
+    "tests/reports/checkpoints/v10_simd_fault_injection.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/simd/golden_v10_simd_fault_injection.trace.json",
+    "tests/reports/checkpoints/v10_simd_fault_injection.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "SIMD fault injection is represented as a first-class semantic object instead of a debug string on traps",
+      "Unsupported SIMD injection cannot retain a live VectorState",
+      "Illegal-instruction injection requires a supported SIMD target feature set",
+      "ContractGraph rejects wrong ObjectKind in simd-fault-injection typed refs instead of trusting id/generation alone",
+      "ContractGraph verifies trap kind, SIMD attribution metadata, and exact activation/code refs",
+      "osctl ViewV1 and history graph expose simd-fault-injection roots as stable control-plane evidence"
+    ],
+    "bad_smells_checked": [
+      "No third-party runtime state is treated as semantic truth",
+      "No raw vector register payload is stored in semantic_core",
+      "No target-side cwasm execution path was added",
+      "No substrate mapping is treated as semantic truth"
+    ],
+    "residual_notes": [
+      "V11 owns SIMD benchmark scalar-vs-vector evidence",
+      "Hardware vector trap delivery remains outside this semantic checkpoint"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core simd_runtime_v10 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl simd_fault_injection_view_v1_exposes_fault_and_exact_refs -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core semantic_roots_reject_simd_fault_injection_root_mismatch -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl simd-fault-injection list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "simd_fault_injection": "simd-fault-injection:22010@1",
+    "activation": "activation:90@2",
+    "code_object": "code-object:18@6",
+    "trap": "trap:28@1",
+    "target_feature_set": "target-feature-set:21000@1",
+    "contract_validation": "ok"
+  },
+  "residual_gaps": [
+    "V11 owns SIMD benchmark scalar-vs-vector evidence",
+    "Hardware vector trap delivery remains outside this semantic checkpoint"
+  ],
+  "next_checkpoint": "V11-simd-benchmark-scalar-vs-vector"
+}

@@ -20041,6 +20041,186 @@ fn simd_runtime_v9_invariants_reject_migrated_vector_generation_drift() {
 }
 
 #[test]
+fn simd_runtime_v10_fault_injection_records_exact_trap_attribution() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.record_target_feature_set_with_id(
+        21_010,
+        "riscv64-qemu-virt-no-rvv",
+        "semantic-contract-v10-test",
+        "riscv64-qemu-virt-research",
+        "riscv64",
+        "rv64imac",
+        "riscv-v",
+        false,
+        0,
+        0,
+        true,
+        "RVV disabled for injected fault test",
+        "v10 unsupported SIMD target fixture",
+    ));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v10-test",
+        SemanticCommand::RecordSimdFaultInjection {
+            injection: 22_010,
+            activation: ContractObjectRef::new(ContractObjectKind::Activation, 11, 4),
+            code_object: ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4),
+            trap: ContractObjectRef::new(ContractObjectKind::Trap, 33, 1),
+            target_feature_set: ContractObjectRef::new(
+                ContractObjectKind::TargetFeatureSet,
+                21_010,
+                1,
+            ),
+            vector_state: None,
+            kind: SimdFaultInjectionKind::UnsupportedFeature,
+            effect: SimdFaultInjectionEffect::ActivationTrapped,
+            required_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            injected_faults: 1,
+            note: "record unsupported SIMD injection".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    assert_eq!(graph.simd_fault_injection_count(), 1);
+    let injection = &graph.simd_fault_injections()[0];
+    assert_eq!(
+        injection.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::SimdFaultInjection, 22_010, 1)
+    );
+    assert_eq!(injection.activation.generation, 4);
+    assert_eq!(injection.code_object.generation, 4);
+    assert_eq!(injection.trap.generation, 1);
+    assert_eq!(
+        injection.target_feature_set,
+        ContractObjectRef::new(ContractObjectKind::TargetFeatureSet, 21_010, 1)
+    );
+    assert_eq!(injection.kind, SimdFaultInjectionKind::UnsupportedFeature);
+    assert_eq!(
+        injection.effect,
+        SimdFaultInjectionEffect::ActivationTrapped
+    );
+    assert_eq!(injection.injected_faults, 1);
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "SimdFaultInjectionRecorded injection=22010 activation=activation:11@4 code_object=code-object:9@4 trap=trap:33@1 target_feature_set=target-feature-set:21010@1 vector_state=none kind=unsupported-feature effect=activation-trapped generation=1"
+    );
+}
+
+#[test]
+fn simd_runtime_v10_rejects_unsupported_fault_with_live_vector_state() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.record_target_feature_set_with_id(
+        21_010,
+        "riscv64-qemu-virt-no-rvv",
+        "semantic-contract-v10-test",
+        "riscv64-qemu-virt-research",
+        "riscv64",
+        "rv64imac",
+        "riscv-v",
+        false,
+        0,
+        0,
+        true,
+        "RVV disabled for injected fault test",
+        "v10 unsupported SIMD target fixture",
+    ));
+
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v10-test",
+        SemanticCommand::RecordSimdFaultInjection {
+            injection: 22_010,
+            activation: ContractObjectRef::new(ContractObjectKind::Activation, 11, 4),
+            code_object: ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4),
+            trap: ContractObjectRef::new(ContractObjectKind::Trap, 33, 1),
+            target_feature_set: ContractObjectRef::new(
+                ContractObjectKind::TargetFeatureSet,
+                21_010,
+                1,
+            ),
+            vector_state: Some(ContractObjectRef::new(
+                ContractObjectKind::VectorState,
+                22_000,
+                1,
+            )),
+            kind: SimdFaultInjectionKind::UnsupportedFeature,
+            effect: SimdFaultInjectionEffect::ActivationTrapped,
+            required_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            injected_faults: 1,
+            note: "bad unsupported SIMD injection".to_string(),
+        },
+    ));
+
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec![
+            "unsupported SIMD fault injection must record a trap without live vector state"
+                .to_string()
+        ]
+    );
+    assert!(graph.simd_fault_injections().is_empty());
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn simd_runtime_v10_rejects_illegal_instruction_on_unsupported_target() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.record_target_feature_set_with_id(
+        21_010,
+        "riscv64-qemu-virt-no-rvv",
+        "semantic-contract-v10-test",
+        "riscv64-qemu-virt-research",
+        "riscv64",
+        "rv64imac",
+        "riscv-v",
+        false,
+        0,
+        0,
+        true,
+        "RVV disabled for injected fault test",
+        "v10 unsupported SIMD target fixture",
+    ));
+
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v10-test",
+        SemanticCommand::RecordSimdFaultInjection {
+            injection: 22_010,
+            activation: ContractObjectRef::new(ContractObjectKind::Activation, 11, 4),
+            code_object: ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4),
+            trap: ContractObjectRef::new(ContractObjectKind::Trap, 33, 1),
+            target_feature_set: ContractObjectRef::new(
+                ContractObjectKind::TargetFeatureSet,
+                21_010,
+                1,
+            ),
+            vector_state: None,
+            kind: SimdFaultInjectionKind::IllegalInstruction,
+            effect: SimdFaultInjectionEffect::ActivationTrapped,
+            required_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            injected_faults: 1,
+            note: "bad illegal SIMD injection".to_string(),
+        },
+    ));
+
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["SIMD illegal instruction injection requires a supported feature set".to_string()]
+    );
+    assert!(graph.simd_fault_injections().is_empty());
+}
+
+#[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();
     let blocker = ContractObjectRef::new(ContractObjectKind::TimerInterrupt, 5, 1);

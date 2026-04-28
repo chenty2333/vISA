@@ -39,9 +39,10 @@ use artifact_manifest::{
     QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SimdTrapAttributionManifest,
-    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
-    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SimdFaultInjectionManifest,
+    SimdTrapAttributionManifest, SmpCleanupQuiescenceManifest,
+    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
+    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, SocketObjectManifest,
     SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
@@ -80,11 +81,12 @@ use semantic_core::{
     PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
     PageBacking, PageObjectState, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
     RestartPolicy, RuntimeActivationState, RuntimeMode, SavedContextReason, SemanticCommand,
-    SemanticGraph, SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator,
-    StoreRecord, StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec,
-    TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata,
-    TaskState, TombstoneRecord, TrapSurfaceState, VectorStateState, VerifiedArtifact,
-    WaitCancelReason, memory_class_policies, validate_contract_graph,
+    SemanticGraph, SemanticWaitKind, SimdFaultInjectionEffect, SimdFaultInjectionKind,
+    SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState,
+    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
+    TombstoneRecord, TrapSurfaceState, VectorStateState, VerifiedArtifact, WaitCancelReason,
+    memory_class_policies, validate_contract_graph,
 };
 use service_core::fake_block::{
     FAKE_BLOCK_BACKEND_PROFILE, FAKE_BLOCK_BACKEND_PROVIDER, FakeBlockBackendConfig,
@@ -8357,6 +8359,13 @@ fn build_target_executor_v1(
         &mut executor,
         &mut ledger,
     )?;
+    run_simd_fault_injection_harness(
+        &verified_artifacts,
+        semantic,
+        &mut publisher,
+        &mut store_manager,
+        &mut executor,
+    )?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8423,6 +8432,7 @@ fn build_target_executor_v1(
         code_objects: publisher.objects().to_vec(),
         target_feature_sets: semantic.target_feature_sets().to_vec(),
         vector_states: semantic.vector_states().to_vec(),
+        simd_fault_injections: semantic.simd_fault_injections().to_vec(),
         stores: store_manager
             .records()
             .iter()
@@ -9614,6 +9624,121 @@ fn run_simd_cross_hart_vector_migration_harness(
     Ok(())
 }
 
+fn run_simd_fault_injection_harness(
+    verified_artifacts: &[VerifiedArtifact],
+    semantic: &mut SemanticGraph,
+    publisher: &mut CodePublisher,
+    store_manager: &mut TargetStoreManager,
+    executor: &mut TargetExecutor,
+) -> Result<(), Box<dyn Error>> {
+    let artifact = verified_artifacts
+        .first()
+        .ok_or("SIMD fault injection harness requires at least one verified artifact")?;
+    let feature_set = semantic
+        .target_feature_sets()
+        .iter()
+        .find(|feature| !feature.simd_supported && feature.simd_abi == "riscv-v")
+        .cloned()
+        .ok_or("SIMD fault injection harness requires an unsupported riscv-v feature set")?;
+    let store_id =
+        store_manager.register_verified_artifact(artifact, "restartable", "simd-fault-injection");
+    store_manager
+        .set_running(store_id)
+        .map_err(|error| error.message())?;
+    let store = store_manager
+        .record(store_id)
+        .ok_or("SIMD fault injection store missing after registration")?
+        .store
+        .clone();
+    let code_id = publisher
+        .allocate(artifact)
+        .map_err(|error| error.message())?;
+    publisher
+        .declare_simd_requirement(
+            code_id,
+            feature_set.object_ref(),
+            "riscv-v",
+            32,
+            128,
+            "v10 SIMD fault injection unsupported-feature harness",
+        )
+        .map_err(|error| error.message())?;
+    publisher.fill(code_id).map_err(|error| error.message())?;
+    publisher.seal(code_id).map_err(|error| error.message())?;
+    publisher
+        .publish_rx(code_id)
+        .map_err(|error| error.message())?;
+    publisher
+        .bind_to_store(code_id, &store)
+        .map_err(|error| error.message())?;
+    let code = publisher
+        .object(code_id)
+        .ok_or("SIMD fault injection code missing after bind")?
+        .clone();
+    let activation = executor
+        .start_activation(
+            &store,
+            &code,
+            ActivationEntry::Symbol("simd_fault_injection".to_owned()),
+        )
+        .map_err(|error| error.message())?;
+    let offset = RV64_ENTRY_TRAP_EBREAK_OFFSET + 0x50;
+    let trap_map = [TrapMapEntryV1::new(
+        ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, code.id, code.generation),
+        offset,
+        offset + 4,
+        TrapKindV1::SimdUnsupported,
+        55,
+        offset,
+        10,
+    )];
+    let trap = executor
+        .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
+        .map_err(|error| error.message())?;
+    let trap_record = executor
+        .traps()
+        .iter()
+        .find(|record| record.id == trap)
+        .ok_or("SIMD fault injection trap record missing")?;
+    let Some(activation_generation) = trap_record.activation_generation else {
+        return Err("SIMD fault injection trap missing activation generation".into());
+    };
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_016,
+        "simd-runtime-v10",
+        SemanticCommand::RecordSimdFaultInjection {
+            injection: 22_010,
+            activation: ContractObjectRef::new(
+                ContractObjectKind::Activation,
+                activation,
+                activation_generation,
+            ),
+            code_object: code.object_ref(),
+            trap: ContractObjectRef::new(ContractObjectKind::Trap, trap, 1),
+            target_feature_set: feature_set.object_ref(),
+            vector_state: None,
+            kind: SimdFaultInjectionKind::UnsupportedFeature,
+            effect: SimdFaultInjectionEffect::ActivationTrapped,
+            required_abi: "riscv-v".to_owned(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            injected_faults: 1,
+            note: "v10 injected unsupported SIMD fault records exact trap attribution".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "simd runtime v10 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn declared_authority_objects(capabilities: &[CapabilityRecord]) -> Vec<ExternalObjectDeclaration> {
     let mut declarations = Vec::new();
     for capability in capabilities {
@@ -10370,6 +10495,7 @@ fn demo_migration_package(
             block_recovery_benchmark_count: semantic.block_recovery_benchmark_count(),
             target_feature_set_count: semantic.target_feature_set_count(),
             vector_state_count: semantic.vector_state_count(),
+            simd_fault_injection_count: semantic.simd_fault_injection_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -10797,6 +10923,11 @@ fn demo_migration_package(
                 .vector_states()
                 .iter()
                 .map(vector_state_manifest)
+                .collect(),
+            simd_fault_injections: semantic
+                .simd_fault_injections()
+                .iter()
+                .map(simd_fault_injection_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -12814,6 +12945,29 @@ fn semantic_roots(
                     vector_state.register_bytes,
                     vector_state.state.as_str(),
                     vector_state.generation
+                )
+            })
+            .collect(),
+        simd_fault_injection_roots: semantic
+            .simd_fault_injections()
+            .iter()
+            .map(|injection| {
+                format!(
+                    "simd-fault-injection id={} activation={} code_object={} trap={} target_feature_set={} vector_state={} kind={} effect={} injected_faults={} state={} generation={}",
+                    injection.id,
+                    injection.activation.summary(),
+                    injection.code_object.summary(),
+                    injection.trap.summary(),
+                    injection.target_feature_set.summary(),
+                    injection
+                        .vector_state
+                        .map(|vector_state| vector_state.summary())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    injection.kind.as_str(),
+                    injection.effect.as_str(),
+                    injection.injected_faults,
+                    injection.state.as_str(),
+                    injection.generation
                 )
             })
             .collect(),
@@ -15598,6 +15752,29 @@ fn vector_state_manifest(vector_state: &semantic_core::VectorStateRecord) -> Vec
         state: vector_state.state.as_str().to_owned(),
         recorded_at_event: vector_state.recorded_at_event,
         note: vector_state.note.clone(),
+    }
+}
+
+fn simd_fault_injection_manifest(
+    injection: &semantic_core::SimdFaultInjectionRecord,
+) -> SimdFaultInjectionManifest {
+    SimdFaultInjectionManifest {
+        id: injection.id,
+        activation: contract_object_ref_manifest(injection.activation),
+        code_object: contract_object_ref_manifest(injection.code_object),
+        trap: contract_object_ref_manifest(injection.trap),
+        target_feature_set: contract_object_ref_manifest(injection.target_feature_set),
+        vector_state: injection.vector_state.map(contract_object_ref_manifest),
+        kind: injection.kind.as_str().to_owned(),
+        effect: injection.effect.as_str().to_owned(),
+        required_abi: injection.required_abi.clone(),
+        vector_register_count: injection.vector_register_count,
+        vector_register_bits: injection.vector_register_bits,
+        injected_faults: injection.injected_faults,
+        generation: injection.generation,
+        state: injection.state.as_str().to_owned(),
+        recorded_at_event: injection.recorded_at_event,
+        note: injection.note.clone(),
     }
 }
 

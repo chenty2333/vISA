@@ -1497,6 +1497,17 @@ pub enum SemanticInvariantError {
         vector_state: VectorStateId,
         event: EventId,
     },
+    SimdFaultInjectionInvalid {
+        injection: SimdFaultInjectionId,
+    },
+    SimdFaultInjectionMissingTarget {
+        injection: SimdFaultInjectionId,
+        target: ContractObjectRef,
+    },
+    SimdFaultInjectionMissingEvent {
+        injection: SimdFaultInjectionId,
+        event: EventId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

@@ -680,6 +680,17 @@ pub enum EventKind {
         state: VectorStateState,
         generation: Generation,
     },
+    SimdFaultInjectionRecorded {
+        injection: SimdFaultInjectionId,
+        activation: ContractObjectRef,
+        code_object: ContractObjectRef,
+        trap: ContractObjectRef,
+        target_feature_set: ContractObjectRef,
+        vector_state: Option<ContractObjectRef>,
+        kind: SimdFaultInjectionKind,
+        effect: SimdFaultInjectionEffect,
+        generation: Generation,
+    },
     FakeBlockBackendObjectBound {
         fake_block_backend: FakeBlockBackendObjectId,
         block_device: BlockDeviceObjectId,
@@ -2604,6 +2615,28 @@ impl EventKind {
                 target_feature_set.id,
                 target_feature_set.generation,
                 state.as_str()
+            ),
+            Self::SimdFaultInjectionRecorded {
+                injection,
+                activation,
+                code_object,
+                trap,
+                target_feature_set,
+                vector_state,
+                kind,
+                effect,
+                generation,
+            } => format!(
+                "SimdFaultInjectionRecorded injection={injection} activation={} code_object={} trap={} target_feature_set={} vector_state={} kind={} effect={} generation={generation}",
+                activation.summary(),
+                code_object.summary(),
+                trap.summary(),
+                target_feature_set.summary(),
+                vector_state
+                    .map(|record| record.summary())
+                    .unwrap_or_else(|| "none".to_string()),
+                kind.as_str(),
+                effect.as_str()
             ),
             Self::FakeBlockBackendObjectBound {
                 fake_block_backend,

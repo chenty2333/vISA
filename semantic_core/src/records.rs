@@ -2511,6 +2511,36 @@ impl VectorStateRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SimdFaultInjectionRecord {
+    pub id: SimdFaultInjectionId,
+    pub activation: ContractObjectRef,
+    pub code_object: ContractObjectRef,
+    pub trap: ContractObjectRef,
+    pub target_feature_set: ContractObjectRef,
+    pub vector_state: Option<ContractObjectRef>,
+    pub kind: SimdFaultInjectionKind,
+    pub effect: SimdFaultInjectionEffect,
+    pub required_abi: String,
+    pub vector_register_count: u16,
+    pub vector_register_bits: u16,
+    pub injected_faults: u32,
+    pub generation: Generation,
+    pub state: SimdFaultInjectionState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl SimdFaultInjectionRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::SimdFaultInjection,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,
