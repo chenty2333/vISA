@@ -1,0 +1,118 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "M5-network-recovery-time",
+  "name": "golden_m5_network_recovery_time",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real virtio datapath",
+    "real smoltcp recovery timing",
+    "real DMA/IOMMU/MMIO/IRQ hardware access",
+    "calibrated target network recovery time",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "N20 recorded network-recovery-benchmark:10068@1 as semantic recovery timing evidence",
+      "benchmark references exact cleanup, IO cleanup, adapter, packet device, backend, driver store, and fault injection generations",
+      "osctl network-recovery-benchmark list --json exposes stable ViewV1 output"
+    ],
+    "commands": [
+      {
+        "command": "record-network-recovery-benchmark",
+        "benchmark": "network-recovery-benchmark:10068@1",
+        "cleanup": "network-driver-cleanup:10051@1",
+        "io_cleanup": "io-cleanup:10052@1",
+        "fault_injection": "network-fault-injection:10064@1",
+        "driver_store": "store:7@3",
+        "recovery_nanos": 90000,
+        "budget_nanos": 200000,
+        "expected": "applied"
+      },
+      {
+        "command": "record-network-recovery-benchmark",
+        "cleanup": "network-driver-cleanup:10051@2",
+        "expected": "rejected",
+        "violation": "network recovery benchmark cleanup generation is missing or incomplete"
+      },
+      {
+        "command": "record-network-recovery-benchmark",
+        "recovery_nanos": 250000,
+        "budget_nanos": 200000,
+        "expected": "rejected",
+        "violation": "network recovery benchmark exceeds recovery budget"
+      },
+      {
+        "command": "osctl experiment report --json tests/reports/experiments/m5_network_recovery_time.experiment.json",
+        "result": "experiment report validates as vmos-experiment-report"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "NetworkRecoveryBenchmarkRecorded",
+      "benchmark": "network-recovery-benchmark:10068@1",
+      "event": 380,
+      "recovery_start_event": 369,
+      "recovery_complete_event": 378,
+      "recovery_nanos": 90000,
+      "budget_nanos": 200000
+    }
+  ],
+  "expected": {
+    "views": {
+      "network-recovery-benchmark": {
+        "kind": "network-recovery-benchmark",
+        "id": 10068,
+        "generation": 1,
+        "state": "recorded",
+        "cleanup": "network-driver-cleanup:10051@1",
+        "io_cleanup": "io-cleanup:10052@1",
+        "fault_injection": "network-fault-injection:10064@1",
+        "recovery_nanos": 90000,
+        "budget_nanos": 200000,
+        "cancelled_socket_waits": 1,
+        "revoked_packet_capabilities": 1,
+        "within_budget": true
+      },
+      "experiment_report": {
+        "schema": "vmos-experiment-report",
+        "name": "m5_network_recovery_time_host_validation",
+        "checkpoint": "M5-network-recovery-time",
+        "contract_ok": true,
+        "golden_replay_ok": true
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "M5 experiment evidence is backed by first-class NetworkRecoveryBenchmark ObjectRef",
+      "M5 reuses N20 semantic command, event, ViewV1, and invariant rather than treating adapter logs as truth",
+      "fault injection evidence precedes cleanup start",
+      "cleanup effect counts match completed NetworkDriverCleanup evidence",
+      "stale cleanup generation and recovery budget overrun are osctl-visible negative evidence",
+      "NetworkRecoveryBenchmark is historical evidence only and creates no live ownership edge"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "network_runtime_n20_recovery_benchmark_records_cleanup_latency_evidence",
+      "network_runtime_n20_rejects_stale_cleanup_and_budget_overrun",
+      "network_runtime_n20_invariants_reject_cleanup_generation_drift",
+      "network_recovery_benchmark_view_v1_exposes_recovery_metrics",
+      "semantic_roots_reject_network_recovery_benchmark_root_mismatch"
+    ],
+    "experiment_report": "tests/reports/experiments/m5_network_recovery_time.experiment.json",
+    "osctl_json_view": "network-recovery-benchmark list --json",
+    "network_recovery_benchmark": "network-recovery-benchmark:10068@1"
+  }
+}
