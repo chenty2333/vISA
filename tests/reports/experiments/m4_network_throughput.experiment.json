@@ -1,0 +1,106 @@
+{
+  "schema": "vmos-experiment-report",
+  "schema_version": 1,
+  "name": "m4_network_throughput_host_validation",
+  "checkpoint": "M4-network-throughput",
+  "commands": [
+    {
+      "command": "cargo run -p target_executor",
+      "purpose": "generate semantic package containing NetworkBenchmark evidence"
+    },
+    {
+      "command": "cargo run -p osctl -- network-benchmark list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "inspect stable NetworkBenchmark ViewV1 JSON"
+    },
+    {
+      "command": "cargo run -p osctl -- command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 191",
+      "purpose": "prove stale adapter generation negative evidence is osctl-visible"
+    },
+    {
+      "command": "cargo run -p osctl -- command show --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json 192",
+      "purpose": "prove latency budget overrun negative evidence is osctl-visible"
+    }
+  ],
+  "events": [
+    {
+      "kind": "NetworkBenchmarkRecorded",
+      "source": "SemanticGraph::record_network_benchmark_with_id",
+      "event": 379,
+      "object": "network-benchmark:10067@1"
+    }
+  ],
+  "final_views": {
+    "network_benchmark": {
+      "schema": 1,
+      "kind": "network-benchmark",
+      "id": 10067,
+      "generation": 1,
+      "state": "recorded",
+      "references": {
+        "adapter": {
+          "kind": "network-stack-adapter",
+          "id": 10025,
+          "generation": 1
+        },
+        "packet_device": {
+          "kind": "packet-device",
+          "id": 10002,
+          "generation": 1
+        },
+        "owner_store": {
+          "kind": "store",
+          "id": 9,
+          "generation": 3
+        }
+      },
+      "metrics": {
+        "sample_packets": 3,
+        "sample_bytes": 6000,
+        "measured_nanos": 120000,
+        "budget_nanos": 250000,
+        "throughput_bytes_per_sec": 50000000,
+        "p50_latency_nanos": 18000,
+        "p99_latency_nanos": 48000,
+        "within_budget": true
+      }
+    },
+    "negative_evidence": {
+      "stale_adapter_generation": "command-result:191:record-network-benchmark:rejected",
+      "budget_overrun": "command-result:192:record-network-benchmark:rejected"
+    },
+    "contract_validation": {
+      "ok": true,
+      "violation_count": 0
+    },
+    "osctl": {
+      "schema": "vmos-osctl-json-v1",
+      "stable_view": "network-benchmark.list",
+      "read_only": true
+    }
+  },
+  "metrics": {
+    "benchmark_count": 1,
+    "sample_packets": 3,
+    "sample_bytes": 6000,
+    "measured_nanos": 120000,
+    "budget_nanos": 250000,
+    "throughput_bytes_per_sec": 50000000,
+    "p50_latency_nanos": 18000,
+    "p99_latency_nanos": 48000,
+    "dropped_packets": 1,
+    "tx_completed_packets": 1,
+    "rx_resolved_packets": 1,
+    "within_budget": true,
+    "measurement_source": "network-benchmark:10067@1",
+    "hardware_dependency": "none"
+  },
+  "validation": {
+    "contract_ok": true,
+    "golden_replay_ok": true,
+    "osctl_view_ok": true,
+    "semantic_object": "NetworkBenchmark",
+    "semantic_command": "RecordNetworkBenchmark",
+    "semantic_event": "NetworkBenchmarkRecorded",
+    "semantic_invariant": "exact network object generations, closed packet accounting, derived throughput, p99 latency budget, stale adapter rejection"
+  }
+}
