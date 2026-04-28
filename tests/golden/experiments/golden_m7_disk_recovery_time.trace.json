@@ -1,0 +1,117 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "M7-disk-recovery-time",
+  "name": "golden_m7_disk_recovery_time",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real virtio-blk MMIO/DMA/IRQ execution",
+    "real disk scheduler or calibrated recovery timing",
+    "adapter-local disk state as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "B23 recorded block-recovery-benchmark:20135@1 as semantic disk recovery timing evidence",
+      "benchmark references exact cleanup, IO cleanup, backend, block device, driver store, device, and driver binding generations",
+      "osctl block-recovery-benchmark list --json exposes stable ViewV1 output"
+    ],
+    "commands": [
+      {
+        "command": "record-block-recovery-benchmark",
+        "benchmark": "block-recovery-benchmark:20135@1",
+        "cleanup": "block-driver-cleanup:20107@1",
+        "io_cleanup": "io-cleanup:20108@1",
+        "driver_store": "store:7@3",
+        "backend": "virtio-blk-backend-object:20034@1",
+        "recovery_nanos": 70000,
+        "budget_nanos": 150000,
+        "expected": "applied"
+      },
+      {
+        "command": "record-block-recovery-benchmark",
+        "cleanup": "block-driver-cleanup:20107@2",
+        "expected": "rejected",
+        "violation": "block recovery benchmark cleanup generation is missing or incomplete"
+      },
+      {
+        "command": "record-block-recovery-benchmark",
+        "recovery_nanos": 200000,
+        "budget_nanos": 150000,
+        "expected": "rejected",
+        "violation": "block recovery benchmark exceeds recovery budget"
+      },
+      {
+        "command": "osctl experiment report --json tests/reports/experiments/m7_disk_recovery_time.experiment.json",
+        "result": "experiment report validates as vmos-experiment-report"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "BlockRecoveryBenchmarkRecorded",
+      "benchmark": "block-recovery-benchmark:20135@1",
+      "event": 486,
+      "recovery_start_event": 452,
+      "recovery_complete_event": 458,
+      "recovery_nanos": 70000,
+      "budget_nanos": 150000
+    }
+  ],
+  "expected": {
+    "views": {
+      "block-recovery-benchmark": {
+        "kind": "block-recovery-benchmark",
+        "id": 20135,
+        "generation": 1,
+        "state": "recorded",
+        "cleanup": "block-driver-cleanup:20107@1",
+        "io_cleanup": "io-cleanup:20108@1",
+        "recovery_nanos": 70000,
+        "budget_nanos": 150000,
+        "cancelled_block_waits": 1,
+        "cancelled_wait_tokens": 1,
+        "released_dma_buffers": 1,
+        "revoked_device_capabilities": 1,
+        "within_budget": true
+      },
+      "experiment_report": {
+        "schema": "vmos-experiment-report",
+        "name": "m7_disk_recovery_time_host_validation",
+        "checkpoint": "M7-disk-recovery-time",
+        "contract_ok": true,
+        "golden_replay_ok": true
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "M7 experiment evidence is backed by first-class BlockRecoveryBenchmark ObjectRef",
+      "M7 reuses B23 semantic command, event, ViewV1, and invariant rather than treating backend logs as truth",
+      "cleanup effect counts match completed BlockDriverCleanup evidence",
+      "stale cleanup generation and recovery budget overrun are osctl-visible negative evidence",
+      "BlockRecoveryBenchmark is historical evidence only and creates no live ownership edge"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "block_runtime_b23_disk_recovery_benchmark_records_cleanup_latency_evidence",
+      "block_runtime_b23_rejects_stale_cleanup_and_budget_overrun",
+      "block_runtime_b23_invariants_reject_cleanup_generation_leak",
+      "block_recovery_benchmark_view_v1_exposes_cleanup_latency_and_effects",
+      "semantic_roots_reject_block_recovery_benchmark_root_mismatch"
+    ],
+    "experiment_report": "tests/reports/experiments/m7_disk_recovery_time.experiment.json",
+    "osctl_json_view": "block-recovery-benchmark list --json",
+    "block_recovery_benchmark": "block-recovery-benchmark:20135@1"
+  }
+}
