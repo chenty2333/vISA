@@ -1033,6 +1033,21 @@ pub enum SemanticCommand {
         injected_faults: u32,
         note: String,
     },
+    RecordSimdBenchmark {
+        benchmark: SimdBenchmarkId,
+        target_feature_set: ContractObjectRef,
+        scalar_code_object: ContractObjectRef,
+        vector_code_object: ContractObjectRef,
+        simd_abi: String,
+        vector_register_count: u16,
+        vector_register_bits: u16,
+        workload_units: u64,
+        scalar_nanos: u64,
+        vector_nanos: u64,
+        speedup_milli: u64,
+        context_overhead_nanos: u64,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -1464,6 +1479,7 @@ impl SemanticCommand {
             Self::RecordTargetFeatureSet { .. } => "record-target-feature-set",
             Self::RecordVectorState { .. } => "record-vector-state",
             Self::RecordSimdFaultInjection { .. } => "record-simd-fault-injection",
+            Self::RecordSimdBenchmark { .. } => "record-simd-benchmark",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -4296,6 +4312,45 @@ impl SemanticGraph {
                     *injected_faults,
                 )
                 .map_err(CommandError::precondition),
+            SemanticCommand::RecordSimdBenchmark {
+                benchmark,
+                target_feature_set,
+                scalar_code_object,
+                vector_code_object,
+                simd_abi,
+                vector_register_count,
+                vector_register_bits,
+                workload_units,
+                scalar_nanos,
+                vector_nanos,
+                speedup_milli,
+                context_overhead_nanos,
+                ..
+            } => {
+                if self
+                    .simd_benchmarks
+                    .iter()
+                    .any(|record| record.id == *benchmark)
+                {
+                    Err(CommandError::precondition("SIMD benchmark already exists"))
+                } else {
+                    self.validate_simd_benchmark(
+                        *benchmark,
+                        *target_feature_set,
+                        *scalar_code_object,
+                        *vector_code_object,
+                        simd_abi,
+                        *vector_register_count,
+                        *vector_register_bits,
+                        *workload_units,
+                        *scalar_nanos,
+                        *vector_nanos,
+                        *speedup_milli,
+                        *context_overhead_nanos,
+                    )
+                    .map_err(CommandError::precondition)
+                }
+            }
             SemanticCommand::RecordQueueObject {
                 queue,
                 name,
@@ -7044,6 +7099,35 @@ impl SemanticGraph {
                 vector_register_count,
                 vector_register_bits,
                 injected_faults,
+                &note,
+            ),
+            SemanticCommand::RecordSimdBenchmark {
+                benchmark,
+                target_feature_set,
+                scalar_code_object,
+                vector_code_object,
+                simd_abi,
+                vector_register_count,
+                vector_register_bits,
+                workload_units,
+                scalar_nanos,
+                vector_nanos,
+                speedup_milli,
+                context_overhead_nanos,
+                note,
+            } => self.record_simd_benchmark_with_id(
+                benchmark,
+                target_feature_set,
+                scalar_code_object,
+                vector_code_object,
+                &simd_abi,
+                vector_register_count,
+                vector_register_bits,
+                workload_units,
+                scalar_nanos,
+                vector_nanos,
+                speedup_milli,
+                context_overhead_nanos,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

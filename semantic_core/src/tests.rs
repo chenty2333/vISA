@@ -20220,6 +20220,134 @@ fn simd_runtime_v10_rejects_illegal_instruction_on_unsupported_target() {
     assert!(graph.simd_fault_injections().is_empty());
 }
 
+fn v11_supported_simd_benchmark_graph() -> SemanticGraph {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.record_target_feature_set_with_id(
+        21_011,
+        "riscv64-vector-benchmark-test-target",
+        "semantic-contract-v11-test",
+        "riscv64-vector-benchmark-test",
+        "riscv64",
+        "rv64gcv",
+        "riscv-v",
+        true,
+        32,
+        128,
+        true,
+        "",
+        "v11 supported SIMD benchmark fixture",
+    ));
+    graph
+}
+
+#[test]
+fn simd_runtime_v11_benchmark_records_scalar_vs_vector_speedup() {
+    let mut graph = v11_supported_simd_benchmark_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v11-test",
+        SemanticCommand::RecordSimdBenchmark {
+            benchmark: 22_011,
+            target_feature_set: ContractObjectRef::new(
+                ContractObjectKind::TargetFeatureSet,
+                21_011,
+                1,
+            ),
+            scalar_code_object: ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4),
+            vector_code_object: ContractObjectRef::new(ContractObjectKind::CodeObject, 10, 4),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            workload_units: 4096,
+            scalar_nanos: 120_000,
+            vector_nanos: 40_000,
+            speedup_milli: 3000,
+            context_overhead_nanos: 80_000,
+            note: "record scalar/vector SIMD benchmark".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    assert_eq!(graph.simd_benchmark_count(), 1);
+    let benchmark = &graph.simd_benchmarks()[0];
+    assert_eq!(
+        benchmark.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::SimdBenchmark, 22_011, 1)
+    );
+    assert_eq!(benchmark.scalar_code_object.generation, 4);
+    assert_eq!(benchmark.vector_code_object.generation, 4);
+    assert_eq!(benchmark.speedup_milli, 3000);
+    assert_eq!(benchmark.context_overhead_nanos, 80_000);
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "SimdBenchmarkRecorded benchmark=22011 target_feature_set=target-feature-set:21011@1 scalar_code_object=code-object:9@4 vector_code_object=code-object:10@4 simd_abi=riscv-v vector_register_count=32 vector_register_bits=128 workload_units=4096 scalar_nanos=120000 vector_nanos=40000 speedup_milli=3000 context_overhead_nanos=80000 generation=1"
+    );
+}
+
+#[test]
+fn simd_runtime_v11_rejects_vector_slower_than_scalar() {
+    let mut graph = v11_supported_simd_benchmark_graph();
+
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v11-test",
+        SemanticCommand::RecordSimdBenchmark {
+            benchmark: 22_011,
+            target_feature_set: ContractObjectRef::new(
+                ContractObjectKind::TargetFeatureSet,
+                21_011,
+                1,
+            ),
+            scalar_code_object: ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4),
+            vector_code_object: ContractObjectRef::new(ContractObjectKind::CodeObject, 10, 4),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            workload_units: 4096,
+            scalar_nanos: 40_000,
+            vector_nanos: 120_000,
+            speedup_milli: 333,
+            context_overhead_nanos: 0,
+            note: "bad slower vector benchmark".to_string(),
+        },
+    ));
+
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["SIMD benchmark vector path must be faster than scalar path".to_string()]
+    );
+    assert!(graph.simd_benchmarks().is_empty());
+}
+
+#[test]
+fn simd_runtime_v11_invariants_reject_metric_drift() {
+    let mut graph = v11_supported_simd_benchmark_graph();
+    assert!(graph.record_simd_benchmark_with_id(
+        22_011,
+        ContractObjectRef::new(ContractObjectKind::TargetFeatureSet, 21_011, 1),
+        ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4),
+        ContractObjectRef::new(ContractObjectKind::CodeObject, 10, 4),
+        "riscv-v",
+        32,
+        128,
+        4096,
+        120_000,
+        40_000,
+        3000,
+        80_000,
+        "v11 scalar/vector benchmark",
+    ));
+    graph.corrupt_simd_benchmark_speedup_for_test(22_011, 2999);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::SimdBenchmarkInvalid { benchmark: 22_011 })
+    );
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();

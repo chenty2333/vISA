@@ -1,0 +1,134 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "V11-simd-benchmark-scalar-vs-vector",
+  "name": "golden_v11_simd_scalar_vector_benchmark",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/10-command-transaction-surface.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "hardware vector instruction execution",
+    "raw vector register payload storage",
+    "real target-side cwasm execution",
+    "target hardware SIMD enablement"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "TargetFeatureSet target-feature-set:21011@1 supports riscv-v with 32x128 vector registers",
+      "CodeObject code-object:19@5 is scalar-only",
+      "CodeObject code-object:20@6 declares riscv-v SIMD requirements against target-feature-set:21011@1"
+    ],
+    "command": {
+      "name": "record-simd-benchmark",
+      "benchmark": "simd-benchmark:22011@1",
+      "target_feature_set": "target-feature-set:21011@1",
+      "scalar_code_object": "code-object:19@5",
+      "vector_code_object": "code-object:20@6",
+      "workload_units": 4096,
+      "result": "recorded scalar/vector SIMD benchmark evidence"
+    }
+  },
+  "events": [
+    {
+      "kind": "TargetFeatureSetDiscovered",
+      "source": "SemanticGraph::record_target_feature_set_with_id",
+      "visible_as": "osctl target-feature-set list --json",
+      "reason": "SIMD benchmark evidence is pinned to a declared target feature object"
+    },
+    {
+      "kind": "SimdBenchmarkRecorded",
+      "source": "SemanticGraph::record_simd_benchmark_with_id",
+      "visible_as": "osctl simd-benchmark list --json",
+      "reason": "scalar and vector measurements are semantic evidence, not ad hoc logs"
+    }
+  ],
+  "expected": {
+    "views": {
+      "simd-benchmark": {
+        "id": 22011,
+        "generation": 1,
+        "state": "recorded",
+        "simd": {
+          "abi": "riscv-v",
+          "vector_register_count": 32,
+          "vector_register_bits": 128
+        },
+        "metrics": {
+          "workload_units": 4096,
+          "scalar_nanos": 120000,
+          "vector_nanos": 40000,
+          "speedup_milli": 3000,
+          "context_overhead_nanos": 80000
+        },
+        "references": {
+          "target_feature_set": {
+            "kind": "target-feature-set",
+            "id": 21011,
+            "generation": 1
+          },
+          "scalar_code_object": {
+            "kind": "code-object",
+            "id": 19,
+            "generation": 5
+          },
+          "vector_code_object": {
+            "kind": "code-object",
+            "id": 20,
+            "generation": 6
+          }
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "simd-benchmark:22011@1",
+          "relation": "simd-benchmark->target-feature-set",
+          "to": "target-feature-set:21011@1",
+          "mode": "historical"
+        },
+        {
+          "from": "simd-benchmark:22011@1",
+          "relation": "simd-benchmark->scalar-code-object",
+          "to": "code-object:19@5",
+          "mode": "historical"
+        },
+        {
+          "from": "simd-benchmark:22011@1",
+          "relation": "simd-benchmark->vector-code-object",
+          "to": "code-object:20@6",
+          "mode": "historical"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "SIMD benchmark target feature set must support the requested ABI and vector shape",
+      "scalar benchmark CodeObject must remain scalar-only",
+      "vector benchmark CodeObject must declare a matching SIMD requirement",
+      "vector measurement must be faster than scalar measurement",
+      "speedup and context-overhead metrics are derived and validated"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "simd_runtime_v11_benchmark_records_scalar_vs_vector_speedup",
+      "simd_runtime_v11_rejects_vector_slower_than_scalar",
+      "simd_runtime_v11_invariants_reject_metric_drift",
+      "simd_runtime_v11_benchmark_validates_scalar_and_vector_code_requirements",
+      "simd_runtime_v11_rejects_benchmark_scalar_code_that_declares_simd",
+      "simd_benchmark_view_v1_exposes_scalar_vector_metrics_and_refs"
+    ],
+    "osctl_json_view": "simd-benchmark list --json",
+    "simd_benchmark": "simd-benchmark:22011@1",
+    "target_feature_set": "target-feature-set:21011@1",
+    "scalar_code_object": "code-object:19@5",
+    "vector_code_object": "code-object:20@6"
+  }
+}

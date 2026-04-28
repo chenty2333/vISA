@@ -149,6 +149,7 @@ impl SemanticGraph {
         self.check_target_feature_set_invariants()?;
         self.check_vector_state_invariants()?;
         self.check_simd_fault_injection_invariants()?;
+        self.check_simd_benchmark_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;

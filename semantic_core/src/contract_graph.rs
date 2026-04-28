@@ -82,6 +82,7 @@ pub struct ContractGraphSnapshot {
     pub target_feature_sets: Vec<TargetFeatureSetRecord>,
     pub vector_states: Vec<VectorStateRecord>,
     pub simd_fault_injections: Vec<SimdFaultInjectionRecord>,
+    pub simd_benchmarks: Vec<SimdBenchmarkRecord>,
     pub stores: Vec<StoreRecord>,
     pub activations: Vec<ActivationRecord>,
     pub traps: Vec<TargetTrapRecord>,
@@ -181,6 +182,7 @@ impl ContractGraphValidator {
         Self::validate_code_objects(snapshot, &mut violations);
         Self::validate_vector_states(snapshot, &mut violations);
         Self::validate_simd_fault_injections(snapshot, &mut violations);
+        Self::validate_simd_benchmarks(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -483,6 +485,152 @@ impl ContractGraphValidator {
                     Some(trap.object_ref()),
                     "SIMD fault injection trap attribution does not match exact activation/code refs",
                 ));
+            }
+        }
+    }
+
+    fn validate_simd_benchmarks(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for benchmark in &snapshot.simd_benchmarks {
+            let from = benchmark.object_ref();
+            for (label, target, expected_kind) in [
+                (
+                    "simd-benchmark->target-feature-set",
+                    benchmark.target_feature_set,
+                    ContractObjectKind::TargetFeatureSet,
+                ),
+                (
+                    "simd-benchmark->scalar-code",
+                    benchmark.scalar_code_object,
+                    ContractObjectKind::CodeObject,
+                ),
+                (
+                    "simd-benchmark->vector-code",
+                    benchmark.vector_code_object,
+                    ContractObjectKind::CodeObject,
+                ),
+            ] {
+                if target.kind != expected_kind {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        label,
+                        from,
+                        Some(target),
+                        "SIMD benchmark edge uses the wrong object kind",
+                    ));
+                    continue;
+                }
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    expected_kind,
+                    target.id,
+                    target.generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+
+            if benchmark.scalar_code_object == benchmark.vector_code_object {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "simd-benchmark->code-pair",
+                    from,
+                    Some(benchmark.scalar_code_object),
+                    "SIMD benchmark requires distinct scalar and vector code objects",
+                ));
+            }
+            if benchmark.vector_nanos >= benchmark.scalar_nanos
+                || benchmark.scalar_nanos == 0
+                || benchmark.vector_nanos == 0
+                || benchmark.workload_units == 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "simd-benchmark->metrics",
+                    from,
+                    None,
+                    "SIMD benchmark requires nonzero workload and faster vector path",
+                ));
+            } else {
+                let expected_speedup = ((benchmark.scalar_nanos as u128) * 1000u128
+                    / benchmark.vector_nanos as u128) as u64;
+                let expected_overhead = benchmark.scalar_nanos - benchmark.vector_nanos;
+                if benchmark.speedup_milli != expected_speedup
+                    || benchmark.context_overhead_nanos != expected_overhead
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "simd-benchmark->metrics",
+                        from,
+                        None,
+                        "SIMD benchmark derived metrics do not match scalar/vector measurements",
+                    ));
+                }
+            }
+
+            let feature = snapshot
+                .target_feature_sets
+                .iter()
+                .find(|feature| feature.object_ref() == benchmark.target_feature_set);
+            if let Some(feature) = feature {
+                if !feature.simd_supported
+                    || feature.simd_abi != benchmark.simd_abi
+                    || feature.vector_register_count < benchmark.vector_register_count
+                    || feature.vector_register_bits < benchmark.vector_register_bits
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "simd-benchmark->target-feature-set",
+                        from,
+                        Some(feature.object_ref()),
+                        "SIMD benchmark target feature set does not support benchmark vector shape",
+                    ));
+                }
+            }
+
+            let scalar_code = snapshot
+                .code_objects
+                .iter()
+                .find(|code| code.object_ref() == benchmark.scalar_code_object);
+            if let Some(code) = scalar_code
+                && code.simd_requirement.uses_simd
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "simd-benchmark->scalar-code",
+                    from,
+                    Some(code.object_ref()),
+                    "SIMD benchmark scalar code object must not declare SIMD usage",
+                ));
+            }
+
+            let vector_code = snapshot
+                .code_objects
+                .iter()
+                .find(|code| code.object_ref() == benchmark.vector_code_object);
+            if let Some(code) = vector_code {
+                if !code.simd_requirement.uses_simd
+                    || code.simd_requirement.status != CodeObjectSimdRequirementStatus::Declared
+                    || code.simd_requirement.required_abi != benchmark.simd_abi
+                    || code.simd_requirement.min_vector_register_count
+                        != benchmark.vector_register_count
+                    || code.simd_requirement.min_vector_register_bits
+                        != benchmark.vector_register_bits
+                    || code.simd_requirement.target_feature_set
+                        != Some(benchmark.target_feature_set)
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "simd-benchmark->vector-code",
+                        from,
+                        Some(code.object_ref()),
+                        "SIMD benchmark vector code object does not declare matching SIMD requirement",
+                    ));
+                }
             }
         }
     }
@@ -1548,6 +1696,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|injection| injection.id == id)
                 .map(SimdFaultInjectionRecord::object_ref),
+            ContractObjectKind::SimdBenchmark => snapshot
+                .simd_benchmarks
+                .iter()
+                .find(|benchmark| benchmark.id == id)
+                .map(SimdBenchmarkRecord::object_ref),
             ContractObjectKind::Artifact => snapshot
                 .artifacts
                 .iter()
@@ -1726,6 +1879,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|injection| injection.id == id)
                 .map(SimdFaultInjectionRecord::object_ref),
+            ContractObjectKind::SimdBenchmark => snapshot
+                .simd_benchmarks
+                .iter()
+                .find(|benchmark| benchmark.id == id)
+                .map(SimdBenchmarkRecord::object_ref),
             ContractObjectKind::Store => snapshot
                 .stores
                 .iter()
@@ -1868,6 +2026,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::TargetFeatureSet
                 | ContractObjectKind::VectorState
                 | ContractObjectKind::SimdFaultInjection
+                | ContractObjectKind::SimdBenchmark
                 | ContractObjectKind::Store
                 | ContractObjectKind::Activation
                 | ContractObjectKind::Trap

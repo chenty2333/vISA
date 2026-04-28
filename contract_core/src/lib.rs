@@ -147,6 +147,7 @@ pub enum ObjectKind {
     TargetFeatureSet,
     VectorState,
     SimdFaultInjection,
+    SimdBenchmark,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -259,6 +260,7 @@ impl ObjectKind {
             Self::TargetFeatureSet => "target-feature-set",
             Self::VectorState => "vector-state",
             Self::SimdFaultInjection => "simd-fault-injection",
+            Self::SimdBenchmark => "simd-benchmark",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -560,6 +562,7 @@ typed_ref!(
 typed_ref!(TargetFeatureSetRef, ObjectKind::TargetFeatureSet);
 typed_ref!(VectorStateRef, ObjectKind::VectorState);
 typed_ref!(SimdFaultInjectionRef, ObjectKind::SimdFaultInjection);
+typed_ref!(SimdBenchmarkRef, ObjectKind::SimdBenchmark);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2219,6 +2222,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "simd fault injection root/count mismatch",
         ));
     }
+    if roots.simd_benchmark_roots.len() != package.semantic.simd_benchmark_count
+        || package.semantic.simd_benchmarks.len() != package.semantic.simd_benchmark_count
+    {
+        return Err(ContractError::new("simd benchmark root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2822,6 +2830,7 @@ mod tests {
                 target_feature_set_count: 0,
                 vector_state_count: 0,
                 simd_fault_injection_count: 0,
+                simd_benchmark_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2943,6 +2952,7 @@ mod tests {
                 target_feature_sets: Vec::new(),
                 vector_states: Vec::new(),
                 simd_fault_injections: Vec::new(),
+                simd_benchmarks: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -5104,6 +5114,48 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_simd_benchmark_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.simd_benchmark_count = 1;
+        package
+            .semantic
+            .simd_benchmarks
+            .push(artifact_manifest::SimdBenchmarkManifest {
+                id: 89,
+                target_feature_set: artifact_manifest::ContractObjectRefManifest {
+                    kind: "target-feature-set".to_owned(),
+                    id: 86,
+                    generation: 1,
+                },
+                scalar_code_object: artifact_manifest::ContractObjectRefManifest {
+                    kind: "code-object".to_owned(),
+                    id: 9,
+                    generation: 3,
+                },
+                vector_code_object: artifact_manifest::ContractObjectRefManifest {
+                    kind: "code-object".to_owned(),
+                    id: 10,
+                    generation: 3,
+                },
+                simd_abi: "riscv-v".to_owned(),
+                vector_register_count: 32,
+                vector_register_bits: 128,
+                workload_units: 4096,
+                scalar_nanos: 120_000,
+                vector_nanos: 40_000,
+                speedup_milli: 3000,
+                context_overhead_nanos: 80_000,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 99,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "simd benchmark root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -6427,6 +6479,8 @@ mod tests {
         assert!(VectorStateRef::try_from_ref(vector_state).is_ok());
         let simd_fault_injection = ObjectRef::new(ObjectKind::SimdFaultInjection, 77, 1).unwrap();
         assert!(SimdFaultInjectionRef::try_from_ref(simd_fault_injection).is_ok());
+        let simd_benchmark = ObjectRef::new(ObjectKind::SimdBenchmark, 78, 1).unwrap();
+        assert!(SimdBenchmarkRef::try_from_ref(simd_benchmark).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

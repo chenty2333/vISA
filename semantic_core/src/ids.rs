@@ -79,6 +79,7 @@ pub type BlockRecoveryBenchmarkId = u64;
 pub type TargetFeatureSetId = u64;
 pub type VectorStateId = u64;
 pub type SimdFaultInjectionId = u64;
+pub type SimdBenchmarkId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

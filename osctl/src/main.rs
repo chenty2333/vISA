@@ -32,13 +32,14 @@ use artifact_manifest::{
     PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
     QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SimdFaultInjectionManifest, SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest,
-    SmpSafePointManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
-    SmpStressRunManifest, SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
-    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
-    TargetArtifactImageManifest, TargetFeatureSetManifest, TaskRecordManifest,
-    TimerInterruptManifest, TrapRecordManifest, VectorStateManifest,
-    VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
+    SimdBenchmarkManifest, SimdFaultInjectionManifest, SmpCleanupQuiescenceManifest,
+    SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
+    SmpSnapshotBarrierManifest, SmpStressRunManifest, SocketObjectManifest,
+    SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
+    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest,
+    TargetFeatureSetManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
+    VectorStateManifest, VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -409,6 +410,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "simd-vector-state"
         | "simd-fault-injection"
         | "simd-fault"
+        | "simd-benchmark"
+        | "simd-scalar-vector-benchmark"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -580,7 +583,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -588,7 +591,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -866,6 +869,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         }
         "vector-state" | "vector" | "simd-vector-state" => "vector-state",
         "simd-fault-injection" | "simd-fault" => "simd-fault-injection",
+        "simd-benchmark" | "simd-scalar-vector-benchmark" => "simd-benchmark",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -4137,6 +4141,45 @@ fn simd_fault_injection_view_v1(injection: &SimdFaultInjectionManifest) -> serde
     })
 }
 
+fn simd_benchmark_view_v1(benchmark: &SimdBenchmarkManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "simd-benchmark",
+        "id": benchmark.id,
+        "generation": benchmark.generation,
+        "state": benchmark.state,
+        "owner": {
+            "target_feature_set": object_ref_manifest_json(&benchmark.target_feature_set),
+        },
+        "references": {
+            "target_feature_set": object_ref_manifest_json(&benchmark.target_feature_set),
+            "scalar_code_object": object_ref_manifest_json(&benchmark.scalar_code_object),
+            "vector_code_object": object_ref_manifest_json(&benchmark.vector_code_object),
+            "event": {
+                "id": benchmark.recorded_at_event,
+            },
+        },
+        "simd": {
+            "abi": benchmark.simd_abi,
+            "vector_register_count": benchmark.vector_register_count,
+            "vector_register_bits": benchmark.vector_register_bits,
+        },
+        "metrics": {
+            "workload_units": benchmark.workload_units,
+            "scalar_nanos": benchmark.scalar_nanos,
+            "vector_nanos": benchmark.vector_nanos,
+            "speedup_milli": benchmark.speedup_milli,
+            "context_overhead_nanos": benchmark.context_overhead_nanos,
+        },
+        "note": benchmark.note,
+        "last_transition": {
+            "recorded_at_event": benchmark.recorded_at_event,
+            "state": benchmark.state,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn packet_buffer_object_view_v1(packet_buffer: &PacketBufferObjectManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -6926,6 +6969,12 @@ fn stable_views_for_kind(
             .simd_fault_injections
             .iter()
             .map(simd_fault_injection_view_v1)
+            .collect()),
+        "simd-benchmark" | "simd-scalar-vector-benchmark" => Ok(package
+            .semantic
+            .simd_benchmarks
+            .iter()
+            .map(simd_benchmark_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -10273,6 +10322,39 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             event,
         ));
     }
+    for benchmark in &package.semantic.simd_benchmarks {
+        let event = Some(benchmark.recorded_at_event);
+        let from = object_ref_json("simd-benchmark", benchmark.id, benchmark.generation);
+        for (target, label) in [
+            (
+                &benchmark.target_feature_set,
+                "simd-benchmark->target-feature-set",
+            ),
+            (
+                &benchmark.scalar_code_object,
+                "simd-benchmark->scalar-code-object",
+            ),
+            (
+                &benchmark.vector_code_object,
+                "simd-benchmark->vector-code-object",
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(target),
+                label,
+                "historical",
+                event,
+            ));
+        }
+        edges.push(graph_edge(
+            from,
+            object_ref_json("event", benchmark.recorded_at_event, 1),
+            "simd-benchmark->event",
+            "historical",
+            event,
+        ));
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -13342,6 +13424,42 @@ fn inspect_package_object(
                 );
             }
         }
+        "simd-benchmark" | "simd-scalar-vector-benchmark" => {
+            println!(
+                "inspect simd-benchmark package={} count={}",
+                package.package_id, package.semantic.simd_benchmark_count
+            );
+            for benchmark in &package.semantic.simd_benchmarks {
+                let line = format!(
+                    "simd-benchmark id={} target_feature_set={}@{} scalar_code_object={}@{} vector_code_object={}@{} simd_abi={} vector_register_count={} vector_register_bits={} workload_units={} scalar_nanos={} vector_nanos={} speedup_milli={} context_overhead_nanos={} state={} generation={}",
+                    benchmark.id,
+                    benchmark.target_feature_set.id,
+                    benchmark.target_feature_set.generation,
+                    benchmark.scalar_code_object.id,
+                    benchmark.scalar_code_object.generation,
+                    benchmark.vector_code_object.id,
+                    benchmark.vector_code_object.generation,
+                    benchmark.simd_abi,
+                    benchmark.vector_register_count,
+                    benchmark.vector_register_bits,
+                    benchmark.workload_units,
+                    benchmark.scalar_nanos,
+                    benchmark.vector_nanos,
+                    benchmark.speedup_milli,
+                    benchmark.context_overhead_nanos,
+                    benchmark.state,
+                    benchmark.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.simd_benchmarks.is_empty() {
+                print_roots_filtered(
+                    "simd-benchmark",
+                    &package.semantic.roots.simd_benchmark_roots,
+                    filter,
+                );
+            }
+        }
         "command" => {
             println!(
                 "inspect command package={} count={}",
@@ -13643,6 +13761,28 @@ fn inspect_package_object_json(
                 .map(vector_state_view_v1)
                 .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.vector_state_roots.len() }),
+        ),
+        "simd-fault-injection" | "simd-fault" => (
+            "simd-fault-injection",
+            package.semantic.simd_fault_injection_count,
+            package
+                .semantic
+                .simd_fault_injections
+                .iter()
+                .map(simd_fault_injection_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "root_count": package.semantic.roots.simd_fault_injection_roots.len() }),
+        ),
+        "simd-benchmark" | "simd-scalar-vector-benchmark" => (
+            "simd-benchmark",
+            package.semantic.simd_benchmark_count,
+            package
+                .semantic
+                .simd_benchmarks
+                .iter()
+                .map(simd_benchmark_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "root_count": package.semantic.roots.simd_benchmark_roots.len() }),
         ),
         "command" => (
             "command",
@@ -17706,6 +17846,54 @@ mod tests {
         assert_eq!(view["fault"]["vector_register_bits"], 128);
         assert_eq!(view["fault"]["injected_faults"], 1);
         assert_eq!(view["last_transition"]["recorded_at_event"], 491);
+    }
+
+    #[test]
+    fn simd_benchmark_view_v1_exposes_scalar_vector_metrics_and_refs() {
+        let view = simd_benchmark_view_v1(&SimdBenchmarkManifest {
+            id: 22_011,
+            target_feature_set: ContractObjectRefManifest {
+                kind: "target-feature-set".to_owned(),
+                id: 21_011,
+                generation: 1,
+            },
+            scalar_code_object: ContractObjectRefManifest {
+                kind: "code-object".to_owned(),
+                id: 41,
+                generation: 4,
+            },
+            vector_code_object: ContractObjectRefManifest {
+                kind: "code-object".to_owned(),
+                id: 42,
+                generation: 5,
+            },
+            simd_abi: "riscv-v".to_owned(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            workload_units: 4096,
+            scalar_nanos: 120_000,
+            vector_nanos: 40_000,
+            speedup_milli: 3000,
+            context_overhead_nanos: 80_000,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 492,
+            note: "v11 SIMD benchmark".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "simd-benchmark");
+        assert_eq!(view["owner"]["target_feature_set"]["id"], 21_011);
+        assert_eq!(view["references"]["scalar_code_object"]["generation"], 4);
+        assert_eq!(view["references"]["vector_code_object"]["generation"], 5);
+        assert_eq!(view["simd"]["abi"], "riscv-v");
+        assert_eq!(view["simd"]["vector_register_count"], 32);
+        assert_eq!(view["metrics"]["workload_units"], 4096);
+        assert_eq!(view["metrics"]["scalar_nanos"], 120_000);
+        assert_eq!(view["metrics"]["vector_nanos"], 40_000);
+        assert_eq!(view["metrics"]["speedup_milli"], 3000);
+        assert_eq!(view["metrics"]["context_overhead_nanos"], 80_000);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 492);
     }
 
     #[test]

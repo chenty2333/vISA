@@ -1508,6 +1508,20 @@ pub enum SemanticInvariantError {
         injection: SimdFaultInjectionId,
         event: EventId,
     },
+    SimdBenchmarkInvalid {
+        benchmark: SimdBenchmarkId,
+    },
+    SimdBenchmarkMissingTarget {
+        benchmark: SimdBenchmarkId,
+        target: ContractObjectRef,
+    },
+    SimdBenchmarkMetricMismatch {
+        benchmark: SimdBenchmarkId,
+    },
+    SimdBenchmarkMissingEvent {
+        benchmark: SimdBenchmarkId,
+        event: EventId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

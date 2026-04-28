@@ -93,6 +93,7 @@ pub enum ContractObjectKind {
     TargetFeatureSet,
     VectorState,
     SimdFaultInjection,
+    SimdBenchmark,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -202,6 +203,7 @@ impl ContractObjectKind {
             Self::TargetFeatureSet => "target-feature-set",
             Self::VectorState => "vector-state",
             Self::SimdFaultInjection => "simd-fault-injection",
+            Self::SimdBenchmark => "simd-benchmark",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -5688,6 +5690,7 @@ mod tests {
             target_feature_sets: Vec::new(),
             vector_states: Vec::new(),
             simd_fault_injections: Vec::new(),
+            simd_benchmarks: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(stale_store);
@@ -5784,6 +5787,7 @@ mod tests {
             target_feature_sets: Vec::new(),
             vector_states: Vec::new(),
             simd_fault_injections: Vec::new(),
+            simd_benchmarks: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(store.store);
@@ -6014,6 +6018,7 @@ mod tests {
             target_feature_sets: Vec::new(),
             vector_states: Vec::new(),
             simd_fault_injections: Vec::new(),
+            simd_benchmarks: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(store.store);
@@ -6114,6 +6119,7 @@ mod tests {
             target_feature_sets: Vec::new(),
             vector_states: Vec::new(),
             simd_fault_injections: Vec::new(),
+            simd_benchmarks: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(dead_store.clone());
@@ -6301,6 +6307,7 @@ mod tests {
             target_feature_sets: Vec::new(),
             vector_states: Vec::new(),
             simd_fault_injections: Vec::new(),
+            simd_benchmarks: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(current_store.clone());
@@ -7147,6 +7154,99 @@ mod tests {
 
         assert!(violations.iter().any(|violation| {
             violation.edge == "simd-fault-injection->activation"
+                && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+        }));
+    }
+
+    #[test]
+    fn simd_runtime_v11_benchmark_validates_scalar_and_vector_code_requirements() {
+        let (artifact, store, scalar_code, _capabilities) = running_store_and_code();
+        let feature_set = target_feature_set_record();
+        let mut vector_code = scalar_code.clone();
+        vector_code.id += 1;
+        vector_code.generation += 1;
+        vector_code.simd_requirement = CodeObjectSimdRequirement::declared_simd(
+            "riscv-v",
+            32,
+            128,
+            feature_set.object_ref(),
+            "v11 vector benchmark code",
+        );
+        let benchmark = SimdBenchmarkRecord {
+            id: 22_011,
+            target_feature_set: feature_set.object_ref(),
+            scalar_code_object: scalar_code.object_ref(),
+            vector_code_object: vector_code.object_ref(),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            workload_units: 4096,
+            scalar_nanos: 120_000,
+            vector_nanos: 40_000,
+            speedup_milli: 3000,
+            context_overhead_nanos: 80_000,
+            generation: 1,
+            state: SimdBenchmarkState::Recorded,
+            recorded_at_event: 99,
+            note: "v11 scalar/vector benchmark".to_string(),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([artifact]),
+            code_objects: Vec::from([scalar_code, vector_code]),
+            target_feature_sets: Vec::from([feature_set]),
+            stores: Vec::from([store.store]),
+            simd_benchmarks: Vec::from([benchmark]),
+            ..ContractGraphSnapshot::default()
+        };
+
+        assert_eq!(validate_contract_graph(&snapshot), Vec::new());
+    }
+
+    #[test]
+    fn simd_runtime_v11_rejects_benchmark_scalar_code_that_declares_simd() {
+        let (artifact, store, mut scalar_code, _capabilities) = running_store_and_code();
+        let feature_set = target_feature_set_record();
+        scalar_code.simd_requirement = CodeObjectSimdRequirement::declared_simd(
+            "riscv-v",
+            32,
+            128,
+            feature_set.object_ref(),
+            "bad v11 scalar benchmark code",
+        );
+        scalar_code.generation += 1;
+        let mut vector_code = scalar_code.clone();
+        vector_code.id += 1;
+        vector_code.generation += 1;
+        let benchmark = SimdBenchmarkRecord {
+            id: 22_011,
+            target_feature_set: feature_set.object_ref(),
+            scalar_code_object: scalar_code.object_ref(),
+            vector_code_object: vector_code.object_ref(),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            workload_units: 4096,
+            scalar_nanos: 120_000,
+            vector_nanos: 40_000,
+            speedup_milli: 3000,
+            context_overhead_nanos: 80_000,
+            generation: 1,
+            state: SimdBenchmarkState::Recorded,
+            recorded_at_event: 99,
+            note: "bad v11 scalar/vector benchmark".to_string(),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([artifact]),
+            code_objects: Vec::from([scalar_code, vector_code]),
+            target_feature_sets: Vec::from([feature_set]),
+            stores: Vec::from([store.store]),
+            simd_benchmarks: Vec::from([benchmark]),
+            ..ContractGraphSnapshot::default()
+        };
+        let violations = validate_contract_graph(&snapshot);
+
+        assert!(violations.iter().any(|violation| {
+            violation.edge == "simd-benchmark->scalar-code"
                 && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
         }));
     }

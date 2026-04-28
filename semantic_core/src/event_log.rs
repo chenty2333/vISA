@@ -691,6 +691,21 @@ pub enum EventKind {
         effect: SimdFaultInjectionEffect,
         generation: Generation,
     },
+    SimdBenchmarkRecorded {
+        benchmark: SimdBenchmarkId,
+        target_feature_set: ContractObjectRef,
+        scalar_code_object: ContractObjectRef,
+        vector_code_object: ContractObjectRef,
+        simd_abi: String,
+        vector_register_count: u16,
+        vector_register_bits: u16,
+        workload_units: u64,
+        scalar_nanos: u64,
+        vector_nanos: u64,
+        speedup_milli: u64,
+        context_overhead_nanos: u64,
+        generation: Generation,
+    },
     FakeBlockBackendObjectBound {
         fake_block_backend: FakeBlockBackendObjectId,
         block_device: BlockDeviceObjectId,
@@ -2637,6 +2652,26 @@ impl EventKind {
                     .unwrap_or_else(|| "none".to_string()),
                 kind.as_str(),
                 effect.as_str()
+            ),
+            Self::SimdBenchmarkRecorded {
+                benchmark,
+                target_feature_set,
+                scalar_code_object,
+                vector_code_object,
+                simd_abi,
+                vector_register_count,
+                vector_register_bits,
+                workload_units,
+                scalar_nanos,
+                vector_nanos,
+                speedup_milli,
+                context_overhead_nanos,
+                generation,
+            } => format!(
+                "SimdBenchmarkRecorded benchmark={benchmark} target_feature_set={} scalar_code_object={} vector_code_object={} simd_abi={simd_abi} vector_register_count={vector_register_count} vector_register_bits={vector_register_bits} workload_units={workload_units} scalar_nanos={scalar_nanos} vector_nanos={vector_nanos} speedup_milli={speedup_milli} context_overhead_nanos={context_overhead_nanos} generation={generation}",
+                target_feature_set.summary(),
+                scalar_code_object.summary(),
+                vector_code_object.summary()
             ),
             Self::FakeBlockBackendObjectBound {
                 fake_block_backend,

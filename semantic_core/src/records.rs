@@ -2541,6 +2541,32 @@ impl SimdFaultInjectionRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SimdBenchmarkRecord {
+    pub id: SimdBenchmarkId,
+    pub target_feature_set: ContractObjectRef,
+    pub scalar_code_object: ContractObjectRef,
+    pub vector_code_object: ContractObjectRef,
+    pub simd_abi: String,
+    pub vector_register_count: u16,
+    pub vector_register_bits: u16,
+    pub workload_units: u64,
+    pub scalar_nanos: u64,
+    pub vector_nanos: u64,
+    pub speedup_milli: u64,
+    pub context_overhead_nanos: u64,
+    pub generation: Generation,
+    pub state: SimdBenchmarkState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl SimdBenchmarkRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::SimdBenchmark, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

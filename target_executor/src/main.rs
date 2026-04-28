@@ -39,8 +39,8 @@ use artifact_manifest::{
     QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SimdFaultInjectionManifest,
-    SimdTrapAttributionManifest, SmpCleanupQuiescenceManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
+    SimdFaultInjectionManifest, SimdTrapAttributionManifest, SmpCleanupQuiescenceManifest,
     SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
     SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
@@ -8366,6 +8366,12 @@ fn build_target_executor_v1(
         &mut store_manager,
         &mut executor,
     )?;
+    run_simd_benchmark_harness(
+        &verified_artifacts,
+        semantic,
+        &mut publisher,
+        &mut store_manager,
+    )?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8433,6 +8439,7 @@ fn build_target_executor_v1(
         target_feature_sets: semantic.target_feature_sets().to_vec(),
         vector_states: semantic.vector_states().to_vec(),
         simd_fault_injections: semantic.simd_fault_injections().to_vec(),
+        simd_benchmarks: semantic.simd_benchmarks().to_vec(),
         stores: store_manager
             .records()
             .iter()
@@ -9739,6 +9746,154 @@ fn run_simd_fault_injection_harness(
     Ok(())
 }
 
+fn run_simd_benchmark_harness(
+    verified_artifacts: &[VerifiedArtifact],
+    semantic: &mut SemanticGraph,
+    publisher: &mut CodePublisher,
+    store_manager: &mut TargetStoreManager,
+) -> Result<(), Box<dyn Error>> {
+    let artifact = verified_artifacts
+        .first()
+        .ok_or("SIMD benchmark harness requires at least one verified artifact")?;
+    let feature_set = 21_011;
+    let feature_recorded = semantic.apply_envelope(CommandEnvelope::new(
+        90_017,
+        "simd-runtime-v11",
+        SemanticCommand::RecordTargetFeatureSet {
+            feature_set,
+            name: "v11-simd-benchmark-fixture".to_owned(),
+            discovery_source: "target-executor-v11-simd-benchmark-harness".to_owned(),
+            target_profile: "riscv64-vector-host-validation-fixture".to_owned(),
+            target_arch: "riscv64".to_owned(),
+            base_isa: "rv64gcv".to_owned(),
+            simd_abi: "riscv-v".to_owned(),
+            simd_supported: true,
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            scalar_fallback: true,
+            unsupported_reason: String::new(),
+            note: "v11 synthetic supported SIMD fixture for scalar/vector benchmark".to_owned(),
+        },
+    ));
+    if feature_recorded.status != CommandStatus::Applied {
+        return Err(format!(
+            "simd runtime v11 target feature command {} ({}) failed: status={} violations={:?}",
+            feature_recorded.command_id,
+            feature_recorded.command,
+            feature_recorded.status.as_str(),
+            feature_recorded.violations
+        )
+        .into());
+    }
+    let feature_ref = semantic
+        .target_feature_sets()
+        .iter()
+        .find(|feature| feature.id == feature_set)
+        .map(|feature| feature.object_ref())
+        .ok_or("v11 target feature fixture missing")?;
+
+    let scalar_store_id =
+        store_manager.register_verified_artifact(artifact, "restartable", "simd-benchmark-scalar");
+    store_manager
+        .set_running(scalar_store_id)
+        .map_err(|error| error.message())?;
+    let scalar_store = store_manager
+        .record(scalar_store_id)
+        .ok_or("SIMD benchmark scalar store missing after registration")?
+        .store
+        .clone();
+    let scalar_code_id = publisher
+        .allocate(artifact)
+        .map_err(|error| error.message())?;
+    publisher
+        .fill(scalar_code_id)
+        .map_err(|error| error.message())?;
+    publisher
+        .seal(scalar_code_id)
+        .map_err(|error| error.message())?;
+    publisher
+        .publish_rx(scalar_code_id)
+        .map_err(|error| error.message())?;
+    publisher
+        .bind_to_store(scalar_code_id, &scalar_store)
+        .map_err(|error| error.message())?;
+    let scalar_code = publisher
+        .object(scalar_code_id)
+        .ok_or("SIMD benchmark scalar code missing after bind")?
+        .clone();
+
+    let vector_store_id =
+        store_manager.register_verified_artifact(artifact, "restartable", "simd-benchmark-vector");
+    store_manager
+        .set_running(vector_store_id)
+        .map_err(|error| error.message())?;
+    let vector_store = store_manager
+        .record(vector_store_id)
+        .ok_or("SIMD benchmark vector store missing after registration")?
+        .store
+        .clone();
+    let vector_code_id = publisher
+        .allocate(artifact)
+        .map_err(|error| error.message())?;
+    publisher
+        .declare_simd_requirement(
+            vector_code_id,
+            feature_ref,
+            "riscv-v",
+            32,
+            128,
+            "v11 SIMD benchmark vector code requirement",
+        )
+        .map_err(|error| error.message())?;
+    publisher
+        .fill(vector_code_id)
+        .map_err(|error| error.message())?;
+    publisher
+        .seal(vector_code_id)
+        .map_err(|error| error.message())?;
+    publisher
+        .publish_rx(vector_code_id)
+        .map_err(|error| error.message())?;
+    publisher
+        .bind_to_store(vector_code_id, &vector_store)
+        .map_err(|error| error.message())?;
+    let vector_code = publisher
+        .object(vector_code_id)
+        .ok_or("SIMD benchmark vector code missing after bind")?
+        .clone();
+
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_018,
+        "simd-runtime-v11",
+        SemanticCommand::RecordSimdBenchmark {
+            benchmark: 22_011,
+            target_feature_set: feature_ref,
+            scalar_code_object: scalar_code.object_ref(),
+            vector_code_object: vector_code.object_ref(),
+            simd_abi: "riscv-v".to_owned(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            workload_units: 4096,
+            scalar_nanos: 120_000,
+            vector_nanos: 40_000,
+            speedup_milli: 3000,
+            context_overhead_nanos: 80_000,
+            note: "v11 records deterministic scalar versus SIMD vector benchmark".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "simd runtime v11 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn declared_authority_objects(capabilities: &[CapabilityRecord]) -> Vec<ExternalObjectDeclaration> {
     let mut declarations = Vec::new();
     for capability in capabilities {
@@ -10496,6 +10651,7 @@ fn demo_migration_package(
             target_feature_set_count: semantic.target_feature_set_count(),
             vector_state_count: semantic.vector_state_count(),
             simd_fault_injection_count: semantic.simd_fault_injection_count(),
+            simd_benchmark_count: semantic.simd_benchmark_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -10928,6 +11084,11 @@ fn demo_migration_package(
                 .simd_fault_injections()
                 .iter()
                 .map(simd_fault_injection_manifest)
+                .collect(),
+            simd_benchmarks: semantic
+                .simd_benchmarks()
+                .iter()
+                .map(simd_benchmark_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -12968,6 +13129,29 @@ fn semantic_roots(
                     injection.injected_faults,
                     injection.state.as_str(),
                     injection.generation
+                )
+            })
+            .collect(),
+        simd_benchmark_roots: semantic
+            .simd_benchmarks()
+            .iter()
+            .map(|benchmark| {
+                format!(
+                    "simd-benchmark id={} target_feature_set={} scalar_code_object={} vector_code_object={} simd_abi={} vector_register_count={} vector_register_bits={} workload_units={} scalar_nanos={} vector_nanos={} speedup_milli={} context_overhead_nanos={} state={} generation={}",
+                    benchmark.id,
+                    benchmark.target_feature_set.summary(),
+                    benchmark.scalar_code_object.summary(),
+                    benchmark.vector_code_object.summary(),
+                    benchmark.simd_abi,
+                    benchmark.vector_register_count,
+                    benchmark.vector_register_bits,
+                    benchmark.workload_units,
+                    benchmark.scalar_nanos,
+                    benchmark.vector_nanos,
+                    benchmark.speedup_milli,
+                    benchmark.context_overhead_nanos,
+                    benchmark.state.as_str(),
+                    benchmark.generation
                 )
             })
             .collect(),
@@ -15775,6 +15959,29 @@ fn simd_fault_injection_manifest(
         state: injection.state.as_str().to_owned(),
         recorded_at_event: injection.recorded_at_event,
         note: injection.note.clone(),
+    }
+}
+
+fn simd_benchmark_manifest(
+    benchmark: &semantic_core::SimdBenchmarkRecord,
+) -> SimdBenchmarkManifest {
+    SimdBenchmarkManifest {
+        id: benchmark.id,
+        target_feature_set: contract_object_ref_manifest(benchmark.target_feature_set),
+        scalar_code_object: contract_object_ref_manifest(benchmark.scalar_code_object),
+        vector_code_object: contract_object_ref_manifest(benchmark.vector_code_object),
+        simd_abi: benchmark.simd_abi.clone(),
+        vector_register_count: benchmark.vector_register_count,
+        vector_register_bits: benchmark.vector_register_bits,
+        workload_units: benchmark.workload_units,
+        scalar_nanos: benchmark.scalar_nanos,
+        vector_nanos: benchmark.vector_nanos,
+        speedup_milli: benchmark.speedup_milli,
+        context_overhead_nanos: benchmark.context_overhead_nanos,
+        generation: benchmark.generation,
+        state: benchmark.state.as_str().to_owned(),
+        recorded_at_event: benchmark.recorded_at_event,
+        note: benchmark.note.clone(),
     }
 }
 

@@ -387,6 +387,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub simd_fault_injection_count: usize,
     #[serde(default)]
+    pub simd_benchmark_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -625,6 +627,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub simd_fault_injections: Vec<SimdFaultInjectionManifest>,
     #[serde(default)]
+    pub simd_benchmarks: Vec<SimdBenchmarkManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -842,6 +846,8 @@ pub struct SemanticRootSetManifest {
     pub vector_state_roots: Vec<String>,
     #[serde(default)]
     pub simd_fault_injection_roots: Vec<String>,
+    #[serde(default)]
+    pub simd_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2942,6 +2948,26 @@ pub struct SimdFaultInjectionManifest {
     pub vector_register_count: u16,
     pub vector_register_bits: u16,
     pub injected_faults: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SimdBenchmarkManifest {
+    pub id: u64,
+    pub target_feature_set: ContractObjectRefManifest,
+    pub scalar_code_object: ContractObjectRefManifest,
+    pub vector_code_object: ContractObjectRefManifest,
+    pub simd_abi: String,
+    pub vector_register_count: u16,
+    pub vector_register_bits: u16,
+    pub workload_units: u64,
+    pub scalar_nanos: u64,
+    pub vector_nanos: u64,
+    pub speedup_milli: u64,
+    pub context_overhead_nanos: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,
