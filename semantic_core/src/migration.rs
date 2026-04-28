@@ -848,6 +848,16 @@ pub enum SemanticInvariantError {
     IntegratedSnapshotIoLeaseBarrierMissingEvent {
         integrated: IntegratedSnapshotIoLeaseBarrierId,
     },
+    IntegratedCodePublishSmpWorkloadInvalid {
+        integrated: IntegratedCodePublishSmpWorkloadId,
+    },
+    IntegratedCodePublishSmpWorkloadMissingEvidence {
+        integrated: IntegratedCodePublishSmpWorkloadId,
+        evidence: &'static str,
+    },
+    IntegratedCodePublishSmpWorkloadMissingEvent {
+        integrated: IntegratedCodePublishSmpWorkloadId,
+    },
     DeviceObjectInvalid {
         device: DeviceObjectId,
     },

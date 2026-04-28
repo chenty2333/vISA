@@ -996,6 +996,48 @@ impl IntegratedSnapshotIoLeaseBarrierRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntegratedCodePublishSmpWorkloadRecord {
+    pub id: IntegratedCodePublishSmpWorkloadId,
+    pub scenario: String,
+    pub smp_stress_run: SmpStressRunId,
+    pub smp_stress_run_generation: Generation,
+    pub smp_code_publish_barrier: SmpCodePublishBarrierId,
+    pub smp_code_publish_barrier_generation: Generation,
+    pub publish_rendezvous: StopTheWorldRendezvousId,
+    pub publish_rendezvous_generation: Generation,
+    pub publish_safe_point: SmpSafePointId,
+    pub publish_safe_point_generation: Generation,
+    pub hart_count: u32,
+    pub workload_iterations: u32,
+    pub observed_safe_point_count: u32,
+    pub observed_rendezvous_count: u32,
+    pub observed_code_publish_barrier_count: u32,
+    pub code_publish_epoch_before: u64,
+    pub code_publish_epoch_after: u64,
+    pub remote_icache_sync_required: bool,
+    pub code_publish_executed: bool,
+    pub participant_count: u32,
+    pub stress_event_log_cursor: EventId,
+    pub barrier_event: EventId,
+    pub stress_recorded_at_event: EventId,
+    pub invariant_checks: u32,
+    pub generation: Generation,
+    pub state: IntegratedCodePublishSmpWorkloadState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl IntegratedCodePublishSmpWorkloadRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::IntegratedCodePublishSmpWorkload,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceObjectRecord {
     pub id: DeviceObjectId,
     pub name: String,

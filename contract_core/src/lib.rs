@@ -93,6 +93,7 @@ pub enum ObjectKind {
     IntegratedNetworkDiskIo,
     IntegratedDisplaySchedulerLoad,
     IntegratedSnapshotIoLeaseBarrier,
+    IntegratedCodePublishSmpWorkload,
     DeviceObject,
     QueueObject,
     DescriptorObject,
@@ -227,6 +228,7 @@ impl ObjectKind {
             Self::IntegratedNetworkDiskIo => "integrated-network-disk-io",
             Self::IntegratedDisplaySchedulerLoad => "integrated-display-scheduler-load",
             Self::IntegratedSnapshotIoLeaseBarrier => "integrated-snapshot-io-lease-barrier",
+            Self::IntegratedCodePublishSmpWorkload => "integrated-code-publish-smp-workload",
             Self::DeviceObject => "device-object",
             Self::QueueObject => "queue-object",
             Self::DescriptorObject => "descriptor-object",
@@ -541,6 +543,10 @@ typed_ref!(
 typed_ref!(
     IntegratedSnapshotIoLeaseBarrierRef,
     ObjectKind::IntegratedSnapshotIoLeaseBarrier
+);
+typed_ref!(
+    IntegratedCodePublishSmpWorkloadRef,
+    ObjectKind::IntegratedCodePublishSmpWorkload
 );
 typed_ref!(DeviceObjectRef, ObjectKind::DeviceObject);
 typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
@@ -1981,6 +1987,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "integrated snapshot io lease barrier root/count mismatch",
         ));
     }
+    if roots.integrated_code_publish_smp_workload_roots.len()
+        != package.semantic.integrated_code_publish_smp_workload_count
+        || package.semantic.integrated_code_publish_smp_workloads.len()
+            != package.semantic.integrated_code_publish_smp_workload_count
+    {
+        return Err(ContractError::new(
+            "integrated code publish smp workload root/count mismatch",
+        ));
+    }
     if roots.device_object_roots.len() != package.semantic.device_object_count
         || package.semantic.device_objects.len() != package.semantic.device_object_count
     {
@@ -3032,6 +3047,7 @@ mod tests {
                 integrated_network_disk_io_count: 0,
                 integrated_display_scheduler_load_count: 0,
                 integrated_snapshot_io_lease_barrier_count: 0,
+                integrated_code_publish_smp_workload_count: 0,
                 device_object_count: 0,
                 queue_object_count: 0,
                 descriptor_object_count: 0,
@@ -3175,6 +3191,7 @@ mod tests {
                 integrated_network_disk_ios: Vec::new(),
                 integrated_display_scheduler_loads: Vec::new(),
                 integrated_snapshot_io_lease_barriers: Vec::new(),
+                integrated_code_publish_smp_workloads: Vec::new(),
                 device_objects: Vec::new(),
                 queue_objects: Vec::new(),
                 descriptor_objects: Vec::new(),
@@ -4323,6 +4340,50 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "integrated snapshot io lease barrier root/count mismatch"
+        );
+    }
+
+    #[test]
+    fn semantic_roots_reject_integrated_code_publish_smp_workload_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.integrated_code_publish_smp_workload_count = 1;
+        package.semantic.integrated_code_publish_smp_workloads.push(
+            artifact_manifest::IntegratedCodePublishSmpWorkloadManifest {
+                id: 26_701,
+                scenario: "x7-code-publish-while-smp-workload-active".to_owned(),
+                smp_stress_run: 9_501,
+                smp_stress_run_generation: 1,
+                smp_code_publish_barrier: 9_201,
+                smp_code_publish_barrier_generation: 1,
+                publish_rendezvous: 9_101,
+                publish_rendezvous_generation: 1,
+                publish_safe_point: 9_001,
+                publish_safe_point_generation: 1,
+                hart_count: 2,
+                workload_iterations: 3,
+                observed_safe_point_count: 3,
+                observed_rendezvous_count: 3,
+                observed_code_publish_barrier_count: 1,
+                code_publish_epoch_before: 0,
+                code_publish_epoch_after: 1,
+                remote_icache_sync_required: true,
+                code_publish_executed: false,
+                participant_count: 2,
+                stress_event_log_cursor: 117,
+                barrier_event: 24,
+                stress_recorded_at_event: 118,
+                invariant_checks: 7,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 577,
+                note: "x7 semantic code publish while smp workload is active".to_owned(),
+            },
+        );
+
+        let err = validate_semantic_roots(&package).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "integrated code publish smp workload root/count mismatch"
         );
     }
 
@@ -7573,6 +7634,14 @@ mod tests {
         assert!(
             IntegratedSnapshotIoLeaseBarrierRef::try_from_ref(integrated_snapshot_io_lease_barrier)
                 .is_ok()
+        );
+        let integrated_code_publish_smp_workload =
+            ObjectRef::new(ObjectKind::IntegratedCodePublishSmpWorkload, 24, 1).unwrap();
+        assert!(
+            IntegratedCodePublishSmpWorkloadRef::try_from_ref(
+                integrated_code_publish_smp_workload,
+            )
+            .is_ok()
         );
         let device_object = ObjectRef::new(ObjectKind::DeviceObject, 17, 1).unwrap();
         assert!(DeviceObjectRef::try_from_ref(device_object).is_ok());

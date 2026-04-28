@@ -26,12 +26,13 @@ use artifact_manifest::{
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    IntegratedDiskPreemptFaultManifest, IntegratedDisplaySchedulerLoadManifest,
-    IntegratedNetworkDiskIoManifest, IntegratedSimdMigrationManifest,
-    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
-    IntegratedSnapshotIoLeaseBarrierManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    IntegratedCodePublishSmpWorkloadManifest, IntegratedDiskPreemptFaultManifest,
+    IntegratedDisplaySchedulerLoadManifest, IntegratedNetworkDiskIoManifest,
+    IntegratedSimdMigrationManifest, IntegratedSmpNetworkFaultManifest,
+    IntegratedSmpPreemptionCleanupManifest, IntegratedSnapshotIoLeaseBarrierManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -300,6 +301,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "integrated-snapshot-io-lease-barrier"
         | "snapshot-io-lease-barrier"
         | "snapshot-io-barrier"
+        | "integrated-code-publish-smp-workload"
+        | "code-publish-smp-workload"
+        | "integrated-code-publish-workload"
         | "device"
         | "device-object"
         | "queue"
@@ -648,7 +652,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|integrated-code-publish-smp-workload|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -656,7 +660,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|integrated-snapshot-io-lease-barrier|integrated-code-publish-smp-workload|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -974,6 +978,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "integrated-snapshot-io-lease-barrier"
         | "snapshot-io-lease-barrier"
         | "snapshot-io-barrier" => "integrated-snapshot-io-lease-barrier",
+        "integrated-code-publish-smp-workload"
+        | "code-publish-smp-workload"
+        | "integrated-code-publish-workload" => "integrated-code-publish-smp-workload",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2565,6 +2572,78 @@ fn integrated_snapshot_io_lease_barrier_view_v1(
             "uses_semantic_display_snapshot_barrier": true,
             "real_snapshot_or_dma_hardware_executed": false,
             "real_display_hardware_executed": false,
+            "adapter_internal_state_is_not_semantic_truth": true,
+        },
+        "note": record.note,
+        "last_transition": {
+            "event": record.recorded_at_event,
+            "state": record.state,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+fn integrated_code_publish_smp_workload_view_v1(
+    record: &IntegratedCodePublishSmpWorkloadManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "integrated-code-publish-smp-workload",
+        "id": record.id,
+        "generation": record.generation,
+        "state": record.state,
+        "owner": {
+            "hart_count": record.hart_count,
+            "workload_iterations": record.workload_iterations,
+        },
+        "references": {
+            "smp_stress_run": object_ref_json(
+                "smp-stress-run",
+                record.smp_stress_run,
+                record.smp_stress_run_generation,
+            ),
+            "smp_code_publish_barrier": object_ref_json(
+                "smp-code-publish-barrier",
+                record.smp_code_publish_barrier,
+                record.smp_code_publish_barrier_generation,
+            ),
+            "publish_rendezvous": object_ref_json(
+                "stop-the-world-rendezvous",
+                record.publish_rendezvous,
+                record.publish_rendezvous_generation,
+            ),
+            "publish_safe_point": object_ref_json(
+                "smp-safe-point",
+                record.publish_safe_point,
+                record.publish_safe_point_generation,
+            ),
+            "event": {
+                "id": record.recorded_at_event,
+            },
+        },
+        "closure": {
+            "scenario": record.scenario,
+            "observed_safe_point_count": record.observed_safe_point_count,
+            "observed_rendezvous_count": record.observed_rendezvous_count,
+            "observed_code_publish_barrier_count": record.observed_code_publish_barrier_count,
+            "code_publish_epoch_before": record.code_publish_epoch_before,
+            "code_publish_epoch_after": record.code_publish_epoch_after,
+            "remote_icache_sync_required": record.remote_icache_sync_required,
+            "code_publish_executed": record.code_publish_executed,
+            "participant_count": record.participant_count,
+            "stress_event_log_cursor": record.stress_event_log_cursor,
+            "barrier_event": record.barrier_event,
+            "stress_recorded_at_event": record.stress_recorded_at_event,
+            "invariant_checks": record.invariant_checks,
+            "requires_clean_smp_stress_run": true,
+            "requires_semantic_code_publish_barrier": true,
+            "requires_generation_exact_publish_refs": true,
+        },
+        "authority": {
+            "uses_semantic_stress_run": true,
+            "uses_semantic_code_publish_barrier": true,
+            "real_smp_dynamic_code_publish_executed": false,
+            "real_wx_page_publish_executed": false,
             "adapter_internal_state_is_not_semantic_truth": true,
         },
         "note": record.note,
@@ -8288,6 +8367,14 @@ fn stable_views_for_kind(
             .iter()
             .map(integrated_snapshot_io_lease_barrier_view_v1)
             .collect()),
+        "integrated-code-publish-smp-workload"
+        | "code-publish-smp-workload"
+        | "integrated-code-publish-workload" => Ok(package
+            .semantic
+            .integrated_code_publish_smp_workloads
+            .iter()
+            .map(integrated_code_publish_smp_workload_view_v1)
+            .collect()),
         "device" | "device-object" => Ok(package
             .semantic
             .device_objects
@@ -9740,6 +9827,13 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
             .semantic
             .roots
             .integrated_snapshot_io_lease_barrier_roots,
+    );
+    print_roots(
+        "integrated-code-publish-smp-workload",
+        &package
+            .semantic
+            .roots
+            .integrated_code_publish_smp_workload_roots,
     );
     print_roots("device", &package.semantic.roots.device_object_roots);
     print_roots("queue", &package.semantic.roots.queue_object_roots);
@@ -11836,6 +11930,47 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "framebuffer-object",
                 record.framebuffer,
                 record.framebuffer_generation,
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(kind, id, generation),
+                label,
+                "historical",
+                Some(record.recorded_at_event),
+            ));
+        }
+    }
+    for record in &package.semantic.integrated_code_publish_smp_workloads {
+        let from = object_ref_json(
+            "integrated-code-publish-smp-workload",
+            record.id,
+            record.generation,
+        );
+        for (label, kind, id, generation) in [
+            (
+                "integrated-smp-stress-run",
+                "smp-stress-run",
+                record.smp_stress_run,
+                record.smp_stress_run_generation,
+            ),
+            (
+                "integrated-smp-code-publish-barrier",
+                "smp-code-publish-barrier",
+                record.smp_code_publish_barrier,
+                record.smp_code_publish_barrier_generation,
+            ),
+            (
+                "integrated-publish-rendezvous",
+                "stop-the-world-rendezvous",
+                record.publish_rendezvous,
+                record.publish_rendezvous_generation,
+            ),
+            (
+                "integrated-publish-safe-point",
+                "smp-safe-point",
+                record.publish_safe_point,
+                record.publish_safe_point_generation,
             ),
         ] {
             edges.push(graph_edge(
@@ -17489,6 +17624,52 @@ fn inspect_package_object(
                 );
             }
         }
+        "integrated-code-publish-smp-workload"
+        | "code-publish-smp-workload"
+        | "integrated-code-publish-workload" => {
+            println!(
+                "inspect integrated-code-publish-smp-workload package={} count={}",
+                package.package_id, package.semantic.integrated_code_publish_smp_workload_count
+            );
+            for record in &package.semantic.integrated_code_publish_smp_workloads {
+                let line = format!(
+                    "integrated-code-publish-smp-workload id={} scenario={} stress_run={}@{} code_publish_barrier={}@{} rendezvous={}@{} safe_point={}@{} code_publish_epoch={}->{} harts={} iterations={} participant_count={} invariants={} state={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.smp_stress_run,
+                    record.smp_stress_run_generation,
+                    record.smp_code_publish_barrier,
+                    record.smp_code_publish_barrier_generation,
+                    record.publish_rendezvous,
+                    record.publish_rendezvous_generation,
+                    record.publish_safe_point,
+                    record.publish_safe_point_generation,
+                    record.code_publish_epoch_before,
+                    record.code_publish_epoch_after,
+                    record.hart_count,
+                    record.workload_iterations,
+                    record.participant_count,
+                    record.invariant_checks,
+                    record.state,
+                    record.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package
+                .semantic
+                .integrated_code_publish_smp_workloads
+                .is_empty()
+            {
+                print_roots_filtered(
+                    "integrated-code-publish-smp-workload",
+                    &package
+                        .semantic
+                        .roots
+                        .integrated_code_publish_smp_workload_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -18100,6 +18281,25 @@ fn inspect_package_object_json(
                     .len()
             }),
         ),
+        "integrated-code-publish-smp-workload"
+        | "code-publish-smp-workload"
+        | "integrated-code-publish-workload" => (
+            "integrated-code-publish-smp-workload",
+            package.semantic.integrated_code_publish_smp_workload_count,
+            package
+                .semantic
+                .integrated_code_publish_smp_workloads
+                .iter()
+                .map(integrated_code_publish_smp_workload_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package
+                    .semantic
+                    .roots
+                    .integrated_code_publish_smp_workload_roots
+                    .len()
+            }),
+        ),
         "command" => (
             "command",
             package.semantic.command_result_count,
@@ -18627,6 +18827,13 @@ fn replay_until(
         .integrated_snapshot_io_lease_barrier_roots
     {
         println!("replay integrated-snapshot-io-lease-barrier {integrated}");
+    }
+    for integrated in &package
+        .semantic
+        .roots
+        .integrated_code_publish_smp_workload_roots
+    {
+        println!("replay integrated-code-publish-smp-workload {integrated}");
     }
     for device in &package.semantic.roots.device_object_roots {
         println!("replay device {device}");
@@ -23575,6 +23782,98 @@ mod tests {
             && edge["from"]["kind"] == "integrated-snapshot-io-lease-barrier"
             && edge["relation"] == "integrated-display-snapshot-barrier"
             && edge["to"]["kind"] == "display-snapshot-barrier"
+            && edge["to"]["generation"] == 1));
+    }
+
+    fn test_integrated_code_publish_smp_workload_manifest()
+    -> IntegratedCodePublishSmpWorkloadManifest {
+        IntegratedCodePublishSmpWorkloadManifest {
+            id: 26_701,
+            scenario: "x7-code-publish-while-smp-workload-active".to_owned(),
+            smp_stress_run: 9_501,
+            smp_stress_run_generation: 1,
+            smp_code_publish_barrier: 9_201,
+            smp_code_publish_barrier_generation: 1,
+            publish_rendezvous: 9_101,
+            publish_rendezvous_generation: 1,
+            publish_safe_point: 9_001,
+            publish_safe_point_generation: 1,
+            hart_count: 2,
+            workload_iterations: 3,
+            observed_safe_point_count: 3,
+            observed_rendezvous_count: 3,
+            observed_code_publish_barrier_count: 1,
+            code_publish_epoch_before: 0,
+            code_publish_epoch_after: 1,
+            remote_icache_sync_required: true,
+            code_publish_executed: false,
+            participant_count: 2,
+            stress_event_log_cursor: 117,
+            barrier_event: 24,
+            stress_recorded_at_event: 118,
+            invariant_checks: 7,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 577,
+            note: "x7 semantic code publish while smp workload is active".to_owned(),
+        }
+    }
+
+    #[test]
+    fn integrated_code_publish_smp_workload_view_v1_exposes_publish_and_stress_refs() {
+        let view = integrated_code_publish_smp_workload_view_v1(
+            &test_integrated_code_publish_smp_workload_manifest(),
+        );
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "integrated-code-publish-smp-workload");
+        assert_eq!(view["owner"]["hart_count"], 2);
+        assert_eq!(view["references"]["smp_stress_run"]["id"], 9_501);
+        assert_eq!(view["references"]["smp_code_publish_barrier"]["id"], 9_201);
+        assert_eq!(view["references"]["publish_rendezvous"]["id"], 9_101);
+        assert_eq!(view["references"]["publish_safe_point"]["generation"], 1);
+        assert_eq!(view["closure"]["code_publish_epoch_before"], 0);
+        assert_eq!(view["closure"]["code_publish_epoch_after"], 1);
+        assert_eq!(view["closure"]["remote_icache_sync_required"], true);
+        assert_eq!(view["closure"]["code_publish_executed"], false);
+        assert_eq!(
+            view["authority"]["real_smp_dynamic_code_publish_executed"],
+            false
+        );
+        assert_eq!(view["last_transition"]["event"], 577);
+    }
+
+    #[test]
+    fn integrated_code_publish_smp_workload_graph_edges_are_history_only() {
+        let mut package = minimal_graph_package();
+        package.semantic.integrated_code_publish_smp_workload_count = 1;
+        package
+            .semantic
+            .integrated_code_publish_smp_workloads
+            .push(test_integrated_code_publish_smp_workload_manifest());
+
+        let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
+        assert!(
+            !live
+                .iter()
+                .any(|edge| { edge["from"]["kind"] == "integrated-code-publish-smp-workload" })
+        );
+
+        let history = graph_edges_for_package(&package, GraphEdgeMode::History);
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-code-publish-smp-workload"
+            && edge["relation"] == "integrated-smp-stress-run"
+            && edge["to"]["kind"] == "smp-stress-run"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-code-publish-smp-workload"
+            && edge["relation"] == "integrated-smp-code-publish-barrier"
+            && edge["to"]["kind"] == "smp-code-publish-barrier"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-code-publish-smp-workload"
+            && edge["relation"] == "integrated-publish-rendezvous"
+            && edge["to"]["kind"] == "stop-the-world-rendezvous"
             && edge["to"]["generation"] == 1));
     }
 

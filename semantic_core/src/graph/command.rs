@@ -345,6 +345,16 @@ pub enum SemanticCommand {
         invariant_checks: u32,
         note: String,
     },
+    RecordIntegratedCodePublishSmpWorkload {
+        integrated: IntegratedCodePublishSmpWorkloadId,
+        scenario: String,
+        smp_stress_run: SmpStressRunId,
+        smp_stress_run_generation: Generation,
+        smp_code_publish_barrier: SmpCodePublishBarrierId,
+        smp_code_publish_barrier_generation: Generation,
+        invariant_checks: u32,
+        note: String,
+    },
     RecordDeviceObject {
         device: DeviceObjectId,
         name: String,
@@ -1737,6 +1747,9 @@ impl SemanticCommand {
             }
             Self::RecordIntegratedSnapshotIoLeaseBarrier { .. } => {
                 "record-integrated-snapshot-io-lease-barrier"
+            }
+            Self::RecordIntegratedCodePublishSmpWorkload { .. } => {
+                "record-integrated-code-publish-smp-workload"
             }
             Self::RecordDeviceObject { .. } => "record-device-object",
             Self::RecordPacketDeviceObject { .. } => "record-packet-device-object",
@@ -3135,6 +3148,26 @@ impl SemanticGraph {
                     *io_cleanup_generation,
                     *display_snapshot_barrier,
                     *display_snapshot_barrier_generation,
+                    *invariant_checks,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordIntegratedCodePublishSmpWorkload {
+                integrated,
+                scenario,
+                smp_stress_run,
+                smp_stress_run_generation,
+                smp_code_publish_barrier,
+                smp_code_publish_barrier_generation,
+                invariant_checks,
+                ..
+            } => self
+                .validate_integrated_code_publish_smp_workload(
+                    *integrated,
+                    scenario,
+                    *smp_stress_run,
+                    *smp_stress_run_generation,
+                    *smp_code_publish_barrier,
+                    *smp_code_publish_barrier_generation,
                     *invariant_checks,
                 )
                 .map_err(CommandError::precondition),
@@ -6727,6 +6760,25 @@ impl SemanticGraph {
                 io_cleanup_generation,
                 display_snapshot_barrier,
                 display_snapshot_barrier_generation,
+                invariant_checks,
+                &note,
+            ),
+            SemanticCommand::RecordIntegratedCodePublishSmpWorkload {
+                integrated,
+                scenario,
+                smp_stress_run,
+                smp_stress_run_generation,
+                smp_code_publish_barrier,
+                smp_code_publish_barrier_generation,
+                invariant_checks,
+                note,
+            } => self.record_integrated_code_publish_smp_workload_with_id(
+                integrated,
+                &scenario,
+                smp_stress_run,
+                smp_stress_run_generation,
+                smp_code_publish_barrier,
+                smp_code_publish_barrier_generation,
                 invariant_checks,
                 &note,
             ),

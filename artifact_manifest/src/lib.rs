@@ -279,6 +279,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_snapshot_io_lease_barrier_count: usize,
     #[serde(default)]
+    pub integrated_code_publish_smp_workload_count: usize,
+    #[serde(default)]
     pub device_object_count: usize,
     #[serde(default)]
     pub queue_object_count: usize,
@@ -561,6 +563,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_snapshot_io_lease_barriers: Vec<IntegratedSnapshotIoLeaseBarrierManifest>,
     #[serde(default)]
+    pub integrated_code_publish_smp_workloads: Vec<IntegratedCodePublishSmpWorkloadManifest>,
+    #[serde(default)]
     pub device_objects: Vec<DeviceObjectManifest>,
     #[serde(default)]
     pub queue_objects: Vec<QueueObjectManifest>,
@@ -822,6 +826,8 @@ pub struct SemanticRootSetManifest {
     pub integrated_display_scheduler_load_roots: Vec<String>,
     #[serde(default)]
     pub integrated_snapshot_io_lease_barrier_roots: Vec<String>,
+    #[serde(default)]
+    pub integrated_code_publish_smp_workload_roots: Vec<String>,
     #[serde(default)]
     pub device_object_roots: Vec<String>,
     #[serde(default)]
@@ -1873,6 +1879,38 @@ pub struct IntegratedSnapshotIoLeaseBarrierManifest {
     pub smp_barrier_event: u64,
     pub io_cleanup_completed_event: u64,
     pub display_barrier_event: u64,
+    pub invariant_checks: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IntegratedCodePublishSmpWorkloadManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub smp_stress_run: u64,
+    pub smp_stress_run_generation: u64,
+    pub smp_code_publish_barrier: u64,
+    pub smp_code_publish_barrier_generation: u64,
+    pub publish_rendezvous: u64,
+    pub publish_rendezvous_generation: u64,
+    pub publish_safe_point: u64,
+    pub publish_safe_point_generation: u64,
+    pub hart_count: u32,
+    pub workload_iterations: u32,
+    pub observed_safe_point_count: u32,
+    pub observed_rendezvous_count: u32,
+    pub observed_code_publish_barrier_count: u32,
+    pub code_publish_epoch_before: u64,
+    pub code_publish_epoch_after: u64,
+    pub remote_icache_sync_required: bool,
+    pub code_publish_executed: bool,
+    pub participant_count: u32,
+    pub stress_event_log_cursor: u64,
+    pub barrier_event: u64,
+    pub stress_recorded_at_event: u64,
     pub invariant_checks: u32,
     pub generation: u64,
     pub state: String,

@@ -456,6 +456,24 @@ pub enum EventKind {
         invariant_checks: u32,
         generation: Generation,
     },
+    IntegratedCodePublishSmpWorkloadRecorded {
+        scenario: String,
+        integrated: IntegratedCodePublishSmpWorkloadId,
+        smp_stress_run: SmpStressRunId,
+        smp_stress_run_generation: Generation,
+        smp_code_publish_barrier: SmpCodePublishBarrierId,
+        smp_code_publish_barrier_generation: Generation,
+        publish_rendezvous: StopTheWorldRendezvousId,
+        publish_rendezvous_generation: Generation,
+        publish_safe_point: SmpSafePointId,
+        publish_safe_point_generation: Generation,
+        code_publish_epoch_before: u64,
+        code_publish_epoch_after: u64,
+        hart_count: u32,
+        workload_iterations: u32,
+        invariant_checks: u32,
+        generation: Generation,
+    },
     DeviceObjectRecorded {
         device: DeviceObjectId,
         resource: ResourceId,
@@ -2761,6 +2779,26 @@ impl EventKind {
                 generation,
             } => format!(
                 "IntegratedSnapshotIoLeaseBarrierRecorded integrated={integrated} scenario={scenario} smp_snapshot_barrier={smp_snapshot_barrier}@{smp_snapshot_barrier_generation} io_cleanup={io_cleanup}@{io_cleanup_generation} display_snapshot_barrier={display_snapshot_barrier}@{display_snapshot_barrier_generation} released_dma_buffers={released_dma_buffers} released_mmio_regions={released_mmio_regions} released_irq_lines={released_irq_lines} released_framebuffer_window_leases={released_framebuffer_window_leases} active_dmw_leases={active_dmw_lease_count} in_flight_dma={in_flight_dma_count} active_framebuffer_window_leases={active_framebuffer_window_lease_count} invariant_checks={invariant_checks} generation={generation}"
+            ),
+            Self::IntegratedCodePublishSmpWorkloadRecorded {
+                scenario,
+                integrated,
+                smp_stress_run,
+                smp_stress_run_generation,
+                smp_code_publish_barrier,
+                smp_code_publish_barrier_generation,
+                publish_rendezvous,
+                publish_rendezvous_generation,
+                publish_safe_point,
+                publish_safe_point_generation,
+                code_publish_epoch_before,
+                code_publish_epoch_after,
+                hart_count,
+                workload_iterations,
+                invariant_checks,
+                generation,
+            } => format!(
+                "IntegratedCodePublishSmpWorkloadRecorded integrated={integrated} scenario={scenario} stress_run={smp_stress_run}@{smp_stress_run_generation} code_publish_barrier={smp_code_publish_barrier}@{smp_code_publish_barrier_generation} rendezvous={publish_rendezvous}@{publish_rendezvous_generation} safe_point={publish_safe_point}@{publish_safe_point_generation} code_publish_epoch={code_publish_epoch_before}->{code_publish_epoch_after} harts={hart_count} iterations={workload_iterations} invariant_checks={invariant_checks} generation={generation}"
             ),
             Self::DeviceObjectRecorded {
                 device,

@@ -27134,6 +27134,139 @@ fn integrated_runtime_x6_contract_graph_rejects_cleanup_count_drift() {
     }));
 }
 
+fn x7_code_publish_smp_workload_graph() -> SemanticGraph {
+    let mut graph = s15_stress_graph(true);
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "x7-test",
+        SemanticCommand::RecordSmpStressRun {
+            run: 191,
+            scenario: "s15-smp-stress-property".to_string(),
+            iterations: 3,
+            invariant_checks: 6,
+            reason: "smp-stress-property-tests".to_string(),
+            note: "stress code publish cleanup snapshot properties".to_string(),
+        },
+    ));
+    assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    graph
+}
+
+#[test]
+fn integrated_runtime_x7_records_code_publish_smp_workload() {
+    let mut graph = x7_code_publish_smp_workload_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        22,
+        "x7-test",
+        SemanticCommand::RecordIntegratedCodePublishSmpWorkload {
+            integrated: 902,
+            scenario: "x7-code-publish-while-smp-workload-active".to_string(),
+            smp_stress_run: 191,
+            smp_stress_run_generation: 1,
+            smp_code_publish_barrier: 91,
+            smp_code_publish_barrier_generation: 1,
+            invariant_checks: 7,
+            note: "integrate code publish barrier with SMP workload evidence".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    assert_eq!(graph.integrated_code_publish_smp_workload_count(), 1);
+    let record = &graph.integrated_code_publish_smp_workloads()[0];
+    assert_eq!(record.id, 902);
+    assert_eq!(record.smp_stress_run, 191);
+    assert_eq!(record.smp_code_publish_barrier, 91);
+    assert_eq!(record.publish_rendezvous, 81);
+    assert_eq!(record.publish_safe_point, 71);
+    assert_eq!(record.hart_count, 2);
+    assert_eq!(record.workload_iterations, 3);
+    assert_eq!(record.observed_code_publish_barrier_count, 1);
+    assert_eq!(record.code_publish_epoch_before, 0);
+    assert_eq!(record.code_publish_epoch_after, 1);
+    assert!(record.remote_icache_sync_required);
+    assert!(!record.code_publish_executed);
+    assert_eq!(record.participant_count, 2);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "IntegratedCodePublishSmpWorkloadRecorded integrated=902 scenario=x7-code-publish-while-smp-workload-active stress_run=191@1 code_publish_barrier=91@1 rendezvous=81@1 safe_point=71@1 code_publish_epoch=0->1 harts=2 iterations=3 invariant_checks=7 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn integrated_runtime_x7_rejects_missing_or_stale_publish_evidence() {
+    let missing = SemanticGraph::new().apply_envelope(CommandEnvelope::new(
+        1,
+        "x7-test",
+        SemanticCommand::RecordIntegratedCodePublishSmpWorkload {
+            integrated: 902,
+            scenario: "x7-code-publish-while-smp-workload-active".to_string(),
+            smp_stress_run: 191,
+            smp_stress_run_generation: 1,
+            smp_code_publish_barrier: 91,
+            smp_code_publish_barrier_generation: 1,
+            invariant_checks: 7,
+            note: "missing evidence rejects".to_string(),
+        },
+    ));
+    assert_eq!(missing.status, CommandStatus::Rejected);
+    assert_eq!(
+        missing.violations,
+        vec!["integrated code-publish/SMP workload missing stress evidence".to_string()]
+    );
+
+    let stale = x7_code_publish_smp_workload_graph().apply_envelope(CommandEnvelope::new(
+        22,
+        "x7-test",
+        SemanticCommand::RecordIntegratedCodePublishSmpWorkload {
+            integrated: 902,
+            scenario: "x7-code-publish-while-smp-workload-active".to_string(),
+            smp_stress_run: 191,
+            smp_stress_run_generation: 1,
+            smp_code_publish_barrier: 91,
+            smp_code_publish_barrier_generation: 2,
+            invariant_checks: 7,
+            note: "stale publish barrier rejects".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale.violations,
+        vec!["integrated code-publish/SMP workload missing code publish barrier".to_string()]
+    );
+}
+
+#[test]
+fn integrated_runtime_x7_contract_graph_rejects_epoch_drift() {
+    let mut graph = x7_code_publish_smp_workload_graph();
+    assert!(graph.record_integrated_code_publish_smp_workload_with_id(
+        902,
+        "x7-code-publish-while-smp-workload-active",
+        191,
+        1,
+        91,
+        1,
+        7,
+        "integrated code publish smp workload",
+    ));
+    let mut integrated = graph.integrated_code_publish_smp_workloads().to_vec();
+    integrated[0].code_publish_epoch_after = 2;
+    let snapshot = ContractGraphSnapshot {
+        integrated_code_publish_smp_workloads: integrated,
+        smp_stress_runs: graph.smp_stress_runs().to_vec(),
+        smp_code_publish_barriers: graph.smp_code_publish_barriers().to_vec(),
+        stop_the_world_rendezvous: graph.stop_the_world_rendezvous().to_vec(),
+        smp_safe_points: graph.smp_safe_points().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "integrated-code-publish-smp-workload->contract"
+            && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+    }));
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

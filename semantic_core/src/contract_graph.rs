@@ -99,6 +99,7 @@ pub struct ContractGraphSnapshot {
     pub framebuffer_benchmarks: Vec<FramebufferBenchmarkRecord>,
     pub integrated_display_scheduler_loads: Vec<IntegratedDisplaySchedulerLoadRecord>,
     pub integrated_snapshot_io_lease_barriers: Vec<IntegratedSnapshotIoLeaseBarrierRecord>,
+    pub integrated_code_publish_smp_workloads: Vec<IntegratedCodePublishSmpWorkloadRecord>,
     pub integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
     pub integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
     pub integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultRecord>,
@@ -128,6 +129,9 @@ pub struct ContractGraphSnapshot {
     pub scheduler_decisions: Vec<SchedulerDecisionRecord>,
     pub activation_contexts: Vec<ActivationContextRecord>,
     pub activation_migrations: Vec<ActivationMigrationRecord>,
+    pub smp_safe_points: Vec<SmpSafePointRecord>,
+    pub stop_the_world_rendezvous: Vec<StopTheWorldRendezvousRecord>,
+    pub smp_code_publish_barriers: Vec<SmpCodePublishBarrierRecord>,
     pub saved_contexts: Vec<SavedContextRecord>,
     pub timer_interrupts: Vec<TimerInterruptRecord>,
     pub remote_preempts: Vec<RemotePreemptRecord>,
@@ -253,6 +257,7 @@ impl ContractGraphValidator {
         Self::validate_framebuffer_benchmarks(snapshot, &mut violations);
         Self::validate_integrated_display_scheduler_loads(snapshot, &mut violations);
         Self::validate_integrated_snapshot_io_lease_barriers(snapshot, &mut violations);
+        Self::validate_integrated_code_publish_smp_workloads(snapshot, &mut violations);
         Self::validate_integrated_smp_preemption_cleanups(snapshot, &mut violations);
         Self::validate_integrated_smp_network_faults(snapshot, &mut violations);
         Self::validate_integrated_disk_preempt_faults(snapshot, &mut violations);
@@ -4067,6 +4072,135 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_integrated_code_publish_smp_workloads(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for record in &snapshot.integrated_code_publish_smp_workloads {
+            let from = record.object_ref();
+            if record.id == 0
+                || record.generation == 0
+                || record.scenario.is_empty()
+                || record.state != IntegratedCodePublishSmpWorkloadState::Recorded
+                || record.smp_stress_run_generation == 0
+                || record.smp_code_publish_barrier_generation == 0
+                || record.publish_rendezvous_generation == 0
+                || record.publish_safe_point_generation == 0
+                || record.hart_count < 2
+                || record.workload_iterations < 3
+                || record.observed_safe_point_count == 0
+                || record.observed_rendezvous_count == 0
+                || record.observed_code_publish_barrier_count == 0
+                || record.code_publish_epoch_after != record.code_publish_epoch_before + 1
+                || !record.remote_icache_sync_required
+                || record.code_publish_executed
+                || record.participant_count < 2
+                || record.stress_event_log_cursor < record.barrier_event
+                || record.stress_recorded_at_event <= record.barrier_event
+                || record.invariant_checks == 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "integrated-code-publish-smp-workload->contract",
+                    from,
+                    None,
+                    "integrated code publish/SMP workload requires clean stress and semantic publish barrier evidence",
+                ));
+                continue;
+            }
+
+            for (label, kind, id, generation) in [
+                (
+                    "integrated-code-publish-smp-workload->smp-stress-run",
+                    ContractObjectKind::SmpStressRun,
+                    record.smp_stress_run,
+                    record.smp_stress_run_generation,
+                ),
+                (
+                    "integrated-code-publish-smp-workload->smp-code-publish-barrier",
+                    ContractObjectKind::SmpCodePublishBarrier,
+                    record.smp_code_publish_barrier,
+                    record.smp_code_publish_barrier_generation,
+                ),
+                (
+                    "integrated-code-publish-smp-workload->stop-the-world-rendezvous",
+                    ContractObjectKind::StopTheWorldRendezvous,
+                    record.publish_rendezvous,
+                    record.publish_rendezvous_generation,
+                ),
+                (
+                    "integrated-code-publish-smp-workload->smp-safe-point",
+                    ContractObjectKind::SmpSafePoint,
+                    record.publish_safe_point,
+                    record.publish_safe_point_generation,
+                ),
+            ] {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    kind,
+                    id,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+
+            let stress = snapshot.smp_stress_runs.iter().find(|stress| {
+                stress.id == record.smp_stress_run
+                    && stress.generation == record.smp_stress_run_generation
+            });
+            let barrier = snapshot.smp_code_publish_barriers.iter().find(|barrier| {
+                barrier.id == record.smp_code_publish_barrier
+                    && barrier.generation == record.smp_code_publish_barrier_generation
+            });
+            let rendezvous = snapshot
+                .stop_the_world_rendezvous
+                .iter()
+                .find(|rendezvous| {
+                    rendezvous.id == record.publish_rendezvous
+                        && rendezvous.generation == record.publish_rendezvous_generation
+                });
+            if let (Some(stress), Some(barrier), Some(rendezvous)) = (stress, barrier, rendezvous) {
+                if stress.state != SmpStressRunState::Recorded
+                    || stress.property_failures != 0
+                    || stress.hart_count != record.hart_count
+                    || stress.iterations != record.workload_iterations
+                    || stress.observed_safe_point_count != record.observed_safe_point_count
+                    || stress.observed_rendezvous_count != record.observed_rendezvous_count
+                    || stress.observed_code_publish_barrier_count
+                        != record.observed_code_publish_barrier_count
+                    || stress.last_code_publish_barrier != barrier.id
+                    || stress.last_code_publish_barrier_generation != barrier.generation
+                    || stress.event_log_cursor != record.stress_event_log_cursor
+                    || stress.recorded_at_event != record.stress_recorded_at_event
+                    || barrier.state != SmpCodePublishBarrierState::Validated
+                    || barrier.rendezvous != record.publish_rendezvous
+                    || barrier.rendezvous_generation != record.publish_rendezvous_generation
+                    || barrier.code_publish_epoch_before != record.code_publish_epoch_before
+                    || barrier.code_publish_epoch_after != record.code_publish_epoch_after
+                    || barrier.remote_icache_sync_required != record.remote_icache_sync_required
+                    || barrier.code_publish_executed != record.code_publish_executed
+                    || barrier.participants.len() as u32 != record.participant_count
+                    || barrier.validated_at_event != record.barrier_event
+                    || rendezvous.safe_point != record.publish_safe_point
+                    || rendezvous.safe_point_generation != record.publish_safe_point_generation
+                    || rendezvous.state != StopTheWorldRendezvousState::Completed
+                    || !rendezvous.stop_new_activations
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-code-publish-smp-workload->evidence-binding",
+                        from,
+                        Some(barrier.object_ref()),
+                        "integrated code publish/SMP workload record does not match stress and publish barrier evidence",
+                    ));
+                }
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -5384,11 +5518,31 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id && record.generation == generation)
                 .map(IntegratedSnapshotIoLeaseBarrierRecord::object_ref),
+            ContractObjectKind::IntegratedCodePublishSmpWorkload => snapshot
+                .integrated_code_publish_smp_workloads
+                .iter()
+                .find(|record| record.id == id && record.generation == generation)
+                .map(IntegratedCodePublishSmpWorkloadRecord::object_ref),
+            ContractObjectKind::SmpSafePoint => snapshot
+                .smp_safe_points
+                .iter()
+                .find(|safe_point| safe_point.id == id && safe_point.generation == generation)
+                .map(SmpSafePointRecord::object_ref),
+            ContractObjectKind::StopTheWorldRendezvous => snapshot
+                .stop_the_world_rendezvous
+                .iter()
+                .find(|rendezvous| rendezvous.id == id && rendezvous.generation == generation)
+                .map(StopTheWorldRendezvousRecord::object_ref),
             ContractObjectKind::DeviceObject => snapshot
                 .device_objects
                 .iter()
                 .find(|device| device.id == id && device.generation == generation)
                 .map(DeviceObjectRecord::object_ref),
+            ContractObjectKind::SmpCodePublishBarrier => snapshot
+                .smp_code_publish_barriers
+                .iter()
+                .find(|barrier| barrier.id == id && barrier.generation == generation)
+                .map(SmpCodePublishBarrierRecord::object_ref),
             ContractObjectKind::NetworkDriverCleanup => snapshot
                 .network_driver_cleanups
                 .iter()
@@ -5761,11 +5915,31 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id)
                 .map(IntegratedSnapshotIoLeaseBarrierRecord::object_ref),
+            ContractObjectKind::IntegratedCodePublishSmpWorkload => snapshot
+                .integrated_code_publish_smp_workloads
+                .iter()
+                .find(|record| record.id == id)
+                .map(IntegratedCodePublishSmpWorkloadRecord::object_ref),
+            ContractObjectKind::SmpSafePoint => snapshot
+                .smp_safe_points
+                .iter()
+                .find(|safe_point| safe_point.id == id)
+                .map(SmpSafePointRecord::object_ref),
+            ContractObjectKind::StopTheWorldRendezvous => snapshot
+                .stop_the_world_rendezvous
+                .iter()
+                .find(|rendezvous| rendezvous.id == id)
+                .map(StopTheWorldRendezvousRecord::object_ref),
             ContractObjectKind::DeviceObject => snapshot
                 .device_objects
                 .iter()
                 .find(|device| device.id == id)
                 .map(DeviceObjectRecord::object_ref),
+            ContractObjectKind::SmpCodePublishBarrier => snapshot
+                .smp_code_publish_barriers
+                .iter()
+                .find(|barrier| barrier.id == id)
+                .map(SmpCodePublishBarrierRecord::object_ref),
             ContractObjectKind::NetworkDriverCleanup => snapshot
                 .network_driver_cleanups
                 .iter()
@@ -5926,9 +6100,6 @@ impl ContractGraphValidator {
             ContractObjectKind::IpiEvent
             | ContractObjectKind::RemotePark
             | ContractObjectKind::CrossHartSchedulerDecision
-            | ContractObjectKind::SmpSafePoint
-            | ContractObjectKind::StopTheWorldRendezvous
-            | ContractObjectKind::SmpCodePublishBarrier
             | ContractObjectKind::SmpScalingBenchmark
             | ContractObjectKind::QueueObject
             | ContractObjectKind::DescriptorObject
@@ -6289,6 +6460,23 @@ impl ContractGraphValidator {
                     (record.state != IntegratedSnapshotIoLeaseBarrierState::Recorded).then_some(
                         "live edge references unrecorded integrated snapshot/io lease barrier evidence",
                     )
+                }),
+            ContractObjectKind::IntegratedCodePublishSmpWorkload => snapshot
+                .integrated_code_publish_smp_workloads
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != IntegratedCodePublishSmpWorkloadState::Recorded).then_some(
+                        "live edge references unrecorded integrated code publish/SMP workload evidence",
+                    )
+                }),
+            ContractObjectKind::SmpCodePublishBarrier => snapshot
+                .smp_code_publish_barriers
+                .iter()
+                .find(|barrier| barrier.id == object.id && barrier.generation == object.generation)
+                .and_then(|barrier| {
+                    (barrier.state != SmpCodePublishBarrierState::Validated)
+                        .then_some("live edge references invalid SMP code publish barrier")
                 }),
             ContractObjectKind::Task => snapshot
                 .tasks

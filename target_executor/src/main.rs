@@ -30,21 +30,22 @@ use artifact_manifest::{
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    IntegratedDiskPreemptFaultManifest, IntegratedDisplaySchedulerLoadManifest,
-    IntegratedNetworkDiskIoManifest, IntegratedSimdMigrationManifest,
-    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
-    IntegratedSnapshotIoLeaseBarrierManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    IntegratedCodePublishSmpWorkloadManifest, IntegratedDiskPreemptFaultManifest,
+    IntegratedDisplaySchedulerLoadManifest, IntegratedNetworkDiskIoManifest,
+    IntegratedSimdMigrationManifest, IntegratedSmpNetworkFaultManifest,
+    IntegratedSmpPreemptionCleanupManifest, IntegratedSnapshotIoLeaseBarrierManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8402,6 +8403,7 @@ fn build_target_executor_v1(
     run_integrated_network_disk_io_harness(semantic)?;
     run_integrated_display_scheduler_load_harness(semantic)?;
     run_integrated_snapshot_io_lease_barrier_harness(semantic)?;
+    run_integrated_code_publish_smp_workload_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8497,6 +8499,9 @@ fn build_target_executor_v1(
         integrated_snapshot_io_lease_barriers: semantic
             .integrated_snapshot_io_lease_barriers()
             .to_vec(),
+        integrated_code_publish_smp_workloads: semantic
+            .integrated_code_publish_smp_workloads()
+            .to_vec(),
         integrated_smp_preemption_cleanups: semantic.integrated_smp_preemption_cleanups().to_vec(),
         integrated_smp_network_faults: semantic.integrated_smp_network_faults().to_vec(),
         integrated_disk_preempt_faults: semantic.integrated_disk_preempt_faults().to_vec(),
@@ -8526,6 +8531,9 @@ fn build_target_executor_v1(
         scheduler_decisions: semantic.scheduler_decisions().to_vec(),
         activation_contexts: semantic.activation_contexts().to_vec(),
         activation_migrations: semantic.activation_migrations().to_vec(),
+        smp_safe_points: semantic.smp_safe_points().to_vec(),
+        stop_the_world_rendezvous: semantic.stop_the_world_rendezvous().to_vec(),
+        smp_code_publish_barriers: semantic.smp_code_publish_barriers().to_vec(),
         saved_contexts: semantic.saved_contexts().to_vec(),
         timer_interrupts: semantic.timer_interrupts().to_vec(),
         remote_preempts: semantic.remote_preempts().to_vec(),
@@ -10991,6 +10999,37 @@ fn run_integrated_snapshot_io_lease_barrier_harness(
     Ok(())
 }
 
+fn run_integrated_code_publish_smp_workload_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        100_008,
+        "integrated-runtime-x7",
+        SemanticCommand::RecordIntegratedCodePublishSmpWorkload {
+            integrated: 26_701,
+            scenario: "x7-code-publish-while-smp-workload-active".to_owned(),
+            smp_stress_run: 9_501,
+            smp_stress_run_generation: 1,
+            smp_code_publish_barrier: 9_201,
+            smp_code_publish_barrier_generation: 1,
+            invariant_checks: 7,
+            note: "x7 records semantic code publish barrier during SMP workload evidence"
+                .to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "integrated runtime x7 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11824,6 +11863,8 @@ fn demo_migration_package(
                 .integrated_display_scheduler_load_count(),
             integrated_snapshot_io_lease_barrier_count: semantic
                 .integrated_snapshot_io_lease_barrier_count(),
+            integrated_code_publish_smp_workload_count: semantic
+                .integrated_code_publish_smp_workload_count(),
             device_object_count: semantic.device_object_count(),
             queue_object_count: semantic.queue_object_count(),
             descriptor_object_count: semantic.descriptor_object_count(),
@@ -12070,6 +12111,11 @@ fn demo_migration_package(
                 .integrated_snapshot_io_lease_barriers()
                 .iter()
                 .map(integrated_snapshot_io_lease_barrier_manifest)
+                .collect(),
+            integrated_code_publish_smp_workloads: semantic
+                .integrated_code_publish_smp_workloads()
+                .iter()
+                .map(integrated_code_publish_smp_workload_manifest)
                 .collect(),
             device_objects: semantic
                 .device_objects()
@@ -13134,6 +13180,30 @@ fn semantic_roots(
                     record.active_dmw_lease_count,
                     record.in_flight_dma_count,
                     record.active_framebuffer_window_lease_count,
+                    record.generation
+                )
+            })
+            .collect(),
+        integrated_code_publish_smp_workload_roots: semantic
+            .integrated_code_publish_smp_workloads()
+            .iter()
+            .map(|record| {
+                format!(
+                    "integrated-code-publish-smp-workload id={} scenario={} stress_run={}@{} code_publish_barrier={}@{} rendezvous={}@{} safe_point={}@{} code_publish_epoch={}->{} harts={} iterations={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.smp_stress_run,
+                    record.smp_stress_run_generation,
+                    record.smp_code_publish_barrier,
+                    record.smp_code_publish_barrier_generation,
+                    record.publish_rendezvous,
+                    record.publish_rendezvous_generation,
+                    record.publish_safe_point,
+                    record.publish_safe_point_generation,
+                    record.code_publish_epoch_before,
+                    record.code_publish_epoch_after,
+                    record.hart_count,
+                    record.workload_iterations,
                     record.generation
                 )
             })
@@ -16527,6 +16597,41 @@ fn integrated_snapshot_io_lease_barrier_manifest(
         smp_barrier_event: record.smp_barrier_event,
         io_cleanup_completed_event: record.io_cleanup_completed_event,
         display_barrier_event: record.display_barrier_event,
+        invariant_checks: record.invariant_checks,
+        generation: record.generation,
+        state: record.state.as_str().to_owned(),
+        recorded_at_event: record.recorded_at_event,
+        note: record.note.clone(),
+    }
+}
+
+fn integrated_code_publish_smp_workload_manifest(
+    record: &semantic_core::IntegratedCodePublishSmpWorkloadRecord,
+) -> IntegratedCodePublishSmpWorkloadManifest {
+    IntegratedCodePublishSmpWorkloadManifest {
+        id: record.id,
+        scenario: record.scenario.clone(),
+        smp_stress_run: record.smp_stress_run,
+        smp_stress_run_generation: record.smp_stress_run_generation,
+        smp_code_publish_barrier: record.smp_code_publish_barrier,
+        smp_code_publish_barrier_generation: record.smp_code_publish_barrier_generation,
+        publish_rendezvous: record.publish_rendezvous,
+        publish_rendezvous_generation: record.publish_rendezvous_generation,
+        publish_safe_point: record.publish_safe_point,
+        publish_safe_point_generation: record.publish_safe_point_generation,
+        hart_count: record.hart_count,
+        workload_iterations: record.workload_iterations,
+        observed_safe_point_count: record.observed_safe_point_count,
+        observed_rendezvous_count: record.observed_rendezvous_count,
+        observed_code_publish_barrier_count: record.observed_code_publish_barrier_count,
+        code_publish_epoch_before: record.code_publish_epoch_before,
+        code_publish_epoch_after: record.code_publish_epoch_after,
+        remote_icache_sync_required: record.remote_icache_sync_required,
+        code_publish_executed: record.code_publish_executed,
+        participant_count: record.participant_count,
+        stress_event_log_cursor: record.stress_event_log_cursor,
+        barrier_event: record.barrier_event,
+        stress_recorded_at_event: record.stress_recorded_at_event,
         invariant_checks: record.invariant_checks,
         generation: record.generation,
         state: record.state.as_str().to_owned(),

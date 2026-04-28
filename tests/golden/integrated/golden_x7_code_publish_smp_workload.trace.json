@@ -1,0 +1,160 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "X7-integrated-code-publish-smp-workload",
+  "name": "golden_x7_code_publish_smp_workload",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real SMP dynamic code publish",
+    "real W^X page-table publish",
+    "real target-side cwasm execution",
+    "runtime-only executor behavior change",
+    "adapter-internal state as semantic truth"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "S12 produced smp-code-publish-barrier:9201@1 with code_publish_epoch 0->1, remote icache sync required, and code_publish_executed=false",
+      "S15 produced smp-stress-run:9501@1 with 2 harts, 3 iterations, zero property failures, and last_code_publish_barrier=9201@1",
+      "S11 produced stop-the-world-rendezvous:9101@1 and S10 produced smp-safe-point:9001@1 for the publish boundary",
+      "all source evidence carries exact kind/id/generation ObjectRef identity"
+    ],
+    "command": {
+      "name": "record-integrated-code-publish-smp-workload",
+      "integrated": "integrated-code-publish-smp-workload:26701@1",
+      "smp_stress_run": "smp-stress-run:9501@1",
+      "smp_code_publish_barrier": "smp-code-publish-barrier:9201@1",
+      "publish_rendezvous": "stop-the-world-rendezvous:9101@1",
+      "publish_safe_point": "smp-safe-point:9001@1",
+      "result": "semantic evidence proves a code-publish barrier was observed by a clean SMP workload without claiming real dynamic code publish"
+    }
+  },
+  "events": [
+    {
+      "kind": "IntegratedCodePublishSmpWorkloadRecorded",
+      "source": "SemanticGraph::record_integrated_code_publish_smp_workload_with_id",
+      "visible_as": "osctl integrated-code-publish-smp-workload list --json",
+      "event": 577
+    }
+  ],
+  "expected": {
+    "views": {
+      "integrated-code-publish-smp-workload": {
+        "id": 26701,
+        "generation": 1,
+        "state": "recorded",
+        "owner": {
+          "hart_count": 2,
+          "workload_iterations": 3
+        },
+        "references": {
+          "smp_stress_run": {
+            "kind": "smp-stress-run",
+            "id": 9501,
+            "generation": 1
+          },
+          "smp_code_publish_barrier": {
+            "kind": "smp-code-publish-barrier",
+            "id": 9201,
+            "generation": 1
+          },
+          "publish_rendezvous": {
+            "kind": "stop-the-world-rendezvous",
+            "id": 9101,
+            "generation": 1
+          },
+          "publish_safe_point": {
+            "kind": "smp-safe-point",
+            "id": 9001,
+            "generation": 1
+          }
+        },
+        "closure": {
+          "scenario": "x7-code-publish-while-smp-workload-active",
+          "observed_safe_point_count": 3,
+          "observed_rendezvous_count": 3,
+          "observed_code_publish_barrier_count": 1,
+          "code_publish_epoch_before": 0,
+          "code_publish_epoch_after": 1,
+          "remote_icache_sync_required": true,
+          "code_publish_executed": false,
+          "participant_count": 2,
+          "stress_event_log_cursor": 117,
+          "barrier_event": 49,
+          "stress_recorded_at_event": 118,
+          "invariant_checks": 7,
+          "requires_clean_smp_stress_run": true,
+          "requires_semantic_code_publish_barrier": true,
+          "requires_generation_exact_publish_refs": true
+        },
+        "authority": {
+          "uses_semantic_stress_run": true,
+          "uses_semantic_code_publish_barrier": true,
+          "real_smp_dynamic_code_publish_executed": false,
+          "real_wx_page_publish_executed": false,
+          "adapter_internal_state_is_not_semantic_truth": true
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "integrated-code-publish-smp-workload:26701@1",
+          "relation": "integrated-smp-stress-run",
+          "to": "smp-stress-run:9501@1",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-code-publish-smp-workload:26701@1",
+          "relation": "integrated-smp-code-publish-barrier",
+          "to": "smp-code-publish-barrier:9201@1",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-code-publish-smp-workload:26701@1",
+          "relation": "integrated-publish-rendezvous",
+          "to": "stop-the-world-rendezvous:9101@1",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-code-publish-smp-workload:26701@1",
+          "relation": "integrated-publish-safe-point",
+          "to": "smp-safe-point:9001@1",
+          "mode": "historical"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "Integrated code publish/SMP workload evidence is a first-class ObjectRef",
+      "SMP stress, code publish barrier, rendezvous, and safe point references carry exact generations",
+      "SMP stress has 2+ harts, 3+ iterations, and zero property failures",
+      "code_publish_epoch_after equals code_publish_epoch_before + 1",
+      "code_publish_executed remains false because X7 is semantic evidence only",
+      "history graph uses Historical edges only",
+      "no substrate mapping or adapter internal state is semantic truth"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "integrated_runtime_x7_records_code_publish_smp_workload",
+      "integrated_runtime_x7_rejects_missing_or_stale_publish_evidence",
+      "integrated_runtime_x7_contract_graph_rejects_epoch_drift",
+      "semantic_roots_reject_integrated_code_publish_smp_workload_root_mismatch",
+      "integrated_code_publish_smp_workload_view_v1_exposes_publish_and_stress_refs",
+      "integrated_code_publish_smp_workload_graph_edges_are_history_only"
+    ],
+    "osctl_json_view": "integrated-code-publish-smp-workload list --json",
+    "integrated_code_publish_smp_workload": "integrated-code-publish-smp-workload:26701@1",
+    "smp_stress_run": "smp-stress-run:9501@1",
+    "smp_code_publish_barrier": "smp-code-publish-barrier:9201@1",
+    "event": 577
+  }
+}
