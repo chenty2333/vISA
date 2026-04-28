@@ -1961,6 +1961,76 @@ impl TargetTrapClass {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimdTrapClassification {
+    UnsupportedTargetProfile,
+    IllegalInstruction,
+    RequirementMissing,
+}
+
+impl SimdTrapClassification {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UnsupportedTargetProfile => "unsupported-target-profile",
+            Self::IllegalInstruction => "illegal-instruction",
+            Self::RequirementMissing => "requirement-missing",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SimdTrapAttribution {
+    pub classification: SimdTrapClassification,
+    pub required_abi: String,
+    pub min_vector_register_count: u16,
+    pub min_vector_register_bits: u16,
+    pub target_feature_set: Option<ContractObjectRef>,
+    pub code_requirement_status: CodeObjectSimdRequirementStatus,
+    pub note: String,
+}
+
+impl SimdTrapAttribution {
+    fn from_code(kind: TrapKindV1, code: Option<&CodeObject>) -> Option<Self> {
+        let classification = match kind {
+            TrapKindV1::SimdUnsupported => SimdTrapClassification::UnsupportedTargetProfile,
+            TrapKindV1::SimdIllegalInstruction => SimdTrapClassification::IllegalInstruction,
+            _ => return None,
+        };
+        let Some(code) = code else {
+            return Some(Self {
+                classification: SimdTrapClassification::RequirementMissing,
+                required_abi: String::new(),
+                min_vector_register_count: 0,
+                min_vector_register_bits: 0,
+                target_feature_set: None,
+                code_requirement_status: CodeObjectSimdRequirementStatus::MissingDeclaration,
+                note: "SIMD trap had no code object attribution".to_string(),
+            });
+        };
+        if !code.simd_requirement.uses_simd || !code.simd_requirement.declared {
+            return Some(Self {
+                classification: SimdTrapClassification::RequirementMissing,
+                required_abi: code.simd_requirement.required_abi.clone(),
+                min_vector_register_count: code.simd_requirement.min_vector_register_count,
+                min_vector_register_bits: code.simd_requirement.min_vector_register_bits,
+                target_feature_set: code.simd_requirement.target_feature_set,
+                code_requirement_status: code.simd_requirement.status,
+                note: "SIMD trap was raised for code without a declared SIMD requirement"
+                    .to_string(),
+            });
+        }
+        Some(Self {
+            classification,
+            required_abi: code.simd_requirement.required_abi.clone(),
+            min_vector_register_count: code.simd_requirement.min_vector_register_count,
+            min_vector_register_bits: code.simd_requirement.min_vector_register_bits,
+            target_feature_set: code.simd_requirement.target_feature_set,
+            code_requirement_status: code.simd_requirement.status,
+            note: "SIMD trap is attributed through the CodeObject SIMD requirement".to_string(),
+        })
+    }
+}
+
 fn trap_class_for_attribution(kind: TrapKindV1) -> TargetTrapClass {
     match kind {
         TrapKindV1::CapabilityDenied => TargetTrapClass::CapabilityTrap,
@@ -1970,6 +2040,9 @@ fn trap_class_for_attribution(kind: TrapKindV1) -> TargetTrapClass {
             TargetTrapClass::SubstrateFault
         }
         TrapKindV1::UnknownCodeTrap | TrapKindV1::StaleCodeExecutionFault => {
+            TargetTrapClass::CodeObjectTrap
+        }
+        TrapKindV1::SimdUnsupported | TrapKindV1::SimdIllegalInstruction => {
             TargetTrapClass::CodeObjectTrap
         }
         TrapKindV1::WasmBounds
@@ -2000,6 +2073,7 @@ pub struct TargetTrapRecord {
     pub wasm_offset: Option<u64>,
     pub debug_symbol: Option<u32>,
     pub classification_status: Option<String>,
+    pub simd_attribution: Option<SimdTrapAttribution>,
     pub hostcall: Option<String>,
     pub fault_policy: String,
     pub effect: FailureEffect,
@@ -3665,6 +3739,7 @@ impl TargetExecutor {
             wasm_offset: None,
             debug_symbol: None,
             classification_status: None,
+            simd_attribution: None,
             hostcall: hostcall.map(|hostcall| hostcall.to_string()),
             fault_policy: "harness-classification".to_string(),
             effect: FailureEffect::CompleteWithErrno(5),
@@ -4610,6 +4685,9 @@ impl TargetExecutor {
             debug_symbol: attribution.and_then(|attribution| attribution.debug_symbol),
             classification_status: attribution
                 .map(|attribution| attribution.trap_kind.as_str().to_string()),
+            simd_attribution: attribution.and_then(|attribution| {
+                SimdTrapAttribution::from_code(attribution.trap_kind, code)
+            }),
             hostcall,
             fault_policy: fault_policy.to_string(),
             effect,
@@ -5586,6 +5664,7 @@ mod tests {
             wasm_offset: None,
             debug_symbol: None,
             classification_status: None,
+            simd_attribution: None,
             hostcall: Some("hostcall.bad".to_string()),
             fault_policy: "debug".to_string(),
             effect: FailureEffect::CompleteWithErrno(22),
@@ -6184,6 +6263,7 @@ mod tests {
             wasm_offset: None,
             debug_symbol: None,
             classification_status: None,
+            simd_attribution: None,
             hostcall: None,
             fault_policy: "history-only".to_string(),
             effect: FailureEffect::CompleteWithErrno(5),
@@ -6745,6 +6825,111 @@ mod tests {
             trap.classification_status.as_deref(),
             Some("wasm-unreachable")
         );
+    }
+
+    #[test]
+    fn simd_runtime_v3_trap_records_requirement_attribution() {
+        let (artifact, store, mut code, _capabilities) = running_store_and_code();
+        let feature_set = target_feature_set_record();
+        code.simd_requirement = CodeObjectSimdRequirement::declared_simd(
+            "riscv-v",
+            32,
+            128,
+            feature_set.object_ref(),
+            "v3 simd trap attribution",
+        );
+        code.generation += 1;
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("simd_fault".to_string()),
+            )
+            .unwrap();
+        let offset = 0x40;
+        let trap_map = [TrapMapEntryV1::new(
+            ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, code.id, code.generation),
+            offset,
+            offset + 4,
+            TrapKindV1::SimdUnsupported,
+            7,
+            0x80,
+            13,
+        )];
+
+        let trap_id = executor
+            .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
+            .unwrap();
+        let trap = executor
+            .traps()
+            .iter()
+            .find(|trap| trap.id == trap_id)
+            .unwrap();
+        let simd = trap
+            .simd_attribution
+            .as_ref()
+            .expect("SIMD trap attribution");
+
+        assert_eq!(trap.class, TargetTrapClass::CodeObjectTrap);
+        assert_eq!(trap.trap_kind.as_deref(), Some("simd-unsupported"));
+        assert_eq!(
+            simd.classification,
+            SimdTrapClassification::UnsupportedTargetProfile
+        );
+        assert_eq!(simd.required_abi, "riscv-v");
+        assert_eq!(simd.target_feature_set, Some(feature_set.object_ref()));
+
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([artifact]),
+            code_objects: Vec::from([code]),
+            target_feature_sets: Vec::from([feature_set]),
+            stores: Vec::from([store.store]),
+            activations: executor.activations().to_vec(),
+            traps: executor.traps().to_vec(),
+            ..ContractGraphSnapshot::default()
+        };
+        assert_eq!(validate_contract_graph(&snapshot), Vec::new());
+    }
+
+    #[test]
+    fn simd_runtime_v3_rejects_simd_trap_without_requirement() {
+        let (artifact, store, code, _capabilities) = running_store_and_code();
+        let mut executor = TargetExecutor::new();
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("unexpected_simd_fault".to_string()),
+            )
+            .unwrap();
+        let offset = 0x44;
+        let trap_map = [TrapMapEntryV1::new(
+            ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, code.id, code.generation),
+            offset,
+            offset + 4,
+            TrapKindV1::SimdIllegalInstruction,
+            8,
+            0x84,
+            14,
+        )];
+        executor
+            .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
+            .unwrap();
+
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([artifact]),
+            code_objects: Vec::from([code]),
+            stores: Vec::from([store.store]),
+            activations: executor.activations().to_vec(),
+            traps: executor.traps().to_vec(),
+            ..ContractGraphSnapshot::default()
+        };
+        let violations = validate_contract_graph(&snapshot);
+        assert!(violations.iter().any(|violation| {
+            violation.edge == "trap->simd-requirement"
+                && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+        }));
     }
 
     #[test]

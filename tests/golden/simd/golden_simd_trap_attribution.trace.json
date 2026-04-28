@@ -1,0 +1,87 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "V3-simd-trap-record-classification",
+  "name": "golden_simd_trap_attribution",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/target-runtime-abi/04-trap-map-and-attribution.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "VectorState object",
+    "lazy vector state enable",
+    "real vector register save or restore",
+    "cross-hart vector migration",
+    "real target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "CodeObject declares a SIMD requirement through target_feature_set",
+      "TrapMap classifies the fake PC as simd-unsupported",
+      "TrapRecord uses historical Store/Activation/CodeObject/Artifact refs"
+    ],
+    "pc_attribution": {
+      "trap_kind": "simd-unsupported",
+      "trap_class": "code-object-trap",
+      "function_index": 42,
+      "wasm_offset": 96,
+      "debug_symbol": 6
+    },
+    "expected": "typed-simd-trap-record"
+  },
+  "events": [
+    {
+      "kind": "TrapClassified",
+      "source": "target_executor::TargetExecutor::trap_exit_by_pc",
+      "visible_as": "osctl inspect trap --json",
+      "reason": "SIMD trap is attributed through CodeObject SIMD requirement"
+    }
+  ],
+  "expected": {
+    "views": {
+      "trap": {
+        "trap_kind": "simd-unsupported",
+        "trap_class": "code-object-trap",
+        "classification_status": "simd-unsupported",
+        "simd_attribution": {
+          "classification": "unsupported-target-profile",
+          "required_abi": "riscv-v",
+          "min_vector_register_count": 32,
+          "min_vector_register_bits": 128,
+          "code_requirement_status": "declared"
+        }
+      },
+      "code-object": {
+        "simd_requirement": {
+          "uses_simd": true,
+          "declared": true,
+          "required_abi": "riscv-v",
+          "status": "declared"
+        }
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "SIMD trap kind must be typed, not a generic opaque trap",
+      "SIMD trap must carry exact CodeObject generation",
+      "SIMD trap attribution must match CodeObject SIMD requirement",
+      "SIMD trap target feature set reference must be generation exact",
+      "SIMD trap history may remain valid after cleanup because it is historical"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "simd_runtime_v3_trap_records_requirement_attribution",
+      "simd_runtime_v3_rejects_simd_trap_without_requirement",
+      "trace_views_expose_attribution_generations"
+    ],
+    "osctl_json_view": "inspect trap --json",
+    "target_executor_trap_kind": "simd-unsupported"
+  }
+}

@@ -6072,6 +6072,19 @@ fn trap_view_v1(trap: &TrapRecordManifest) -> serde_json::Value {
         "wasm_offset": trap.wasm_offset,
         "debug_symbol": trap.debug_symbol,
         "classification_status": trap.classification_status,
+        "simd_attribution": trap.simd_attribution.as_ref().map(|attribution| serde_json::json!({
+            "classification": attribution.classification,
+            "required_abi": attribution.required_abi,
+            "min_vector_register_count": attribution.min_vector_register_count,
+            "min_vector_register_bits": attribution.min_vector_register_bits,
+            "target_feature_set": attribution.target_feature_set.as_ref().map(|feature| serde_json::json!({
+                "kind": feature.kind,
+                "id": feature.id,
+                "generation": feature.generation,
+            })),
+            "code_requirement_status": attribution.code_requirement_status,
+            "note": attribution.note,
+        })),
         "detail": trap.detail,
         "last_transition": {
             "fault_policy": trap.fault_policy,
@@ -19150,6 +19163,20 @@ mod tests {
             code_generation: Some(4),
             artifact: Some(5),
             artifact_generation: Some(1),
+            trap_kind: Some("simd-unsupported".to_owned()),
+            simd_attribution: Some(artifact_manifest::SimdTrapAttributionManifest {
+                classification: "unsupported-target-profile".to_owned(),
+                required_abi: "riscv-v".to_owned(),
+                min_vector_register_count: 32,
+                min_vector_register_bits: 128,
+                target_feature_set: Some(ContractObjectRefManifest {
+                    kind: "target-feature-set".to_owned(),
+                    id: 21_000,
+                    generation: 1,
+                }),
+                code_requirement_status: "declared".to_owned(),
+                note: "SIMD trap attribution".to_owned(),
+            }),
             fault_policy: "restart".to_owned(),
             effect: "cleanup".to_owned(),
             detail: "denied".to_owned(),
@@ -19158,6 +19185,14 @@ mod tests {
         assert_eq!(trap["kind"], "trap");
         assert_eq!(trap["owner"]["activation_generation"], 6);
         assert_eq!(trap["references"]["code_object"]["generation"], 4);
+        assert_eq!(
+            trap["simd_attribution"]["classification"],
+            "unsupported-target-profile"
+        );
+        assert_eq!(
+            trap["simd_attribution"]["target_feature_set"]["generation"],
+            1
+        );
         assert_eq!(trap["last_error"], "denied");
 
         let hostcall = hostcall_trace_view_v1(&HostcallTraceManifest {

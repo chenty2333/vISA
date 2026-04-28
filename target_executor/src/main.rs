@@ -39,9 +39,9 @@ use artifact_manifest::{
     QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
-    SmpCleanupQuiescenceParticipantManifest, SmpCodePublishBarrierManifest,
-    SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SimdTrapAttributionManifest,
+    SmpCleanupQuiescenceManifest, SmpCleanupQuiescenceParticipantManifest,
+    SmpCodePublishBarrierManifest, SmpCodePublishBarrierParticipantManifest, SmpSafePointManifest,
     SmpSafePointParticipantManifest, SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest,
     SmpSnapshotBarrierParticipantManifest, SmpStressRunManifest, SocketObjectManifest,
     SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
@@ -8317,6 +8317,13 @@ fn build_target_executor_v1(
             .record_current_tombstone(cleanup_code_id, "cleanup-code-retired")
             .map_err(|error| error.message())?;
     }
+    run_simd_trap_classification_harness(
+        &verified_artifacts,
+        semantic,
+        &mut publisher,
+        &mut store_manager,
+        &mut executor,
+    )?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8416,6 +8423,77 @@ fn build_target_executor_v1(
         .collect();
     report.interface_events = interface_event_manifests(semantic.event_log().tail(usize::MAX));
     Ok(report)
+}
+
+fn run_simd_trap_classification_harness(
+    verified_artifacts: &[VerifiedArtifact],
+    semantic: &SemanticGraph,
+    publisher: &mut CodePublisher,
+    store_manager: &mut TargetStoreManager,
+    executor: &mut TargetExecutor,
+) -> Result<(), Box<dyn Error>> {
+    let Some(artifact) = verified_artifacts.first() else {
+        return Ok(());
+    };
+    let Some(feature_set) = semantic.target_feature_sets().first() else {
+        return Ok(());
+    };
+    let store_id =
+        store_manager.register_verified_artifact(artifact, "restartable", "simd-trap-harness");
+    store_manager
+        .set_running(store_id)
+        .map_err(|error| error.message())?;
+    let store = store_manager
+        .record(store_id)
+        .ok_or("SIMD trap harness store missing after registration")?
+        .store
+        .clone();
+    let code_id = publisher
+        .allocate(artifact)
+        .map_err(|error| error.message())?;
+    publisher
+        .declare_simd_requirement(
+            code_id,
+            feature_set.object_ref(),
+            "riscv-v",
+            32,
+            128,
+            "v3 SIMD trap attribution harness",
+        )
+        .map_err(|error| error.message())?;
+    publisher.fill(code_id).map_err(|error| error.message())?;
+    publisher.seal(code_id).map_err(|error| error.message())?;
+    publisher
+        .publish_rx(code_id)
+        .map_err(|error| error.message())?;
+    publisher
+        .bind_to_store(code_id, &store)
+        .map_err(|error| error.message())?;
+    let code = publisher
+        .object(code_id)
+        .ok_or("SIMD trap harness code missing after bind")?
+        .clone();
+    let activation = executor
+        .start_activation(
+            &store,
+            &code,
+            ActivationEntry::Symbol("simd_trap_harness".to_owned()),
+        )
+        .map_err(|error| error.message())?;
+    let offset = RV64_ENTRY_TRAP_EBREAK_OFFSET + 0x40;
+    let trap_map = [TrapMapEntryV1::new(
+        ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, code.id, code.generation),
+        offset,
+        offset + 4,
+        TrapKindV1::SimdUnsupported,
+        42,
+        offset,
+        6,
+    )];
+    executor
+        .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
+        .map_err(|error| error.message())?;
+    Ok(())
 }
 
 fn declared_authority_objects(capabilities: &[CapabilityRecord]) -> Vec<ExternalObjectDeclaration> {
@@ -11882,9 +11960,15 @@ fn semantic_roots(
                     .activation
                     .map(|activation| activation.to_string())
                     .unwrap_or_else(|| "none".to_owned());
+                let trap_kind = trap.trap_kind.as_deref().unwrap_or("none");
+                let simd = trap
+                    .simd_attribution
+                    .as_ref()
+                    .map(|attribution| attribution.classification.clone())
+                    .unwrap_or_else(|| "none".to_owned());
                 format!(
-                    "trap id={} class={} store={} activation={} effect={} detail={}",
-                    trap.id, trap.class, store, activation, trap.effect, trap.detail
+                    "trap id={} class={} kind={} store={} activation={} simd={} effect={} detail={}",
+                    trap.id, trap.class, trap_kind, store, activation, simd, trap.effect, trap.detail
                 )
             })
             .collect(),
@@ -14507,6 +14591,19 @@ fn trap_record_manifest(trap: &semantic_core::TargetTrapRecord) -> TrapRecordMan
         wasm_offset: trap.wasm_offset,
         debug_symbol: trap.debug_symbol,
         classification_status: trap.classification_status.clone(),
+        simd_attribution: trap.simd_attribution.as_ref().map(|attribution| {
+            SimdTrapAttributionManifest {
+                classification: attribution.classification.as_str().to_owned(),
+                required_abi: attribution.required_abi.clone(),
+                min_vector_register_count: attribution.min_vector_register_count,
+                min_vector_register_bits: attribution.min_vector_register_bits,
+                target_feature_set: attribution
+                    .target_feature_set
+                    .map(contract_object_ref_manifest),
+                code_requirement_status: attribution.code_requirement_status.as_str().to_owned(),
+                note: attribution.note.clone(),
+            }
+        }),
         hostcall: trap.hostcall.clone(),
         fault_policy: trap.fault_policy.clone(),
         effect: trap.effect.summary(),

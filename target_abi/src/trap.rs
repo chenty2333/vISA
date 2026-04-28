@@ -57,6 +57,8 @@ pub enum TrapKindV1 {
     SubstrateFault = 10,
     UnknownCodeFault = 11,
     StaleCodeExecutionFault = 12,
+    SimdUnsupported = 13,
+    SimdIllegalInstruction = 14,
 }
 
 impl TrapKindV1 {
@@ -74,6 +76,8 @@ impl TrapKindV1 {
             Self::SubstrateFault => "substrate-fault",
             Self::UnknownCodeFault => "unknown-code-fault",
             Self::StaleCodeExecutionFault => "stale-code-execution-fault",
+            Self::SimdUnsupported => "simd-unsupported",
+            Self::SimdIllegalInstruction => "simd-illegal-instruction",
         }
     }
 }

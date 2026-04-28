@@ -3179,6 +3179,17 @@ pub struct ActivationRecordManifest {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SimdTrapAttributionManifest {
+    pub classification: String,
+    pub required_abi: String,
+    pub min_vector_register_count: u16,
+    pub min_vector_register_bits: u16,
+    pub target_feature_set: Option<ContractObjectRefManifest>,
+    pub code_requirement_status: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct TrapRecordManifest {
     pub id: u64,
     #[serde(default)]
@@ -3209,6 +3220,8 @@ pub struct TrapRecordManifest {
     pub debug_symbol: Option<u32>,
     #[serde(default)]
     pub classification_status: Option<String>,
+    #[serde(default)]
+    pub simd_attribution: Option<SimdTrapAttributionManifest>,
     pub hostcall: Option<String>,
     pub fault_policy: String,
     pub effect: String,

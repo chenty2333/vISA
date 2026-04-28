@@ -472,6 +472,98 @@ impl ContractGraphValidator {
                     )),
                 }
             }
+            Self::validate_simd_trap(snapshot, violations, trap);
+        }
+    }
+
+    fn validate_simd_trap(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+        trap: &TargetTrapRecord,
+    ) {
+        let is_simd_trap = trap
+            .trap_kind
+            .as_deref()
+            .is_some_and(|kind| kind.starts_with("simd-"));
+        if !is_simd_trap && trap.simd_attribution.is_none() {
+            return;
+        }
+        let from = trap.object_ref();
+        let Some(attribution) = &trap.simd_attribution else {
+            violations.push(ContractViolation::new(
+                ContractViolationKind::ExternalEdgeMetadataMismatch,
+                "trap->simd-requirement",
+                from,
+                None,
+                "SIMD trap is missing SIMD attribution",
+            ));
+            return;
+        };
+        if attribution.classification == SimdTrapClassification::RequirementMissing {
+            violations.push(ContractViolation::new(
+                ContractViolationKind::ExternalEdgeMetadataMismatch,
+                "trap->simd-requirement",
+                from,
+                None,
+                "SIMD trap was attributed to code without a declared SIMD requirement",
+            ));
+        }
+        if let Some(feature) = attribution.target_feature_set {
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "trap->target-feature-set",
+                ContractObjectKind::TargetFeatureSet,
+                feature.id,
+                feature.generation,
+                ContractEdgeMode::Historical,
+            );
+        }
+        let Some(code_id) = trap.code_object else {
+            violations.push(ContractViolation::new(
+                ContractViolationKind::DanglingEdge,
+                "trap->simd-code",
+                from,
+                None,
+                "SIMD trap is missing code object attribution",
+            ));
+            return;
+        };
+        let Some(code) = snapshot.code_objects.iter().find(|code| code.id == code_id) else {
+            return;
+        };
+        if trap.code_generation != Some(code.generation) {
+            return;
+        }
+        if !code.simd_requirement.uses_simd
+            || !code.simd_requirement.declared
+            || code.simd_requirement.status != CodeObjectSimdRequirementStatus::Declared
+        {
+            violations.push(ContractViolation::new(
+                ContractViolationKind::ExternalEdgeMetadataMismatch,
+                "trap->simd-requirement",
+                from,
+                Some(code.object_ref()),
+                "SIMD trap code object does not declare a valid SIMD requirement",
+            ));
+            return;
+        }
+        if attribution.required_abi != code.simd_requirement.required_abi
+            || attribution.min_vector_register_count
+                != code.simd_requirement.min_vector_register_count
+            || attribution.min_vector_register_bits
+                != code.simd_requirement.min_vector_register_bits
+            || attribution.target_feature_set != code.simd_requirement.target_feature_set
+            || attribution.code_requirement_status != code.simd_requirement.status
+        {
+            violations.push(ContractViolation::new(
+                ContractViolationKind::ExternalEdgeMetadataMismatch,
+                "trap->simd-requirement",
+                from,
+                Some(code.object_ref()),
+                "SIMD trap attribution does not match CodeObject SIMD requirement",
+            ));
         }
     }
 
