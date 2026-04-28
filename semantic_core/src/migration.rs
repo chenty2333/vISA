@@ -788,6 +788,16 @@ pub enum SemanticInvariantError {
     IntegratedSmpPreemptionCleanupMissingEvent {
         integrated: IntegratedSmpPreemptionCleanupId,
     },
+    IntegratedSmpNetworkFaultInvalid {
+        integrated: IntegratedSmpNetworkFaultId,
+    },
+    IntegratedSmpNetworkFaultMissingEvidence {
+        integrated: IntegratedSmpNetworkFaultId,
+        evidence: &'static str,
+    },
+    IntegratedSmpNetworkFaultMissingEvent {
+        integrated: IntegratedSmpNetworkFaultId,
+    },
     DeviceObjectInvalid {
         device: DeviceObjectId,
     },

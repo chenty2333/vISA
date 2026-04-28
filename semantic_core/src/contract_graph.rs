@@ -98,6 +98,12 @@ pub struct ContractGraphSnapshot {
     pub display_panic_last_frames: Vec<DisplayPanicLastFrameRecord>,
     pub framebuffer_benchmarks: Vec<FramebufferBenchmarkRecord>,
     pub integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
+    pub integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
+    pub network_driver_cleanups: Vec<NetworkDriverCleanupRecord>,
+    pub packet_device_objects: Vec<PacketDeviceObjectRecord>,
+    pub network_stack_adapters: Vec<NetworkStackAdapterRecord>,
+    pub virtio_net_backends: Vec<VirtioNetBackendObjectRecord>,
+    pub io_cleanups: Vec<IoCleanupRecord>,
     pub saved_contexts: Vec<SavedContextRecord>,
     pub timer_interrupts: Vec<TimerInterruptRecord>,
     pub remote_preempts: Vec<RemotePreemptRecord>,
@@ -221,6 +227,7 @@ impl ContractGraphValidator {
         Self::validate_display_panic_last_frames(snapshot, &mut violations);
         Self::validate_framebuffer_benchmarks(snapshot, &mut violations);
         Self::validate_integrated_smp_preemption_cleanups(snapshot, &mut violations);
+        Self::validate_integrated_smp_network_faults(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -2795,6 +2802,203 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_integrated_smp_network_faults(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for record in &snapshot.integrated_smp_network_faults {
+            let from = record.object_ref();
+            if record.id == 0
+                || record.generation == 0
+                || record.scenario.is_empty()
+                || record.state != IntegratedSmpNetworkFaultState::Recorded
+                || record.network_driver_cleanup_generation == 0
+                || record.smp_stress_run_generation == 0
+                || record.remote_preempt_generation == 0
+                || record.smp_cleanup_quiescence_generation == 0
+                || record.driver_store_generation == 0
+                || record.packet_device_generation == 0
+                || record.adapter_generation == 0
+                || record.backend.generation == 0
+                || record.io_cleanup_generation == 0
+                || record.cancelled_socket_wait_count == 0
+                || record.cancelled_wait_token_count == 0
+                || record.revoked_packet_capability_count == 0
+                || record.hart_count < 2
+                || record.invariant_checks == 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "integrated-smp-network-fault->contract",
+                    from,
+                    None,
+                    "integrated SMP/network-fault evidence requires exact refs, completed network cleanup effects, 2+ harts, and recorded state",
+                ));
+                continue;
+            }
+            for (label, kind, id, generation) in [
+                (
+                    "integrated-smp-network-fault->network-driver-cleanup",
+                    ContractObjectKind::NetworkDriverCleanup,
+                    record.network_driver_cleanup,
+                    record.network_driver_cleanup_generation,
+                ),
+                (
+                    "integrated-smp-network-fault->smp-stress-run",
+                    ContractObjectKind::SmpStressRun,
+                    record.smp_stress_run,
+                    record.smp_stress_run_generation,
+                ),
+                (
+                    "integrated-smp-network-fault->remote-preempt",
+                    ContractObjectKind::RemotePreempt,
+                    record.remote_preempt,
+                    record.remote_preempt_generation,
+                ),
+                (
+                    "integrated-smp-network-fault->smp-cleanup-quiescence",
+                    ContractObjectKind::SmpCleanupQuiescence,
+                    record.smp_cleanup_quiescence,
+                    record.smp_cleanup_quiescence_generation,
+                ),
+                (
+                    "integrated-smp-network-fault->packet-device",
+                    ContractObjectKind::PacketDeviceObject,
+                    record.packet_device,
+                    record.packet_device_generation,
+                ),
+                (
+                    "integrated-smp-network-fault->network-stack-adapter",
+                    ContractObjectKind::NetworkStackAdapter,
+                    record.adapter,
+                    record.adapter_generation,
+                ),
+                (
+                    "integrated-smp-network-fault->io-cleanup",
+                    ContractObjectKind::IoCleanup,
+                    record.io_cleanup,
+                    record.io_cleanup_generation,
+                ),
+            ] {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    kind,
+                    id,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "integrated-smp-network-fault->backend",
+                record.backend.kind,
+                record.backend.id,
+                record.backend.generation,
+                ContractEdgeMode::Historical,
+            );
+            if let Some(cleanup) = snapshot.network_driver_cleanups.iter().find(|cleanup| {
+                cleanup.id == record.network_driver_cleanup
+                    && cleanup.generation == record.network_driver_cleanup_generation
+            }) {
+                if cleanup.state != NetworkDriverCleanupState::Completed
+                    || cleanup.driver_store != record.driver_store
+                    || cleanup.driver_store_generation != record.driver_store_generation
+                    || cleanup.packet_device != record.packet_device
+                    || cleanup.packet_device_generation != record.packet_device_generation
+                    || cleanup.adapter != record.adapter
+                    || cleanup.adapter_generation != record.adapter_generation
+                    || cleanup.backend != record.backend
+                    || cleanup.io_cleanup != record.io_cleanup
+                    || cleanup.io_cleanup_generation != record.io_cleanup_generation
+                    || cleanup.cancelled_socket_waits.len() as u32
+                        != record.cancelled_socket_wait_count
+                    || cleanup.cancelled_wait_tokens.len() as u32
+                        != record.cancelled_wait_token_count
+                    || cleanup.revoked_packet_capabilities.len() as u32
+                        != record.revoked_packet_capability_count
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-smp-network-fault->network-cleanup-binding",
+                        from,
+                        Some(cleanup.object_ref()),
+                        "integrated evidence network cleanup does not match recorded closure effects",
+                    ));
+                }
+            }
+            if let Some(stress) = snapshot.smp_stress_runs.iter().find(|run| {
+                run.id == record.smp_stress_run
+                    && run.generation == record.smp_stress_run_generation
+            }) {
+                if stress.state != SmpStressRunState::Recorded
+                    || stress.property_failures != 0
+                    || stress.hart_count != record.hart_count
+                    || stress.hart_count < 2
+                    || stress.observed_remote_preempt_count == 0
+                    || stress.observed_cleanup_quiescence_count == 0
+                    || stress.last_remote_preempt != record.remote_preempt
+                    || stress.last_remote_preempt_generation != record.remote_preempt_generation
+                    || stress.last_cleanup_quiescence != record.smp_cleanup_quiescence
+                    || stress.last_cleanup_quiescence_generation
+                        != record.smp_cleanup_quiescence_generation
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-smp-network-fault->smp-stress-binding",
+                        from,
+                        Some(stress.object_ref()),
+                        "integrated evidence stress run does not prove cross-hart cleanup context",
+                    ));
+                }
+            }
+            if let Some(remote) = snapshot.remote_preempts.iter().find(|remote| {
+                remote.id == record.remote_preempt
+                    && remote.generation == record.remote_preempt_generation
+            }) {
+                if remote.state != RemotePreemptState::Applied
+                    || remote.source_hart == remote.target_hart
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-smp-network-fault->remote-preempt-binding",
+                        from,
+                        Some(remote.object_ref()),
+                        "integrated evidence remote preempt is not cross-hart applied evidence",
+                    ));
+                }
+            }
+            if let Some(quiescence) = snapshot.smp_cleanup_quiescence.iter().find(|quiescence| {
+                quiescence.id == record.smp_cleanup_quiescence
+                    && quiescence.generation == record.smp_cleanup_quiescence_generation
+            }) {
+                if quiescence.state != SmpCleanupQuiescenceState::Validated
+                    || quiescence.participants.len() < 2
+                    || quiescence
+                        .participants
+                        .iter()
+                        .any(|participant| !participant.quiesced)
+                    || !quiescence.no_running_activation
+                    || !quiescence.no_pending_wait
+                    || !quiescence.no_live_capability
+                    || !quiescence.no_live_resource
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-smp-network-fault->quiescence-binding",
+                        from,
+                        Some(quiescence.object_ref()),
+                        "integrated evidence quiescence does not prove an SMP-safe fault context",
+                    ));
+                }
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -4058,6 +4262,38 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id && record.generation == generation)
                 .map(IntegratedSmpPreemptionCleanupRecord::object_ref),
+            ContractObjectKind::IntegratedSmpNetworkFault => snapshot
+                .integrated_smp_network_faults
+                .iter()
+                .find(|record| record.id == id && record.generation == generation)
+                .map(IntegratedSmpNetworkFaultRecord::object_ref),
+            ContractObjectKind::NetworkDriverCleanup => snapshot
+                .network_driver_cleanups
+                .iter()
+                .find(|cleanup| cleanup.id == id && cleanup.generation == generation)
+                .map(NetworkDriverCleanupRecord::object_ref),
+            ContractObjectKind::PacketDeviceObject => snapshot
+                .packet_device_objects
+                .iter()
+                .find(|packet_device| {
+                    packet_device.id == id && packet_device.generation == generation
+                })
+                .map(PacketDeviceObjectRecord::object_ref),
+            ContractObjectKind::NetworkStackAdapter => snapshot
+                .network_stack_adapters
+                .iter()
+                .find(|adapter| adapter.id == id && adapter.generation == generation)
+                .map(NetworkStackAdapterRecord::object_ref),
+            ContractObjectKind::VirtioNetBackendObject => snapshot
+                .virtio_net_backends
+                .iter()
+                .find(|backend| backend.id == id && backend.generation == generation)
+                .map(VirtioNetBackendObjectRecord::object_ref),
+            ContractObjectKind::IoCleanup => snapshot
+                .io_cleanups
+                .iter()
+                .find(|cleanup| cleanup.id == id && cleanup.generation == generation)
+                .map(IoCleanupRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -4283,6 +4519,36 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id)
                 .map(IntegratedSmpPreemptionCleanupRecord::object_ref),
+            ContractObjectKind::IntegratedSmpNetworkFault => snapshot
+                .integrated_smp_network_faults
+                .iter()
+                .find(|record| record.id == id)
+                .map(IntegratedSmpNetworkFaultRecord::object_ref),
+            ContractObjectKind::NetworkDriverCleanup => snapshot
+                .network_driver_cleanups
+                .iter()
+                .find(|cleanup| cleanup.id == id)
+                .map(NetworkDriverCleanupRecord::object_ref),
+            ContractObjectKind::PacketDeviceObject => snapshot
+                .packet_device_objects
+                .iter()
+                .find(|packet_device| packet_device.id == id)
+                .map(PacketDeviceObjectRecord::object_ref),
+            ContractObjectKind::NetworkStackAdapter => snapshot
+                .network_stack_adapters
+                .iter()
+                .find(|adapter| adapter.id == id)
+                .map(NetworkStackAdapterRecord::object_ref),
+            ContractObjectKind::VirtioNetBackendObject => snapshot
+                .virtio_net_backends
+                .iter()
+                .find(|backend| backend.id == id)
+                .map(VirtioNetBackendObjectRecord::object_ref),
+            ContractObjectKind::IoCleanup => snapshot
+                .io_cleanups
+                .iter()
+                .find(|cleanup| cleanup.id == id)
+                .map(IoCleanupRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -4357,28 +4623,23 @@ impl ContractGraphValidator {
             | ContractObjectKind::DeviceCapability
             | ContractObjectKind::DriverStoreBinding
             | ContractObjectKind::IoWait
-            | ContractObjectKind::IoCleanup
             | ContractObjectKind::IoFaultInjection
             | ContractObjectKind::IoValidationReport
-            | ContractObjectKind::PacketDeviceObject
             | ContractObjectKind::PacketBufferObject
             | ContractObjectKind::PacketQueueObject
             | ContractObjectKind::PacketDescriptorObject
             | ContractObjectKind::FakeNetBackendObject
             | ContractObjectKind::FakeBlockBackendObject
             | ContractObjectKind::VirtioBlkBackendObject
-            | ContractObjectKind::VirtioNetBackendObject
             | ContractObjectKind::NetworkRxInterrupt
             | ContractObjectKind::NetworkRxWaitResolution
             | ContractObjectKind::NetworkTxCapabilityGate
             | ContractObjectKind::NetworkTxCompletion
-            | ContractObjectKind::NetworkStackAdapter
             | ContractObjectKind::SocketObject
             | ContractObjectKind::EndpointObject
             | ContractObjectKind::SocketOperation
             | ContractObjectKind::SocketWait
             | ContractObjectKind::NetworkBackpressure
-            | ContractObjectKind::NetworkDriverCleanup
             | ContractObjectKind::NetworkGenerationAudit
             | ContractObjectKind::NetworkFaultInjection
             | ContractObjectKind::NetworkBenchmark
@@ -4654,6 +4915,15 @@ impl ContractGraphValidator {
                 .and_then(|record| {
                     (record.state != IntegratedSmpPreemptionCleanupState::Recorded).then_some(
                         "live edge references unrecorded integrated SMP/preemption/cleanup evidence",
+                    )
+                }),
+            ContractObjectKind::IntegratedSmpNetworkFault => snapshot
+                .integrated_smp_network_faults
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != IntegratedSmpNetworkFaultState::Recorded).then_some(
+                        "live edge references unrecorded integrated SMP/network-fault evidence",
                     )
                 }),
             _ => None,

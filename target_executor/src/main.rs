@@ -30,18 +30,19 @@ use artifact_manifest::{
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    IntegratedSmpPreemptionCleanupManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8393,6 +8394,7 @@ fn build_target_executor_v1(
     run_display_panic_last_frame_harness(semantic)?;
     run_framebuffer_benchmark_harness(semantic)?;
     run_integrated_smp_preemption_cleanup_harness(semantic)?;
+    run_integrated_smp_network_fault_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8485,6 +8487,12 @@ fn build_target_executor_v1(
         display_panic_last_frames: semantic.display_panic_last_frames().to_vec(),
         framebuffer_benchmarks: semantic.framebuffer_benchmarks().to_vec(),
         integrated_smp_preemption_cleanups: semantic.integrated_smp_preemption_cleanups().to_vec(),
+        integrated_smp_network_faults: semantic.integrated_smp_network_faults().to_vec(),
+        network_driver_cleanups: semantic.network_driver_cleanups().to_vec(),
+        packet_device_objects: semantic.packet_device_objects().to_vec(),
+        network_stack_adapters: semantic.network_stack_adapters().to_vec(),
+        virtio_net_backends: semantic.virtio_net_backends().to_vec(),
+        io_cleanups: semantic.io_cleanups().to_vec(),
         saved_contexts: semantic.saved_contexts().to_vec(),
         timer_interrupts: semantic.timer_interrupts().to_vec(),
         remote_preempts: semantic.remote_preempts().to_vec(),
@@ -10762,6 +10770,41 @@ fn run_integrated_smp_preemption_cleanup_harness(
     Ok(())
 }
 
+fn run_integrated_smp_network_fault_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        100_002,
+        "integrated-runtime-x1",
+        SemanticCommand::RecordIntegratedSmpNetworkFault {
+            integrated: 26_101,
+            scenario: "x1-smp-network-driver-fault".to_owned(),
+            network_driver_cleanup: 10051,
+            network_driver_cleanup_generation: 1,
+            smp_stress_run: 9501,
+            smp_stress_run_generation: 1,
+            remote_preempt: 9001,
+            remote_preempt_generation: 1,
+            smp_cleanup_quiescence: 9301,
+            smp_cleanup_quiescence_generation: 1,
+            invariant_checks: 7,
+            note: "x1 records network driver cleanup under SMP stress and quiescence evidence"
+                .to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "integrated runtime x1 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11559,6 +11602,7 @@ fn demo_migration_package(
             smp_scaling_benchmark_count: semantic.smp_scaling_benchmark_count(),
             integrated_smp_preemption_cleanup_count: semantic
                 .integrated_smp_preemption_cleanup_count(),
+            integrated_smp_network_fault_count: semantic.integrated_smp_network_fault_count(),
             device_object_count: semantic.device_object_count(),
             queue_object_count: semantic.queue_object_count(),
             descriptor_object_count: semantic.descriptor_object_count(),
@@ -11775,6 +11819,11 @@ fn demo_migration_package(
                 .integrated_smp_preemption_cleanups()
                 .iter()
                 .map(integrated_smp_preemption_cleanup_manifest)
+                .collect(),
+            integrated_smp_network_faults: semantic
+                .integrated_smp_network_faults()
+                .iter()
+                .map(integrated_smp_network_fault_manifest)
                 .collect(),
             device_objects: semantic
                 .device_objects()
@@ -12671,6 +12720,38 @@ fn semantic_roots(
                     record.target_store_generation,
                     record.result_store_generation,
                     record.hart_count,
+                    record.generation
+                )
+            })
+            .collect(),
+        integrated_smp_network_fault_roots: semantic
+            .integrated_smp_network_faults()
+            .iter()
+            .map(|record| {
+                format!(
+                    "integrated-smp-network-fault id={} scenario={} cleanup={}@{} stress_run={}@{} remote_preempt={}@{} smp_cleanup_quiescence={}@{} driver_store={}@{} packet_device={}@{} adapter={}@{} backend={}:{}@{} harts={} cancelled_socket_waits={} revoked_packet_capabilities={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.network_driver_cleanup,
+                    record.network_driver_cleanup_generation,
+                    record.smp_stress_run,
+                    record.smp_stress_run_generation,
+                    record.remote_preempt,
+                    record.remote_preempt_generation,
+                    record.smp_cleanup_quiescence,
+                    record.smp_cleanup_quiescence_generation,
+                    record.driver_store,
+                    record.driver_store_generation,
+                    record.packet_device,
+                    record.packet_device_generation,
+                    record.adapter,
+                    record.adapter_generation,
+                    record.backend.kind.as_str(),
+                    record.backend.id,
+                    record.backend.generation,
+                    record.hart_count,
+                    record.cancelled_socket_wait_count,
+                    record.revoked_packet_capability_count,
                     record.generation
                 )
             })
@@ -15826,6 +15907,41 @@ fn integrated_smp_preemption_cleanup_manifest(
         result_store_generation: record.result_store_generation,
         cleanup_activation: record.cleanup_activation,
         cleanup_activation_generation_after: record.cleanup_activation_generation_after,
+        hart_count: record.hart_count,
+        invariant_checks: record.invariant_checks,
+        generation: record.generation,
+        state: record.state.as_str().to_owned(),
+        recorded_at_event: record.recorded_at_event,
+        note: record.note.clone(),
+    }
+}
+
+fn integrated_smp_network_fault_manifest(
+    record: &semantic_core::IntegratedSmpNetworkFaultRecord,
+) -> IntegratedSmpNetworkFaultManifest {
+    IntegratedSmpNetworkFaultManifest {
+        id: record.id,
+        scenario: record.scenario.clone(),
+        network_driver_cleanup: record.network_driver_cleanup,
+        network_driver_cleanup_generation: record.network_driver_cleanup_generation,
+        smp_stress_run: record.smp_stress_run,
+        smp_stress_run_generation: record.smp_stress_run_generation,
+        remote_preempt: record.remote_preempt,
+        remote_preempt_generation: record.remote_preempt_generation,
+        smp_cleanup_quiescence: record.smp_cleanup_quiescence,
+        smp_cleanup_quiescence_generation: record.smp_cleanup_quiescence_generation,
+        driver_store: record.driver_store,
+        driver_store_generation: record.driver_store_generation,
+        packet_device: record.packet_device,
+        packet_device_generation: record.packet_device_generation,
+        adapter: record.adapter,
+        adapter_generation: record.adapter_generation,
+        backend: contract_object_ref_manifest(record.backend),
+        io_cleanup: record.io_cleanup,
+        io_cleanup_generation: record.io_cleanup_generation,
+        cancelled_socket_wait_count: record.cancelled_socket_wait_count,
+        cancelled_wait_token_count: record.cancelled_wait_token_count,
+        revoked_packet_capability_count: record.revoked_packet_capability_count,
         hart_count: record.hart_count,
         invariant_checks: record.invariant_checks,
         generation: record.generation,

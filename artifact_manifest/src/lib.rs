@@ -267,6 +267,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_smp_preemption_cleanup_count: usize,
     #[serde(default)]
+    pub integrated_smp_network_fault_count: usize,
+    #[serde(default)]
     pub device_object_count: usize,
     #[serde(default)]
     pub queue_object_count: usize,
@@ -537,6 +539,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupManifest>,
     #[serde(default)]
+    pub integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultManifest>,
+    #[serde(default)]
     pub device_objects: Vec<DeviceObjectManifest>,
     #[serde(default)]
     pub queue_objects: Vec<QueueObjectManifest>,
@@ -786,6 +790,8 @@ pub struct SemanticRootSetManifest {
     pub smp_scaling_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub integrated_smp_preemption_cleanup_roots: Vec<String>,
+    #[serde(default)]
+    pub integrated_smp_network_fault_roots: Vec<String>,
     #[serde(default)]
     pub device_object_roots: Vec<String>,
     #[serde(default)]
@@ -1617,6 +1623,38 @@ pub struct IntegratedSmpPreemptionCleanupManifest {
     pub result_store_generation: u64,
     pub cleanup_activation: u64,
     pub cleanup_activation_generation_after: u64,
+    pub hart_count: u32,
+    pub invariant_checks: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IntegratedSmpNetworkFaultManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub network_driver_cleanup: u64,
+    pub network_driver_cleanup_generation: u64,
+    pub smp_stress_run: u64,
+    pub smp_stress_run_generation: u64,
+    pub remote_preempt: u64,
+    pub remote_preempt_generation: u64,
+    pub smp_cleanup_quiescence: u64,
+    pub smp_cleanup_quiescence_generation: u64,
+    pub driver_store: u64,
+    pub driver_store_generation: u64,
+    pub packet_device: u64,
+    pub packet_device_generation: u64,
+    pub adapter: u64,
+    pub adapter_generation: u64,
+    pub backend: ContractObjectRefManifest,
+    pub io_cleanup: u64,
+    pub io_cleanup_generation: u64,
+    pub cancelled_socket_wait_count: u32,
+    pub cancelled_wait_token_count: u32,
+    pub revoked_packet_capability_count: u32,
     pub hart_count: u32,
     pub invariant_checks: u32,
     pub generation: u64,

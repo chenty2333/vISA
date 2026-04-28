@@ -717,6 +717,48 @@ impl IntegratedSmpPreemptionCleanupRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntegratedSmpNetworkFaultRecord {
+    pub id: IntegratedSmpNetworkFaultId,
+    pub scenario: String,
+    pub network_driver_cleanup: NetworkDriverCleanupId,
+    pub network_driver_cleanup_generation: Generation,
+    pub smp_stress_run: SmpStressRunId,
+    pub smp_stress_run_generation: Generation,
+    pub remote_preempt: RemotePreemptId,
+    pub remote_preempt_generation: Generation,
+    pub smp_cleanup_quiescence: SmpCleanupQuiescenceId,
+    pub smp_cleanup_quiescence_generation: Generation,
+    pub driver_store: StoreId,
+    pub driver_store_generation: Generation,
+    pub packet_device: PacketDeviceObjectId,
+    pub packet_device_generation: Generation,
+    pub adapter: NetworkStackAdapterId,
+    pub adapter_generation: Generation,
+    pub backend: ContractObjectRef,
+    pub io_cleanup: IoCleanupId,
+    pub io_cleanup_generation: Generation,
+    pub cancelled_socket_wait_count: u32,
+    pub cancelled_wait_token_count: u32,
+    pub revoked_packet_capability_count: u32,
+    pub hart_count: u32,
+    pub invariant_checks: u32,
+    pub generation: Generation,
+    pub state: IntegratedSmpNetworkFaultState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl IntegratedSmpNetworkFaultRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::IntegratedSmpNetworkFault,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceObjectRecord {
     pub id: DeviceObjectId,
     pub name: String,

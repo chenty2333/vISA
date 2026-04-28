@@ -26,9 +26,10 @@ use artifact_manifest::{
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    IntegratedSmpPreemptionCleanupManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -279,6 +280,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "integrated-smp-preemption-cleanup"
         | "integrated-smp-cleanup"
         | "smp-preemption-cleanup"
+        | "integrated-smp-network-fault"
+        | "smp-network-fault"
+        | "integrated-network-fault"
         | "device"
         | "device-object"
         | "queue"
@@ -627,7 +631,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -635,7 +639,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -935,6 +939,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "integrated-smp-preemption-cleanup"
         | "integrated-smp-cleanup"
         | "smp-preemption-cleanup" => "integrated-smp-preemption-cleanup",
+        "integrated-smp-network-fault" | "smp-network-fault" | "integrated-network-fault" => {
+            "integrated-smp-network-fault"
+        }
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -1978,6 +1985,94 @@ fn integrated_smp_preemption_cleanup_view_v1(
             "cleanup_store_generation_after": record.result_store_generation,
         },
         "last_error": serde_json::Value::Null,
+    })
+}
+
+fn integrated_smp_network_fault_view_v1(
+    record: &IntegratedSmpNetworkFaultManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "integrated-smp-network-fault",
+        "id": record.id,
+        "generation": record.generation,
+        "state": record.state,
+        "owner": {
+            "scenario": record.scenario,
+            "driver_store": {
+                "kind": "store",
+                "id": record.driver_store,
+                "generation": record.driver_store_generation,
+                "note": "semantic driver store generation, not adapter-internal state",
+            },
+            "packet_device": object_ref_json(
+                "packet-device-object",
+                record.packet_device,
+                record.packet_device_generation,
+            ),
+        },
+        "references": {
+            "network_driver_cleanup": object_ref_json(
+                "network-driver-cleanup",
+                record.network_driver_cleanup,
+                record.network_driver_cleanup_generation,
+            ),
+            "smp_stress_run": object_ref_json(
+                "smp-stress-run",
+                record.smp_stress_run,
+                record.smp_stress_run_generation,
+            ),
+            "remote_preempt": object_ref_json(
+                "remote-preempt",
+                record.remote_preempt,
+                record.remote_preempt_generation,
+            ),
+            "smp_cleanup_quiescence": object_ref_json(
+                "smp-cleanup-quiescence",
+                record.smp_cleanup_quiescence,
+                record.smp_cleanup_quiescence_generation,
+            ),
+            "network_stack_adapter": object_ref_json(
+                "network-stack-adapter",
+                record.adapter,
+                record.adapter_generation,
+            ),
+            "backend": object_ref_json(
+                &record.backend.kind,
+                record.backend.id,
+                record.backend.generation,
+            ),
+            "io_cleanup": object_ref_json(
+                "io-cleanup",
+                record.io_cleanup,
+                record.io_cleanup_generation,
+            ),
+            "event": {
+                "id": record.recorded_at_event,
+            },
+        },
+        "closure": {
+            "hart_count": record.hart_count,
+            "invariant_checks": record.invariant_checks,
+            "cancelled_socket_wait_count": record.cancelled_socket_wait_count,
+            "cancelled_wait_token_count": record.cancelled_wait_token_count,
+            "revoked_packet_capability_count": record.revoked_packet_capability_count,
+            "requires_completed_network_driver_cleanup": true,
+            "requires_cross_hart_preempt_evidence": true,
+            "requires_smp_quiescence_evidence": true,
+        },
+        "authority": {
+            "uses_semantic_network_cleanup_evidence": true,
+            "uses_smp_stress_evidence": true,
+            "real_network_driver_fault_executed": false,
+            "real_cross_hart_substrate_interrupt_executed": false,
+            "adapter_internal_state_is_not_semantic_truth": true,
+        },
+        "note": record.note,
+        "last_transition": {
+            "event": record.recorded_at_event,
+            "state": record.state,
+        },
     })
 }
 
@@ -7645,6 +7740,14 @@ fn stable_views_for_kind(
             .iter()
             .map(integrated_smp_preemption_cleanup_view_v1)
             .collect()),
+        "integrated-smp-network-fault" | "smp-network-fault" | "integrated-network-fault" => {
+            Ok(package
+                .semantic
+                .integrated_smp_network_faults
+                .iter()
+                .map(integrated_smp_network_fault_view_v1)
+                .collect())
+        }
         "device" | "device-object" => Ok(package
             .semantic
             .device_objects
@@ -9067,6 +9170,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
             .semantic
             .roots
             .integrated_smp_preemption_cleanup_roots,
+    );
+    print_roots(
+        "integrated-smp-network-fault",
+        &package.semantic.roots.integrated_smp_network_fault_roots,
     );
     print_roots("device", &package.semantic.roots.device_object_roots);
     print_roots("queue", &package.semantic.roots.queue_object_roots);
@@ -13767,6 +13874,72 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             ));
         }
     }
+    for record in &package.semantic.integrated_smp_network_faults {
+        let from = object_ref_json("integrated-smp-network-fault", record.id, record.generation);
+        for (label, kind, id, generation) in [
+            (
+                "integrated-network-cleanup",
+                "network-driver-cleanup",
+                record.network_driver_cleanup,
+                record.network_driver_cleanup_generation,
+            ),
+            (
+                "integrated-smp-stress-run",
+                "smp-stress-run",
+                record.smp_stress_run,
+                record.smp_stress_run_generation,
+            ),
+            (
+                "integrated-remote-preempt",
+                "remote-preempt",
+                record.remote_preempt,
+                record.remote_preempt_generation,
+            ),
+            (
+                "integrated-cleanup-quiescence",
+                "smp-cleanup-quiescence",
+                record.smp_cleanup_quiescence,
+                record.smp_cleanup_quiescence_generation,
+            ),
+            (
+                "integrated-packet-device",
+                "packet-device-object",
+                record.packet_device,
+                record.packet_device_generation,
+            ),
+            (
+                "integrated-network-adapter",
+                "network-stack-adapter",
+                record.adapter,
+                record.adapter_generation,
+            ),
+            (
+                "integrated-io-cleanup",
+                "io-cleanup",
+                record.io_cleanup,
+                record.io_cleanup_generation,
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(kind, id, generation),
+                label,
+                "historical",
+                Some(record.recorded_at_event),
+            ));
+        }
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                &record.backend.kind,
+                record.backend.id,
+                record.backend.generation,
+            ),
+            "integrated-network-backend",
+            "historical",
+            Some(record.recorded_at_event),
+        ));
+    }
     for device in &package.semantic.device_objects {
         edges.push(graph_edge(
             object_ref_json("device", device.id, device.generation),
@@ -16055,6 +16228,53 @@ fn inspect_package_object(
                 );
             }
         }
+        "integrated-smp-network-fault" | "smp-network-fault" | "integrated-network-fault" => {
+            println!(
+                "inspect integrated-smp-network-fault package={} count={}",
+                package.package_id, package.semantic.integrated_smp_network_fault_count
+            );
+            for record in &package.semantic.integrated_smp_network_faults {
+                let line = format!(
+                    "integrated-smp-network-fault id={} scenario={} cleanup={}@{} stress_run={}@{} remote_preempt={}@{} smp_cleanup_quiescence={}@{} driver_store={}@{} packet_device={}@{} adapter={}@{} backend={}:{}@{} io_cleanup={}@{} harts={} cancelled_socket_waits={} cancelled_wait_tokens={} revoked_packet_capabilities={} invariants={} state={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.network_driver_cleanup,
+                    record.network_driver_cleanup_generation,
+                    record.smp_stress_run,
+                    record.smp_stress_run_generation,
+                    record.remote_preempt,
+                    record.remote_preempt_generation,
+                    record.smp_cleanup_quiescence,
+                    record.smp_cleanup_quiescence_generation,
+                    record.driver_store,
+                    record.driver_store_generation,
+                    record.packet_device,
+                    record.packet_device_generation,
+                    record.adapter,
+                    record.adapter_generation,
+                    record.backend.kind,
+                    record.backend.id,
+                    record.backend.generation,
+                    record.io_cleanup,
+                    record.io_cleanup_generation,
+                    record.hart_count,
+                    record.cancelled_socket_wait_count,
+                    record.cancelled_wait_token_count,
+                    record.revoked_packet_capability_count,
+                    record.invariant_checks,
+                    record.state,
+                    record.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.integrated_smp_network_faults.is_empty() {
+                print_roots_filtered(
+                    "integrated-smp-network-fault",
+                    &package.semantic.roots.integrated_smp_network_fault_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -16555,6 +16775,23 @@ fn inspect_package_object_json(
                     .semantic
                     .roots
                     .integrated_smp_preemption_cleanup_roots
+                    .len()
+            }),
+        ),
+        "integrated-smp-network-fault" | "smp-network-fault" | "integrated-network-fault" => (
+            "integrated-smp-network-fault",
+            package.semantic.integrated_smp_network_fault_count,
+            package
+                .semantic
+                .integrated_smp_network_faults
+                .iter()
+                .map(integrated_smp_network_fault_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package
+                    .semantic
+                    .roots
+                    .integrated_smp_network_fault_roots
                     .len()
             }),
         ),
@@ -17059,6 +17296,9 @@ fn replay_until(
         .integrated_smp_preemption_cleanup_roots
     {
         println!("replay integrated-smp-preemption-cleanup {integrated}");
+    }
+    for integrated in &package.semantic.roots.integrated_smp_network_fault_roots {
+        println!("replay integrated-smp-network-fault {integrated}");
     }
     for device in &package.semantic.roots.device_object_roots {
         println!("replay device {device}");
@@ -21376,6 +21616,70 @@ mod tests {
             true
         );
         assert_eq!(view["last_transition"]["recorded_at_event"], 570);
+    }
+
+    #[test]
+    fn integrated_smp_network_fault_view_v1_exposes_network_fault_under_smp_refs() {
+        let view = integrated_smp_network_fault_view_v1(&IntegratedSmpNetworkFaultManifest {
+            id: 26_101,
+            scenario: "x1-smp-network-driver-fault".to_owned(),
+            network_driver_cleanup: 10_051,
+            network_driver_cleanup_generation: 1,
+            smp_stress_run: 9_501,
+            smp_stress_run_generation: 1,
+            remote_preempt: 9_001,
+            remote_preempt_generation: 1,
+            smp_cleanup_quiescence: 9_301,
+            smp_cleanup_quiescence_generation: 1,
+            driver_store: 7,
+            driver_store_generation: 3,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            adapter: 10_025,
+            adapter_generation: 1,
+            backend: ContractObjectRefManifest {
+                kind: "virtio-net-backend-object".to_owned(),
+                id: 10_010,
+                generation: 1,
+            },
+            io_cleanup: 10_052,
+            io_cleanup_generation: 1,
+            cancelled_socket_wait_count: 1,
+            cancelled_wait_token_count: 1,
+            revoked_packet_capability_count: 1,
+            hart_count: 2,
+            invariant_checks: 7,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 571,
+            note: "x1 integrated network fault".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "integrated-smp-network-fault");
+        assert_eq!(view["owner"]["driver_store"]["generation"], 3);
+        assert_eq!(view["owner"]["packet_device"]["id"], 10_002);
+        assert_eq!(view["references"]["network_driver_cleanup"]["id"], 10_051);
+        assert_eq!(view["references"]["smp_stress_run"]["id"], 9_501);
+        assert_eq!(view["references"]["remote_preempt"]["generation"], 1);
+        assert_eq!(view["references"]["smp_cleanup_quiescence"]["id"], 9_301);
+        assert_eq!(
+            view["references"]["backend"]["kind"],
+            "virtio-net-backend-object"
+        );
+        assert_eq!(view["references"]["io_cleanup"]["id"], 10_052);
+        assert_eq!(view["closure"]["hart_count"], 2);
+        assert_eq!(view["closure"]["cancelled_socket_wait_count"], 1);
+        assert_eq!(view["closure"]["revoked_packet_capability_count"], 1);
+        assert_eq!(
+            view["authority"]["adapter_internal_state_is_not_semantic_truth"],
+            true
+        );
+        assert_eq!(
+            view["authority"]["real_network_driver_fault_executed"],
+            false
+        );
+        assert_eq!(view["last_transition"]["event"], 571);
     }
 
     #[test]

@@ -28,6 +28,7 @@ pub struct SemanticGraph {
     smp_stress_runs: Vec<SmpStressRunRecord>,
     smp_scaling_benchmarks: Vec<SmpScalingBenchmarkRecord>,
     integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
+    integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
     device_objects: Vec<DeviceObjectRecord>,
     queue_objects: Vec<QueueObjectRecord>,
     descriptor_objects: Vec<DescriptorObjectRecord>,
@@ -143,6 +144,7 @@ pub struct SemanticGraph {
     next_smp_stress_run_id: SmpStressRunId,
     next_smp_scaling_benchmark_id: SmpScalingBenchmarkId,
     next_integrated_smp_preemption_cleanup_id: IntegratedSmpPreemptionCleanupId,
+    next_integrated_smp_network_fault_id: IntegratedSmpNetworkFaultId,
     next_device_object_id: DeviceObjectId,
     next_queue_object_id: QueueObjectId,
     next_descriptor_object_id: DescriptorObjectId,
@@ -287,6 +289,7 @@ mod framebuffer_write;
 mod fs_wait;
 mod hart;
 mod hart_event;
+mod integrated_smp_network_fault;
 mod integrated_smp_preemption_cleanup;
 mod interface;
 mod io_cleanup;
@@ -375,6 +378,7 @@ impl SemanticGraph {
             smp_stress_runs: Vec::new(),
             smp_scaling_benchmarks: Vec::new(),
             integrated_smp_preemption_cleanups: Vec::new(),
+            integrated_smp_network_faults: Vec::new(),
             device_objects: Vec::new(),
             queue_objects: Vec::new(),
             descriptor_objects: Vec::new(),
@@ -490,6 +494,7 @@ impl SemanticGraph {
             next_smp_stress_run_id: 1,
             next_smp_scaling_benchmark_id: 1,
             next_integrated_smp_preemption_cleanup_id: 1,
+            next_integrated_smp_network_fault_id: 1,
             next_device_object_id: 1,
             next_queue_object_id: 1,
             next_descriptor_object_id: 1,
