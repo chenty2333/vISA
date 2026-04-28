@@ -64,6 +64,13 @@ pub enum SemanticCommand {
         activation: ActivationId,
         activation_generation: Generation,
     },
+    UpdateActivationContextVectorState {
+        context: ActivationContextId,
+        context_generation: Generation,
+        vector_state: Option<ContractObjectRef>,
+        vector_status: ActivationVectorState,
+        note: String,
+    },
     CaptureSavedContext {
         saved_context: SavedContextId,
         context: ActivationContextId,
@@ -1343,6 +1350,9 @@ impl SemanticCommand {
             Self::EnqueueRunnable { .. } => "enqueue-runnable",
             Self::DequeueRunnable { .. } => "dequeue-runnable",
             Self::CreateActivationContext { .. } => "create-activation-context",
+            Self::UpdateActivationContextVectorState { .. } => {
+                "update-activation-context-vector-state"
+            }
             Self::CaptureSavedContext { .. } => "capture-saved-context",
             Self::SavePreemptedContext { .. } => "save-preempted-context",
             Self::RecordTimerInterrupt { .. } => "record-timer-interrupt",
@@ -1908,6 +1918,20 @@ impl SemanticGraph {
                     ))
                 }
             }
+            SemanticCommand::UpdateActivationContextVectorState {
+                context,
+                context_generation,
+                vector_state,
+                vector_status,
+                ..
+            } => self
+                .validate_activation_context_vector_state(
+                    *context,
+                    *context_generation,
+                    *vector_state,
+                    *vector_status,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::CaptureSavedContext {
                 saved_context,
                 context,
@@ -5059,6 +5083,19 @@ impl SemanticGraph {
                 activation,
                 activation_generation,
             } => self.create_activation_context_with_id(context, activation, activation_generation),
+            SemanticCommand::UpdateActivationContextVectorState {
+                context,
+                context_generation,
+                vector_state,
+                vector_status,
+                note,
+            } => self.update_activation_context_vector_state(
+                context,
+                context_generation,
+                vector_state,
+                vector_status,
+                &note,
+            ),
             SemanticCommand::CaptureSavedContext {
                 saved_context,
                 context,

@@ -82,6 +82,14 @@ pub enum EventKind {
         activation_generation: Generation,
         generation: Generation,
     },
+    ActivationContextVectorStateUpdated {
+        context: ActivationContextId,
+        context_generation_before: Generation,
+        context_generation_after: Generation,
+        vector_state: Option<ContractObjectRef>,
+        vector_status: ActivationVectorState,
+        generation: Generation,
+    },
     SavedContextCaptured {
         saved_context: SavedContextId,
         context: ActivationContextId,
@@ -1783,6 +1791,20 @@ impl EventKind {
                 generation,
             } => format!(
                 "ActivationContextCreated context={context} activation={activation}@{activation_generation} generation={generation}"
+            ),
+            Self::ActivationContextVectorStateUpdated {
+                context,
+                context_generation_before,
+                context_generation_after,
+                vector_state,
+                vector_status,
+                generation,
+            } => format!(
+                "ActivationContextVectorStateUpdated context={context}@{context_generation_before}->{context_generation_after} vector_state={} vector_status={} generation={generation}",
+                vector_state
+                    .map(ContractObjectRef::summary)
+                    .unwrap_or_else(|| "none".to_string()),
+                vector_status.as_str()
             ),
             Self::SavedContextCaptured {
                 saved_context,

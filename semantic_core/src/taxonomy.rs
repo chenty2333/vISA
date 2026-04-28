@@ -179,6 +179,27 @@ impl ActivationContextState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivationVectorState {
+    Absent,
+    Clean,
+    Dirty,
+}
+
+impl ActivationVectorState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Absent => "absent",
+            Self::Clean => "clean",
+            Self::Dirty => "dirty",
+        }
+    }
+
+    pub const fn requires_vector_state(self) -> bool {
+        matches!(self, Self::Clean | Self::Dirty)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SavedContextState {
     Captured,
     Superseded,

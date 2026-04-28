@@ -1046,6 +1046,12 @@ pub struct ActivationContextManifest {
     pub current_saved_context: Option<u64>,
     #[serde(default)]
     pub current_saved_context_generation: Option<u64>,
+    #[serde(default)]
+    pub vector_state: Option<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub vector_status: String,
+    #[serde(default)]
+    pub vector_state_event: Option<u64>,
     pub last_event: Option<u64>,
 }
 

@@ -1,0 +1,89 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "V5-activation-context-vector-clean-dirty-state",
+  "name": "golden_v5_activation_context_vector_state",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "lazy vector state enable",
+    "preempt saves dirty vector state",
+    "resume restores vector state",
+    "cross-hart vector migration",
+    "real target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "ActivationContext exists for activation:11@1",
+      "VectorState vector-state:22000@1 is reserved and owned by activation:11@1",
+      "RuntimeActivation carries the same CodeObject ref as the VectorState"
+    ],
+    "commands": [
+      {
+        "name": "update-activation-context-vector-state",
+        "context": "activation-context:12@1",
+        "vector_state": "vector-state:22000@1",
+        "vector_status": "dirty"
+      },
+      {
+        "name": "update-activation-context-vector-state",
+        "context": "activation-context:12@2",
+        "vector_state": "vector-state:22000@1",
+        "vector_status": "clean"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "ActivationContextVectorStateUpdated",
+      "source": "SemanticGraph::update_activation_context_vector_state",
+      "visible_as": "osctl activation-context list --json",
+      "reason": "ActivationContext owns only semantic vector cleanliness state and exact VectorState refs"
+    }
+  ],
+  "expected": {
+    "views": {
+      "activation-context": {
+        "id": 12,
+        "generation": 3,
+        "state": "created",
+        "vector_context": {
+          "status": "clean",
+          "vector_state": {
+            "kind": "vector-state",
+            "id": 22000,
+            "generation": 1
+          }
+        }
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "clean or dirty ActivationContext vector state requires an exact VectorState ObjectRef",
+      "ActivationContext vector ref must match the VectorState generation",
+      "VectorState owner activation must match the ActivationContext activation generation",
+      "VectorState owner store must match the ActivationContext owner store generation when present",
+      "RuntimeActivation CodeObject ref must match the VectorState CodeObject ref when present",
+      "absent vector context must not carry a VectorState ref"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "simd_runtime_v5_activation_context_tracks_dirty_and_clean_vector_state",
+      "simd_runtime_v5_rejects_missing_or_stale_vector_state_ref",
+      "simd_runtime_v5_invariants_reject_vector_context_generation_drift",
+      "activation_context_view_v1_exposes_vector_clean_dirty_state"
+    ],
+    "osctl_json_view": "activation-context list --json",
+    "activation_context": "activation-context:12@3",
+    "vector_state": "vector-state:22000@1"
+  }
+}

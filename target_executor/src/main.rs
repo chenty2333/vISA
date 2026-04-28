@@ -63,27 +63,28 @@ use fs_adapter::{
 use net_stack_adapter::{SmoltcpAdapterConfig, build_smoltcp_adapter_evidence};
 use runtime::{HostValidationSmokeTrace, RuntimeOnlyExecutor};
 use semantic_core::{
-    ActivationEntry, ArtifactRegistry, ArtifactVerificationState, AuthorityObjectRef,
-    BlockCompletionStatus, BlockPendingIoAction, BlockRequestOperation, BlockRequestQueueEntryRef,
-    BoundaryKind, BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation,
-    BufferCacheObjectState, CapabilityClass, CapabilityHandleArg, CapabilityLedger,
-    CapabilityRecord, CodeObject, CodePublishState, CodePublisher, CommandEnvelope, CommandResult,
-    CommandStatus, ContractGraphSnapshot, ContractObjectKind, ContractObjectRef, ContractViolation,
-    CowState, DescriptorObjectAccess, DirectoryEntryKind, DirectoryObjectState,
-    DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact,
-    Ext4AdapterObjectState, ExternalObjectDeclaration, FatAdapterObjectState, FileObjectState,
-    FrontendKind, HartState, HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec,
-    HostcallTraceRecord, IpiEventKind, IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord,
-    MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord, MmioRegionObjectAccess,
-    NetworkBackpressureAction, NetworkBackpressureReason, NetworkFaultInjectionEffect,
-    NetworkFaultInjectionKind, PackageReplayValidator, PacketBufferDirection,
-    PacketBufferObjectState, PacketQueueRole, PageBacking, PageObjectState, QueueObjectRole,
-    ReplayPackageValidationState, ResourceKind, RestartPolicy, RuntimeMode, SavedContextReason,
-    SemanticCommand, SemanticGraph, SemanticWaitKind, SnapshotBarrierValidationState,
-    SnapshotBarrierValidator, StoreRecord, StoreState, TargetAddressMapEntry, TargetArtifactImage,
-    TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass,
-    TargetTrapMetadata, TaskState, TombstoneRecord, TrapSurfaceState, VectorStateState,
-    VerifiedArtifact, WaitCancelReason, memory_class_policies, validate_contract_graph,
+    ActivationEntry, ActivationVectorState, ArtifactRegistry, ArtifactVerificationState,
+    AuthorityObjectRef, BlockCompletionStatus, BlockPendingIoAction, BlockRequestOperation,
+    BlockRequestQueueEntryRef, BoundaryKind, BoundaryStatus, BoundaryValidationReport,
+    BoundaryValidationViolation, BufferCacheObjectState, CapabilityClass, CapabilityHandleArg,
+    CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState, CodePublisher,
+    CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot, ContractObjectKind,
+    ContractObjectRef, ContractViolation, CowState, DescriptorObjectAccess, DirectoryEntryKind,
+    DirectoryObjectState, DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord,
+    ExpectedTargetArtifact, Ext4AdapterObjectState, ExternalObjectDeclaration,
+    FatAdapterObjectState, FileObjectState, FrontendKind, HartState, HostcallCategory,
+    HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind,
+    IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
+    MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
+    NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
+    PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
+    PageBacking, PageObjectState, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
+    RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
+    SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
+    StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
+    TombstoneRecord, TrapSurfaceState, VectorStateState, VerifiedArtifact, WaitCancelReason,
+    memory_class_policies, validate_contract_graph,
 };
 use service_core::fake_block::{
     FAKE_BLOCK_BACKEND_PROFILE, FAKE_BLOCK_BACKEND_PROVIDER, FakeBlockBackendConfig,
@@ -8325,6 +8326,7 @@ fn build_target_executor_v1(
         &mut executor,
     )?;
     run_simd_vector_state_harness(semantic, &publisher, &executor)?;
+    run_simd_activation_context_vector_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8559,6 +8561,61 @@ fn run_simd_vector_state_harness(
             result.violations
         )
         .into());
+    }
+    Ok(())
+}
+
+fn run_simd_activation_context_vector_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    semantic.ensure_task(9_050, FrontendKind::WasmApp, "v5-simd-vector-context-task");
+    let commands = [
+        CommandEnvelope::new(
+            60_005,
+            "simd-runtime-v5",
+            SemanticCommand::CreateRuntimeActivation {
+                activation: 9_050,
+                owner_task: 9_050,
+                owner_task_generation: 1,
+                owner_store: None,
+                owner_store_generation: None,
+                code_object: None,
+            },
+        ),
+        CommandEnvelope::new(
+            60_006,
+            "simd-runtime-v5",
+            SemanticCommand::CreateActivationContext {
+                context: 9_050,
+                activation: 9_050,
+                activation_generation: 1,
+            },
+        ),
+        CommandEnvelope::new(
+            60_007,
+            "simd-runtime-v5",
+            SemanticCommand::UpdateActivationContextVectorState {
+                context: 9_050,
+                context_generation: 1,
+                vector_state: None,
+                vector_status: ActivationVectorState::Absent,
+                note: "v5 activation context records vector state as absent until SIMD is live"
+                    .to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "simd runtime v5 command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
     }
     Ok(())
 }
@@ -9911,7 +9968,7 @@ fn semantic_roots(
             .iter()
             .map(|context| {
                 format!(
-                    "activation-context id={} activation={}@{} state={} generation={} saved={}@{}",
+                    "activation-context id={} activation={}@{} state={} generation={} saved={}@{} vector_status={} vector_state={}",
                     context.id,
                     context.activation,
                     context.activation_generation,
@@ -9924,6 +9981,11 @@ fn semantic_roots(
                     context
                         .current_saved_context_generation
                         .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    context.vector_status.as_str(),
+                    context
+                        .vector_state
+                        .map(|vector_state| vector_state.summary())
                         .unwrap_or_else(|| "none".to_owned())
                 )
             })
@@ -12429,6 +12491,9 @@ fn activation_context_manifest(
         state: context.state.as_str().to_owned(),
         current_saved_context: context.current_saved_context,
         current_saved_context_generation: context.current_saved_context_generation,
+        vector_state: context.vector_state.map(contract_object_ref_manifest),
+        vector_status: context.vector_status.as_str().to_owned(),
+        vector_state_event: context.vector_state_event,
         last_event: context.last_event,
     }
 }

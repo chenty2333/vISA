@@ -404,6 +404,12 @@ pub enum SemanticInvariantError {
         context: ActivationContextId,
         saved_context: SavedContextId,
     },
+    ActivationContextVectorStateInvalid {
+        context: ActivationContextId,
+    },
+    ActivationContextVectorStateMissing {
+        context: ActivationContextId,
+    },
     ActivationHasMultipleLiveContexts {
         activation: ActivationId,
         contexts: usize,

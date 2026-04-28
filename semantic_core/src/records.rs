@@ -178,6 +178,9 @@ pub struct ActivationContextRecord {
     pub state: ActivationContextState,
     pub current_saved_context: Option<SavedContextId>,
     pub current_saved_context_generation: Option<Generation>,
+    pub vector_state: Option<ContractObjectRef>,
+    pub vector_status: ActivationVectorState,
+    pub vector_state_event: Option<EventId>,
     pub last_event: Option<EventId>,
 }
 

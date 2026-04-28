@@ -85,6 +85,9 @@ impl SemanticGraph {
             state: ActivationContextState::Created,
             current_saved_context: None,
             current_saved_context_generation: None,
+            vector_state: None,
+            vector_status: ActivationVectorState::Absent,
+            vector_state_event: None,
             last_event: Some(event),
         });
         true
@@ -282,6 +285,9 @@ impl SemanticGraph {
             state: ActivationContextState::Created,
             current_saved_context: None,
             current_saved_context_generation: None,
+            vector_state: None,
+            vector_status: ActivationVectorState::Absent,
+            vector_state_event: None,
             last_event: Some(created_event),
         });
 
@@ -328,6 +334,127 @@ impl SemanticGraph {
         true
     }
 
+    pub(crate) fn validate_activation_context_vector_state(
+        &self,
+        context: ActivationContextId,
+        context_generation: Generation,
+        vector_state: Option<ContractObjectRef>,
+        vector_status: ActivationVectorState,
+    ) -> Result<(), &'static str> {
+        let Some(context_record) = self.activation_contexts.iter().find(|record| {
+            record.id == context
+                && record.generation == context_generation
+                && record.state != ActivationContextState::Dropped
+        }) else {
+            return Err("activation context generation is missing or dropped");
+        };
+
+        match (vector_status.requires_vector_state(), vector_state) {
+            (false, None) => Ok(()),
+            (false, Some(_)) => Err("absent vector context cannot carry vector state"),
+            (true, None) => Err("clean or dirty vector context requires vector state"),
+            (true, Some(vector_ref)) => {
+                if vector_ref.kind != ContractObjectKind::VectorState
+                    || vector_ref.id == 0
+                    || vector_ref.generation == 0
+                {
+                    return Err(
+                        "activation context vector state must be an exact vector-state ref",
+                    );
+                }
+                let Some(vector_record) = self.vector_states.iter().find(|record| {
+                    record.id == vector_ref.id && record.generation == vector_ref.generation
+                }) else {
+                    return Err("activation context vector state is missing");
+                };
+                if !vector_record.state.is_live_owned() {
+                    return Err("activation context vector state must be live-owned");
+                }
+                if vector_record.owner_activation
+                    != ContractObjectRef::new(
+                        ContractObjectKind::Activation,
+                        context_record.activation,
+                        context_record.activation_generation,
+                    )
+                {
+                    return Err("activation context vector state owner activation mismatch");
+                }
+                if let Some(store) = context_record.owner_store {
+                    let Some(store_generation) = context_record.owner_store_generation else {
+                        return Err("activation context vector state owner store mismatch");
+                    };
+                    if vector_record.owner_store
+                        != ContractObjectRef::new(
+                            ContractObjectKind::Store,
+                            store,
+                            store_generation,
+                        )
+                    {
+                        return Err("activation context vector state owner store mismatch");
+                    }
+                }
+                if let Some(activation) = self.runtime_activations.iter().find(|activation| {
+                    activation.id == context_record.activation
+                        && activation.generation == context_record.activation_generation
+                }) {
+                    if let Some(code_object) = activation.code_object
+                        && vector_record.code_object != code_object
+                    {
+                        return Err("activation context vector state code object mismatch");
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    pub fn update_activation_context_vector_state(
+        &mut self,
+        context: ActivationContextId,
+        context_generation: Generation,
+        vector_state: Option<ContractObjectRef>,
+        vector_status: ActivationVectorState,
+        _note: &str,
+    ) -> bool {
+        if self
+            .validate_activation_context_vector_state(
+                context,
+                context_generation,
+                vector_state,
+                vector_status,
+            )
+            .is_err()
+        {
+            return false;
+        }
+        let Some(index) = self
+            .activation_contexts
+            .iter()
+            .position(|record| record.id == context && record.generation == context_generation)
+        else {
+            return false;
+        };
+        let context_generation_before = self.activation_contexts[index].generation;
+        self.activation_contexts[index].generation += 1;
+        let context_generation_after = self.activation_contexts[index].generation;
+        let event = self.event_log.push(
+            "scheduler",
+            EventKind::ActivationContextVectorStateUpdated {
+                context,
+                context_generation_before,
+                context_generation_after,
+                vector_state,
+                vector_status,
+                generation: 1,
+            },
+        );
+        self.activation_contexts[index].vector_state = vector_state;
+        self.activation_contexts[index].vector_status = vector_status;
+        self.activation_contexts[index].vector_state_event = Some(event);
+        self.activation_contexts[index].last_event = Some(event);
+        true
+    }
+
     pub fn activation_contexts(&self) -> &[ActivationContextRecord] {
         &self.activation_contexts
     }
@@ -369,6 +496,22 @@ impl SemanticGraph {
             .find(|record| record.id == saved_context)
         {
             record.source_preemption_generation = None;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_activation_context_vector_state_generation_for_test(
+        &mut self,
+        context: ActivationContextId,
+        generation: Generation,
+    ) {
+        if let Some(record) = self
+            .activation_contexts
+            .iter_mut()
+            .find(|record| record.id == context)
+            && let Some(vector_state) = record.vector_state.as_mut()
+        {
+            vector_state.generation = generation;
         }
     }
 
@@ -457,6 +600,121 @@ impl SemanticGraph {
                             saved_context: saved,
                         },
                     );
+                }
+            }
+            match (
+                context.vector_status.requires_vector_state(),
+                context.vector_state,
+            ) {
+                (false, None) => {}
+                (false, Some(_)) => {
+                    return Err(
+                        SemanticInvariantError::ActivationContextVectorStateInvalid {
+                            context: context.id,
+                        },
+                    );
+                }
+                (true, None) => {
+                    return Err(
+                        SemanticInvariantError::ActivationContextVectorStateMissing {
+                            context: context.id,
+                        },
+                    );
+                }
+                (true, Some(vector_state)) => {
+                    if vector_state.kind != ContractObjectKind::VectorState
+                        || vector_state.id == 0
+                        || vector_state.generation == 0
+                    {
+                        return Err(
+                            SemanticInvariantError::ActivationContextVectorStateInvalid {
+                                context: context.id,
+                            },
+                        );
+                    }
+                    let Some(vector_record) = self.vector_states.iter().find(|record| {
+                        record.id == vector_state.id && record.generation == vector_state.generation
+                    }) else {
+                        return Err(
+                            SemanticInvariantError::ActivationContextVectorStateMissing {
+                                context: context.id,
+                            },
+                        );
+                    };
+                    if !vector_record.state.is_live_owned()
+                        || vector_record.owner_activation
+                            != ContractObjectRef::new(
+                                ContractObjectKind::Activation,
+                                context.activation,
+                                context.activation_generation,
+                            )
+                    {
+                        return Err(
+                            SemanticInvariantError::ActivationContextVectorStateInvalid {
+                                context: context.id,
+                            },
+                        );
+                    }
+                    if let Some(store) = context.owner_store {
+                        let Some(store_generation) = context.owner_store_generation else {
+                            return Err(
+                                SemanticInvariantError::ActivationContextVectorStateInvalid {
+                                    context: context.id,
+                                },
+                            );
+                        };
+                        if vector_record.owner_store
+                            != ContractObjectRef::new(
+                                ContractObjectKind::Store,
+                                store,
+                                store_generation,
+                            )
+                        {
+                            return Err(
+                                SemanticInvariantError::ActivationContextVectorStateInvalid {
+                                    context: context.id,
+                                },
+                            );
+                        }
+                    }
+                    if let Some(code_object) = activation.code_object
+                        && vector_record.code_object != code_object
+                    {
+                        return Err(
+                            SemanticInvariantError::ActivationContextVectorStateInvalid {
+                                context: context.id,
+                            },
+                        );
+                    }
+                    let Some(vector_event) = context.vector_state_event else {
+                        return Err(
+                            SemanticInvariantError::ActivationContextVectorStateMissing {
+                                context: context.id,
+                            },
+                        );
+                    };
+                    if !self.event_log.events.iter().any(|event| {
+                        event.id == vector_event
+                            && matches!(
+                                &event.kind,
+                                EventKind::ActivationContextVectorStateUpdated {
+                                    context: event_context,
+                                    context_generation_after,
+                                    vector_state: event_vector_state,
+                                    vector_status,
+                                    ..
+                                } if *event_context == context.id
+                                    && *context_generation_after <= context.generation
+                                    && *event_vector_state == context.vector_state
+                                    && *vector_status == context.vector_status
+                            )
+                    }) {
+                        return Err(
+                            SemanticInvariantError::ActivationContextVectorStateMissing {
+                                context: context.id,
+                            },
+                        );
+                    }
                 }
             }
         }

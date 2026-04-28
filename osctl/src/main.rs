@@ -1013,6 +1013,11 @@ fn runnable_queue_view_v1(queue: &RunnableQueueManifest) -> serde_json::Value {
 }
 
 fn activation_context_view_v1(context: &ActivationContextManifest) -> serde_json::Value {
+    let vector_status = if context.vector_status.is_empty() {
+        "absent"
+    } else {
+        context.vector_status.as_str()
+    };
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
         "kind": "activation-context",
@@ -1034,6 +1039,12 @@ fn activation_context_view_v1(context: &ActivationContextManifest) -> serde_json
                 "id": id,
                 "generation": context.current_saved_context_generation,
             })),
+            "vector_state": context.vector_state.as_ref().map(object_ref_manifest_json),
+        },
+        "vector_context": {
+            "status": vector_status,
+            "vector_state": context.vector_state.as_ref().map(object_ref_manifest_json),
+            "last_event": context.vector_state_event,
         },
         "last_transition": {
             "last_event": context.last_event,
@@ -8121,6 +8132,19 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
                 "current-saved-context",
                 "live",
                 context.last_event,
+            ));
+        }
+        if let Some(vector_state) = &context.vector_state {
+            edges.push(graph_edge(
+                object_ref_json("activation-context", context.id, context.generation),
+                object_ref_manifest_json(vector_state),
+                "vector-context",
+                if context.vector_status == "dirty" || context.vector_status == "clean" {
+                    "live"
+                } else {
+                    "historical"
+                },
+                context.vector_state_event.or(context.last_event),
             ));
         }
     }
@@ -17405,6 +17429,41 @@ mod tests {
     }
 
     #[test]
+    fn activation_context_view_v1_exposes_vector_clean_dirty_state() {
+        let view = activation_context_view_v1(&ActivationContextManifest {
+            id: 12,
+            activation: 11,
+            activation_generation: 3,
+            owner_task: 7,
+            owner_task_generation: 1,
+            owner_store: Some(2),
+            owner_store_generation: Some(5),
+            generation: 4,
+            state: "current".to_owned(),
+            current_saved_context: None,
+            current_saved_context_generation: None,
+            vector_state: Some(ContractObjectRefManifest {
+                kind: "vector-state".to_owned(),
+                id: 22_000,
+                generation: 1,
+            }),
+            vector_status: "dirty".to_owned(),
+            vector_state_event: Some(42),
+            last_event: Some(42),
+        });
+
+        assert_eq!(view["kind"], "activation-context");
+        assert_eq!(view["vector_context"]["status"], "dirty");
+        assert_eq!(
+            view["vector_context"]["vector_state"]["kind"],
+            "vector-state"
+        );
+        assert_eq!(view["vector_context"]["vector_state"]["generation"], 1);
+        assert_eq!(view["references"]["vector_state"]["id"], 22_000);
+        assert_eq!(view["vector_context"]["last_event"], 42);
+    }
+
+    #[test]
     fn preemptive_runtime_views_expose_task_activation_and_scheduler_state() {
         let task = task_view_v1(&TaskRecordManifest {
             id: 7,
@@ -17576,6 +17635,9 @@ mod tests {
                 state: "saved".to_owned(),
                 current_saved_context: Some(13),
                 current_saved_context_generation: Some(1),
+                vector_state: None,
+                vector_status: "absent".to_owned(),
+                vector_state_event: None,
                 last_event: Some(10),
             });
         package.semantic.saved_contexts.push(SavedContextManifest {

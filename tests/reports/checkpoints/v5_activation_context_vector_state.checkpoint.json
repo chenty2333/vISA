@@ -1,0 +1,139 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "V5-activation-context-vector-clean-dirty-state",
+  "phase": "Phase 6 SIMD Full Runtime Contract",
+  "status": "pass",
+  "scope": [
+    "Add ActivationVectorState as absent/clean/dirty semantic context state",
+    "Extend ActivationContextRecord with exact VectorState ObjectRef, vector status, and vector event evidence",
+    "Add SemanticCommand::UpdateActivationContextVectorState and ActivationContextVectorStateUpdated event evidence",
+    "Validate clean/dirty vector context refs against VectorState, Activation, Store, and CodeObject generations",
+    "Expose vector_context in stable osctl ActivationContext ViewV1 JSON"
+  ],
+  "no_goals": [
+    "lazy vector state enable",
+    "preempt saves dirty vector state",
+    "resume restores vector state",
+    "cross-hart vector migration",
+    "real target-side cwasm execution"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/context.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/simd/golden_v5_activation_context_vector_state.trace.json",
+    "tests/reports/checkpoints/v5_activation_context_vector_state.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/simd/golden_v5_activation_context_vector_state.trace.json",
+    "tests/reports/checkpoints/v5_activation_context_vector_state.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "clean/dirty vector context cannot be authorized by debug label or global id",
+      "ActivationContext vector state uses exact ContractObjectRef values",
+      "stale VectorState generation is rejected before mutation",
+      "osctl ActivationContext ViewV1 exposes vector_context without dumping internal structs"
+    ],
+    "bad_smells_checked": [
+      "No real vector register bytes are stored in semantic_core",
+      "No lazy vector enable path was introduced",
+      "No scheduler preempt/resume vector save/restore path was introduced",
+      "No cross-hart vector migration behavior was introduced"
+    ],
+    "residual_notes": [
+      "target_executor host package records an absent vector context for default unsupported SIMD profile",
+      "semantic_core unit tests cover positive clean/dirty transitions with a supported vector-state fixture",
+      "V6 owns lazy vector state enable",
+      "V7-V9 own preempt/resume and cross-hart migration"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core simd_runtime_v5 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl activation_context_view_v1_exposes_vector_clean_dirty_state -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core semantic_roots_reject_activation_context_root_mismatch -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl check target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- activation-context list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "golden_trace": "tests/golden/simd/golden_v5_activation_context_vector_state.trace.json",
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "target_executor_event_cursor": 494,
+    "osctl_view": "activation-context list --json",
+    "activation_context": "activation-context:9050@2",
+    "activation_context_vector_status": "absent",
+    "activation_vector_states": [
+      "absent",
+      "clean",
+      "dirty"
+    ],
+    "contract_validation": "ok"
+  },
+  "residual_gaps": [
+    "V6 owns lazy vector state enable",
+    "V7 owns preempt saves dirty vector state",
+    "V8 owns resume restores vector state",
+    "V9 owns cross-hart migration handles vector state"
+  ],
+  "next_checkpoint": "V6-lazy-vector-state-enable"
+}

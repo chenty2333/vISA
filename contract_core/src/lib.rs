@@ -3083,6 +3083,9 @@ mod tests {
                 state: "created".to_owned(),
                 current_saved_context: None,
                 current_saved_context_generation: None,
+                vector_state: None,
+                vector_status: "absent".to_owned(),
+                vector_state_event: None,
                 last_event: Some(4),
             });
 
