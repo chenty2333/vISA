@@ -86,6 +86,7 @@ pub struct ContractGraphSnapshot {
     pub simd_context_switch_benchmarks: Vec<SimdContextSwitchBenchmarkRecord>,
     pub framebuffer_objects: Vec<FramebufferObjectRecord>,
     pub display_objects: Vec<DisplayObjectRecord>,
+    pub display_capabilities: Vec<DisplayCapabilityRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -191,6 +192,7 @@ impl ContractGraphValidator {
         Self::validate_simd_context_switch_benchmarks(snapshot, &mut violations);
         Self::validate_framebuffer_objects(snapshot, &mut violations);
         Self::validate_display_objects(snapshot, &mut violations);
+        Self::validate_display_capabilities(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -935,6 +937,94 @@ impl ContractGraphValidator {
                         from,
                         Some(framebuffer.object_ref()),
                         "display object mode must fit its registered framebuffer generation",
+                    ));
+                }
+            }
+        }
+    }
+
+    fn validate_display_capabilities(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for capability in &snapshot.display_capabilities {
+            let from = capability.object_ref();
+            if capability.id == 0
+                || capability.generation == 0
+                || capability.owner_store_generation == 0
+                || capability.display_generation == 0
+                || capability.framebuffer_generation == 0
+                || capability.capability_generation == 0
+                || capability.operations.is_empty()
+                || capability
+                    .operations
+                    .iter()
+                    .any(|operation| operation.is_empty())
+                || capability.state != DisplayCapabilityState::Active
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "display-capability->contract",
+                    from,
+                    None,
+                    "display capability requires nonzero owner, display, framebuffer, capability, operations, and active state",
+                ));
+                continue;
+            }
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-capability->owner-store",
+                ContractObjectKind::Store,
+                capability.owner_store,
+                capability.owner_store_generation,
+                ContractEdgeMode::Live,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-capability->display-object",
+                ContractObjectKind::DisplayObject,
+                capability.display,
+                capability.display_generation,
+                ContractEdgeMode::Live,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-capability->framebuffer-object",
+                ContractObjectKind::FramebufferObject,
+                capability.framebuffer,
+                capability.framebuffer_generation,
+                ContractEdgeMode::Live,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "display-capability->capability",
+                ContractObjectKind::Capability,
+                capability.capability,
+                capability.capability_generation,
+                ContractEdgeMode::Live,
+            );
+
+            if let Some(display) = snapshot.display_objects.iter().find(|display| {
+                display.id == capability.display
+                    && display.generation == capability.display_generation
+            }) {
+                if display.framebuffer != capability.framebuffer
+                    || display.framebuffer_generation != capability.framebuffer_generation
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "display-capability->display-framebuffer",
+                        from,
+                        Some(display.object_ref()),
+                        "display capability framebuffer edge does not match display object generation",
                     ));
                 }
             }
@@ -1751,7 +1841,14 @@ impl ContractGraphValidator {
                 continue;
             }
 
-            if let Some(source) = Self::current_object_ref(snapshot, edge.from.kind, edge.from.id) {
+            if let Some(source) = Self::object_ref_by_id_generation(
+                snapshot,
+                edge.from.kind,
+                edge.from.id,
+                edge.from.generation,
+            )
+            .or_else(|| Self::current_object_ref(snapshot, edge.from.kind, edge.from.id))
+            {
                 if source.generation != edge.from.generation {
                     violations.push(ContractViolation::new(
                         ContractViolationKind::GenerationMismatch,
@@ -1971,104 +2068,8 @@ impl ContractGraphValidator {
             ));
             return;
         }
-        let target = match kind {
-            ContractObjectKind::Activation => snapshot
-                .activations
-                .iter()
-                .find(|activation| activation.id == id)
-                .map(ActivationRecord::object_ref),
-            ContractObjectKind::Store => snapshot
-                .stores
-                .iter()
-                .find(|store| store.id == id)
-                .map(StoreRecord::object_ref),
-            ContractObjectKind::CodeObject => snapshot
-                .code_objects
-                .iter()
-                .find(|code| code.id == id)
-                .map(CodeObject::object_ref),
-            ContractObjectKind::TargetFeatureSet => snapshot
-                .target_feature_sets
-                .iter()
-                .find(|feature| feature.id == id)
-                .map(TargetFeatureSetRecord::object_ref),
-            ContractObjectKind::VectorState => snapshot
-                .vector_states
-                .iter()
-                .find(|vector_state| vector_state.id == id)
-                .map(VectorStateRecord::object_ref),
-            ContractObjectKind::SimdFaultInjection => snapshot
-                .simd_fault_injections
-                .iter()
-                .find(|injection| injection.id == id)
-                .map(SimdFaultInjectionRecord::object_ref),
-            ContractObjectKind::SimdBenchmark => snapshot
-                .simd_benchmarks
-                .iter()
-                .find(|benchmark| benchmark.id == id)
-                .map(SimdBenchmarkRecord::object_ref),
-            ContractObjectKind::SimdContextSwitchBenchmark => snapshot
-                .simd_context_switch_benchmarks
-                .iter()
-                .find(|benchmark| benchmark.id == id)
-                .map(SimdContextSwitchBenchmarkRecord::object_ref),
-            ContractObjectKind::FramebufferObject => snapshot
-                .framebuffer_objects
-                .iter()
-                .find(|framebuffer| framebuffer.id == id)
-                .map(FramebufferObjectRecord::object_ref),
-            ContractObjectKind::DisplayObject => snapshot
-                .display_objects
-                .iter()
-                .find(|display| display.id == id)
-                .map(DisplayObjectRecord::object_ref),
-            ContractObjectKind::Preemption => snapshot
-                .preemptions
-                .iter()
-                .find(|preemption| preemption.id == id)
-                .map(PreemptionRecord::object_ref),
-            ContractObjectKind::ActivationResume => snapshot
-                .activation_resumes
-                .iter()
-                .find(|resume| resume.id == id)
-                .map(ActivationResumeRecord::object_ref),
-            ContractObjectKind::Artifact => snapshot
-                .artifacts
-                .iter()
-                .find(|artifact| artifact.artifact_id == id)
-                .map(VerifiedArtifact::object_ref),
-            ContractObjectKind::Trap => snapshot
-                .traps
-                .iter()
-                .find(|trap| trap.id == id)
-                .map(TargetTrapRecord::object_ref),
-            ContractObjectKind::Hostcall => snapshot
-                .hostcalls
-                .iter()
-                .find(|hostcall| hostcall.id == id)
-                .map(HostcallTraceRecord::object_ref),
-            ContractObjectKind::Capability => snapshot
-                .capabilities
-                .iter()
-                .find(|capability| capability.id == id)
-                .map(CapabilityRecord::object_ref),
-            ContractObjectKind::WaitToken => snapshot
-                .waits
-                .iter()
-                .find(|wait| wait.id == id)
-                .map(WaitRecord::object_ref),
-            ContractObjectKind::CleanupTransaction => snapshot
-                .cleanup_transactions
-                .iter()
-                .find(|cleanup| cleanup.id == id)
-                .map(FaultCleanupTransaction::object_ref),
-            ContractObjectKind::ExternalObject => snapshot
-                .external_objects
-                .iter()
-                .find(|external| external.object.id == id)
-                .map(|external| external.object),
-            _ => None,
-        };
+        let target = Self::object_ref_by_id_generation(snapshot, kind, id, generation)
+            .or_else(|| Self::current_object_ref(snapshot, kind, id));
         match target {
             Some(target) if target.generation != generation => {
                 let has_exact_tombstone =
@@ -2143,6 +2144,119 @@ impl ContractGraphValidator {
                     ));
                 }
             }
+        }
+    }
+
+    fn object_ref_by_id_generation(
+        snapshot: &ContractGraphSnapshot,
+        kind: ContractObjectKind,
+        id: u64,
+        generation: Generation,
+    ) -> Option<ContractObjectRef> {
+        match kind {
+            ContractObjectKind::Activation => snapshot
+                .activations
+                .iter()
+                .find(|activation| activation.id == id && activation.generation == generation)
+                .map(ActivationRecord::object_ref),
+            ContractObjectKind::Store => snapshot
+                .stores
+                .iter()
+                .find(|store| store.id == id && store.generation == generation)
+                .map(StoreRecord::object_ref),
+            ContractObjectKind::CodeObject => snapshot
+                .code_objects
+                .iter()
+                .find(|code| code.id == id && code.generation == generation)
+                .map(CodeObject::object_ref),
+            ContractObjectKind::TargetFeatureSet => snapshot
+                .target_feature_sets
+                .iter()
+                .find(|feature| feature.id == id && feature.generation == generation)
+                .map(TargetFeatureSetRecord::object_ref),
+            ContractObjectKind::VectorState => snapshot
+                .vector_states
+                .iter()
+                .find(|vector_state| vector_state.id == id && vector_state.generation == generation)
+                .map(VectorStateRecord::object_ref),
+            ContractObjectKind::SimdFaultInjection => snapshot
+                .simd_fault_injections
+                .iter()
+                .find(|injection| injection.id == id && injection.generation == generation)
+                .map(SimdFaultInjectionRecord::object_ref),
+            ContractObjectKind::SimdBenchmark => snapshot
+                .simd_benchmarks
+                .iter()
+                .find(|benchmark| benchmark.id == id && benchmark.generation == generation)
+                .map(SimdBenchmarkRecord::object_ref),
+            ContractObjectKind::SimdContextSwitchBenchmark => snapshot
+                .simd_context_switch_benchmarks
+                .iter()
+                .find(|benchmark| benchmark.id == id && benchmark.generation == generation)
+                .map(SimdContextSwitchBenchmarkRecord::object_ref),
+            ContractObjectKind::FramebufferObject => snapshot
+                .framebuffer_objects
+                .iter()
+                .find(|framebuffer| framebuffer.id == id && framebuffer.generation == generation)
+                .map(FramebufferObjectRecord::object_ref),
+            ContractObjectKind::DisplayObject => snapshot
+                .display_objects
+                .iter()
+                .find(|display| display.id == id && display.generation == generation)
+                .map(DisplayObjectRecord::object_ref),
+            ContractObjectKind::DisplayCapability => snapshot
+                .display_capabilities
+                .iter()
+                .find(|capability| capability.id == id && capability.generation == generation)
+                .map(DisplayCapabilityRecord::object_ref),
+            ContractObjectKind::Preemption => snapshot
+                .preemptions
+                .iter()
+                .find(|preemption| preemption.id == id && preemption.generation == generation)
+                .map(PreemptionRecord::object_ref),
+            ContractObjectKind::ActivationResume => snapshot
+                .activation_resumes
+                .iter()
+                .find(|resume| resume.id == id && resume.generation == generation)
+                .map(ActivationResumeRecord::object_ref),
+            ContractObjectKind::Artifact => snapshot
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.artifact_id == id && artifact.generation == generation)
+                .map(VerifiedArtifact::object_ref),
+            ContractObjectKind::Trap => snapshot
+                .traps
+                .iter()
+                .find(|trap| trap.id == id && trap.generation == generation)
+                .map(TargetTrapRecord::object_ref),
+            ContractObjectKind::Hostcall => snapshot
+                .hostcalls
+                .iter()
+                .find(|hostcall| hostcall.id == id && hostcall.generation == generation)
+                .map(HostcallTraceRecord::object_ref),
+            ContractObjectKind::Capability => snapshot
+                .capabilities
+                .iter()
+                .find(|capability| capability.id == id && capability.generation == generation)
+                .map(CapabilityRecord::object_ref),
+            ContractObjectKind::WaitToken => snapshot
+                .waits
+                .iter()
+                .find(|wait| wait.id == id && wait.generation == generation)
+                .map(WaitRecord::object_ref),
+            ContractObjectKind::CleanupTransaction => snapshot
+                .cleanup_transactions
+                .iter()
+                .find(|cleanup| cleanup.id == id && cleanup.generation == generation)
+                .map(FaultCleanupTransaction::object_ref),
+            ContractObjectKind::ExternalObject => snapshot
+                .external_objects
+                .iter()
+                .find(|external| {
+                    external.object.id == id && external.object.generation == generation
+                })
+                .map(|external| external.object),
+            _ => None,
         }
     }
 
@@ -2230,6 +2344,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|display| display.id == id)
                 .map(DisplayObjectRecord::object_ref),
+            ContractObjectKind::DisplayCapability => snapshot
+                .display_capabilities
+                .iter()
+                .find(|capability| capability.id == id)
+                .map(DisplayCapabilityRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2384,6 +2503,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::SimdContextSwitchBenchmark
                 | ContractObjectKind::FramebufferObject
                 | ContractObjectKind::DisplayObject
+                | ContractObjectKind::DisplayCapability
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -2495,6 +2615,16 @@ impl ContractGraphValidator {
                 .and_then(|display| {
                     (display.state != DisplayObjectState::Registered)
                         .then_some("live edge references inactive display object")
+                }),
+            ContractObjectKind::DisplayCapability => snapshot
+                .display_capabilities
+                .iter()
+                .find(|capability| {
+                    capability.id == object.id && capability.generation == object.generation
+                })
+                .and_then(|capability| {
+                    (capability.state != DisplayCapabilityState::Active)
+                        .then_some("live edge references inactive display capability")
                 }),
             _ => None,
         }

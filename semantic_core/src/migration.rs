@@ -1549,6 +1549,32 @@ pub enum SemanticInvariantError {
     DisplayObjectMissingEvent {
         display: DisplayObjectId,
     },
+    DisplayCapabilityInvalid {
+        display_capability: DisplayCapabilityId,
+    },
+    DisplayCapabilityMissingStore {
+        display_capability: DisplayCapabilityId,
+        store: StoreId,
+    },
+    DisplayCapabilityMissingDisplay {
+        display_capability: DisplayCapabilityId,
+        display: DisplayObjectId,
+    },
+    DisplayCapabilityMissingFramebuffer {
+        display_capability: DisplayCapabilityId,
+        framebuffer: FramebufferObjectId,
+    },
+    DisplayCapabilityMissingCapability {
+        display_capability: DisplayCapabilityId,
+        capability: CapabilityId,
+    },
+    DisplayCapabilityDuplicateGrant {
+        display_capability: DisplayCapabilityId,
+        display: DisplayObjectId,
+    },
+    DisplayCapabilityMissingEvent {
+        display_capability: DisplayCapabilityId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

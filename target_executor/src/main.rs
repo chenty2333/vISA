@@ -20,23 +20,24 @@ use artifact_manifest::{
     CleanupTransactionManifest, CodeObjectManifest, CodeObjectSimdRequirementManifest,
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
     ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest, DisplayObjectManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest,
-    FramebufferObjectManifest, FsWaitManifest, GuestStateManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
+    DisplayCapabilityManifest, DisplayObjectManifest, DmaBufferObjectManifest,
+    DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
+    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
+    FileHandleCapabilityManifest, FileObjectManifest, FramebufferObjectManifest, FsWaitManifest,
+    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
+    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
+    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
+    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
+    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
+    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -117,6 +118,7 @@ const SEMANTIC_EVIDENCE_CAPABILITY_SOURCES: &[&str] = &[
     "n17-dma-generation-capability",
     "b6-virtio-blk-device-capability",
     "target-executor-b17",
+    "display-runtime-g2",
 ];
 
 #[derive(Clone, Debug, Default)]
@@ -8375,6 +8377,7 @@ fn build_target_executor_v1(
     run_simd_context_switch_benchmark_harness(semantic)?;
     run_framebuffer_object_harness(semantic)?;
     run_display_object_harness(semantic)?;
+    run_display_capability_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8406,6 +8409,11 @@ fn build_target_executor_v1(
             .capability_records
             .push(capability_record_manifest(capability));
     }
+    append_display_capability_contract_evidence(
+        semantic,
+        &mut report.store_records,
+        &mut report.capability_records,
+    );
     for activation in executor.activations() {
         report
             .activation_records
@@ -8436,6 +8444,8 @@ fn build_target_executor_v1(
         report.tombstones.push(tombstone_manifest(tombstone));
     }
     let external_objects = declared_authority_objects(ledger.records());
+    let contract_stores = contract_graph_store_records(semantic, &store_manager);
+    let contract_capabilities = contract_graph_capability_records(semantic, &ledger);
     let contract_snapshot = ContractGraphSnapshot {
         artifacts: verified_artifacts,
         code_objects: publisher.objects().to_vec(),
@@ -8446,17 +8456,14 @@ fn build_target_executor_v1(
         simd_context_switch_benchmarks: semantic.simd_context_switch_benchmarks().to_vec(),
         framebuffer_objects: semantic.framebuffer_objects().to_vec(),
         display_objects: semantic.display_objects().to_vec(),
+        display_capabilities: semantic.display_capabilities().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
-        stores: store_manager
-            .records()
-            .iter()
-            .map(|record| record.store.clone())
-            .collect(),
+        stores: contract_stores,
         activations: executor.activations().to_vec(),
         traps: executor.traps().to_vec(),
         hostcalls: executor.hostcall_trace().to_vec(),
-        capabilities: ledger.records().to_vec(),
+        capabilities: contract_capabilities,
         waits: Vec::new(),
         cleanup_transactions: executor.cleanup_transactions().to_vec(),
         tombstones: publisher
@@ -10044,6 +10051,151 @@ fn run_display_object_harness(semantic: &mut SemanticGraph) -> Result<(), Box<dy
     Ok(())
 }
 
+fn run_display_capability_harness(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let owner_store = semantic_store_id(semantic, "wasm_app")?;
+    let owner_store_generation = semantic
+        .store_handle(owner_store)
+        .ok_or("display runtime g2 owner store missing after lookup")?
+        .generation;
+    let display = semantic
+        .display_objects()
+        .iter()
+        .find(|record| record.id == 23_101)
+        .map(|record| record.object_ref())
+        .ok_or("display runtime g2 requires g1 display object evidence")?;
+    let display_record = semantic
+        .display_objects()
+        .iter()
+        .find(|record| record.id == display.id && record.generation == display.generation)
+        .ok_or("display runtime g2 display generation missing")?;
+    let display_name = display_record.name.clone();
+    let framebuffer = display_record.framebuffer;
+    let framebuffer_generation = display_record.framebuffer_generation;
+
+    let capability = semantic.grant_capability_with_authority_ref(
+        "wasm_app",
+        "display.display0",
+        AuthorityObjectRef::internal(CapabilityClass::Display, display),
+        &["flush", "lease"],
+        "store",
+        "display-runtime-g2",
+        true,
+    );
+    let capability_record = semantic
+        .capabilities()
+        .record(capability)
+        .ok_or("display runtime g2 capability missing after grant")?
+        .clone();
+    let handle = capability_record
+        .store_local_handle(vec!["flush".to_owned(), "lease".to_owned()])
+        .ok_or("display runtime g2 capability is not store-local")?;
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_022,
+        "display-runtime-g2",
+        SemanticCommand::RecordDisplayCapability {
+            display_capability: 23_201,
+            owner_store,
+            owner_store_generation,
+            display: display.id,
+            display_generation: display.generation,
+            capability: capability_record.id,
+            capability_generation: capability_record.generation,
+            handle,
+            operations: vec!["flush".to_owned(), "lease".to_owned()],
+            note: format!(
+                "g2 records display capability for {} backed by framebuffer {}@{}",
+                display_name, framebuffer, framebuffer_generation
+            ),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g2 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn append_display_capability_contract_evidence(
+    semantic: &SemanticGraph,
+    store_records: &mut Vec<StoreRecordManifest>,
+    capability_records: &mut Vec<CapabilityRecordManifest>,
+) {
+    for display_capability in semantic.display_capabilities() {
+        if !store_records.iter().any(|record| {
+            record.id == display_capability.owner_store
+                && record.generation == display_capability.owner_store_generation
+        }) && let Some(store) = semantic.stores().iter().find(|store| {
+            store.id == display_capability.owner_store
+                && store.generation == display_capability.owner_store_generation
+        }) {
+            store_records.push(store_record_manifest(store));
+        }
+        if !capability_records.iter().any(|record| {
+            record.id == display_capability.capability
+                && record.generation == display_capability.capability_generation
+        }) && let Some(capability) = semantic
+            .capabilities()
+            .record(display_capability.capability)
+        {
+            capability_records.push(capability_record_manifest(capability));
+        }
+    }
+}
+
+fn contract_graph_store_records(
+    semantic: &SemanticGraph,
+    store_manager: &TargetStoreManager,
+) -> Vec<StoreRecord> {
+    let mut stores = store_manager
+        .records()
+        .iter()
+        .map(|record| record.store.clone())
+        .collect::<Vec<_>>();
+    for display_capability in semantic.display_capabilities() {
+        if stores.iter().any(|store| {
+            store.id == display_capability.owner_store
+                && store.generation == display_capability.owner_store_generation
+        }) {
+            continue;
+        }
+        if let Some(store) = semantic.stores().iter().find(|store| {
+            store.id == display_capability.owner_store
+                && store.generation == display_capability.owner_store_generation
+        }) {
+            stores.push(store.clone());
+        }
+    }
+    stores
+}
+
+fn contract_graph_capability_records(
+    semantic: &SemanticGraph,
+    ledger: &CapabilityLedger,
+) -> Vec<CapabilityRecord> {
+    let mut capabilities = ledger.records().to_vec();
+    for display_capability in semantic.display_capabilities() {
+        if capabilities.iter().any(|capability| {
+            capability.id == display_capability.capability
+                && capability.generation == display_capability.capability_generation
+        }) {
+            continue;
+        }
+        if let Some(capability) = semantic
+            .capabilities()
+            .record(display_capability.capability)
+        {
+            capabilities.push(capability.clone());
+        }
+    }
+    capabilities
+}
+
 fn declared_authority_objects(capabilities: &[CapabilityRecord]) -> Vec<ExternalObjectDeclaration> {
     let mut declarations = Vec::new();
     for capability in capabilities {
@@ -10805,6 +10957,7 @@ fn demo_migration_package(
             simd_context_switch_benchmark_count: semantic.simd_context_switch_benchmark_count(),
             framebuffer_object_count: semantic.framebuffer_object_count(),
             display_object_count: semantic.display_object_count(),
+            display_capability_count: semantic.display_capability_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11257,6 +11410,11 @@ fn demo_migration_package(
                 .display_objects()
                 .iter()
                 .map(display_object_manifest)
+                .collect(),
+            display_capabilities: semantic
+                .display_capabilities()
+                .iter()
+                .map(display_capability_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -13384,6 +13542,29 @@ fn semantic_roots(
                     display.refresh_millihz,
                     display.state.as_str(),
                     display.generation
+                )
+            })
+            .collect(),
+        display_capability_roots: semantic
+            .display_capabilities()
+            .iter()
+            .map(|capability| {
+                format!(
+                    "display-capability id={} owner_store={}@{} display={}@{} framebuffer={}@{} capability={}@{} handle_slot={} handle_generation={} operations={} state={} generation={}",
+                    capability.id,
+                    capability.owner_store,
+                    capability.owner_store_generation,
+                    capability.display,
+                    capability.display_generation,
+                    capability.framebuffer,
+                    capability.framebuffer_generation,
+                    capability.capability,
+                    capability.capability_generation,
+                    capability.handle_slot,
+                    capability.handle_generation,
+                    capability.operations.join("|"),
+                    capability.state.as_str(),
+                    capability.generation
                 )
             })
             .collect(),
@@ -16276,6 +16457,30 @@ fn display_object_manifest(display: &semantic_core::DisplayObjectRecord) -> Disp
         state: display.state.as_str().to_owned(),
         recorded_at_event: display.recorded_at_event,
         note: display.note.clone(),
+    }
+}
+
+fn display_capability_manifest(
+    capability: &semantic_core::DisplayCapabilityRecord,
+) -> DisplayCapabilityManifest {
+    DisplayCapabilityManifest {
+        id: capability.id,
+        owner_store: capability.owner_store,
+        owner_store_generation: capability.owner_store_generation,
+        display: capability.display,
+        display_generation: capability.display_generation,
+        framebuffer: capability.framebuffer,
+        framebuffer_generation: capability.framebuffer_generation,
+        capability: capability.capability,
+        capability_generation: capability.capability_generation,
+        handle_slot: capability.handle_slot,
+        handle_generation: capability.handle_generation,
+        handle_tag: capability.handle_tag,
+        operations: capability.operations.clone(),
+        generation: capability.generation,
+        state: capability.state.as_str().to_owned(),
+        recorded_at_event: capability.recorded_at_event,
+        note: capability.note.clone(),
     }
 }
 

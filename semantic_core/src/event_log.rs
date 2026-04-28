@@ -744,6 +744,23 @@ pub enum EventKind {
         refresh_millihz: u32,
         generation: Generation,
     },
+    DisplayCapabilityRecorded {
+        display_capability: DisplayCapabilityId,
+        owner_store: StoreId,
+        owner_store_generation: Generation,
+        display: DisplayObjectId,
+        display_generation: Generation,
+        framebuffer: FramebufferObjectId,
+        framebuffer_generation: Generation,
+        capability: CapabilityId,
+        capability_generation: Generation,
+        handle_slot: u32,
+        handle_generation: u32,
+        handle_tag: u64,
+        operations: Vec<String>,
+        state: DisplayCapabilityState,
+        generation: Generation,
+    },
     FakeBlockBackendObjectBound {
         fake_block_backend: FakeBlockBackendObjectId,
         block_device: BlockDeviceObjectId,
@@ -2759,6 +2776,27 @@ impl EventKind {
                 generation,
             } => format!(
                 "DisplayObjectRecorded display={display} framebuffer={framebuffer}@{framebuffer_generation} mode_name={mode_name} width={width} height={height} refresh_millihz={refresh_millihz} generation={generation}"
+            ),
+            Self::DisplayCapabilityRecorded {
+                display_capability,
+                owner_store,
+                owner_store_generation,
+                display,
+                display_generation,
+                framebuffer,
+                framebuffer_generation,
+                capability,
+                capability_generation,
+                handle_slot,
+                handle_generation,
+                handle_tag,
+                operations,
+                state,
+                generation,
+            } => format!(
+                "DisplayCapabilityRecorded display_capability={display_capability} owner_store={owner_store}@{owner_store_generation} display={display}@{display_generation} framebuffer={framebuffer}@{framebuffer_generation} capability={capability}@{capability_generation} handle_slot={handle_slot} handle_generation={handle_generation} handle_tag={handle_tag} operations={} state={} generation={generation}",
+                operations.join("|"),
+                state.as_str()
             ),
             Self::FakeBlockBackendObjectBound {
                 fake_block_backend,

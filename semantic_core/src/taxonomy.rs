@@ -1855,6 +1855,21 @@ impl BlockDmaBufferState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayCapabilityState {
+    Active,
+    Revoked,
+}
+
+impl DisplayCapabilityState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Revoked => "revoked",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

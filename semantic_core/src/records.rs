@@ -2648,6 +2648,37 @@ impl DisplayObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisplayCapabilityRecord {
+    pub id: DisplayCapabilityId,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub display: DisplayObjectId,
+    pub display_generation: Generation,
+    pub framebuffer: FramebufferObjectId,
+    pub framebuffer_generation: Generation,
+    pub capability: CapabilityId,
+    pub capability_generation: Generation,
+    pub handle_slot: u32,
+    pub handle_generation: u32,
+    pub handle_tag: u64,
+    pub operations: Vec<String>,
+    pub generation: Generation,
+    pub state: DisplayCapabilityState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl DisplayCapabilityRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::DisplayCapability,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

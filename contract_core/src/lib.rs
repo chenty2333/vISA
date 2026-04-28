@@ -151,6 +151,7 @@ pub enum ObjectKind {
     SimdContextSwitchBenchmark,
     FramebufferObject,
     DisplayObject,
+    DisplayCapability,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -267,6 +268,7 @@ impl ObjectKind {
             Self::SimdContextSwitchBenchmark => "simd-context-switch-benchmark",
             Self::FramebufferObject => "framebuffer-object",
             Self::DisplayObject => "display-object",
+            Self::DisplayCapability => "display-capability",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -575,6 +577,7 @@ typed_ref!(
 );
 typed_ref!(FramebufferObjectRef, ObjectKind::FramebufferObject);
 typed_ref!(DisplayObjectRef, ObjectKind::DisplayObject);
+typed_ref!(DisplayCapabilityRef, ObjectKind::DisplayCapability);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2258,6 +2261,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("display object root/count mismatch"));
     }
+    if roots.display_capability_roots.len() != package.semantic.display_capability_count
+        || package.semantic.display_capabilities.len() != package.semantic.display_capability_count
+    {
+        return Err(ContractError::new("display capability root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2865,6 +2873,7 @@ mod tests {
                 simd_context_switch_benchmark_count: 0,
                 framebuffer_object_count: 0,
                 display_object_count: 0,
+                display_capability_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2990,6 +2999,7 @@ mod tests {
                 simd_context_switch_benchmarks: Vec::new(),
                 framebuffer_objects: Vec::new(),
                 display_objects: Vec::new(),
+                display_capabilities: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -5300,6 +5310,37 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_display_capability_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.display_capability_count = 1;
+        package
+            .semantic
+            .display_capabilities
+            .push(artifact_manifest::DisplayCapabilityManifest {
+                id: 92,
+                owner_store: 7,
+                owner_store_generation: 1,
+                display: 91,
+                display_generation: 1,
+                framebuffer: 90,
+                framebuffer_generation: 1,
+                capability: 3,
+                capability_generation: 1,
+                handle_slot: 1,
+                handle_generation: 1,
+                handle_tag: 42,
+                operations: vec!["flush".to_owned(), "lease".to_owned()],
+                generation: 1,
+                state: "active".to_owned(),
+                recorded_at_event: 103,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "display capability root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -6632,6 +6673,8 @@ mod tests {
         assert!(FramebufferObjectRef::try_from_ref(framebuffer_object).is_ok());
         let display_object = ObjectRef::new(ObjectKind::DisplayObject, 81, 1).unwrap();
         assert!(DisplayObjectRef::try_from_ref(display_object).is_ok());
+        let display_capability = ObjectRef::new(ObjectKind::DisplayCapability, 82, 1).unwrap();
+        assert!(DisplayCapabilityRef::try_from_ref(display_capability).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

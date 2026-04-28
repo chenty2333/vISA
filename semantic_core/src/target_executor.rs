@@ -97,6 +97,7 @@ pub enum ContractObjectKind {
     SimdContextSwitchBenchmark,
     FramebufferObject,
     DisplayObject,
+    DisplayCapability,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -210,6 +211,7 @@ impl ContractObjectKind {
             Self::SimdContextSwitchBenchmark => "simd-context-switch-benchmark",
             Self::FramebufferObject => "framebuffer-object",
             Self::DisplayObject => "display-object",
+            Self::DisplayCapability => "display-capability",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -494,6 +496,7 @@ pub const fn capability_class_requires_hostcall_gate(class: CapabilityClass) -> 
             | CapabilityClass::NetInterface
             | CapabilityClass::NetSocket
             | CapabilityClass::GuestMemoryAccess
+            | CapabilityClass::Display
     )
 }
 
@@ -651,6 +654,10 @@ impl AuthorityMatrix {
             CapabilityClass::NetInterface | CapabilityClass::NetSocket => Some(operation),
             CapabilityClass::FileHandle => match operation {
                 "open" | "read" | "write" | "close" | "stat" | "seek" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::Display => match operation {
+                "flush" | "present" | "lease" | "inspect" => Some(operation),
                 _ => return Err(AuthorityMatrixError::UnknownOperation),
             },
             CapabilityClass::ServiceImport => {
@@ -5700,6 +5707,7 @@ mod tests {
             simd_context_switch_benchmarks: Vec::new(),
             framebuffer_objects: Vec::new(),
             display_objects: Vec::new(),
+            display_capabilities: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -5802,6 +5810,7 @@ mod tests {
             simd_context_switch_benchmarks: Vec::new(),
             framebuffer_objects: Vec::new(),
             display_objects: Vec::new(),
+            display_capabilities: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6038,6 +6047,7 @@ mod tests {
             simd_context_switch_benchmarks: Vec::new(),
             framebuffer_objects: Vec::new(),
             display_objects: Vec::new(),
+            display_capabilities: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6144,6 +6154,7 @@ mod tests {
             simd_context_switch_benchmarks: Vec::new(),
             framebuffer_objects: Vec::new(),
             display_objects: Vec::new(),
+            display_capabilities: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6337,6 +6348,7 @@ mod tests {
             simd_context_switch_benchmarks: Vec::new(),
             framebuffer_objects: Vec::new(),
             display_objects: Vec::new(),
+            display_capabilities: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {

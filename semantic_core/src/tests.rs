@@ -20801,6 +20801,241 @@ fn display_runtime_g1_contract_graph_rejects_missing_framebuffer_edge() {
     }));
 }
 
+fn g2_display_capability_graph() -> (SemanticGraph, StoreId, Generation, CapabilityId) {
+    let mut graph = g1_framebuffer_graph();
+    assert!(graph.record_display_object_with_id(
+        23_101,
+        "display0",
+        23_001,
+        1,
+        "800x600@60",
+        800,
+        600,
+        60_000,
+        "g1 display object",
+    ));
+    let owner_store =
+        graph.register_store("wasm_app", "wasm_app", "frontend_guest", "kill-on-trap");
+    graph.set_store_state(owner_store, StoreState::Running);
+    let owner_store_generation = graph.store_handle(owner_store).unwrap().generation;
+    let display_ref = graph.display_objects()[0].object_ref();
+    let capability = graph.grant_capability_with_authority_ref(
+        "wasm_app",
+        "display.display0",
+        AuthorityObjectRef::internal(CapabilityClass::Display, display_ref),
+        &["flush", "lease"],
+        "store",
+        "g2-test",
+        true,
+    );
+    (graph, owner_store, owner_store_generation, capability)
+}
+
+#[test]
+fn display_runtime_g2_display_capability_records_store_local_authority() {
+    let (mut graph, owner_store, owner_store_generation, capability) =
+        g2_display_capability_graph();
+    let capability_record = graph.capabilities().record(capability).unwrap().clone();
+    let handle = handle_for(&capability_record, &["flush", "lease"]);
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "display-runtime-g2",
+        SemanticCommand::RecordDisplayCapability {
+            display_capability: 23_201,
+            owner_store,
+            owner_store_generation,
+            display: 23_101,
+            display_generation: 1,
+            capability,
+            capability_generation: capability_record.generation,
+            handle: handle.clone(),
+            operations: vec!["flush".to_string(), "lease".to_string()],
+            note: "g2 display capability".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.display_capability_count(), 1);
+    let display_capability = &graph.display_capabilities()[0];
+    assert_eq!(
+        display_capability.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::DisplayCapability, 23_201, 1)
+    );
+    assert_eq!(display_capability.owner_store, owner_store);
+    assert_eq!(
+        display_capability.owner_store_generation,
+        owner_store_generation
+    );
+    assert_eq!(display_capability.display, 23_101);
+    assert_eq!(display_capability.display_generation, 1);
+    assert_eq!(display_capability.framebuffer, 23_001);
+    assert_eq!(display_capability.framebuffer_generation, 1);
+    assert_eq!(display_capability.handle_slot, handle.slot);
+    assert_eq!(display_capability.handle_generation, handle.generation);
+    assert_eq!(display_capability.handle_tag, handle.tag);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "DisplayCapabilityRecorded display_capability=23201 owner_store={owner_store}@{owner_store_generation} display=23101@1 framebuffer=23001@1 capability={capability}@{} handle_slot={} handle_generation={} handle_tag={} operations=flush|lease state=active generation=1",
+            capability_record.generation, handle.slot, handle.generation, handle.tag,
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g2_rejects_stale_display_and_forged_handle() {
+    let (mut graph, owner_store, owner_store_generation, capability) =
+        g2_display_capability_graph();
+    let capability_record = graph.capabilities().record(capability).unwrap().clone();
+    let handle = handle_for(&capability_record, &["flush", "lease"]);
+
+    let stale_display = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "display-runtime-g2",
+        SemanticCommand::RecordDisplayCapability {
+            display_capability: 23_202,
+            owner_store,
+            owner_store_generation,
+            display: 23_101,
+            display_generation: 2,
+            capability,
+            capability_generation: capability_record.generation,
+            handle: handle.clone(),
+            operations: vec!["flush".to_string(), "lease".to_string()],
+            note: "g2 stale display".to_string(),
+        },
+    ));
+    assert_eq!(stale_display.status, CommandStatus::Rejected);
+
+    let mut forged_handle = handle.clone();
+    forged_handle.class_hint = CapabilityClass::Device;
+    let bad_handle = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "display-runtime-g2",
+        SemanticCommand::RecordDisplayCapability {
+            display_capability: 23_203,
+            owner_store,
+            owner_store_generation,
+            display: 23_101,
+            display_generation: 1,
+            capability,
+            capability_generation: capability_record.generation,
+            handle: forged_handle,
+            operations: vec!["flush".to_string(), "lease".to_string()],
+            note: "g2 forged handle".to_string(),
+        },
+    ));
+    assert_eq!(bad_handle.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn display_runtime_g2_invariants_reject_capability_generation_leak() {
+    let (mut graph, owner_store, owner_store_generation, capability) =
+        g2_display_capability_graph();
+    let capability_record = graph.capabilities().record(capability).unwrap().clone();
+    let handle = handle_for(&capability_record, &["flush", "lease"]);
+    assert!(graph.record_display_capability_with_id(
+        23_204,
+        owner_store,
+        owner_store_generation,
+        23_101,
+        1,
+        capability,
+        capability_record.generation,
+        handle,
+        vec!["flush".to_string(), "lease".to_string()],
+        "g2 invariant capability",
+    ));
+    graph.corrupt_display_capability_generation_for_test(23_204, capability_record.generation + 1);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::DisplayCapabilityInvalid {
+            display_capability: 23_204,
+        })
+    );
+}
+
+#[test]
+fn display_runtime_g2_contract_graph_rejects_missing_capability_edge() {
+    let display_capability = DisplayCapabilityRecord {
+        id: 23_205,
+        owner_store: 1,
+        owner_store_generation: 1,
+        display: 23_101,
+        display_generation: 1,
+        framebuffer: 23_001,
+        framebuffer_generation: 1,
+        capability: 77,
+        capability_generation: 3,
+        handle_slot: 1,
+        handle_generation: 1,
+        handle_tag: 42,
+        operations: vec!["flush".to_string()],
+        generation: 1,
+        state: DisplayCapabilityState::Active,
+        recorded_at_event: 1,
+        note: "g2 missing capability edge".to_string(),
+    };
+    let snapshot = ContractGraphSnapshot {
+        display_capabilities: Vec::from([display_capability]),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "display-capability->capability"
+            && violation.kind == ContractViolationKind::DanglingEdge
+    }));
+}
+
+#[test]
+fn display_runtime_g2_contract_graph_uses_exact_store_generation() {
+    let (mut graph, owner_store, owner_store_generation, capability) =
+        g2_display_capability_graph();
+    let capability_record = graph.capabilities().record(capability).unwrap().clone();
+    let handle = handle_for(&capability_record, &["flush", "lease"]);
+    assert!(graph.record_display_capability_with_id(
+        23_206,
+        owner_store,
+        owner_store_generation,
+        23_101,
+        1,
+        capability,
+        capability_record.generation,
+        handle,
+        vec!["flush".to_string(), "lease".to_string()],
+        "g2 exact generation lookup",
+    ));
+
+    let mut stores = graph.stores().to_vec();
+    let mut same_id_wrong_generation = stores
+        .iter()
+        .find(|store| store.id == owner_store)
+        .unwrap()
+        .clone();
+    same_id_wrong_generation.generation = owner_store_generation + 1;
+    stores.insert(0, same_id_wrong_generation);
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        display_capabilities: graph.display_capabilities().to_vec(),
+        stores,
+        capabilities: graph.capabilities().records().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(
+        !violations
+            .iter()
+            .any(|violation| violation.edge == "display-capability->owner-store"),
+        "unexpected owner-store violations: {violations:?}"
+    );
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();

@@ -17,12 +17,12 @@ use artifact_manifest::{
     CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
     CommandResultManifest, ContractObjectRefManifest, CrossHartSchedulerDecisionManifest,
     DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
-    DirectoryObjectManifest, DisplayObjectManifest, DmaBufferObjectManifest,
-    DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
-    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
-    FileHandleCapabilityManifest, FileObjectManifest, FramebufferObjectManifest, FsWaitManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    DirectoryObjectManifest, DisplayCapabilityManifest, DisplayObjectManifest,
+    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
+    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
+    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest,
+    FramebufferObjectManifest, FsWaitManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
@@ -422,6 +422,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "display-object"
         | "display"
         | "display-mode"
+        | "display-capability"
+        | "display-cap"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -593,7 +595,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -601,7 +603,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -885,6 +887,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         }
         "framebuffer-object" | "framebuffer" | "fb" => "framebuffer-object",
         "display-object" | "display" | "display-mode" => "display-object",
+        "display-capability" | "display-cap" => "display-capability",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -5726,6 +5729,63 @@ fn display_object_view_v1(display: &DisplayObjectManifest) -> serde_json::Value 
     })
 }
 
+fn display_capability_view_v1(capability: &DisplayCapabilityManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "display-capability",
+        "id": capability.id,
+        "generation": capability.generation,
+        "state": capability.state,
+        "owner": {
+            "store": object_ref_json(
+                "store",
+                capability.owner_store,
+                capability.owner_store_generation,
+            ),
+        },
+        "references": {
+            "display": object_ref_json(
+                "display-object",
+                capability.display,
+                capability.display_generation,
+            ),
+            "framebuffer": object_ref_json(
+                "framebuffer-object",
+                capability.framebuffer,
+                capability.framebuffer_generation,
+            ),
+            "capability": object_ref_json(
+                "capability",
+                capability.capability,
+                capability.capability_generation,
+            ),
+            "event": {
+                "id": capability.recorded_at_event,
+            },
+        },
+        "authority": {
+            "class": "display",
+            "operations": capability.operations,
+            "handle": {
+                "slot": capability.handle_slot,
+                "generation": capability.handle_generation,
+                "tag": capability.handle_tag,
+            },
+            "write_requires_framebuffer_window_lease": true,
+            "raw_mapping_is_semantic_truth": false,
+        },
+        "note": capability.note,
+        "last_transition": {
+            "recorded_at_event": capability.recorded_at_event,
+            "owner_store_generation": capability.owner_store_generation,
+            "display_generation": capability.display_generation,
+            "framebuffer_generation": capability.framebuffer_generation,
+            "capability_generation": capability.capability_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     let vector_status = if resume.vector_status.is_empty() {
         "absent"
@@ -7140,6 +7200,12 @@ fn stable_views_for_kind(
             .display_objects
             .iter()
             .map(display_object_view_v1)
+            .collect()),
+        "display-capability" | "display-cap" => Ok(package
+            .semantic
+            .display_capabilities
+            .iter()
+            .map(display_capability_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -10609,6 +10675,61 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             event,
         ));
     }
+    for capability in &package.semantic.display_capabilities {
+        let event = Some(capability.recorded_at_event);
+        let from = object_ref_json("display-capability", capability.id, capability.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "store",
+                capability.owner_store,
+                capability.owner_store_generation,
+            ),
+            "display-capability->owner-store",
+            "live",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "display-object",
+                capability.display,
+                capability.display_generation,
+            ),
+            "display-capability->display-object",
+            "live",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "framebuffer-object",
+                capability.framebuffer,
+                capability.framebuffer_generation,
+            ),
+            "display-capability->framebuffer-object",
+            "live",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "capability",
+                capability.capability,
+                capability.capability_generation,
+            ),
+            "display-capability->capability",
+            "live",
+            event,
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json("event", capability.recorded_at_event, 1),
+            "display-capability->event",
+            "historical",
+            event,
+        ));
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -13839,6 +13960,39 @@ fn inspect_package_object(
                 );
             }
         }
+        "display-capability" | "display-cap" => {
+            println!(
+                "inspect display-capability package={} count={}",
+                package.package_id, package.semantic.display_capability_count
+            );
+            for capability in &package.semantic.display_capabilities {
+                let line = format!(
+                    "display-capability id={} owner_store={}@{} display={}@{} framebuffer={}@{} capability={}@{} handle_slot={} handle_generation={} operations={} state={} generation={}",
+                    capability.id,
+                    capability.owner_store,
+                    capability.owner_store_generation,
+                    capability.display,
+                    capability.display_generation,
+                    capability.framebuffer,
+                    capability.framebuffer_generation,
+                    capability.capability,
+                    capability.capability_generation,
+                    capability.handle_slot,
+                    capability.handle_generation,
+                    capability.operations.join("|"),
+                    capability.state,
+                    capability.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.display_capabilities.is_empty() {
+                print_roots_filtered(
+                    "display-capability",
+                    &package.semantic.roots.display_capability_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -14178,6 +14332,19 @@ fn inspect_package_object_json(
                 .collect::<Vec<_>>(),
             serde_json::json!({
                 "root_count": package.semantic.roots.display_object_roots.len()
+            }),
+        ),
+        "display-capability" | "display-cap" => (
+            "display-capability",
+            package.semantic.display_capability_count,
+            package
+                .semantic
+                .display_capabilities
+                .iter()
+                .map(display_capability_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package.semantic.roots.display_capability_roots.len()
             }),
         ),
         "command" => (
@@ -18417,6 +18584,46 @@ mod tests {
         assert_eq!(view["authority"]["flush_requires"], "display-capability");
         assert_eq!(view["authority"]["raw_mapping_is_semantic_truth"], false);
         assert_eq!(view["last_transition"]["recorded_at_event"], 495);
+    }
+
+    #[test]
+    fn display_capability_view_v1_exposes_handle_and_generation_refs() {
+        let view = display_capability_view_v1(&DisplayCapabilityManifest {
+            id: 23_201,
+            owner_store: 12,
+            owner_store_generation: 1,
+            display: 23_101,
+            display_generation: 1,
+            framebuffer: 23_001,
+            framebuffer_generation: 1,
+            capability: 25,
+            capability_generation: 1,
+            handle_slot: 8,
+            handle_generation: 1,
+            handle_tag: 99,
+            operations: vec!["flush".to_owned(), "lease".to_owned()],
+            generation: 1,
+            state: "active".to_owned(),
+            recorded_at_event: 496,
+            note: "g2 display capability".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "display-capability");
+        assert_eq!(view["owner"]["store"]["id"], 12);
+        assert_eq!(view["references"]["display"]["id"], 23_101);
+        assert_eq!(view["references"]["framebuffer"]["generation"], 1);
+        assert_eq!(view["references"]["capability"]["id"], 25);
+        assert_eq!(view["authority"]["class"], "display");
+        assert_eq!(view["authority"]["operations"][0], "flush");
+        assert_eq!(view["authority"]["operations"][1], "lease");
+        assert_eq!(view["authority"]["handle"]["slot"], 8);
+        assert_eq!(
+            view["authority"]["write_requires_framebuffer_window_lease"],
+            true
+        );
+        assert_eq!(view["authority"]["raw_mapping_is_semantic_truth"], false);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 496);
     }
 
     #[test]
