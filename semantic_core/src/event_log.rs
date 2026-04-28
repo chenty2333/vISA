@@ -117,6 +117,24 @@ pub enum EventKind {
         vector_state: ContractObjectRef,
         generation: Generation,
     },
+    VectorStateRestoredOnResume {
+        resume: ActivationResumeId,
+        resume_generation: Generation,
+        context: ActivationContextId,
+        context_generation: Generation,
+        saved_context: SavedContextId,
+        saved_context_generation: Generation,
+        saved_vector_state: ContractObjectRef,
+        restored_vector_state: ContractObjectRef,
+        generation: Generation,
+    },
+    VectorStateReleasedOnResume {
+        resume: ActivationResumeId,
+        resume_generation: Generation,
+        vector_state: ContractObjectRef,
+        restored_vector_state: ContractObjectRef,
+        generation: Generation,
+    },
     TimerInterruptRecorded {
         interrupt: TimerInterruptId,
         timer_epoch: u64,
@@ -1859,6 +1877,32 @@ impl EventKind {
             } => format!(
                 "DirtyVectorStateSavedOnPreempt saved_context={saved_context}@{saved_context_generation} context={context}@{context_generation_before}->{context_generation_after} preemption={preemption}@{preemption_generation} vector_state={} vector_status=clean generation={generation}",
                 vector_state.summary()
+            ),
+            Self::VectorStateRestoredOnResume {
+                resume,
+                resume_generation,
+                context,
+                context_generation,
+                saved_context,
+                saved_context_generation,
+                saved_vector_state,
+                restored_vector_state,
+                generation,
+            } => format!(
+                "VectorStateRestoredOnResume resume={resume}@{resume_generation} context={context}@{context_generation} saved_context={saved_context}@{saved_context_generation} saved_vector_state={} restored_vector_state={} vector_status=clean generation={generation}",
+                saved_vector_state.summary(),
+                restored_vector_state.summary()
+            ),
+            Self::VectorStateReleasedOnResume {
+                resume,
+                resume_generation,
+                vector_state,
+                restored_vector_state,
+                generation,
+            } => format!(
+                "VectorStateReleasedOnResume resume={resume}@{resume_generation} vector_state={} restored_vector_state={} vector_status=dropped generation={generation}",
+                vector_state.summary(),
+                restored_vector_state.summary()
             ),
             Self::TimerInterruptRecorded {
                 interrupt,

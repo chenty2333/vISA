@@ -4679,32 +4679,43 @@ impl SemanticGraph {
                                 "resume activation context is not saved",
                             ));
                         }
-                        match (
+                        let saved_for_vector = match (
                             context.current_saved_context,
                             context.current_saved_context_generation,
                         ) {
                             (Some(saved), Some(saved_generation)) => {
-                                if !self.saved_contexts.iter().any(|saved_record| {
-                                    saved_record.id == saved
-                                        && saved_record.generation == saved_generation
-                                        && saved_record.context == context.id
-                                        && saved_record.context_generation == context.generation
-                                        && saved_record.activation == *activation
-                                        && saved_record.activation_generation
-                                            == *activation_generation
-                                        && saved_record.state == SavedContextState::Captured
-                                }) {
+                                let Some(saved_record) =
+                                    self.saved_contexts.iter().find(|saved_record| {
+                                        saved_record.id == saved
+                                            && saved_record.generation == saved_generation
+                                            && saved_record.context == context.id
+                                            && saved_record.context_generation == context.generation
+                                            && saved_record.activation == *activation
+                                            && saved_record.activation_generation
+                                                == *activation_generation
+                                            && saved_record.state == SavedContextState::Captured
+                                    })
+                                else {
                                     return Err(CommandError::precondition(
                                         "resume saved context generation is missing",
                                     ));
-                                }
+                                };
+                                Some(saved_record)
                             }
-                            (None, None) => {}
+                            (None, None) => None,
                             _ => {
                                 return Err(CommandError::precondition(
                                     "resume saved context generation is required",
                                 ));
                             }
+                        };
+                        if let Err(message) = self.validate_resume_vector_restore_records(
+                            Some(context),
+                            saved_for_vector,
+                            *activation,
+                            *activation_generation,
+                        ) {
+                            return Err(CommandError::precondition(message));
                         }
                     }
                     Ok(())

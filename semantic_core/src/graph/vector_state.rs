@@ -235,35 +235,49 @@ impl SemanticGraph {
                 }
                 VectorStateState::Dropped => {}
             }
-            if !self.event_log.events.iter().any(|event| {
-                event.id == record.recorded_at_event
-                    && matches!(
-                        &event.kind,
-                        EventKind::VectorStateRecorded {
-                            vector_state,
-                            owner_activation,
-                            owner_store,
-                            code_object,
-                            target_feature_set,
-                            simd_abi,
-                            vector_register_count,
-                            vector_register_bits,
-                            register_bytes,
-                            state,
-                            generation,
-                        } if *vector_state == record.id
-                            && *owner_activation == record.owner_activation
-                            && *owner_store == record.owner_store
-                            && *code_object == record.code_object
-                            && *target_feature_set == record.target_feature_set
-                            && simd_abi == &record.simd_abi
-                            && *vector_register_count == record.vector_register_count
-                            && *vector_register_bits == record.vector_register_bits
-                            && *register_bytes == record.register_bytes
-                            && *state == record.state
-                            && *generation == record.generation
-                    )
-            }) {
+            let has_state_event = self.event_log.events.iter().any(|event| {
+                if event.id != record.recorded_at_event {
+                    return false;
+                }
+                let recorded_event_matches = matches!(
+                    &event.kind,
+                    EventKind::VectorStateRecorded {
+                        vector_state,
+                        owner_activation,
+                        owner_store,
+                        code_object,
+                        target_feature_set,
+                        simd_abi,
+                        vector_register_count,
+                        vector_register_bits,
+                        register_bytes,
+                        state,
+                        generation,
+                    } if *vector_state == record.id
+                        && *owner_activation == record.owner_activation
+                        && *owner_store == record.owner_store
+                        && *code_object == record.code_object
+                        && *target_feature_set == record.target_feature_set
+                        && simd_abi == &record.simd_abi
+                        && *vector_register_count == record.vector_register_count
+                        && *vector_register_bits == record.vector_register_bits
+                        && *register_bytes == record.register_bytes
+                        && *state == record.state
+                        && *generation == record.generation
+                );
+                let resume_release_event_matches = matches!(
+                    &event.kind,
+                    EventKind::VectorStateReleasedOnResume {
+                        vector_state,
+                        generation,
+                        ..
+                    } if record.state == VectorStateState::Dropped
+                        && *vector_state == record.object_ref()
+                        && *generation == 1
+                );
+                recorded_event_matches || resume_release_event_matches
+            });
+            if !has_state_event {
                 return Err(SemanticInvariantError::VectorStateMissingEvent {
                     vector_state: record.id,
                     event: record.recorded_at_event,

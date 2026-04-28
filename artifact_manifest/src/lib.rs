@@ -2928,6 +2928,14 @@ pub struct ActivationResumeManifest {
     pub saved_context: Option<u64>,
     #[serde(default)]
     pub saved_context_generation: Option<u64>,
+    #[serde(default)]
+    pub saved_vector_state: Option<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub restored_vector_state: Option<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub vector_status: String,
+    #[serde(default)]
+    pub vector_restored_at_event: Option<u64>,
     pub generation: u64,
     pub state: String,
     pub resumed_at_event: u64,

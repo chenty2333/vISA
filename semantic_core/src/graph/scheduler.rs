@@ -575,6 +575,84 @@ impl SemanticGraph {
         true
     }
 
+    pub(crate) fn validate_resume_vector_restore_records(
+        &self,
+        context: Option<&ActivationContextRecord>,
+        saved: Option<&SavedContextRecord>,
+        activation: ActivationId,
+        activation_generation: Generation,
+    ) -> Result<Option<ContractObjectRef>, &'static str> {
+        match (context, saved) {
+            (Some(context), Some(saved)) => {
+                if context.activation != activation
+                    || context.activation_generation != activation_generation
+                    || saved.activation != activation
+                    || saved.activation_generation != activation_generation
+                    || saved.context != context.id
+                    || saved.context_generation != context.generation
+                {
+                    return Err("resume vector context generation mismatch");
+                }
+                match saved.vector_status {
+                    ActivationVectorState::Absent => {
+                        if context.vector_status != ActivationVectorState::Absent
+                            || context.vector_state.is_some()
+                            || saved.vector_state.is_some()
+                        {
+                            return Err(
+                                "resume vector state is present without saved vector state",
+                            );
+                        }
+                        Ok(None)
+                    }
+                    ActivationVectorState::Clean => {
+                        let Some(saved_vector_state) = saved.vector_state else {
+                            return Err("resume saved vector state is missing");
+                        };
+                        if context.vector_status != ActivationVectorState::Clean
+                            || context.vector_state != Some(saved_vector_state)
+                        {
+                            return Err("resume vector state does not match saved context");
+                        }
+                        let Some(vector_record) = self.vector_states.iter().find(|record| {
+                            record.id == saved_vector_state.id
+                                && record.generation == saved_vector_state.generation
+                        }) else {
+                            return Err("resume saved vector state record is missing");
+                        };
+                        if !vector_record.state.is_live_owned() {
+                            return Err("resume saved vector state is not live-owned");
+                        }
+                        if vector_record.owner_activation
+                            != ContractObjectRef::new(
+                                ContractObjectKind::Activation,
+                                activation,
+                                activation_generation,
+                            )
+                        {
+                            return Err("resume saved vector state owner activation mismatch");
+                        }
+                        Ok(Some(saved_vector_state))
+                    }
+                    ActivationVectorState::Dirty => {
+                        Err("resume requires preempted vector state to be saved")
+                    }
+                }
+            }
+            (Some(context), None) => {
+                if context.vector_status != ActivationVectorState::Absent
+                    || context.vector_state.is_some()
+                {
+                    Err("resume saved context is required for vector state")
+                } else {
+                    Ok(None)
+                }
+            }
+            (None, Some(_)) => Err("resume saved context exists without activation context"),
+            (None, None) => Ok(None),
+        }
+    }
+
     pub fn resume_activation_with_id(
         &mut self,
         resume: ActivationResumeId,
@@ -693,6 +771,30 @@ impl SemanticGraph {
         } else {
             None
         };
+        let saved_vector_state = match self.validate_resume_vector_restore_records(
+            context_index.map(|index| &self.activation_contexts[index]),
+            saved_index.map(|index| &self.saved_contexts[index]),
+            activation,
+            activation_generation,
+        ) {
+            Ok(vector_state) => vector_state,
+            Err(_) => return false,
+        };
+        let saved_vector_record = if let Some(vector_state) = saved_vector_state {
+            let Some(record) = self
+                .vector_states
+                .iter()
+                .find(|record| {
+                    record.id == vector_state.id && record.generation == vector_state.generation
+                })
+                .cloned()
+            else {
+                return false;
+            };
+            Some(record)
+        } else {
+            None
+        };
 
         self.next_activation_resume_id = self.next_activation_resume_id.max(resume + 1);
         let entry = self.runnable_queues[queue_index]
@@ -746,6 +848,53 @@ impl SemanticGraph {
             saved_context_generation = Some(self.saved_contexts[saved_index].generation);
         }
 
+        let mut restored_vector_state = None;
+        if let (Some(source), Some(context_index)) = (saved_vector_record.as_ref(), context_index) {
+            let restored_id = self.next_vector_state_id;
+            self.next_vector_state_id = self.next_vector_state_id.max(restored_id + 1);
+            let restored_ref =
+                ContractObjectRef::new(ContractObjectKind::VectorState, restored_id, 1);
+            let owner_activation = ContractObjectRef::new(
+                ContractObjectKind::Activation,
+                activation,
+                activation_generation_after,
+            );
+            let recorded_at_event = self.event_log.push(
+                "scheduler",
+                EventKind::VectorStateRecorded {
+                    vector_state: restored_id,
+                    owner_activation,
+                    owner_store: source.owner_store,
+                    code_object: source.code_object,
+                    target_feature_set: source.target_feature_set,
+                    simd_abi: source.simd_abi.clone(),
+                    vector_register_count: source.vector_register_count,
+                    vector_register_bits: source.vector_register_bits,
+                    register_bytes: source.register_bytes,
+                    state: source.state,
+                    generation: 1,
+                },
+            );
+            self.vector_states.push(VectorStateRecord {
+                id: restored_id,
+                owner_activation,
+                owner_store: source.owner_store,
+                code_object: source.code_object,
+                target_feature_set: source.target_feature_set,
+                simd_abi: source.simd_abi.clone(),
+                vector_register_count: source.vector_register_count,
+                vector_register_bits: source.vector_register_bits,
+                register_bytes: source.register_bytes,
+                generation: 1,
+                state: source.state,
+                recorded_at_event,
+                note: format!("restored from {}", source.object_ref().summary()),
+            });
+            self.activation_contexts[context_index].vector_state = Some(restored_ref);
+            self.activation_contexts[context_index].vector_status = ActivationVectorState::Clean;
+            restored_vector_state = Some(restored_ref);
+        }
+
         let resumed_event = self.event_log.push(
             "scheduler",
             EventKind::RuntimeActivationResumed {
@@ -760,10 +909,67 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        let last_event = resumed_event.max(state_event).max(dequeued_event);
+        let mut vector_restore_event = None;
+        if let (
+            Some(context),
+            Some(context_generation),
+            Some(saved),
+            Some(saved_generation),
+            Some(saved_vector_state),
+            Some(restored_vector_state),
+        ) = (
+            context_ref,
+            context_generation_after,
+            saved_context,
+            saved_context_generation,
+            saved_vector_state,
+            restored_vector_state,
+        ) {
+            let release_event = self.event_log.push(
+                "scheduler",
+                EventKind::VectorStateReleasedOnResume {
+                    resume,
+                    resume_generation: 1,
+                    vector_state: saved_vector_state,
+                    restored_vector_state,
+                    generation: 1,
+                },
+            );
+            if let Some(record) = self.vector_states.iter_mut().find(|record| {
+                record.id == saved_vector_state.id
+                    && record.generation == saved_vector_state.generation
+            }) {
+                record.state = VectorStateState::Dropped;
+                record.recorded_at_event = release_event;
+            }
+            let event = self.event_log.push(
+                "scheduler",
+                EventKind::VectorStateRestoredOnResume {
+                    resume,
+                    resume_generation: 1,
+                    context,
+                    context_generation,
+                    saved_context: saved,
+                    saved_context_generation: saved_generation,
+                    saved_vector_state,
+                    restored_vector_state,
+                    generation: 1,
+                },
+            );
+            vector_restore_event = Some(event);
+            if let Some(context_index) = context_index {
+                self.activation_contexts[context_index].vector_state_event = Some(event);
+            }
+        }
+
+        let last_event = vector_restore_event
+            .unwrap_or(resumed_event)
+            .max(resumed_event)
+            .max(state_event)
+            .max(dequeued_event);
         self.runtime_activations[activation_index].last_event = Some(last_event);
         if let Some(context_index) = context_index {
-            self.activation_contexts[context_index].last_event = Some(resumed_event);
+            self.activation_contexts[context_index].last_event = Some(last_event);
         }
         self.scheduler_decisions[decision_index].state = SchedulerDecisionState::Superseded;
         self.activation_resumes.push(ActivationResumeRecord {
@@ -782,6 +988,14 @@ impl SemanticGraph {
             context_generation_after,
             saved_context,
             saved_context_generation,
+            saved_vector_state,
+            restored_vector_state,
+            vector_status: if restored_vector_state.is_some() {
+                ActivationVectorState::Clean
+            } else {
+                ActivationVectorState::Absent
+            },
+            vector_restored_at_event: vector_restore_event,
             generation: 1,
             state: ActivationResumeState::Applied,
             resumed_at_event: resumed_event,
@@ -1331,6 +1545,74 @@ impl SemanticGraph {
                     resume: resume.id,
                     activation: resume.activation,
                 });
+            }
+            match (
+                resume.vector_status.requires_vector_state(),
+                resume.saved_vector_state,
+                resume.restored_vector_state,
+                resume.vector_restored_at_event,
+            ) {
+                (false, None, None, None) => {}
+                (true, Some(saved_vector_state), Some(restored_vector_state), Some(event_id)) => {
+                    if resume.vector_status != ActivationVectorState::Clean {
+                        return Err(SemanticInvariantError::ActivationResumeVectorStateInvalid {
+                            resume: resume.id,
+                        });
+                    }
+                    if saved_vector_state.kind != ContractObjectKind::VectorState
+                        || restored_vector_state.kind != ContractObjectKind::VectorState
+                    {
+                        return Err(SemanticInvariantError::ActivationResumeVectorStateInvalid {
+                            resume: resume.id,
+                        });
+                    }
+                    let saved_exists = self.vector_states.iter().any(|record| {
+                        record.id == saved_vector_state.id
+                            && record.generation == saved_vector_state.generation
+                            && record.owner_activation
+                                == ContractObjectRef::new(
+                                    ContractObjectKind::Activation,
+                                    resume.activation,
+                                    resume.activation_generation_before,
+                                )
+                    });
+                    let restored_exists = self.vector_states.iter().any(|record| {
+                        record.id == restored_vector_state.id
+                            && record.generation == restored_vector_state.generation
+                            && record.owner_activation
+                                == ContractObjectRef::new(
+                                    ContractObjectKind::Activation,
+                                    resume.activation,
+                                    resume.activation_generation_after,
+                                )
+                    });
+                    let event_exists = self.event_log.events.iter().any(|event| {
+                        event.id == event_id
+                            && matches!(
+                                &event.kind,
+                                EventKind::VectorStateRestoredOnResume {
+                                    resume: event_resume,
+                                    resume_generation,
+                                    saved_vector_state: event_saved,
+                                    restored_vector_state: event_restored,
+                                    ..
+                                } if *event_resume == resume.id
+                                    && *resume_generation == resume.generation
+                                    && *event_saved == saved_vector_state
+                                    && *event_restored == restored_vector_state
+                            )
+                    });
+                    if !saved_exists || !restored_exists || !event_exists {
+                        return Err(SemanticInvariantError::ActivationResumeVectorStateInvalid {
+                            resume: resume.id,
+                        });
+                    }
+                }
+                _ => {
+                    return Err(SemanticInvariantError::ActivationResumeVectorStateInvalid {
+                        resume: resume.id,
+                    });
+                }
             }
         }
 

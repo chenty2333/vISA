@@ -63,15 +63,15 @@ use fs_adapter::{
 use net_stack_adapter::{SmoltcpAdapterConfig, build_smoltcp_adapter_evidence};
 use runtime::{HostValidationSmokeTrace, RuntimeOnlyExecutor};
 use semantic_core::{
-    ActivationEntry, ActivationVectorState, ArtifactRegistry, ArtifactVerificationState,
-    AuthorityObjectRef, BlockCompletionStatus, BlockPendingIoAction, BlockRequestOperation,
-    BlockRequestQueueEntryRef, BoundaryKind, BoundaryStatus, BoundaryValidationReport,
-    BoundaryValidationViolation, BufferCacheObjectState, CapabilityClass, CapabilityHandleArg,
-    CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState, CodePublisher,
-    CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot, ContractObjectKind,
-    ContractObjectRef, ContractViolation, CowState, DescriptorObjectAccess, DirectoryEntryKind,
-    DirectoryObjectState, DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord,
-    ExpectedTargetArtifact, Ext4AdapterObjectState, ExternalObjectDeclaration,
+    ActivationContextState, ActivationEntry, ActivationVectorState, ArtifactRegistry,
+    ArtifactVerificationState, AuthorityObjectRef, BlockCompletionStatus, BlockPendingIoAction,
+    BlockRequestOperation, BlockRequestQueueEntryRef, BoundaryKind, BoundaryStatus,
+    BoundaryValidationReport, BoundaryValidationViolation, BufferCacheObjectState, CapabilityClass,
+    CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
+    CodePublisher, CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot,
+    ContractObjectKind, ContractObjectRef, ContractViolation, CowState, DescriptorObjectAccess,
+    DirectoryEntryKind, DirectoryObjectState, DmaBufferObjectAccess, EntrypointState, EventKind,
+    EventRecord, ExpectedTargetArtifact, Ext4AdapterObjectState, ExternalObjectDeclaration,
     FatAdapterObjectState, FileObjectState, FrontendKind, HartState, HostcallCategory,
     HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind,
     IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
@@ -79,12 +79,12 @@ use semantic_core::{
     NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
     PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
     PageBacking, PageObjectState, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
-    RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
-    SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
-    StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
-    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
-    TombstoneRecord, TrapSurfaceState, VectorStateState, VerifiedArtifact, WaitCancelReason,
-    memory_class_policies, validate_contract_graph,
+    RestartPolicy, RuntimeActivationState, RuntimeMode, SavedContextReason, SemanticCommand,
+    SemanticGraph, SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator,
+    StoreRecord, StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec,
+    TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata,
+    TaskState, TombstoneRecord, TrapSurfaceState, VectorStateState, VerifiedArtifact,
+    WaitCancelReason, memory_class_policies, validate_contract_graph,
 };
 use service_core::fake_block::{
     FAKE_BLOCK_BACKEND_PROFILE, FAKE_BLOCK_BACKEND_PROVIDER, FakeBlockBackendConfig,
@@ -8342,6 +8342,13 @@ fn build_target_executor_v1(
         &mut executor,
         &mut ledger,
     )?;
+    run_simd_resume_vector_restore_harness(
+        semantic,
+        &publisher,
+        &store_manager,
+        &mut executor,
+        &mut ledger,
+    )?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -9121,6 +9128,140 @@ fn run_simd_preempt_vector_save_harness(
         if result.status != CommandStatus::Applied {
             return Err(format!(
                 "simd runtime v7 command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn run_simd_resume_vector_restore_harness(
+    semantic: &mut SemanticGraph,
+    publisher: &CodePublisher,
+    store_manager: &TargetStoreManager,
+    executor: &mut TargetExecutor,
+    ledger: &mut CapabilityLedger,
+) -> Result<(), Box<dyn Error>> {
+    let Some(context) = semantic
+        .activation_contexts()
+        .iter()
+        .find(|context| context.id == 9_070 && context.state == ActivationContextState::Saved)
+    else {
+        return Ok(());
+    };
+    let activation = context.activation;
+    let activation_generation = context.activation_generation;
+    let Some(activation_record) = semantic.runtime_activations().iter().find(|record| {
+        record.id == activation
+            && record.generation == activation_generation
+            && record.state == RuntimeActivationState::Runnable
+    }) else {
+        return Err("v8 runnable activation for vector restore is missing".into());
+    };
+    let Some(queue) = activation_record.runnable_queue else {
+        return Err("v8 runnable activation has no queue".into());
+    };
+    let Some(queue_generation) = activation_record.runnable_queue_generation else {
+        return Err("v8 runnable activation has no queue generation".into());
+    };
+    let Some(saved_vector_state) = semantic
+        .saved_contexts()
+        .iter()
+        .find(|saved| saved.id == 9_070)
+        .and_then(|saved| saved.vector_state)
+    else {
+        return Err("v8 saved vector state is missing".into());
+    };
+    let Some(source_vector) = semantic.vector_states().iter().find(|vector| {
+        vector.id == saved_vector_state.id && vector.generation == saved_vector_state.generation
+    }) else {
+        return Err("v8 saved vector state record is missing".into());
+    };
+    let code = publisher
+        .objects()
+        .iter()
+        .find(|code| {
+            code.id == source_vector.code_object.id
+                && code.generation == source_vector.code_object.generation
+        })
+        .ok_or("v8 code object for vector restore is missing")?;
+    let target_activation_generation = executor
+        .activations()
+        .iter()
+        .find(|record| record.id == activation)
+        .map(|record| record.generation)
+        .ok_or("v8 target activation for vector restore is missing")?;
+    let target_store = store_manager
+        .record(source_vector.owner_store.id)
+        .ok_or("v8 target store for vector restore is missing")?
+        .store
+        .clone();
+    if target_store.generation != source_vector.owner_store.generation {
+        return Err("v8 target store generation for vector restore is stale".into());
+    }
+    let hostcall_spec = code
+        .hostcalls
+        .iter()
+        .find(|spec| {
+            spec.number == 1 && spec.object == "console.write" && spec.operation == "write"
+        })
+        .ok_or("v8 vector restore hostcall spec missing")?;
+    let mut frame = HostcallFrame::new_bound(
+        activation,
+        &target_store,
+        code,
+        hostcall_spec.number,
+        &hostcall_spec.object,
+        &hostcall_spec.operation,
+        ledger
+            .generation_of(&code.package, &hostcall_spec.object)
+            .unwrap_or(1),
+    )
+    .with_hostcall_seq(4);
+    frame.activation_generation = target_activation_generation;
+    if let Some(cap_arg) = capability_handle_arg_for(ledger, &code.package, hostcall_spec) {
+        frame = frame.with_cap_args(vec![cap_arg]);
+    }
+    executor
+        .invoke_hostcall(code, frame.to_wire_frame(), ledger)
+        .map_err(|error| error.message())?;
+
+    let commands = [
+        CommandEnvelope::new(
+            80_001,
+            "simd-runtime-v8",
+            SemanticCommand::RecordSchedulerDecision {
+                decision: 9_071,
+                queue,
+                queue_generation,
+                selected_activation: activation,
+                selected_activation_generation: activation_generation,
+                reason: "v8-vector-restore-runnable".to_owned(),
+                note: "v8 scheduler selects preempted vector activation".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            80_002,
+            "simd-runtime-v8",
+            SemanticCommand::ResumeActivation {
+                resume: 9_071,
+                scheduler_decision: 9_071,
+                scheduler_decision_generation: 1,
+                activation,
+                activation_generation,
+                note: "v8 resume restores saved vector state".to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "simd runtime v8 command {} ({}) failed: status={} violations={:?}",
                 result.command_id,
                 result.command,
                 result.status.as_str(),
@@ -12331,13 +12472,22 @@ fn semantic_roots(
             .iter()
             .map(|resume| {
                 format!(
-                    "activation-resume id={} decision={}@{} activation={}@{}->{} state={} generation={}",
+                    "activation-resume id={} decision={}@{} activation={}@{}->{} vector_status={} saved_vector_state={} restored_vector_state={} state={} generation={}",
                     resume.id,
                     resume.scheduler_decision,
                     resume.scheduler_decision_generation,
                     resume.activation,
                     resume.activation_generation_before,
                     resume.activation_generation_after,
+                    resume.vector_status.as_str(),
+                    resume
+                        .saved_vector_state
+                        .map(|state| state.summary())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    resume
+                        .restored_vector_state
+                        .map(|state| state.summary())
+                        .unwrap_or_else(|| "none".to_owned()),
                     resume.state.as_str(),
                     resume.generation
                 )
@@ -15109,6 +15259,12 @@ fn activation_resume_manifest(
         context_generation_after: resume.context_generation_after,
         saved_context: resume.saved_context,
         saved_context_generation: resume.saved_context_generation,
+        saved_vector_state: resume.saved_vector_state.map(contract_object_ref_manifest),
+        restored_vector_state: resume
+            .restored_vector_state
+            .map(contract_object_ref_manifest),
+        vector_status: resume.vector_status.as_str().to_owned(),
+        vector_restored_at_event: resume.vector_restored_at_event,
         generation: resume.generation,
         state: resume.state.as_str().to_owned(),
         resumed_at_event: resume.resumed_at_event,

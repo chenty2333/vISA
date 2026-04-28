@@ -964,6 +964,17 @@ impl SemanticGraph {
                                     && Some(*event_vector_state) == context.vector_state
                                     && context.vector_status == ActivationVectorState::Clean
                             }
+                            EventKind::VectorStateRestoredOnResume {
+                                context: event_context,
+                                context_generation,
+                                restored_vector_state,
+                                ..
+                            } => {
+                                *event_context == context.id
+                                    && *context_generation <= context.generation
+                                    && Some(*restored_vector_state) == context.vector_state
+                                    && context.vector_status == ActivationVectorState::Clean
+                            }
                             _ => false,
                         }
                     }) {

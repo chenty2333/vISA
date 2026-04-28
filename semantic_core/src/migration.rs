@@ -1952,6 +1952,9 @@ pub enum SemanticInvariantError {
         resume: ActivationResumeId,
         task: TaskId,
     },
+    ActivationResumeVectorStateInvalid {
+        resume: ActivationResumeId,
+    },
     PreemptionLatencyMissingTimerInterrupt {
         sample: PreemptionLatencySampleId,
         interrupt: TimerInterruptId,

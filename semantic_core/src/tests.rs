@@ -19675,6 +19675,170 @@ fn simd_runtime_v7_rejects_stale_saved_context_generation() {
     );
 }
 
+fn v8_saved_vector_context_with_decision() -> SemanticGraph {
+    let mut graph = v7_preempted_dirty_vector_context();
+    let vector_ref = ContractObjectRef::new(ContractObjectKind::VectorState, 22_002, 1);
+    let saved = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v8-test",
+        SemanticCommand::SaveDirtyVectorStateOnPreempt {
+            context: 12,
+            context_generation: 3,
+            saved_context: 13,
+            saved_context_generation: 1,
+            preemption: 6,
+            preemption_generation: 1,
+            vector_state: vector_ref,
+            note: "timer preempt saves dirty vector state".to_string(),
+        },
+    ));
+    assert_eq!(saved.status, CommandStatus::Applied, "{saved:?}");
+    let decision = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "v8-test",
+        SemanticCommand::RecordSchedulerDecision {
+            decision: 14,
+            queue: 1,
+            queue_generation: 1,
+            selected_activation: 11,
+            selected_activation_generation: 4,
+            reason: "resume-ready".to_string(),
+            note: "choose vector-saved activation".to_string(),
+        },
+    ));
+    assert_eq!(decision.status, CommandStatus::Applied, "{decision:?}");
+    graph
+}
+
+#[test]
+fn simd_runtime_v8_resume_restores_vector_state_to_current_activation_generation() {
+    let mut graph = v8_saved_vector_context_with_decision();
+    let saved_vector_ref = ContractObjectRef::new(ContractObjectKind::VectorState, 22_002, 1);
+    let restored_vector_ref = ContractObjectRef::new(ContractObjectKind::VectorState, 22_003, 1);
+
+    let resumed = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "v8-test",
+        SemanticCommand::ResumeActivation {
+            resume: 15,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 1,
+            activation: 11,
+            activation_generation: 4,
+            note: "resume restores vector state".to_string(),
+        },
+    ));
+
+    assert_eq!(resumed.status, CommandStatus::Applied, "{resumed:?}");
+    assert_eq!(graph.runtime_activations()[0].generation, 5);
+    assert_eq!(
+        graph.activation_contexts()[0].state,
+        ActivationContextState::Current
+    );
+    assert_eq!(graph.activation_contexts()[0].generation, 5);
+    assert_eq!(
+        graph.activation_contexts()[0].vector_status,
+        ActivationVectorState::Clean
+    );
+    assert_eq!(
+        graph.activation_contexts()[0].vector_state,
+        Some(restored_vector_ref)
+    );
+    assert_eq!(graph.saved_contexts()[0].state, SavedContextState::Restored);
+    assert_eq!(
+        graph.saved_contexts()[0].vector_state,
+        Some(saved_vector_ref)
+    );
+    let resume = &graph.activation_resumes()[0];
+    assert_eq!(resume.saved_vector_state, Some(saved_vector_ref));
+    assert_eq!(resume.restored_vector_state, Some(restored_vector_ref));
+    assert_eq!(resume.vector_status, ActivationVectorState::Clean);
+    assert!(resume.vector_restored_at_event.is_some());
+    let restored_vector = graph
+        .vector_states()
+        .iter()
+        .find(|record| record.object_ref() == restored_vector_ref)
+        .unwrap();
+    assert_eq!(
+        restored_vector.owner_activation,
+        ContractObjectRef::new(ContractObjectKind::Activation, 11, 5)
+    );
+    let saved_vector = graph
+        .vector_states()
+        .iter()
+        .find(|record| record.object_ref() == saved_vector_ref)
+        .unwrap();
+    assert_eq!(saved_vector.state, VectorStateState::Dropped);
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "VectorStateRestoredOnResume resume=15@1 context=12@5 saved_context=13@3 saved_vector_state=vector-state:22002@1 restored_vector_state=vector-state:22003@1 vector_status=clean generation=1"
+    );
+}
+
+#[test]
+fn simd_runtime_v8_rejects_resume_when_dirty_vector_state_was_not_saved() {
+    let mut graph = v7_preempted_dirty_vector_context();
+    let decision = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v8-test",
+        SemanticCommand::RecordSchedulerDecision {
+            decision: 14,
+            queue: 1,
+            queue_generation: 1,
+            selected_activation: 11,
+            selected_activation_generation: 4,
+            reason: "resume-ready".to_string(),
+            note: "choose dirty vector activation".to_string(),
+        },
+    ));
+    assert_eq!(decision.status, CommandStatus::Applied, "{decision:?}");
+
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "v8-test",
+        SemanticCommand::ResumeActivation {
+            resume: 15,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 1,
+            activation: 11,
+            activation_generation: 4,
+            note: "must reject dirty vector resume".to_string(),
+        },
+    ));
+
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["resume vector state is present without saved vector state".to_string()]
+    );
+}
+
+#[test]
+fn simd_runtime_v8_rejects_resume_vector_generation_mismatch() {
+    let mut graph = v8_saved_vector_context_with_decision();
+    graph.corrupt_activation_context_vector_state_generation_for_test(12, 99);
+
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "v8-test",
+        SemanticCommand::ResumeActivation {
+            resume: 15,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 1,
+            activation: 11,
+            activation_generation: 4,
+            note: "must reject stale vector generation".to_string(),
+        },
+    ));
+
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["resume vector state does not match saved context".to_string()]
+    );
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();

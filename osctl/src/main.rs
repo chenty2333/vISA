@@ -5481,6 +5481,11 @@ fn network_recovery_benchmark_view_v1(
 }
 
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
+    let vector_status = if resume.vector_status.is_empty() {
+        "absent"
+    } else {
+        resume.vector_status.as_str()
+    };
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
         "kind": "activation-resume",
@@ -5515,6 +5520,14 @@ fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::V
                 "id": id,
                 "generation": resume.saved_context_generation,
             })),
+            "saved_vector_state": resume.saved_vector_state.as_ref().map(object_ref_manifest_json),
+            "restored_vector_state": resume.restored_vector_state.as_ref().map(object_ref_manifest_json),
+        },
+        "vector_restore": {
+            "status": vector_status,
+            "saved_vector_state": resume.saved_vector_state.as_ref().map(object_ref_manifest_json),
+            "restored_vector_state": resume.restored_vector_state.as_ref().map(object_ref_manifest_json),
+            "restored_at_event": resume.vector_restored_at_event,
         },
         "note": resume.note,
         "last_transition": {
@@ -12038,6 +12051,28 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 Some(resume.resumed_at_event),
             ));
         }
+        if let Some(saved_vector_state) = &resume.saved_vector_state {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(saved_vector_state),
+                "restores-saved-vector-state",
+                "historical",
+                resume
+                    .vector_restored_at_event
+                    .or(Some(resume.resumed_at_event)),
+            ));
+        }
+        if let Some(restored_vector_state) = &resume.restored_vector_state {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(restored_vector_state),
+                "restored-vector-state",
+                "historical",
+                resume
+                    .vector_restored_at_event
+                    .or(Some(resume.resumed_at_event)),
+            ));
+        }
     }
     for activation_wait in &package.semantic.activation_waits {
         let from = object_ref_json(
@@ -17523,6 +17558,49 @@ mod tests {
     }
 
     #[test]
+    fn activation_resume_view_v1_exposes_vector_restore_refs() {
+        let view = activation_resume_view_v1(&ActivationResumeManifest {
+            id: 15,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 1,
+            activation: 11,
+            activation_generation_before: 4,
+            activation_generation_after: 5,
+            owner_task: 7,
+            owner_task_generation: 1,
+            queue: 1,
+            queue_generation: 1,
+            context: Some(12),
+            context_generation_before: Some(4),
+            context_generation_after: Some(5),
+            saved_context: Some(13),
+            saved_context_generation: Some(3),
+            saved_vector_state: Some(ContractObjectRefManifest {
+                kind: "vector-state".to_owned(),
+                id: 22_002,
+                generation: 1,
+            }),
+            restored_vector_state: Some(ContractObjectRefManifest {
+                kind: "vector-state".to_owned(),
+                id: 22_003,
+                generation: 1,
+            }),
+            vector_status: "clean".to_owned(),
+            vector_restored_at_event: Some(88),
+            generation: 1,
+            state: "applied".to_owned(),
+            resumed_at_event: 87,
+            note: "resume restores vector state".to_owned(),
+        });
+
+        assert_eq!(view["kind"], "activation-resume");
+        assert_eq!(view["vector_restore"]["status"], "clean");
+        assert_eq!(view["references"]["saved_vector_state"]["id"], 22_002);
+        assert_eq!(view["references"]["restored_vector_state"]["id"], 22_003);
+        assert_eq!(view["vector_restore"]["restored_at_event"], 88);
+    }
+
+    #[test]
     fn preemptive_runtime_views_expose_task_activation_and_scheduler_state() {
         let task = task_view_v1(&TaskRecordManifest {
             id: 7,
@@ -18380,6 +18458,10 @@ mod tests {
                 context_generation_after: Some(3),
                 saved_context: Some(13),
                 saved_context_generation: Some(2),
+                saved_vector_state: None,
+                restored_vector_state: None,
+                vector_status: "absent".to_owned(),
+                vector_restored_at_event: None,
                 generation: 1,
                 state: "applied".to_owned(),
                 resumed_at_event: 14,
