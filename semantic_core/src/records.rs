@@ -759,6 +759,51 @@ impl IntegratedSmpNetworkFaultRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntegratedDiskPreemptFaultRecord {
+    pub id: IntegratedDiskPreemptFaultId,
+    pub scenario: String,
+    pub preemption: PreemptionId,
+    pub preemption_generation: Generation,
+    pub timer_interrupt: TimerInterruptId,
+    pub timer_interrupt_generation: Generation,
+    pub block_pending_io_policy: BlockPendingIoPolicyId,
+    pub block_pending_io_policy_generation: Generation,
+    pub block_wait: BlockWaitId,
+    pub block_wait_generation: Generation,
+    pub wait: WaitId,
+    pub wait_generation: Generation,
+    pub block_request: BlockRequestObjectId,
+    pub block_request_generation: Generation,
+    pub retry_request: Option<BlockRequestObjectId>,
+    pub retry_request_generation: Option<Generation>,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub block_range: BlockRangeObjectId,
+    pub block_range_generation: Generation,
+    pub driver_store: Option<StoreId>,
+    pub driver_store_generation: Option<Generation>,
+    pub action: BlockPendingIoAction,
+    pub errno: i32,
+    pub preempted_activation: ActivationId,
+    pub preempted_activation_generation_after: Generation,
+    pub invariant_checks: u32,
+    pub generation: Generation,
+    pub state: IntegratedDiskPreemptFaultState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl IntegratedDiskPreemptFaultRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::IntegratedDiskPreemptFault,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceObjectRecord {
     pub id: DeviceObjectId,
     pub name: String,

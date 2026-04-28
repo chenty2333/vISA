@@ -798,6 +798,16 @@ pub enum SemanticInvariantError {
     IntegratedSmpNetworkFaultMissingEvent {
         integrated: IntegratedSmpNetworkFaultId,
     },
+    IntegratedDiskPreemptFaultInvalid {
+        integrated: IntegratedDiskPreemptFaultId,
+    },
+    IntegratedDiskPreemptFaultMissingEvidence {
+        integrated: IntegratedDiskPreemptFaultId,
+        evidence: &'static str,
+    },
+    IntegratedDiskPreemptFaultMissingEvent {
+        integrated: IntegratedDiskPreemptFaultId,
+    },
     DeviceObjectInvalid {
         device: DeviceObjectId,
     },

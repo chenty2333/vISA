@@ -25740,6 +25740,241 @@ fn integrated_runtime_x1_contract_graph_rejects_generation_drift() {
     }));
 }
 
+fn x2_integrated_disk_preempt_fault_graph() -> SemanticGraph {
+    let mut graph = setup_b20_pending_io_policy_graph();
+    assert_eq!(
+        graph
+            .apply_envelope(CommandEnvelope::new(
+                1,
+                "x2-setup",
+                SemanticCommand::ApplyBlockPendingIoPolicy {
+                    policy: 1899,
+                    block_wait: 1895,
+                    block_wait_generation: 1,
+                    action: BlockPendingIoAction::Eio,
+                    retry_request: None,
+                    retry_request_generation: None,
+                    errno: 5,
+                    retry_attempt: 0,
+                    max_retries: 0,
+                    note: "x2 return EIO for preempted pending disk IO".to_string(),
+                },
+            ))
+            .status,
+        CommandStatus::Applied
+    );
+    graph.ensure_task(1990, FrontendKind::LinuxElf, "x2-preempted-disk-io-thread");
+    assert!(graph.register_hart_with_id(1, 0, "x2-hart0", true, "x2 timer hart"));
+    let hart_generation = graph
+        .harts()
+        .iter()
+        .find(|hart| hart.id == 1)
+        .map(|hart| hart.generation)
+        .unwrap();
+    assert!(graph.create_runnable_queue_with_id(1990, "x2-disk-preempt-rq"));
+    assert!(graph.bind_runnable_queue_owner(
+        1990,
+        1,
+        1,
+        hart_generation,
+        "x2 hart owns disk preempt queue",
+    ));
+    assert!(graph.create_runtime_activation_with_id(1990, 1990, 1, None, None, None,));
+    assert!(graph.enqueue_runnable_activation(1990, 1990, 1));
+    assert!(graph.dequeue_runnable_activation(1990, 1990));
+    assert!(graph.record_timer_interrupt_with_id(
+        1990,
+        11,
+        1,
+        hart_generation,
+        Some(1990),
+        Some(3),
+        "x2 timer preemption during disk pending IO fault",
+    ));
+    assert!(graph.preempt_running_activation_with_id(
+        1990,
+        1990,
+        3,
+        1990,
+        1,
+        1990,
+        "x2 preempt disk pending IO activation",
+    ));
+    graph
+}
+
+#[test]
+fn integrated_runtime_x2_records_disk_pending_io_fault_under_preemption() {
+    let mut graph = x2_integrated_disk_preempt_fault_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "x2-test",
+        SemanticCommand::RecordIntegratedDiskPreemptFault {
+            integrated: 501,
+            scenario: "x2-disk-pending-io-fault-under-preemption".to_string(),
+            preemption: 1990,
+            preemption_generation: 1,
+            block_pending_io_policy: 1899,
+            block_pending_io_policy_generation: 1,
+            invariant_checks: 6,
+            note: "integrate disk EIO policy with timer preemption".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.integrated_disk_preempt_faults().len(), 1);
+    let record = &graph.integrated_disk_preempt_faults()[0];
+    assert_eq!(record.id, 501);
+    assert_eq!(record.action, BlockPendingIoAction::Eio);
+    assert_eq!(record.errno, 5);
+    assert_eq!(record.block_wait, 1895);
+    assert_eq!(record.wait, 1894);
+    assert_eq!(record.block_request, 1893);
+    assert_eq!(record.preempted_activation, 1990);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "IntegratedDiskPreemptFaultRecorded integrated=501 scenario=x2-disk-pending-io-fault-under-preemption preemption=1990@1 timer_interrupt=1990@1 policy=1899@1 block_wait=1895@1 wait=1894@1 block_request=1893@1 block_device=1791@1 action=eio errno=5 activation=1990@4 invariant_checks=6 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn integrated_runtime_x2_rejects_missing_or_non_fault_evidence() {
+    let rejected = SemanticGraph::new().apply_envelope(CommandEnvelope::new(
+        1,
+        "x2-test",
+        SemanticCommand::RecordIntegratedDiskPreemptFault {
+            integrated: 501,
+            scenario: "x2-disk-pending-io-fault-under-preemption".to_string(),
+            preemption: 1990,
+            preemption_generation: 1,
+            block_pending_io_policy: 1899,
+            block_pending_io_policy_generation: 1,
+            invariant_checks: 6,
+            note: "missing evidence rejects".to_string(),
+        },
+    ));
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["integrated disk/preempt fault missing preemption evidence".to_string()]
+    );
+
+    let mut graph = setup_b20_pending_io_policy_graph();
+    assert_eq!(
+        graph
+            .apply_envelope(CommandEnvelope::new(
+                2,
+                "x2-test",
+                SemanticCommand::ApplyBlockPendingIoPolicy {
+                    policy: 1900,
+                    block_wait: 1898,
+                    block_wait_generation: 1,
+                    action: BlockPendingIoAction::Cancel,
+                    retry_request: None,
+                    retry_request_generation: None,
+                    errno: 125,
+                    retry_attempt: 0,
+                    max_retries: 0,
+                    note: "cancel is not a device-fault pending IO policy".to_string(),
+                },
+            ))
+            .status,
+        CommandStatus::Applied
+    );
+    graph.ensure_task(1990, FrontendKind::LinuxElf, "x2-preempted-disk-io-thread");
+    assert!(graph.register_hart_with_id(1, 0, "x2-hart0", true, "x2 timer hart"));
+    let hart_generation = graph
+        .harts()
+        .iter()
+        .find(|hart| hart.id == 1)
+        .map(|hart| hart.generation)
+        .unwrap();
+    assert!(graph.create_runnable_queue_with_id(1990, "x2-disk-preempt-rq"));
+    assert!(graph.bind_runnable_queue_owner(
+        1990,
+        1,
+        1,
+        hart_generation,
+        "x2 hart owns disk preempt queue",
+    ));
+    assert!(graph.create_runtime_activation_with_id(1990, 1990, 1, None, None, None,));
+    assert!(graph.enqueue_runnable_activation(1990, 1990, 1));
+    assert!(graph.dequeue_runnable_activation(1990, 1990));
+    assert!(graph.record_timer_interrupt_with_id(
+        1990,
+        11,
+        1,
+        hart_generation,
+        Some(1990),
+        Some(3),
+        "x2 timer preemption during disk cancel",
+    ));
+    assert!(graph.preempt_running_activation_with_id(
+        1990,
+        1990,
+        3,
+        1990,
+        1,
+        1990,
+        "x2 preempt disk cancel activation",
+    ));
+    let non_fault = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "x2-test",
+        SemanticCommand::RecordIntegratedDiskPreemptFault {
+            integrated: 502,
+            scenario: "x2-disk-pending-io-fault-under-preemption".to_string(),
+            preemption: 1990,
+            preemption_generation: 1,
+            block_pending_io_policy: 1900,
+            block_pending_io_policy_generation: 1,
+            invariant_checks: 6,
+            note: "cancel policy must not satisfy disk fault evidence".to_string(),
+        },
+    ));
+    assert_eq!(non_fault.status, CommandStatus::Rejected);
+    assert_eq!(
+        non_fault.violations,
+        vec!["integrated disk/preempt fault requires device-fault retry or EIO policy".to_string()]
+    );
+}
+
+#[test]
+fn integrated_runtime_x2_contract_graph_rejects_generation_drift() {
+    let mut graph = x2_integrated_disk_preempt_fault_graph();
+    assert!(graph.record_integrated_disk_preempt_fault_with_id(
+        501,
+        "x2-disk-pending-io-fault-under-preemption",
+        1990,
+        1,
+        1899,
+        1,
+        6,
+        "integrated disk fault",
+    ));
+    let mut integrated = graph.integrated_disk_preempt_faults().to_vec();
+    integrated[0].block_pending_io_policy_generation = 99;
+    let snapshot = ContractGraphSnapshot {
+        integrated_disk_preempt_faults: integrated,
+        preemptions: graph.preemptions().to_vec(),
+        timer_interrupts: graph.timer_interrupts().to_vec(),
+        block_pending_io_policies: graph.block_pending_io_policies().to_vec(),
+        block_waits: graph.block_waits().to_vec(),
+        block_request_objects: graph.block_request_objects().to_vec(),
+        block_device_objects: graph.block_device_objects().to_vec(),
+        block_range_objects: graph.block_range_objects().to_vec(),
+        waits: graph.wait_records().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "integrated-disk-preempt-fault->block-pending-io-policy"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

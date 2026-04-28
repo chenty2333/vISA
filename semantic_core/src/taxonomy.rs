@@ -439,6 +439,21 @@ impl IntegratedSmpNetworkFaultState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntegratedDiskPreemptFaultState {
+    Recorded,
+    Rejected,
+}
+
+impl IntegratedDiskPreemptFaultState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceObjectState {
     Registered,
     Removed,

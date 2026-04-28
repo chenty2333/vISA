@@ -88,6 +88,7 @@ pub enum ObjectKind {
     SmpScalingBenchmark,
     IntegratedSmpPreemptionCleanup,
     IntegratedSmpNetworkFault,
+    IntegratedDiskPreemptFault,
     DeviceObject,
     QueueObject,
     DescriptorObject,
@@ -217,6 +218,7 @@ impl ObjectKind {
             Self::SmpScalingBenchmark => "smp-scaling-benchmark",
             Self::IntegratedSmpPreemptionCleanup => "integrated-smp-preemption-cleanup",
             Self::IntegratedSmpNetworkFault => "integrated-smp-network-fault",
+            Self::IntegratedDiskPreemptFault => "integrated-disk-preempt-fault",
             Self::DeviceObject => "device-object",
             Self::QueueObject => "queue-object",
             Self::DescriptorObject => "descriptor-object",
@@ -511,6 +513,10 @@ typed_ref!(
 typed_ref!(
     IntegratedSmpNetworkFaultRef,
     ObjectKind::IntegratedSmpNetworkFault
+);
+typed_ref!(
+    IntegratedDiskPreemptFaultRef,
+    ObjectKind::IntegratedDiskPreemptFault
 );
 typed_ref!(DeviceObjectRef, ObjectKind::DeviceObject);
 typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
@@ -1906,6 +1912,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "integrated smp network fault root/count mismatch",
         ));
     }
+    if roots.integrated_disk_preempt_fault_roots.len()
+        != package.semantic.integrated_disk_preempt_fault_count
+        || package.semantic.integrated_disk_preempt_faults.len()
+            != package.semantic.integrated_disk_preempt_fault_count
+    {
+        return Err(ContractError::new(
+            "integrated disk preempt fault root/count mismatch",
+        ));
+    }
     if roots.device_object_roots.len() != package.semantic.device_object_count
         || package.semantic.device_objects.len() != package.semantic.device_object_count
     {
@@ -2952,6 +2967,7 @@ mod tests {
                 smp_scaling_benchmark_count: 0,
                 integrated_smp_preemption_cleanup_count: 0,
                 integrated_smp_network_fault_count: 0,
+                integrated_disk_preempt_fault_count: 0,
                 device_object_count: 0,
                 queue_object_count: 0,
                 descriptor_object_count: 0,
@@ -3090,6 +3106,7 @@ mod tests {
                 smp_scaling_benchmarks: Vec::new(),
                 integrated_smp_preemption_cleanups: Vec::new(),
                 integrated_smp_network_faults: Vec::new(),
+                integrated_disk_preempt_faults: Vec::new(),
                 device_objects: Vec::new(),
                 queue_objects: Vec::new(),
                 descriptor_objects: Vec::new(),
@@ -3979,6 +3996,53 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "integrated smp network fault root/count mismatch"
+        );
+    }
+
+    #[test]
+    fn semantic_roots_reject_integrated_disk_preempt_fault_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.integrated_disk_preempt_fault_count = 1;
+        package.semantic.integrated_disk_preempt_faults.push(
+            artifact_manifest::IntegratedDiskPreemptFaultManifest {
+                id: 19,
+                scenario: "x2-disk-pending-io-fault-under-preemption".to_owned(),
+                preemption: 6,
+                preemption_generation: 1,
+                timer_interrupt: 5,
+                timer_interrupt_generation: 1,
+                block_pending_io_policy: 71,
+                block_pending_io_policy_generation: 1,
+                block_wait: 55,
+                block_wait_generation: 1,
+                wait: 8,
+                wait_generation: 1,
+                block_request: 53,
+                block_request_generation: 1,
+                retry_request: None,
+                retry_request_generation: None,
+                block_device: 51,
+                block_device_generation: 1,
+                block_range: 52,
+                block_range_generation: 1,
+                driver_store: Some(7),
+                driver_store_generation: Some(2),
+                action: "eio".to_owned(),
+                errno: 5,
+                preempted_activation: 9,
+                preempted_activation_generation_after: 4,
+                invariant_checks: 6,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 55,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "integrated disk preempt fault root/count mismatch"
         );
     }
 
@@ -7209,6 +7273,9 @@ mod tests {
         let integrated_network_fault =
             ObjectRef::new(ObjectKind::IntegratedSmpNetworkFault, 18, 1).unwrap();
         assert!(IntegratedSmpNetworkFaultRef::try_from_ref(integrated_network_fault).is_ok());
+        let integrated_disk_fault =
+            ObjectRef::new(ObjectKind::IntegratedDiskPreemptFault, 19, 1).unwrap();
+        assert!(IntegratedDiskPreemptFaultRef::try_from_ref(integrated_disk_fault).is_ok());
         let device_object = ObjectRef::new(ObjectKind::DeviceObject, 17, 1).unwrap();
         assert!(DeviceObjectRef::try_from_ref(device_object).is_ok());
         let packet_device_object = ObjectRef::new(ObjectKind::PacketDeviceObject, 30, 1).unwrap();

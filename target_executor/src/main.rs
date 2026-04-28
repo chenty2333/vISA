@@ -30,19 +30,19 @@ use artifact_manifest::{
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    IntegratedDiskPreemptFaultManifest, IntegratedSmpNetworkFaultManifest,
+    IntegratedSmpPreemptionCleanupManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8395,6 +8395,7 @@ fn build_target_executor_v1(
     run_framebuffer_benchmark_harness(semantic)?;
     run_integrated_smp_preemption_cleanup_harness(semantic)?;
     run_integrated_smp_network_fault_harness(semantic)?;
+    run_integrated_disk_preempt_fault_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8488,11 +8489,17 @@ fn build_target_executor_v1(
         framebuffer_benchmarks: semantic.framebuffer_benchmarks().to_vec(),
         integrated_smp_preemption_cleanups: semantic.integrated_smp_preemption_cleanups().to_vec(),
         integrated_smp_network_faults: semantic.integrated_smp_network_faults().to_vec(),
+        integrated_disk_preempt_faults: semantic.integrated_disk_preempt_faults().to_vec(),
         network_driver_cleanups: semantic.network_driver_cleanups().to_vec(),
         packet_device_objects: semantic.packet_device_objects().to_vec(),
         network_stack_adapters: semantic.network_stack_adapters().to_vec(),
         virtio_net_backends: semantic.virtio_net_backends().to_vec(),
         io_cleanups: semantic.io_cleanups().to_vec(),
+        block_pending_io_policies: semantic.block_pending_io_policies().to_vec(),
+        block_waits: semantic.block_waits().to_vec(),
+        block_request_objects: semantic.block_request_objects().to_vec(),
+        block_device_objects: semantic.block_device_objects().to_vec(),
+        block_range_objects: semantic.block_range_objects().to_vec(),
         saved_contexts: semantic.saved_contexts().to_vec(),
         timer_interrupts: semantic.timer_interrupts().to_vec(),
         remote_preempts: semantic.remote_preempts().to_vec(),
@@ -8506,7 +8513,7 @@ fn build_target_executor_v1(
         traps: executor.traps().to_vec(),
         hostcalls: executor.hostcall_trace().to_vec(),
         capabilities: contract_capabilities,
-        waits: Vec::new(),
+        waits: semantic.wait_records().to_vec(),
         cleanup_transactions: executor.cleanup_transactions().to_vec(),
         tombstones: publisher
             .tombstones()
@@ -10805,6 +10812,36 @@ fn run_integrated_smp_network_fault_harness(
     Ok(())
 }
 
+fn run_integrated_disk_preempt_fault_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        100_003,
+        "integrated-runtime-x2",
+        SemanticCommand::RecordIntegratedDiskPreemptFault {
+            integrated: 26_201,
+            scenario: "x2-disk-pending-io-fault-under-preemption".to_owned(),
+            preemption: 9_070,
+            preemption_generation: 1,
+            block_pending_io_policy: 20_124,
+            block_pending_io_policy_generation: 1,
+            invariant_checks: 6,
+            note: "x2 records block pending EIO policy under timer preemption evidence".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "integrated runtime x2 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11603,6 +11640,7 @@ fn demo_migration_package(
             integrated_smp_preemption_cleanup_count: semantic
                 .integrated_smp_preemption_cleanup_count(),
             integrated_smp_network_fault_count: semantic.integrated_smp_network_fault_count(),
+            integrated_disk_preempt_fault_count: semantic.integrated_disk_preempt_fault_count(),
             device_object_count: semantic.device_object_count(),
             queue_object_count: semantic.queue_object_count(),
             descriptor_object_count: semantic.descriptor_object_count(),
@@ -11824,6 +11862,11 @@ fn demo_migration_package(
                 .integrated_smp_network_faults()
                 .iter()
                 .map(integrated_smp_network_fault_manifest)
+                .collect(),
+            integrated_disk_preempt_faults: semantic
+                .integrated_disk_preempt_faults()
+                .iter()
+                .map(integrated_disk_preempt_fault_manifest)
                 .collect(),
             device_objects: semantic
                 .device_objects()
@@ -12752,6 +12795,36 @@ fn semantic_roots(
                     record.hart_count,
                     record.cancelled_socket_wait_count,
                     record.revoked_packet_capability_count,
+                    record.generation
+                )
+            })
+            .collect(),
+        integrated_disk_preempt_fault_roots: semantic
+            .integrated_disk_preempt_faults()
+            .iter()
+            .map(|record| {
+                format!(
+                    "integrated-disk-preempt-fault id={} scenario={} preemption={}@{} timer_interrupt={}@{} policy={}@{} block_wait={}@{} wait={}@{} block_request={}@{} block_device={}@{} action={} errno={} activation={}@{} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.preemption,
+                    record.preemption_generation,
+                    record.timer_interrupt,
+                    record.timer_interrupt_generation,
+                    record.block_pending_io_policy,
+                    record.block_pending_io_policy_generation,
+                    record.block_wait,
+                    record.block_wait_generation,
+                    record.wait,
+                    record.wait_generation,
+                    record.block_request,
+                    record.block_request_generation,
+                    record.block_device,
+                    record.block_device_generation,
+                    record.action.as_str(),
+                    record.errno,
+                    record.preempted_activation,
+                    record.preempted_activation_generation_after,
                     record.generation
                 )
             })
@@ -15943,6 +16016,44 @@ fn integrated_smp_network_fault_manifest(
         cancelled_wait_token_count: record.cancelled_wait_token_count,
         revoked_packet_capability_count: record.revoked_packet_capability_count,
         hart_count: record.hart_count,
+        invariant_checks: record.invariant_checks,
+        generation: record.generation,
+        state: record.state.as_str().to_owned(),
+        recorded_at_event: record.recorded_at_event,
+        note: record.note.clone(),
+    }
+}
+
+fn integrated_disk_preempt_fault_manifest(
+    record: &semantic_core::IntegratedDiskPreemptFaultRecord,
+) -> IntegratedDiskPreemptFaultManifest {
+    IntegratedDiskPreemptFaultManifest {
+        id: record.id,
+        scenario: record.scenario.clone(),
+        preemption: record.preemption,
+        preemption_generation: record.preemption_generation,
+        timer_interrupt: record.timer_interrupt,
+        timer_interrupt_generation: record.timer_interrupt_generation,
+        block_pending_io_policy: record.block_pending_io_policy,
+        block_pending_io_policy_generation: record.block_pending_io_policy_generation,
+        block_wait: record.block_wait,
+        block_wait_generation: record.block_wait_generation,
+        wait: record.wait,
+        wait_generation: record.wait_generation,
+        block_request: record.block_request,
+        block_request_generation: record.block_request_generation,
+        retry_request: record.retry_request,
+        retry_request_generation: record.retry_request_generation,
+        block_device: record.block_device,
+        block_device_generation: record.block_device_generation,
+        block_range: record.block_range,
+        block_range_generation: record.block_range_generation,
+        driver_store: record.driver_store,
+        driver_store_generation: record.driver_store_generation,
+        action: record.action.as_str().to_owned(),
+        errno: record.errno,
+        preempted_activation: record.preempted_activation,
+        preempted_activation_generation_after: record.preempted_activation_generation_after,
         invariant_checks: record.invariant_checks,
         generation: record.generation,
         state: record.state.as_str().to_owned(),

@@ -269,6 +269,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_smp_network_fault_count: usize,
     #[serde(default)]
+    pub integrated_disk_preempt_fault_count: usize,
+    #[serde(default)]
     pub device_object_count: usize,
     #[serde(default)]
     pub queue_object_count: usize,
@@ -541,6 +543,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultManifest>,
     #[serde(default)]
+    pub integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultManifest>,
+    #[serde(default)]
     pub device_objects: Vec<DeviceObjectManifest>,
     #[serde(default)]
     pub queue_objects: Vec<QueueObjectManifest>,
@@ -792,6 +796,8 @@ pub struct SemanticRootSetManifest {
     pub integrated_smp_preemption_cleanup_roots: Vec<String>,
     #[serde(default)]
     pub integrated_smp_network_fault_roots: Vec<String>,
+    #[serde(default)]
+    pub integrated_disk_preempt_fault_roots: Vec<String>,
     #[serde(default)]
     pub device_object_roots: Vec<String>,
     #[serde(default)]
@@ -1656,6 +1662,41 @@ pub struct IntegratedSmpNetworkFaultManifest {
     pub cancelled_wait_token_count: u32,
     pub revoked_packet_capability_count: u32,
     pub hart_count: u32,
+    pub invariant_checks: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IntegratedDiskPreemptFaultManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub preemption: u64,
+    pub preemption_generation: u64,
+    pub timer_interrupt: u64,
+    pub timer_interrupt_generation: u64,
+    pub block_pending_io_policy: u64,
+    pub block_pending_io_policy_generation: u64,
+    pub block_wait: u64,
+    pub block_wait_generation: u64,
+    pub wait: u64,
+    pub wait_generation: u64,
+    pub block_request: u64,
+    pub block_request_generation: u64,
+    pub retry_request: Option<u64>,
+    pub retry_request_generation: Option<u64>,
+    pub block_device: u64,
+    pub block_device_generation: u64,
+    pub block_range: u64,
+    pub block_range_generation: u64,
+    pub driver_store: Option<u64>,
+    pub driver_store_generation: Option<u64>,
+    pub action: String,
+    pub errno: i32,
+    pub preempted_activation: u64,
+    pub preempted_activation_generation_after: u64,
     pub invariant_checks: u32,
     pub generation: u64,
     pub state: String,

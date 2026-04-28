@@ -99,11 +99,17 @@ pub struct ContractGraphSnapshot {
     pub framebuffer_benchmarks: Vec<FramebufferBenchmarkRecord>,
     pub integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
     pub integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
+    pub integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultRecord>,
     pub network_driver_cleanups: Vec<NetworkDriverCleanupRecord>,
     pub packet_device_objects: Vec<PacketDeviceObjectRecord>,
     pub network_stack_adapters: Vec<NetworkStackAdapterRecord>,
     pub virtio_net_backends: Vec<VirtioNetBackendObjectRecord>,
     pub io_cleanups: Vec<IoCleanupRecord>,
+    pub block_pending_io_policies: Vec<BlockPendingIoPolicyRecord>,
+    pub block_waits: Vec<BlockWaitRecord>,
+    pub block_request_objects: Vec<BlockRequestObjectRecord>,
+    pub block_device_objects: Vec<BlockDeviceObjectRecord>,
+    pub block_range_objects: Vec<BlockRangeObjectRecord>,
     pub saved_contexts: Vec<SavedContextRecord>,
     pub timer_interrupts: Vec<TimerInterruptRecord>,
     pub remote_preempts: Vec<RemotePreemptRecord>,
@@ -228,6 +234,7 @@ impl ContractGraphValidator {
         Self::validate_framebuffer_benchmarks(snapshot, &mut violations);
         Self::validate_integrated_smp_preemption_cleanups(snapshot, &mut violations);
         Self::validate_integrated_smp_network_faults(snapshot, &mut violations);
+        Self::validate_integrated_disk_preempt_faults(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -2999,6 +3006,267 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_integrated_disk_preempt_faults(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for record in &snapshot.integrated_disk_preempt_faults {
+            let from = record.object_ref();
+            if record.id == 0
+                || record.generation == 0
+                || record.scenario.is_empty()
+                || record.state != IntegratedDiskPreemptFaultState::Recorded
+                || record.preemption_generation == 0
+                || record.timer_interrupt_generation == 0
+                || record.block_pending_io_policy_generation == 0
+                || record.block_wait_generation == 0
+                || record.wait_generation == 0
+                || record.block_request_generation == 0
+                || record.block_device_generation == 0
+                || record.block_range_generation == 0
+                || record.preempted_activation_generation_after == 0
+                || record.invariant_checks == 0
+                || record.errno <= 0
+                || record.action == BlockPendingIoAction::Cancel
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "integrated-disk-preempt-fault->contract",
+                    from,
+                    None,
+                    "integrated disk/preempt fault evidence requires exact refs, applied preemption, cancelled block wait, and retry/EIO policy",
+                ));
+                continue;
+            }
+            for (label, kind, id, generation) in [
+                (
+                    "integrated-disk-preempt-fault->preemption",
+                    ContractObjectKind::Preemption,
+                    record.preemption,
+                    record.preemption_generation,
+                ),
+                (
+                    "integrated-disk-preempt-fault->timer-interrupt",
+                    ContractObjectKind::TimerInterrupt,
+                    record.timer_interrupt,
+                    record.timer_interrupt_generation,
+                ),
+                (
+                    "integrated-disk-preempt-fault->block-pending-io-policy",
+                    ContractObjectKind::BlockPendingIoPolicy,
+                    record.block_pending_io_policy,
+                    record.block_pending_io_policy_generation,
+                ),
+                (
+                    "integrated-disk-preempt-fault->block-wait",
+                    ContractObjectKind::BlockWait,
+                    record.block_wait,
+                    record.block_wait_generation,
+                ),
+                (
+                    "integrated-disk-preempt-fault->wait",
+                    ContractObjectKind::WaitToken,
+                    record.wait,
+                    record.wait_generation,
+                ),
+                (
+                    "integrated-disk-preempt-fault->block-request",
+                    ContractObjectKind::BlockRequestObject,
+                    record.block_request,
+                    record.block_request_generation,
+                ),
+                (
+                    "integrated-disk-preempt-fault->block-device",
+                    ContractObjectKind::BlockDeviceObject,
+                    record.block_device,
+                    record.block_device_generation,
+                ),
+                (
+                    "integrated-disk-preempt-fault->block-range",
+                    ContractObjectKind::BlockRangeObject,
+                    record.block_range,
+                    record.block_range_generation,
+                ),
+            ] {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    kind,
+                    id,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            if let (Some(retry_request), Some(retry_generation)) =
+                (record.retry_request, record.retry_request_generation)
+            {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "integrated-disk-preempt-fault->retry-request",
+                    ContractObjectKind::BlockRequestObject,
+                    retry_request,
+                    retry_generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            if let Some(preemption) = snapshot.preemptions.iter().find(|preemption| {
+                preemption.id == record.preemption
+                    && preemption.generation == record.preemption_generation
+            }) {
+                if preemption.state != PreemptionState::Applied
+                    || preemption.timer_interrupt != record.timer_interrupt
+                    || preemption.timer_interrupt_generation != record.timer_interrupt_generation
+                    || preemption.activation != record.preempted_activation
+                    || preemption.activation_generation_after
+                        != record.preempted_activation_generation_after
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-disk-preempt-fault->preemption-binding",
+                        from,
+                        Some(preemption.object_ref()),
+                        "integrated disk/preempt fault preemption attribution does not match the recorded preempted activation",
+                    ));
+                }
+            }
+            if let Some(timer) = snapshot.timer_interrupts.iter().find(|timer| {
+                timer.id == record.timer_interrupt
+                    && timer.generation == record.timer_interrupt_generation
+            }) {
+                if timer.state != TimerInterruptState::Recorded
+                    || timer.target_activation != Some(record.preempted_activation)
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-disk-preempt-fault->timer-binding",
+                        from,
+                        Some(timer.object_ref()),
+                        "integrated disk/preempt fault timer interrupt does not target the preempted activation",
+                    ));
+                }
+            }
+            if let Some(policy) = snapshot.block_pending_io_policies.iter().find(|policy| {
+                policy.id == record.block_pending_io_policy
+                    && policy.generation == record.block_pending_io_policy_generation
+            }) {
+                let expected_state = match record.action {
+                    BlockPendingIoAction::Retry => BlockPendingIoPolicyState::RetryScheduled,
+                    BlockPendingIoAction::Eio => BlockPendingIoPolicyState::EioReturned,
+                    BlockPendingIoAction::Cancel => BlockPendingIoPolicyState::Cancelled,
+                };
+                if policy.state != expected_state
+                    || policy.action != record.action
+                    || policy.errno != record.errno
+                    || policy.block_wait != record.block_wait
+                    || policy.block_wait_generation != record.block_wait_generation
+                    || policy.wait != record.wait
+                    || policy.wait_generation != record.wait_generation
+                    || policy.block_request != record.block_request
+                    || policy.block_request_generation != record.block_request_generation
+                    || policy.retry_request != record.retry_request
+                    || policy.retry_request_generation != record.retry_request_generation
+                    || policy.block_device != record.block_device
+                    || policy.block_device_generation != record.block_device_generation
+                    || policy.block_range != record.block_range
+                    || policy.block_range_generation != record.block_range_generation
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-disk-preempt-fault->policy-binding",
+                        from,
+                        Some(policy.object_ref()),
+                        "integrated disk/preempt fault policy binding does not match recorded pending IO fault evidence",
+                    ));
+                }
+            }
+            if let Some(block_wait) = snapshot.block_waits.iter().find(|wait| {
+                wait.id == record.block_wait && wait.generation == record.block_wait_generation
+            }) {
+                if block_wait.state != BlockWaitState::Cancelled
+                    || block_wait.cancel_reason != Some(WaitCancelReason::DeviceFault)
+                    || block_wait.wait != record.wait
+                    || block_wait.wait_generation != record.wait_generation
+                    || block_wait.block_request != record.block_request
+                    || block_wait.block_request_generation != record.block_request_generation
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-disk-preempt-fault->block-wait-binding",
+                        from,
+                        Some(block_wait.object_ref()),
+                        "integrated disk/preempt fault block wait is not the cancelled device-fault wait",
+                    ));
+                }
+            }
+            if let Some(wait) = snapshot
+                .waits
+                .iter()
+                .find(|wait| wait.id == record.wait && wait.generation == record.wait_generation)
+            {
+                if wait.state != WaitState::Cancelled
+                    || wait.cancel_reason != Some(WaitCancelReason::DeviceFault)
+                    || wait.owner_store != record.driver_store
+                    || wait.owner_store_generation != record.driver_store_generation
+                    || !wait.blockers.iter().any(|blocker| {
+                        *blocker
+                            == ContractObjectRef::new(
+                                ContractObjectKind::BlockRequestObject,
+                                record.block_request,
+                                record.block_request_generation,
+                            )
+                    })
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-disk-preempt-fault->wait-binding",
+                        from,
+                        Some(wait.object_ref()),
+                        "integrated disk/preempt fault wait token does not carry the cancelled block request blocker",
+                    ));
+                }
+            }
+            if let Some(request) = snapshot.block_request_objects.iter().find(|request| {
+                request.id == record.block_request
+                    && request.generation == record.block_request_generation
+            }) {
+                if request.block_device != record.block_device
+                    || request.block_device_generation != record.block_device_generation
+                    || request.block_range != record.block_range
+                    || request.block_range_generation != record.block_range_generation
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-disk-preempt-fault->request-binding",
+                        from,
+                        Some(request.object_ref()),
+                        "integrated disk/preempt fault request does not match block device/range refs",
+                    ));
+                }
+            }
+            if snapshot.block_waits.iter().any(|wait| {
+                wait.block_request == record.block_request
+                    && wait.block_request_generation == record.block_request_generation
+                    && wait.state == BlockWaitState::Pending
+            }) {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::LiveObjectReferencesDeadObject,
+                    "integrated-disk-preempt-fault->pending-wait-leak",
+                    from,
+                    Some(ContractObjectRef::new(
+                        ContractObjectKind::BlockRequestObject,
+                        record.block_request,
+                        record.block_request_generation,
+                    )),
+                    "integrated disk/preempt fault cannot leave the faulted block request pending",
+                ));
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -4267,6 +4535,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id && record.generation == generation)
                 .map(IntegratedSmpNetworkFaultRecord::object_ref),
+            ContractObjectKind::IntegratedDiskPreemptFault => snapshot
+                .integrated_disk_preempt_faults
+                .iter()
+                .find(|record| record.id == id && record.generation == generation)
+                .map(IntegratedDiskPreemptFaultRecord::object_ref),
             ContractObjectKind::NetworkDriverCleanup => snapshot
                 .network_driver_cleanups
                 .iter()
@@ -4294,6 +4567,31 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|cleanup| cleanup.id == id && cleanup.generation == generation)
                 .map(IoCleanupRecord::object_ref),
+            ContractObjectKind::BlockPendingIoPolicy => snapshot
+                .block_pending_io_policies
+                .iter()
+                .find(|policy| policy.id == id && policy.generation == generation)
+                .map(BlockPendingIoPolicyRecord::object_ref),
+            ContractObjectKind::BlockWait => snapshot
+                .block_waits
+                .iter()
+                .find(|wait| wait.id == id && wait.generation == generation)
+                .map(BlockWaitRecord::object_ref),
+            ContractObjectKind::BlockRequestObject => snapshot
+                .block_request_objects
+                .iter()
+                .find(|request| request.id == id && request.generation == generation)
+                .map(BlockRequestObjectRecord::object_ref),
+            ContractObjectKind::BlockDeviceObject => snapshot
+                .block_device_objects
+                .iter()
+                .find(|device| device.id == id && device.generation == generation)
+                .map(BlockDeviceObjectRecord::object_ref),
+            ContractObjectKind::BlockRangeObject => snapshot
+                .block_range_objects
+                .iter()
+                .find(|range| range.id == id && range.generation == generation)
+                .map(BlockRangeObjectRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -4524,6 +4822,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id)
                 .map(IntegratedSmpNetworkFaultRecord::object_ref),
+            ContractObjectKind::IntegratedDiskPreemptFault => snapshot
+                .integrated_disk_preempt_faults
+                .iter()
+                .find(|record| record.id == id)
+                .map(IntegratedDiskPreemptFaultRecord::object_ref),
             ContractObjectKind::NetworkDriverCleanup => snapshot
                 .network_driver_cleanups
                 .iter()
@@ -4549,6 +4852,31 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|cleanup| cleanup.id == id)
                 .map(IoCleanupRecord::object_ref),
+            ContractObjectKind::BlockPendingIoPolicy => snapshot
+                .block_pending_io_policies
+                .iter()
+                .find(|policy| policy.id == id)
+                .map(BlockPendingIoPolicyRecord::object_ref),
+            ContractObjectKind::BlockWait => snapshot
+                .block_waits
+                .iter()
+                .find(|wait| wait.id == id)
+                .map(BlockWaitRecord::object_ref),
+            ContractObjectKind::BlockRequestObject => snapshot
+                .block_request_objects
+                .iter()
+                .find(|request| request.id == id)
+                .map(BlockRequestObjectRecord::object_ref),
+            ContractObjectKind::BlockDeviceObject => snapshot
+                .block_device_objects
+                .iter()
+                .find(|device| device.id == id)
+                .map(BlockDeviceObjectRecord::object_ref),
+            ContractObjectKind::BlockRangeObject => snapshot
+                .block_range_objects
+                .iter()
+                .find(|range| range.id == id)
+                .map(BlockRangeObjectRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -4644,11 +4972,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::NetworkFaultInjection
             | ContractObjectKind::NetworkBenchmark
             | ContractObjectKind::NetworkRecoveryBenchmark
-            | ContractObjectKind::BlockDeviceObject
-            | ContractObjectKind::BlockRangeObject
-            | ContractObjectKind::BlockRequestObject
             | ContractObjectKind::BlockCompletionObject
-            | ContractObjectKind::BlockWait
             | ContractObjectKind::BlockReadPath
             | ContractObjectKind::BlockWritePath
             | ContractObjectKind::BlockRequestQueue
@@ -4662,7 +4986,6 @@ impl ContractGraphValidator {
             | ContractObjectKind::FileHandleCapability
             | ContractObjectKind::FsWait
             | ContractObjectKind::BlockDriverCleanup
-            | ContractObjectKind::BlockPendingIoPolicy
             | ContractObjectKind::BlockRequestGenerationAudit
             | ContractObjectKind::BlockBenchmark
             | ContractObjectKind::BlockRecoveryBenchmark
@@ -4704,6 +5027,13 @@ impl ContractGraphValidator {
                 | ContractObjectKind::DisplayPanicLastFrame
                 | ContractObjectKind::FramebufferBenchmark
                 | ContractObjectKind::IntegratedSmpPreemptionCleanup
+                | ContractObjectKind::IntegratedSmpNetworkFault
+                | ContractObjectKind::IntegratedDiskPreemptFault
+                | ContractObjectKind::BlockPendingIoPolicy
+                | ContractObjectKind::BlockWait
+                | ContractObjectKind::BlockRequestObject
+                | ContractObjectKind::BlockDeviceObject
+                | ContractObjectKind::BlockRangeObject
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -4924,6 +5254,15 @@ impl ContractGraphValidator {
                 .and_then(|record| {
                     (record.state != IntegratedSmpNetworkFaultState::Recorded).then_some(
                         "live edge references unrecorded integrated SMP/network-fault evidence",
+                    )
+                }),
+            ContractObjectKind::IntegratedDiskPreemptFault => snapshot
+                .integrated_disk_preempt_faults
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != IntegratedDiskPreemptFaultState::Recorded).then_some(
+                        "live edge references unrecorded integrated disk/preempt fault evidence",
                     )
                 }),
             _ => None,

@@ -26,10 +26,10 @@ use artifact_manifest::{
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    IntegratedDiskPreemptFaultManifest, IntegratedSmpNetworkFaultManifest,
+    IntegratedSmpPreemptionCleanupManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -283,6 +283,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "integrated-smp-network-fault"
         | "smp-network-fault"
         | "integrated-network-fault"
+        | "integrated-disk-preempt-fault"
+        | "disk-preempt-fault"
+        | "integrated-block-preempt-fault"
         | "device"
         | "device-object"
         | "queue"
@@ -631,7 +634,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -639,7 +642,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|display-object|display-capability|framebuffer-window-lease|framebuffer-mapping|framebuffer-write|framebuffer-flush-region|framebuffer-dirty-region|display-event-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -942,6 +945,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "integrated-smp-network-fault" | "smp-network-fault" | "integrated-network-fault" => {
             "integrated-smp-network-fault"
         }
+        "integrated-disk-preempt-fault"
+        | "disk-preempt-fault"
+        | "integrated-block-preempt-fault" => "integrated-disk-preempt-fault",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2066,6 +2072,103 @@ fn integrated_smp_network_fault_view_v1(
             "uses_smp_stress_evidence": true,
             "real_network_driver_fault_executed": false,
             "real_cross_hart_substrate_interrupt_executed": false,
+            "adapter_internal_state_is_not_semantic_truth": true,
+        },
+        "note": record.note,
+        "last_transition": {
+            "event": record.recorded_at_event,
+            "state": record.state,
+        },
+    })
+}
+
+fn integrated_disk_preempt_fault_view_v1(
+    record: &IntegratedDiskPreemptFaultManifest,
+) -> serde_json::Value {
+    let retry_request = match (record.retry_request, record.retry_request_generation) {
+        (Some(id), Some(generation)) => object_ref_json("block-request-object", id, generation),
+        _ => serde_json::Value::Null,
+    };
+    let owner = match (record.driver_store, record.driver_store_generation) {
+        (Some(id), Some(generation)) => serde_json::json!({
+            "driver_store": {
+                "kind": "store",
+                "id": id,
+                "generation": generation,
+                "note": "semantic wait owner store generation, not adapter-internal state",
+            }
+        }),
+        _ => serde_json::json!({
+            "driver_store": null,
+        }),
+    };
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "integrated-disk-preempt-fault",
+        "id": record.id,
+        "generation": record.generation,
+        "state": record.state,
+        "owner": owner,
+        "references": {
+            "preemption": object_ref_json(
+                "preemption",
+                record.preemption,
+                record.preemption_generation,
+            ),
+            "timer_interrupt": object_ref_json(
+                "timer-interrupt",
+                record.timer_interrupt,
+                record.timer_interrupt_generation,
+            ),
+            "block_pending_io_policy": object_ref_json(
+                "block-pending-io-policy",
+                record.block_pending_io_policy,
+                record.block_pending_io_policy_generation,
+            ),
+            "block_wait": object_ref_json(
+                "block-wait",
+                record.block_wait,
+                record.block_wait_generation,
+            ),
+            "wait": object_ref_json("wait-token", record.wait, record.wait_generation),
+            "block_request": object_ref_json(
+                "block-request-object",
+                record.block_request,
+                record.block_request_generation,
+            ),
+            "retry_request": retry_request,
+            "block_device": object_ref_json(
+                "block-device-object",
+                record.block_device,
+                record.block_device_generation,
+            ),
+            "block_range": object_ref_json(
+                "block-range-object",
+                record.block_range,
+                record.block_range_generation,
+            ),
+            "event": {
+                "id": record.recorded_at_event,
+            },
+        },
+        "closure": {
+            "scenario": record.scenario,
+            "action": record.action,
+            "errno": record.errno,
+            "preempted_activation": object_ref_json(
+                "activation",
+                record.preempted_activation,
+                record.preempted_activation_generation_after,
+            ),
+            "invariant_checks": record.invariant_checks,
+            "requires_applied_preemption": true,
+            "requires_cancelled_block_wait": true,
+            "requires_device_fault_wait_cancel": true,
+        },
+        "authority": {
+            "uses_semantic_block_pending_io_policy": true,
+            "real_disk_fault_executed": false,
+            "real_preemption_interrupt_executed": false,
             "adapter_internal_state_is_not_semantic_truth": true,
         },
         "note": record.note,
@@ -7748,6 +7851,14 @@ fn stable_views_for_kind(
                 .map(integrated_smp_network_fault_view_v1)
                 .collect())
         }
+        "integrated-disk-preempt-fault"
+        | "disk-preempt-fault"
+        | "integrated-block-preempt-fault" => Ok(package
+            .semantic
+            .integrated_disk_preempt_faults
+            .iter()
+            .map(integrated_disk_preempt_fault_view_v1)
+            .collect()),
         "device" | "device-object" => Ok(package
             .semantic
             .device_objects
@@ -9174,6 +9285,10 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "integrated-smp-network-fault",
         &package.semantic.roots.integrated_smp_network_fault_roots,
+    );
+    print_roots(
+        "integrated-disk-preempt-fault",
+        &package.semantic.roots.integrated_disk_preempt_fault_roots,
     );
     print_roots("device", &package.semantic.roots.device_object_roots);
     print_roots("queue", &package.semantic.roots.queue_object_roots);
@@ -13940,6 +14055,82 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             Some(record.recorded_at_event),
         ));
     }
+    for record in &package.semantic.integrated_disk_preempt_faults {
+        let from = object_ref_json(
+            "integrated-disk-preempt-fault",
+            record.id,
+            record.generation,
+        );
+        for (label, kind, id, generation) in [
+            (
+                "integrated-preemption",
+                "preemption",
+                record.preemption,
+                record.preemption_generation,
+            ),
+            (
+                "integrated-timer-interrupt",
+                "timer-interrupt",
+                record.timer_interrupt,
+                record.timer_interrupt_generation,
+            ),
+            (
+                "integrated-block-policy",
+                "block-pending-io-policy",
+                record.block_pending_io_policy,
+                record.block_pending_io_policy_generation,
+            ),
+            (
+                "integrated-block-wait",
+                "block-wait",
+                record.block_wait,
+                record.block_wait_generation,
+            ),
+            (
+                "integrated-wait-token",
+                "wait-token",
+                record.wait,
+                record.wait_generation,
+            ),
+            (
+                "integrated-block-request",
+                "block-request-object",
+                record.block_request,
+                record.block_request_generation,
+            ),
+            (
+                "integrated-block-device",
+                "block-device-object",
+                record.block_device,
+                record.block_device_generation,
+            ),
+            (
+                "integrated-block-range",
+                "block-range-object",
+                record.block_range,
+                record.block_range_generation,
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(kind, id, generation),
+                label,
+                "historical",
+                Some(record.recorded_at_event),
+            ));
+        }
+        if let (Some(retry_request), Some(retry_generation)) =
+            (record.retry_request, record.retry_request_generation)
+        {
+            edges.push(graph_edge(
+                from,
+                object_ref_json("block-request-object", retry_request, retry_generation),
+                "integrated-block-retry-request",
+                "historical",
+                Some(record.recorded_at_event),
+            ));
+        }
+    }
     for device in &package.semantic.device_objects {
         edges.push(graph_edge(
             object_ref_json("device", device.id, device.generation),
@@ -16275,6 +16466,56 @@ fn inspect_package_object(
                 );
             }
         }
+        "integrated-disk-preempt-fault"
+        | "disk-preempt-fault"
+        | "integrated-block-preempt-fault" => {
+            println!(
+                "inspect integrated-disk-preempt-fault package={} count={}",
+                package.package_id, package.semantic.integrated_disk_preempt_fault_count
+            );
+            for record in &package.semantic.integrated_disk_preempt_faults {
+                let line = format!(
+                    "integrated-disk-preempt-fault id={} scenario={} preemption={}@{} timer_interrupt={}@{} policy={}@{} block_wait={}@{} wait={}@{} block_request={}@{} retry_request={:?}@{:?} block_device={}@{} block_range={}@{} driver_store={:?}@{:?} action={} errno={} activation={}@{} invariants={} state={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.preemption,
+                    record.preemption_generation,
+                    record.timer_interrupt,
+                    record.timer_interrupt_generation,
+                    record.block_pending_io_policy,
+                    record.block_pending_io_policy_generation,
+                    record.block_wait,
+                    record.block_wait_generation,
+                    record.wait,
+                    record.wait_generation,
+                    record.block_request,
+                    record.block_request_generation,
+                    record.retry_request,
+                    record.retry_request_generation,
+                    record.block_device,
+                    record.block_device_generation,
+                    record.block_range,
+                    record.block_range_generation,
+                    record.driver_store,
+                    record.driver_store_generation,
+                    record.action,
+                    record.errno,
+                    record.preempted_activation,
+                    record.preempted_activation_generation_after,
+                    record.invariant_checks,
+                    record.state,
+                    record.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.integrated_disk_preempt_faults.is_empty() {
+                print_roots_filtered(
+                    "integrated-disk-preempt-fault",
+                    &package.semantic.roots.integrated_disk_preempt_fault_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -16795,6 +17036,25 @@ fn inspect_package_object_json(
                     .len()
             }),
         ),
+        "integrated-disk-preempt-fault"
+        | "disk-preempt-fault"
+        | "integrated-block-preempt-fault" => (
+            "integrated-disk-preempt-fault",
+            package.semantic.integrated_disk_preempt_fault_count,
+            package
+                .semantic
+                .integrated_disk_preempt_faults
+                .iter()
+                .map(integrated_disk_preempt_fault_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package
+                    .semantic
+                    .roots
+                    .integrated_disk_preempt_fault_roots
+                    .len()
+            }),
+        ),
         "command" => (
             "command",
             package.semantic.command_result_count,
@@ -17299,6 +17559,9 @@ fn replay_until(
     }
     for integrated in &package.semantic.roots.integrated_smp_network_fault_roots {
         println!("replay integrated-smp-network-fault {integrated}");
+    }
+    for integrated in &package.semantic.roots.integrated_disk_preempt_fault_roots {
+        println!("replay integrated-disk-preempt-fault {integrated}");
     }
     for device in &package.semantic.roots.device_object_roots {
         println!("replay device {device}");
@@ -21680,6 +21943,65 @@ mod tests {
             false
         );
         assert_eq!(view["last_transition"]["event"], 571);
+    }
+
+    #[test]
+    fn integrated_disk_preempt_fault_view_v1_exposes_pending_io_and_preemption_refs() {
+        let view = integrated_disk_preempt_fault_view_v1(&IntegratedDiskPreemptFaultManifest {
+            id: 26_201,
+            scenario: "x2-disk-pending-io-fault-under-preemption".to_owned(),
+            preemption: 9_070,
+            preemption_generation: 1,
+            timer_interrupt: 9_070,
+            timer_interrupt_generation: 1,
+            block_pending_io_policy: 20_124,
+            block_pending_io_policy_generation: 1,
+            block_wait: 20_118,
+            block_wait_generation: 1,
+            wait: 20_117,
+            wait_generation: 1,
+            block_request: 20_116,
+            block_request_generation: 1,
+            retry_request: None,
+            retry_request_generation: None,
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_range: 20_005,
+            block_range_generation: 1,
+            driver_store: Some(15),
+            driver_store_generation: Some(2),
+            action: "eio".to_owned(),
+            errno: 5,
+            preempted_activation: 88,
+            preempted_activation_generation_after: 4,
+            invariant_checks: 6,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 572,
+            note: "x2 integrated disk preempt fault".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "integrated-disk-preempt-fault");
+        assert_eq!(view["owner"]["driver_store"]["id"], 15);
+        assert_eq!(view["references"]["preemption"]["id"], 9_070);
+        assert_eq!(view["references"]["timer_interrupt"]["generation"], 1);
+        assert_eq!(view["references"]["block_pending_io_policy"]["id"], 20_124);
+        assert_eq!(view["references"]["block_wait"]["id"], 20_118);
+        assert_eq!(view["references"]["wait"]["kind"], "wait-token");
+        assert_eq!(view["references"]["block_request"]["id"], 20_116);
+        assert_eq!(view["references"]["retry_request"], serde_json::Value::Null);
+        assert_eq!(view["references"]["block_device"]["id"], 20_002);
+        assert_eq!(view["references"]["block_range"]["id"], 20_005);
+        assert_eq!(view["closure"]["action"], "eio");
+        assert_eq!(view["closure"]["errno"], 5);
+        assert_eq!(view["closure"]["preempted_activation"]["id"], 88);
+        assert_eq!(
+            view["authority"]["adapter_internal_state_is_not_semantic_truth"],
+            true
+        );
+        assert_eq!(view["authority"]["real_disk_fault_executed"], false);
+        assert_eq!(view["last_transition"]["event"], 572);
     }
 
     #[test]

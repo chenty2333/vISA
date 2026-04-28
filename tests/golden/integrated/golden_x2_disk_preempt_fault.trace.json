@@ -1,0 +1,175 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "X2-integrated-disk-pending-io-fault-under-preemption",
+  "name": "golden_x2_disk_preempt_fault",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/05-wait-token-event-bridge.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real disk fault execution",
+    "real timer interrupt delivery",
+    "real virtio-blk, DMA, MMIO, or IRQ execution",
+    "adapter-internal state as semantic truth",
+    "new third-party runtime dependency"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "P3 produced preemption:9070@1 from timer-interrupt:9070@1",
+      "B20 produced block-pending-io-policy:20124@1 with action=eio",
+      "B20 cancelled block-wait:20118@1 and wait-token:20117@1 for block-request-object:20116@1",
+      "B0/B1 produced block-device-object:20002@1 and block-range-object:20005@1"
+    ],
+    "command": {
+      "name": "record-integrated-disk-preempt-fault",
+      "integrated": "integrated-disk-preempt-fault:26201@1",
+      "preemption": "preemption:9070@1",
+      "timer_interrupt": "timer-interrupt:9070@1",
+      "block_pending_io_policy": "block-pending-io-policy:20124@1",
+      "block_wait": "block-wait:20118@1",
+      "wait": "wait-token:20117@1",
+      "block_request": "block-request-object:20116@1",
+      "block_device": "block-device-object:20002@1",
+      "block_range": "block-range-object:20005@1",
+      "result": "semantic evidence ties pending disk IO EIO handling to timer preemption without claiming real disk or timer execution"
+    }
+  },
+  "events": [
+    {
+      "kind": "IntegratedDiskPreemptFaultRecorded",
+      "source": "SemanticGraph::record_integrated_disk_preempt_fault_with_id",
+      "visible_as": "osctl integrated-disk-preempt-fault list --json",
+      "event": 572
+    }
+  ],
+  "expected": {
+    "views": {
+      "integrated-disk-preempt-fault": {
+        "id": 26201,
+        "generation": 1,
+        "state": "recorded",
+        "owner": {
+          "driver_store": {
+            "kind": "store",
+            "id": 15,
+            "generation": 2,
+            "note": "semantic wait owner store generation, not adapter-internal state"
+          }
+        },
+        "references": {
+          "preemption": {
+            "kind": "preemption",
+            "id": 9070,
+            "generation": 1
+          },
+          "timer_interrupt": {
+            "kind": "timer-interrupt",
+            "id": 9070,
+            "generation": 1
+          },
+          "block_pending_io_policy": {
+            "kind": "block-pending-io-policy",
+            "id": 20124,
+            "generation": 1
+          },
+          "block_wait": {
+            "kind": "block-wait",
+            "id": 20118,
+            "generation": 1
+          },
+          "wait": {
+            "kind": "wait-token",
+            "id": 20117,
+            "generation": 1
+          },
+          "block_request": {
+            "kind": "block-request-object",
+            "id": 20116,
+            "generation": 1
+          },
+          "block_device": {
+            "kind": "block-device-object",
+            "id": 20002,
+            "generation": 1
+          },
+          "block_range": {
+            "kind": "block-range-object",
+            "id": 20005,
+            "generation": 1
+          }
+        },
+        "closure": {
+          "scenario": "x2-disk-pending-io-fault-under-preemption",
+          "action": "eio",
+          "errno": 5,
+          "preempted_activation": {
+            "kind": "activation",
+            "id": 88,
+            "generation": 4
+          },
+          "invariant_checks": 6,
+          "requires_applied_preemption": true,
+          "requires_cancelled_block_wait": true,
+          "requires_device_fault_wait_cancel": true
+        },
+        "authority": {
+          "uses_semantic_block_pending_io_policy": true,
+          "real_disk_fault_executed": false,
+          "real_preemption_interrupt_executed": false,
+          "adapter_internal_state_is_not_semantic_truth": true
+        }
+      },
+      "graph-edges": [
+        {
+          "from": "integrated-disk-preempt-fault:26201@1",
+          "relation": "integrated-preemption",
+          "to": "preemption:9070@1",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-disk-preempt-fault:26201@1",
+          "relation": "integrated-block-policy",
+          "to": "block-pending-io-policy:20124@1",
+          "mode": "historical"
+        },
+        {
+          "from": "integrated-disk-preempt-fault:26201@1",
+          "relation": "integrated-wait-token",
+          "to": "wait-token:20117@1",
+          "mode": "historical"
+        }
+      ],
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "Integrated disk/preempt fault evidence is a first-class ObjectRef",
+      "all referenced evidence carries exact generation",
+      "pending disk IO fault must be represented by retry/EIO policy, not generic cancel",
+      "block wait and wait token must be cancelled with DeviceFault",
+      "preemption evidence must be applied and timer-attributed",
+      "history graph uses Historical edges only"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "integrated_runtime_x2_records_disk_pending_io_fault_under_preemption",
+      "integrated_runtime_x2_rejects_missing_or_non_fault_evidence",
+      "integrated_runtime_x2_contract_graph_rejects_generation_drift",
+      "semantic_roots_reject_integrated_disk_preempt_fault_root_mismatch",
+      "integrated_disk_preempt_fault_view_v1_exposes_pending_io_and_preemption_refs"
+    ],
+    "osctl_json_view": "integrated-disk-preempt-fault list --json",
+    "integrated_disk_preempt_fault": "integrated-disk-preempt-fault:26201@1",
+    "block_pending_io_policy": "block-pending-io-policy:20124@1",
+    "event": 572
+  }
+}

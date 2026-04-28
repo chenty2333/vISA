@@ -295,6 +295,16 @@ pub enum SemanticCommand {
         invariant_checks: u32,
         note: String,
     },
+    RecordIntegratedDiskPreemptFault {
+        integrated: IntegratedDiskPreemptFaultId,
+        scenario: String,
+        preemption: PreemptionId,
+        preemption_generation: Generation,
+        block_pending_io_policy: BlockPendingIoPolicyId,
+        block_pending_io_policy_generation: Generation,
+        invariant_checks: u32,
+        note: String,
+    },
     RecordDeviceObject {
         device: DeviceObjectId,
         name: String,
@@ -1679,6 +1689,7 @@ impl SemanticCommand {
                 "record-integrated-smp-preemption-cleanup"
             }
             Self::RecordIntegratedSmpNetworkFault { .. } => "record-integrated-smp-network-fault",
+            Self::RecordIntegratedDiskPreemptFault { .. } => "record-integrated-disk-preempt-fault",
             Self::RecordDeviceObject { .. } => "record-device-object",
             Self::RecordPacketDeviceObject { .. } => "record-packet-device-object",
             Self::RecordPacketBufferObject { .. } => "record-packet-buffer-object",
@@ -2976,6 +2987,26 @@ impl SemanticGraph {
                     *remote_preempt_generation,
                     *smp_cleanup_quiescence,
                     *smp_cleanup_quiescence_generation,
+                    *invariant_checks,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordIntegratedDiskPreemptFault {
+                integrated,
+                scenario,
+                preemption,
+                preemption_generation,
+                block_pending_io_policy,
+                block_pending_io_policy_generation,
+                invariant_checks,
+                ..
+            } => self
+                .validate_integrated_disk_preempt_fault(
+                    *integrated,
+                    scenario,
+                    *preemption,
+                    *preemption_generation,
+                    *block_pending_io_policy,
+                    *block_pending_io_policy_generation,
                     *invariant_checks,
                 )
                 .map_err(CommandError::precondition),
@@ -6473,6 +6504,25 @@ impl SemanticGraph {
                 remote_preempt_generation,
                 smp_cleanup_quiescence,
                 smp_cleanup_quiescence_generation,
+                invariant_checks,
+                &note,
+            ),
+            SemanticCommand::RecordIntegratedDiskPreemptFault {
+                integrated,
+                scenario,
+                preemption,
+                preemption_generation,
+                block_pending_io_policy,
+                block_pending_io_policy_generation,
+                invariant_checks,
+                note,
+            } => self.record_integrated_disk_preempt_fault_with_id(
+                integrated,
+                &scenario,
+                preemption,
+                preemption_generation,
+                block_pending_io_policy,
+                block_pending_io_policy_generation,
                 invariant_checks,
                 &note,
             ),
