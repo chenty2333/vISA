@@ -10,10 +10,10 @@ use artifact_manifest::{
     ActivationMigrationManifest, ActivationRecordManifest, ActivationResumeManifest,
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
     BlockCompletionObjectManifest, BlockDeviceObjectManifest, BlockDmaBufferManifest,
-    BlockDriverCleanupManifest, BlockPageObjectManifest, BlockRangeObjectManifest,
-    BlockReadPathManifest, BlockRequestObjectManifest, BlockRequestQueueEntryManifest,
-    BlockRequestQueueManifest, BlockWaitManifest, BlockWritePathManifest,
-    BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
+    BlockDriverCleanupManifest, BlockPageObjectManifest, BlockPendingIoPolicyManifest,
+    BlockRangeObjectManifest, BlockReadPathManifest, BlockRequestObjectManifest,
+    BlockRequestQueueEntryManifest, BlockRequestQueueManifest, BlockWaitManifest,
+    BlockWritePathManifest, BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
     BufferCacheObjectManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
     CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
     CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
@@ -61,26 +61,26 @@ use net_stack_adapter::{SmoltcpAdapterConfig, build_smoltcp_adapter_evidence};
 use runtime::{HostValidationSmokeTrace, RuntimeOnlyExecutor};
 use semantic_core::{
     ActivationEntry, ArtifactRegistry, ArtifactVerificationState, AuthorityObjectRef,
-    BlockCompletionStatus, BlockRequestOperation, BlockRequestQueueEntryRef, BoundaryKind,
-    BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation, BufferCacheObjectState,
-    CapabilityClass, CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject,
-    CodePublishState, CodePublisher, CommandEnvelope, CommandResult, CommandStatus,
-    ContractGraphSnapshot, ContractObjectKind, ContractObjectRef, ContractViolation, CowState,
-    DescriptorObjectAccess, DirectoryEntryKind, DirectoryObjectState, DmaBufferObjectAccess,
-    EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact, Ext4AdapterObjectState,
-    ExternalObjectDeclaration, FatAdapterObjectState, FileObjectState, FrontendKind, HartState,
-    HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord,
-    IpiEventKind, IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy,
-    MemoryLayoutState, MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
-    NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
-    PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
-    PageBacking, PageObjectState, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
-    RestartPolicy, RuntimeMode, SavedContextReason, SemanticCommand, SemanticGraph,
-    SemanticWaitKind, SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord,
-    StoreState, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
-    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
-    TombstoneRecord, TrapSurfaceState, VerifiedArtifact, WaitCancelReason, memory_class_policies,
-    validate_contract_graph,
+    BlockCompletionStatus, BlockPendingIoAction, BlockRequestOperation, BlockRequestQueueEntryRef,
+    BoundaryKind, BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation,
+    BufferCacheObjectState, CapabilityClass, CapabilityHandleArg, CapabilityLedger,
+    CapabilityRecord, CodeObject, CodePublishState, CodePublisher, CommandEnvelope, CommandResult,
+    CommandStatus, ContractGraphSnapshot, ContractObjectKind, ContractObjectRef, ContractViolation,
+    CowState, DescriptorObjectAccess, DirectoryEntryKind, DirectoryObjectState,
+    DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord, ExpectedTargetArtifact,
+    Ext4AdapterObjectState, ExternalObjectDeclaration, FatAdapterObjectState, FileObjectState,
+    FrontendKind, HartState, HostcallCategory, HostcallFrame, HostcallLinkState, HostcallSpec,
+    HostcallTraceRecord, IpiEventKind, IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord,
+    MemoryClassPolicy, MemoryLayoutState, MigrationObjectRecord, MmioRegionObjectAccess,
+    NetworkBackpressureAction, NetworkBackpressureReason, NetworkFaultInjectionEffect,
+    NetworkFaultInjectionKind, PackageReplayValidator, PacketBufferDirection,
+    PacketBufferObjectState, PacketQueueRole, PageBacking, PageObjectState, QueueObjectRole,
+    ReplayPackageValidationState, ResourceKind, RestartPolicy, RuntimeMode, SavedContextReason,
+    SemanticCommand, SemanticGraph, SemanticWaitKind, SnapshotBarrierValidationState,
+    SnapshotBarrierValidator, StoreRecord, StoreState, TargetAddressMapEntry, TargetArtifactImage,
+    TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass,
+    TargetTrapMetadata, TaskState, TombstoneRecord, TrapSurfaceState, VerifiedArtifact,
+    WaitCancelReason, memory_class_policies, validate_contract_graph,
 };
 use service_core::fake_block::{
     FAKE_BLOCK_BACKEND_PROFILE, FAKE_BLOCK_BACKEND_PROVIDER, FakeBlockBackendConfig,
@@ -233,6 +233,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b17_evidence(&mut semantic)?;
     record_block_runtime_b18_evidence(&mut semantic)?;
     record_block_runtime_b19_evidence(&mut semantic)?;
+    record_block_runtime_b20_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -5872,6 +5873,267 @@ fn record_block_runtime_b19_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_block_runtime_b20_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let driver_store = semantic
+        .store_id("b4.block.driver")
+        .ok_or("block runtime b20 driver store is missing")?;
+    let driver_store_generation = semantic
+        .store_handle(driver_store)
+        .map(|handle| handle.generation)
+        .ok_or("block runtime b20 driver store generation is missing")?;
+
+    let commands = [
+        CommandEnvelope::new(
+            306,
+            "target-executor-b20",
+            SemanticCommand::RecordBlockRequestObject {
+                block_request: 20_111,
+                block_device: 20_002,
+                block_device_generation: 1,
+                block_range: 20_005,
+                block_range_generation: 1,
+                operation: BlockRequestOperation::Read,
+                sequence: 1000,
+                note: "b20-record-retry-original-request".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            307,
+            "target-executor-b20",
+            SemanticCommand::RecordBlockRequestObject {
+                block_request: 20_112,
+                block_device: 20_002,
+                block_device_generation: 1,
+                block_range: 20_005,
+                block_range_generation: 1,
+                operation: BlockRequestOperation::Read,
+                sequence: 1001,
+                note: "b20-record-retry-reissued-request".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            308,
+            "target-executor-b20",
+            SemanticCommand::RecordBlockRequestObject {
+                block_request: 20_116,
+                block_device: 20_002,
+                block_device_generation: 1,
+                block_range: 20_005,
+                block_range_generation: 1,
+                operation: BlockRequestOperation::Read,
+                sequence: 1002,
+                note: "b20-record-eio-request".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            309,
+            "target-executor-b20",
+            SemanticCommand::RecordBlockRequestObject {
+                block_request: 20_119,
+                block_device: 20_002,
+                block_device_generation: 1,
+                block_range: 20_005,
+                block_range_generation: 1,
+                operation: BlockRequestOperation::Read,
+                sequence: 1003,
+                note: "b20-record-cancel-request".to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "block runtime b20 request command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+
+    for (command_id, wait, request, saved_context) in [
+        (310, 20_113, 20_111, "b20-pending-io-retry-original-request"),
+        (311, 20_117, 20_116, "b20-pending-io-eio-request"),
+        (312, 20_120, 20_119, "b20-pending-io-cancel-request"),
+    ] {
+        let result = semantic.apply_envelope(CommandEnvelope::new(
+            command_id,
+            "target-executor-b20",
+            SemanticCommand::CreateWait {
+                wait,
+                owner_task: None,
+                owner_store: Some(driver_store),
+                owner_store_generation: Some(driver_store_generation),
+                kind: SemanticWaitKind::DriverCompletion,
+                generation: 1,
+                blockers: vec![ContractObjectRef::new(
+                    ContractObjectKind::BlockRequestObject,
+                    request,
+                    1,
+                )],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: Some(saved_context.to_owned()),
+            },
+        ));
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "block runtime b20 create wait command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+
+    for (command_id, block_wait, wait, request, note) in [
+        (313, 20_114, 20_113, 20_111, "b20-record-retry-block-wait"),
+        (314, 20_118, 20_117, 20_116, "b20-record-eio-block-wait"),
+        (315, 20_121, 20_120, 20_119, "b20-record-cancel-block-wait"),
+    ] {
+        let result = semantic.apply_envelope(CommandEnvelope::new(
+            command_id,
+            "target-executor-b20",
+            SemanticCommand::RecordBlockWait {
+                block_wait,
+                wait,
+                wait_generation: 1,
+                block_request: request,
+                block_request_generation: 1,
+                note: note.to_owned(),
+            },
+        ));
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "block runtime b20 block wait command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+
+    let stale_retry = semantic.apply_envelope(CommandEnvelope::new(
+        316,
+        "target-executor-b20",
+        SemanticCommand::ApplyBlockPendingIoPolicy {
+            policy: 20_122,
+            block_wait: 20_114,
+            block_wait_generation: 1,
+            action: BlockPendingIoAction::Retry,
+            retry_request: Some(20_112),
+            retry_request_generation: Some(2),
+            errno: 11,
+            retry_attempt: 1,
+            max_retries: 2,
+            note: "b20-reject-stale-retry-request-generation".to_owned(),
+        },
+    ));
+    if stale_retry.status != CommandStatus::Rejected
+        || !stale_retry
+            .violations
+            .iter()
+            .any(|violation| violation.contains("retry request generation"))
+    {
+        return Err(format!(
+            "block runtime b20 stale retry command {} ({}) was not rejected: status={} violations={:?}",
+            stale_retry.command_id,
+            stale_retry.command,
+            stale_retry.status.as_str(),
+            stale_retry.violations
+        )
+        .into());
+    }
+
+    for command in [
+        CommandEnvelope::new(
+            317,
+            "target-executor-b20",
+            SemanticCommand::ApplyBlockPendingIoPolicy {
+                policy: 20_123,
+                block_wait: 20_114,
+                block_wait_generation: 1,
+                action: BlockPendingIoAction::Retry,
+                retry_request: Some(20_112),
+                retry_request_generation: Some(1),
+                errno: 11,
+                retry_attempt: 1,
+                max_retries: 2,
+                note: "b20-retry-pending-block-io".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            318,
+            "target-executor-b20",
+            SemanticCommand::ApplyBlockPendingIoPolicy {
+                policy: 20_124,
+                block_wait: 20_118,
+                block_wait_generation: 1,
+                action: BlockPendingIoAction::Eio,
+                retry_request: None,
+                retry_request_generation: None,
+                errno: 5,
+                retry_attempt: 0,
+                max_retries: 0,
+                note: "b20-return-eio-for-pending-block-io".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            319,
+            "target-executor-b20",
+            SemanticCommand::ApplyBlockPendingIoPolicy {
+                policy: 20_125,
+                block_wait: 20_121,
+                block_wait_generation: 1,
+                action: BlockPendingIoAction::Cancel,
+                retry_request: None,
+                retry_request_generation: None,
+                errno: 125,
+                retry_attempt: 0,
+                max_retries: 0,
+                note: "b20-cancel-pending-block-io".to_owned(),
+            },
+        ),
+    ] {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "block runtime b20 policy command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+
+    if semantic.block_pending_io_policy_count() != 3 {
+        return Err(format!(
+            "block runtime b20 expected 3 policy records, got {}",
+            semantic.block_pending_io_policy_count()
+        )
+        .into());
+    }
+    if !semantic.block_pending_io_policies().iter().any(|policy| {
+        policy.id == 20_123
+            && policy.action == BlockPendingIoAction::Retry
+            && policy.retry_request == Some(20_112)
+            && policy.state.as_str() == "retry-scheduled"
+    }) {
+        return Err("block runtime b20 retry policy evidence is missing".into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -8282,6 +8544,7 @@ fn demo_migration_package(
             file_handle_capability_count: semantic.file_handle_capability_count(),
             fs_wait_count: semantic.fs_wait_count(),
             block_driver_cleanup_count: semantic.block_driver_cleanup_count(),
+            block_pending_io_policy_count: semantic.block_pending_io_policy_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -8679,6 +8942,11 @@ fn demo_migration_package(
                 .block_driver_cleanups()
                 .iter()
                 .map(block_driver_cleanup_manifest)
+                .collect(),
+            block_pending_io_policies: semantic
+                .block_pending_io_policies()
+                .iter()
+                .map(block_pending_io_policy_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -10499,6 +10767,37 @@ fn semantic_roots(
                     cleanup.cancelled_block_waits.len(),
                     cleanup.released_dma_buffers.len(),
                     cleanup.revoked_device_capabilities.len()
+                )
+            })
+            .collect(),
+        block_pending_io_policy_roots: semantic
+            .block_pending_io_policies()
+            .iter()
+            .map(|policy| {
+                format!(
+                    "block-pending-io-policy id={} block_wait={}@{} wait={}@{} block_request={}@{} retry_request={} block_device={}@{} block_range={}@{} action={} errno={} retry_attempt={} max_retries={} state={} generation={}",
+                    policy.id,
+                    policy.block_wait,
+                    policy.block_wait_generation,
+                    policy.wait,
+                    policy.wait_generation,
+                    policy.block_request,
+                    policy.block_request_generation,
+                    policy
+                        .retry_request
+                        .zip(policy.retry_request_generation)
+                        .map(|(id, generation)| format!("{id}@{generation}"))
+                        .unwrap_or_else(|| "none".to_owned()),
+                    policy.block_device,
+                    policy.block_device_generation,
+                    policy.block_range,
+                    policy.block_range_generation,
+                    policy.action.as_str(),
+                    policy.errno,
+                    policy.retry_attempt,
+                    policy.max_retries,
+                    policy.state.as_str(),
+                    policy.generation
                 )
             })
             .collect(),
@@ -13071,6 +13370,37 @@ fn network_recovery_benchmark_manifest(
         state: benchmark.state.as_str().to_owned(),
         recorded_at_event: benchmark.recorded_at_event,
         note: benchmark.note.clone(),
+    }
+}
+
+fn block_pending_io_policy_manifest(
+    policy: &semantic_core::BlockPendingIoPolicyRecord,
+) -> BlockPendingIoPolicyManifest {
+    BlockPendingIoPolicyManifest {
+        id: policy.id,
+        block_wait: policy.block_wait,
+        block_wait_generation: policy.block_wait_generation,
+        wait: policy.wait,
+        wait_generation: policy.wait_generation,
+        block_request: policy.block_request,
+        block_request_generation: policy.block_request_generation,
+        retry_request: policy.retry_request,
+        retry_request_generation: policy.retry_request_generation,
+        block_device: policy.block_device,
+        block_device_generation: policy.block_device_generation,
+        block_range: policy.block_range,
+        block_range_generation: policy.block_range_generation,
+        operation: policy.operation.as_str().to_owned(),
+        sequence: policy.sequence,
+        byte_len: policy.byte_len,
+        action: policy.action.as_str().to_owned(),
+        errno: policy.errno,
+        retry_attempt: policy.retry_attempt,
+        max_retries: policy.max_retries,
+        generation: policy.generation,
+        state: policy.state.as_str().to_owned(),
+        recorded_at_event: policy.recorded_at_event,
+        note: policy.note.clone(),
     }
 }
 

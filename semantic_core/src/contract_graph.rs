@@ -1455,6 +1455,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::FileHandleCapability
             | ContractObjectKind::FsWait
             | ContractObjectKind::BlockDriverCleanup
+            | ContractObjectKind::BlockPendingIoPolicy
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

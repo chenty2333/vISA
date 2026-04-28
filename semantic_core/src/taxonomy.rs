@@ -1507,6 +1507,40 @@ impl BlockDriverCleanupState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockPendingIoAction {
+    Cancel,
+    Retry,
+    Eio,
+}
+
+impl BlockPendingIoAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cancel => "cancel",
+            Self::Retry => "retry",
+            Self::Eio => "eio",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockPendingIoPolicyState {
+    Cancelled,
+    RetryScheduled,
+    EioReturned,
+}
+
+impl BlockPendingIoPolicyState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::RetryScheduled => "retry-scheduled",
+            Self::EioReturned => "eio-returned",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkDriverCleanupState {
     Started,
     Completed,

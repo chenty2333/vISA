@@ -142,6 +142,7 @@ impl SemanticGraph {
         self.check_file_handle_capability_invariants()?;
         self.check_fs_wait_invariants()?;
         self.check_block_driver_cleanup_invariants()?;
+        self.check_block_pending_io_policy_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;

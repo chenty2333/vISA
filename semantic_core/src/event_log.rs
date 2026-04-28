@@ -513,6 +513,26 @@ pub enum EventKind {
         reason: WaitCancelReason,
         generation: Generation,
     },
+    BlockPendingIoPolicyApplied {
+        policy: BlockPendingIoPolicyId,
+        block_wait: BlockWaitId,
+        block_wait_generation: Generation,
+        wait: WaitId,
+        wait_generation: Generation,
+        block_request: BlockRequestObjectId,
+        block_request_generation: Generation,
+        retry_request: Option<BlockRequestObjectId>,
+        retry_request_generation: Option<Generation>,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        block_range: BlockRangeObjectId,
+        block_range_generation: Generation,
+        action: BlockPendingIoAction,
+        errno: i32,
+        retry_attempt: u32,
+        max_retries: u32,
+        generation: Generation,
+    },
     FakeBlockBackendObjectBound {
         fake_block_backend: FakeBlockBackendObjectId,
         block_device: BlockDeviceObjectId,
@@ -2204,6 +2224,33 @@ impl EventKind {
             } => format!(
                 "BlockWaitCancelled block_wait={block_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
                 reason.as_str()
+            ),
+            Self::BlockPendingIoPolicyApplied {
+                policy,
+                block_wait,
+                block_wait_generation,
+                wait,
+                wait_generation,
+                block_request,
+                block_request_generation,
+                retry_request,
+                retry_request_generation,
+                block_device,
+                block_device_generation,
+                block_range,
+                block_range_generation,
+                action,
+                errno,
+                retry_attempt,
+                max_retries,
+                generation,
+            } => format!(
+                "BlockPendingIoPolicyApplied policy={policy} block_wait={block_wait}@{block_wait_generation} wait={wait}@{wait_generation} block_request={block_request}@{block_request_generation} retry_request={} block_device={block_device}@{block_device_generation} block_range={block_range}@{block_range_generation} action={} errno={errno} retry_attempt={retry_attempt} max_retries={max_retries} generation={generation}",
+                retry_request
+                    .zip(*retry_request_generation)
+                    .map(|(id, generation)| format!("{id}@{generation}"))
+                    .unwrap_or_else(|| "none".to_string()),
+                action.as_str()
             ),
             Self::FakeBlockBackendObjectBound {
                 fake_block_backend,

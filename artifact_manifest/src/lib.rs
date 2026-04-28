@@ -373,6 +373,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_driver_cleanup_count: usize,
     #[serde(default)]
+    pub block_pending_io_policy_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -597,6 +599,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_driver_cleanups: Vec<BlockDriverCleanupManifest>,
     #[serde(default)]
+    pub block_pending_io_policies: Vec<BlockPendingIoPolicyManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -800,6 +804,8 @@ pub struct SemanticRootSetManifest {
     pub fs_wait_roots: Vec<String>,
     #[serde(default)]
     pub block_driver_cleanup_roots: Vec<String>,
+    #[serde(default)]
+    pub block_pending_io_policy_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2704,6 +2710,36 @@ pub struct BlockDriverCleanupManifest {
     #[serde(default)]
     pub completed_at_event: Option<u64>,
     pub reason: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct BlockPendingIoPolicyManifest {
+    pub id: u64,
+    pub block_wait: u64,
+    pub block_wait_generation: u64,
+    pub wait: u64,
+    pub wait_generation: u64,
+    pub block_request: u64,
+    pub block_request_generation: u64,
+    #[serde(default)]
+    pub retry_request: Option<u64>,
+    #[serde(default)]
+    pub retry_request_generation: Option<u64>,
+    pub block_device: u64,
+    pub block_device_generation: u64,
+    pub block_range: u64,
+    pub block_range_generation: u64,
+    pub operation: String,
+    pub sequence: u64,
+    pub byte_len: u64,
+    pub action: String,
+    pub errno: i32,
+    pub retry_attempt: u32,
+    pub max_retries: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
     pub note: String,
 }
 

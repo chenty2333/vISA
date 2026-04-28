@@ -1412,6 +1412,25 @@ pub enum SemanticInvariantError {
         cleanup: BlockDriverCleanupId,
         event: EventId,
     },
+    BlockPendingIoPolicyInvalid {
+        policy: BlockPendingIoPolicyId,
+    },
+    BlockPendingIoPolicyMissingBlockWait {
+        policy: BlockPendingIoPolicyId,
+        block_wait: BlockWaitId,
+    },
+    BlockPendingIoPolicyMissingRequest {
+        policy: BlockPendingIoPolicyId,
+        block_request: BlockRequestObjectId,
+    },
+    BlockPendingIoPolicyMissingRetryRequest {
+        policy: BlockPendingIoPolicyId,
+        block_request: BlockRequestObjectId,
+    },
+    BlockPendingIoPolicyMissingEvent {
+        policy: BlockPendingIoPolicyId,
+        event: EventId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

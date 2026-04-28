@@ -15123,6 +15123,217 @@ fn block_runtime_b19_rejects_stale_cleanup_and_detects_effect_generation_leak() 
     );
 }
 
+fn setup_b20_pending_io_policy_graph() -> SemanticGraph {
+    let mut graph = setup_b19_block_driver_cleanup_graph();
+    assert!(graph.record_block_request_object_with_id(
+        1891,
+        1791,
+        1,
+        1881,
+        1,
+        BlockRequestOperation::Read,
+        2,
+        "b20 retry request",
+    ));
+    let store = graph.store_id("driver.virtio-blk0").unwrap();
+    let store_generation = graph.store_handle(store).unwrap().generation;
+    for (request, wait, block_wait, sequence) in [(1893, 1894, 1895, 3), (1896, 1897, 1898, 4)] {
+        assert!(graph.record_block_request_object_with_id(
+            request,
+            1791,
+            1,
+            1881,
+            1,
+            BlockRequestOperation::Read,
+            sequence,
+            "b20 pending request",
+        ));
+        graph.record_wait_created_with_details(
+            wait,
+            None,
+            Some(store),
+            Some(store_generation),
+            SemanticWaitKind::DriverCompletion,
+            1,
+            vec![ContractObjectRef::new(
+                ContractObjectKind::BlockRequestObject,
+                request,
+                1,
+            )],
+            None,
+            RestartPolicy::InternalOnly,
+            Some("b20 pending block wait".to_string()),
+        );
+        assert!(graph.record_block_wait_with_id(
+            block_wait,
+            wait,
+            1,
+            request,
+            1,
+            "b20 pending block wait",
+        ));
+    }
+    graph
+}
+
+#[test]
+fn block_runtime_b20_pending_io_policy_records_retry_eio_and_cancel() {
+    let mut graph = setup_b20_pending_io_policy_graph();
+    for command in [
+        CommandEnvelope::new(
+            1,
+            "b20-test",
+            SemanticCommand::ApplyBlockPendingIoPolicy {
+                policy: 1892,
+                block_wait: 1884,
+                block_wait_generation: 1,
+                action: BlockPendingIoAction::Retry,
+                retry_request: Some(1891),
+                retry_request_generation: Some(1),
+                errno: 11,
+                retry_attempt: 1,
+                max_retries: 2,
+                note: "retry pending block io".to_string(),
+            },
+        ),
+        CommandEnvelope::new(
+            2,
+            "b20-test",
+            SemanticCommand::ApplyBlockPendingIoPolicy {
+                policy: 1899,
+                block_wait: 1895,
+                block_wait_generation: 1,
+                action: BlockPendingIoAction::Eio,
+                retry_request: None,
+                retry_request_generation: None,
+                errno: 5,
+                retry_attempt: 0,
+                max_retries: 0,
+                note: "return eio".to_string(),
+            },
+        ),
+        CommandEnvelope::new(
+            3,
+            "b20-test",
+            SemanticCommand::ApplyBlockPendingIoPolicy {
+                policy: 1900,
+                block_wait: 1898,
+                block_wait_generation: 1,
+                action: BlockPendingIoAction::Cancel,
+                retry_request: None,
+                retry_request_generation: None,
+                errno: 125,
+                retry_attempt: 0,
+                max_retries: 0,
+                note: "cancel pending io".to_string(),
+            },
+        ),
+    ] {
+        let result = graph.apply_envelope(command);
+        assert_eq!(result.status, CommandStatus::Applied);
+    }
+
+    assert_eq!(graph.block_pending_io_policy_count(), 3);
+    let retry = graph
+        .block_pending_io_policies()
+        .iter()
+        .find(|record| record.id == 1892)
+        .unwrap();
+    assert_eq!(retry.action, BlockPendingIoAction::Retry);
+    assert_eq!(retry.retry_request, Some(1891));
+    assert_eq!(retry.state, BlockPendingIoPolicyState::RetryScheduled);
+    assert_eq!(
+        graph
+            .block_waits()
+            .iter()
+            .find(|record| record.id == 1884)
+            .unwrap()
+            .cancel_reason,
+        Some(WaitCancelReason::DeviceFault)
+    );
+    assert_eq!(
+        graph
+            .block_pending_io_policies()
+            .iter()
+            .find(|record| record.id == 1899)
+            .unwrap()
+            .state,
+        BlockPendingIoPolicyState::EioReturned
+    );
+    assert_eq!(
+        graph
+            .block_waits()
+            .iter()
+            .find(|record| record.id == 1898)
+            .unwrap()
+            .cancel_reason,
+        Some(WaitCancelReason::ResourceDropped)
+    );
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "BlockPendingIoPolicyApplied policy=1900 block_wait=1898@1 wait=1897@1 block_request=1896@1 retry_request=none block_device=1791@1 block_range=1881@1 action=cancel errno=125 retry_attempt=0 max_retries=0 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b20_rejects_stale_retry_and_detects_policy_generation_leak() {
+    let mut graph = setup_b20_pending_io_policy_graph();
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b20-test",
+        SemanticCommand::ApplyBlockPendingIoPolicy {
+            policy: 1901,
+            block_wait: 1884,
+            block_wait_generation: 1,
+            action: BlockPendingIoAction::Retry,
+            retry_request: Some(1891),
+            retry_request_generation: Some(2),
+            errno: 11,
+            retry_attempt: 1,
+            max_retries: 2,
+            note: "stale retry generation".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale.violations,
+        vec!["retry policy retry request generation is missing or not submitted".to_string()]
+    );
+
+    assert_eq!(
+        graph
+            .apply_envelope(CommandEnvelope::new(
+                5,
+                "b20-test",
+                SemanticCommand::ApplyBlockPendingIoPolicy {
+                    policy: 1892,
+                    block_wait: 1884,
+                    block_wait_generation: 1,
+                    action: BlockPendingIoAction::Retry,
+                    retry_request: Some(1891),
+                    retry_request_generation: Some(1),
+                    errno: 11,
+                    retry_attempt: 1,
+                    max_retries: 2,
+                    note: "retry pending block io".to_string(),
+                },
+            ))
+            .status,
+        CommandStatus::Applied
+    );
+    graph.corrupt_block_pending_io_policy_retry_generation_for_test(1892, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::BlockPendingIoPolicyMissingRetryRequest {
+                policy: 1892,
+                block_request: 1891,
+            }
+        )
+    );
+}
+
 #[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();

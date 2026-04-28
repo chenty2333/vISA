@@ -140,6 +140,7 @@ pub enum ObjectKind {
     FileHandleCapability,
     FsWait,
     BlockDriverCleanup,
+    BlockPendingIoPolicy,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -245,6 +246,7 @@ impl ObjectKind {
             Self::FileHandleCapability => "file-handle-capability",
             Self::FsWait => "fs-wait",
             Self::BlockDriverCleanup => "block-driver-cleanup",
+            Self::BlockPendingIoPolicy => "block-pending-io-policy",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -533,6 +535,7 @@ typed_ref!(Ext4AdapterObjectRef, ObjectKind::Ext4AdapterObject);
 typed_ref!(FileHandleCapabilityRef, ObjectKind::FileHandleCapability);
 typed_ref!(FsWaitRef, ObjectKind::FsWait);
 typed_ref!(BlockDriverCleanupRef, ObjectKind::BlockDriverCleanup);
+typed_ref!(BlockPendingIoPolicyRef, ObjectKind::BlockPendingIoPolicy);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2144,6 +2147,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "block driver cleanup root/count mismatch",
         ));
     }
+    if roots.block_pending_io_policy_roots.len() != package.semantic.block_pending_io_policy_count
+        || package.semantic.block_pending_io_policies.len()
+            != package.semantic.block_pending_io_policy_count
+    {
+        return Err(ContractError::new(
+            "block pending io policy root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2740,6 +2751,7 @@ mod tests {
                 file_handle_capability_count: 0,
                 fs_wait_count: 0,
                 block_driver_cleanup_count: 0,
+                block_pending_io_policy_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2854,6 +2866,7 @@ mod tests {
                 file_handle_capabilities: Vec::new(),
                 fs_waits: Vec::new(),
                 block_driver_cleanups: Vec::new(),
+                block_pending_io_policies: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4711,6 +4724,46 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_block_pending_io_policy_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.block_pending_io_policy_count = 1;
+        package.semantic.block_pending_io_policies.push(
+            artifact_manifest::BlockPendingIoPolicyManifest {
+                id: 71,
+                block_wait: 72,
+                block_wait_generation: 1,
+                wait: 73,
+                wait_generation: 1,
+                block_request: 74,
+                block_request_generation: 1,
+                retry_request: Some(75),
+                retry_request_generation: Some(1),
+                block_device: 76,
+                block_device_generation: 1,
+                block_range: 77,
+                block_range_generation: 1,
+                operation: "read".to_owned(),
+                sequence: 1,
+                byte_len: 4096,
+                action: "retry".to_owned(),
+                errno: 11,
+                retry_attempt: 1,
+                max_retries: 2,
+                generation: 1,
+                state: "retry-scheduled".to_owned(),
+                recorded_at_event: 88,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "block pending io policy root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -6011,6 +6064,9 @@ mod tests {
         assert!(FsWaitRef::try_from_ref(fs_wait).is_ok());
         let block_driver_cleanup = ObjectRef::new(ObjectKind::BlockDriverCleanup, 70, 1).unwrap();
         assert!(BlockDriverCleanupRef::try_from_ref(block_driver_cleanup).is_ok());
+        let block_pending_io_policy =
+            ObjectRef::new(ObjectKind::BlockPendingIoPolicy, 71, 1).unwrap();
+        assert!(BlockPendingIoPolicyRef::try_from_ref(block_pending_io_policy).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

@@ -895,6 +895,18 @@ pub enum SemanticCommand {
         reason: WaitCancelReason,
         note: String,
     },
+    ApplyBlockPendingIoPolicy {
+        policy: BlockPendingIoPolicyId,
+        block_wait: BlockWaitId,
+        block_wait_generation: Generation,
+        action: BlockPendingIoAction,
+        retry_request: Option<BlockRequestObjectId>,
+        retry_request_generation: Option<Generation>,
+        errno: i32,
+        retry_attempt: u32,
+        max_retries: u32,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -1312,6 +1324,7 @@ impl SemanticCommand {
             Self::RecordBlockWait { .. } => "record-block-wait",
             Self::ResolveBlockWait { .. } => "resolve-block-wait",
             Self::CancelBlockWait { .. } => "cancel-block-wait",
+            Self::ApplyBlockPendingIoPolicy { .. } => "apply-block-pending-io-policy",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -3871,6 +3884,31 @@ impl SemanticGraph {
                     ))
                 }
             }
+            SemanticCommand::ApplyBlockPendingIoPolicy {
+                policy,
+                block_wait,
+                block_wait_generation,
+                action,
+                retry_request,
+                retry_request_generation,
+                errno,
+                retry_attempt,
+                max_retries,
+                ..
+            } => self
+                .validate_block_pending_io_policy(
+                    *policy,
+                    *block_wait,
+                    *block_wait_generation,
+                    *action,
+                    *retry_request,
+                    *retry_request_generation,
+                    *errno,
+                    *retry_attempt,
+                    *max_retries,
+                )
+                .map(|_| ())
+                .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
                 queue,
                 name,
@@ -6349,6 +6387,29 @@ impl SemanticGraph {
                 reason,
                 note,
             } => self.cancel_block_wait(block_wait, block_wait_generation, errno, reason, &note),
+            SemanticCommand::ApplyBlockPendingIoPolicy {
+                policy,
+                block_wait,
+                block_wait_generation,
+                action,
+                retry_request,
+                retry_request_generation,
+                errno,
+                retry_attempt,
+                max_retries,
+                note,
+            } => self.apply_block_pending_io_policy_with_id(
+                policy,
+                block_wait,
+                block_wait_generation,
+                action,
+                retry_request,
+                retry_request_generation,
+                errno,
+                retry_attempt,
+                max_retries,
+                &note,
+            ),
             SemanticCommand::RecordQueueObject {
                 queue,
                 name,

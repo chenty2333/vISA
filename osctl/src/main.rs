@@ -10,17 +10,17 @@ use artifact_manifest::{
     ActivationRecordManifest, ActivationResumeManifest, ActivationWaitManifest,
     ArtifactBundleManifest, BlockCompletionObjectManifest, BlockDeviceObjectManifest,
     BlockDmaBufferManifest, BlockDriverCleanupManifest, BlockPageObjectManifest,
-    BlockRangeObjectManifest, BlockReadPathManifest, BlockRequestObjectManifest,
-    BlockRequestQueueManifest, BlockWaitManifest, BlockWritePathManifest,
-    BoundaryValidationReportManifest, BufferCacheObjectManifest, CapabilityRecordManifest,
-    CleanupTransactionManifest, CodeObjectManifest, CommandResultManifest,
-    ContractObjectRefManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest, FsWaitManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    BlockPendingIoPolicyManifest, BlockRangeObjectManifest, BlockReadPathManifest,
+    BlockRequestObjectManifest, BlockRequestQueueManifest, BlockWaitManifest,
+    BlockWritePathManifest, BoundaryValidationReportManifest, BufferCacheObjectManifest,
+    CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
+    CommandResultManifest, ContractObjectRefManifest, CrossHartSchedulerDecisionManifest,
+    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
+    DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
+    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
+    FileObjectManifest, FsWaitManifest, HartEventAttributionManifest, HartRecordManifest,
+    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
     IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
@@ -387,6 +387,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-driver-cleanup"
         | "disk-driver-cleanup"
         | "disk-cleanup"
+        | "block-pending-io-policy"
+        | "pending-block-io"
+        | "pending-io-policy"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -558,7 +561,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -566,7 +569,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -829,6 +832,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "file-handle-capability" | "file-handle" | "file-capability" => "file-handle-capability",
         "fs-wait" | "filesystem-wait" | "file-wait" => "fs-wait",
         "block-driver-cleanup" | "disk-driver-cleanup" | "disk-cleanup" => "block-driver-cleanup",
+        "block-pending-io-policy" | "pending-block-io" | "pending-io-policy" => {
+            "block-pending-io-policy"
+        }
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3650,6 +3656,80 @@ fn block_driver_cleanup_view_v1(cleanup: &BlockDriverCleanupManifest) -> serde_j
     })
 }
 
+fn block_pending_io_policy_view_v1(policy: &BlockPendingIoPolicyManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "block-pending-io-policy",
+        "id": policy.id,
+        "generation": policy.generation,
+        "state": policy.state,
+        "owner": {
+            "block_wait": object_ref_json(
+                "block-wait",
+                policy.block_wait,
+                policy.block_wait_generation,
+            ),
+            "block_request": object_ref_json(
+                "block-request",
+                policy.block_request,
+                policy.block_request_generation,
+            ),
+        },
+        "references": {
+            "block_wait": object_ref_json(
+                "block-wait",
+                policy.block_wait,
+                policy.block_wait_generation,
+            ),
+            "wait": object_ref_json("wait-token", policy.wait, policy.wait_generation),
+            "block_request": object_ref_json(
+                "block-request",
+                policy.block_request,
+                policy.block_request_generation,
+            ),
+            "retry_request": optional_object_ref_json(
+                "block-request",
+                policy.retry_request,
+                policy.retry_request_generation,
+            ),
+            "block_device": object_ref_json(
+                "block-device",
+                policy.block_device,
+                policy.block_device_generation,
+            ),
+            "block_range": object_ref_json(
+                "block-range",
+                policy.block_range,
+                policy.block_range_generation,
+            ),
+            "event": {
+                "id": policy.recorded_at_event,
+            },
+        },
+        "policy": {
+            "operation": policy.operation,
+            "sequence": policy.sequence,
+            "byte_len": policy.byte_len,
+            "action": policy.action,
+            "errno": policy.errno,
+            "retry_attempt": policy.retry_attempt,
+            "max_retries": policy.max_retries,
+        },
+        "note": policy.note,
+        "last_transition": {
+            "recorded_at_event": policy.recorded_at_event,
+            "block_wait_generation": policy.block_wait_generation,
+            "block_request_generation": policy.block_request_generation,
+            "retry_request_generation": policy.retry_request_generation,
+        },
+        "last_error": if policy.action == "eio" {
+            serde_json::json!({ "errno": policy.errno })
+        } else {
+            serde_json::Value::Null
+        },
+    })
+}
+
 fn packet_buffer_object_view_v1(packet_buffer: &PacketBufferObjectManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -6353,6 +6433,12 @@ fn stable_views_for_kind(
             .block_driver_cleanups
             .iter()
             .map(block_driver_cleanup_view_v1)
+            .collect()),
+        "block-pending-io-policy" | "pending-block-io" | "pending-io-policy" => Ok(package
+            .semantic
+            .block_pending_io_policies
+            .iter()
+            .map(block_pending_io_policy_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -9311,6 +9397,72 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             ));
         }
     }
+    for policy in &package.semantic.block_pending_io_policies {
+        let event = Some(policy.recorded_at_event);
+        let from = object_ref_json("block-pending-io-policy", policy.id, policy.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-wait",
+                policy.block_wait,
+                policy.block_wait_generation,
+            ),
+            "block-pending-io-policy->block-wait",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json("wait-token", policy.wait, policy.wait_generation),
+            "block-pending-io-policy->wait-token",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-request",
+                policy.block_request,
+                policy.block_request_generation,
+            ),
+            "block-pending-io-policy->block-request",
+            "historical",
+            event,
+        ));
+        if let (Some(retry), Some(generation)) =
+            (policy.retry_request, policy.retry_request_generation)
+        {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json("block-request", retry, generation),
+                "block-pending-io-policy->retry-request",
+                "historical",
+                event,
+            ));
+        }
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-device",
+                policy.block_device,
+                policy.block_device_generation,
+            ),
+            "block-pending-io-policy->block-device",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json(
+                "block-range",
+                policy.block_range,
+                policy.block_range_generation,
+            ),
+            "block-pending-io-policy->block-range",
+            "historical",
+            event,
+        ));
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -12042,6 +12194,48 @@ fn inspect_package_object(
                 );
             }
         }
+        "block-pending-io-policy" | "pending-block-io" | "pending-io-policy" => {
+            println!(
+                "inspect block-pending-io-policy package={} count={}",
+                package.package_id, package.semantic.block_pending_io_policy_count
+            );
+            for policy in &package.semantic.block_pending_io_policies {
+                let retry = policy
+                    .retry_request
+                    .zip(policy.retry_request_generation)
+                    .map(|(id, generation)| format!("{id}@{generation}"))
+                    .unwrap_or_else(|| "none".to_owned());
+                let line = format!(
+                    "block-pending-io-policy id={} block_wait={}@{} wait={}@{} block_request={}@{} retry_request={} block_device={}@{} block_range={}@{} action={} errno={} retry_attempt={} max_retries={} state={} generation={}",
+                    policy.id,
+                    policy.block_wait,
+                    policy.block_wait_generation,
+                    policy.wait,
+                    policy.wait_generation,
+                    policy.block_request,
+                    policy.block_request_generation,
+                    retry,
+                    policy.block_device,
+                    policy.block_device_generation,
+                    policy.block_range,
+                    policy.block_range_generation,
+                    policy.action,
+                    policy.errno,
+                    policy.retry_attempt,
+                    policy.max_retries,
+                    policy.state,
+                    policy.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.block_pending_io_policies.is_empty() {
+                print_roots_filtered(
+                    "block-pending-io-policy",
+                    &package.semantic.roots.block_pending_io_policy_roots,
+                    filter,
+                );
+            }
+        }
         "command" => {
             println!(
                 "inspect command package={} count={}",
@@ -12275,6 +12469,17 @@ fn inspect_package_object_json(
                 .map(block_driver_cleanup_view_v1)
                 .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.block_driver_cleanup_roots.len() }),
+        ),
+        "block-pending-io-policy" | "pending-block-io" | "pending-io-policy" => (
+            "block-pending-io-policy",
+            package.semantic.block_pending_io_policy_count,
+            package
+                .semantic
+                .block_pending_io_policies
+                .iter()
+                .map(block_pending_io_policy_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "root_count": package.semantic.roots.block_pending_io_policy_roots.len() }),
         ),
         "command" => (
             "command",
@@ -12871,6 +13076,9 @@ fn replay_until(
     for cleanup in &package.semantic.roots.block_driver_cleanup_roots {
         println!("replay block-driver-cleanup {cleanup}");
     }
+    for policy in &package.semantic.roots.block_pending_io_policy_roots {
+        println!("replay block-pending-io-policy {policy}");
+    }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
     }
@@ -13234,6 +13442,10 @@ fn print_replay_json(
     roots.insert(
         "block_driver_cleanups".to_owned(),
         serde_json::json!(package.semantic.roots.block_driver_cleanup_roots.len()),
+    );
+    roots.insert(
+        "block_pending_io_policies".to_owned(),
+        serde_json::json!(package.semantic.roots.block_pending_io_policy_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -13647,6 +13859,10 @@ fn print_replay_json(
         "block_driver_cleanup_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.block_driver_cleanup_roots),
     );
+    roots.insert(
+        "block_pending_io_policy_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.block_pending_io_policy_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -13862,6 +14078,10 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
     print_roots(
         "block-driver-cleanup",
         &package.semantic.roots.block_driver_cleanup_roots,
+    );
+    print_roots(
+        "block-pending-io-policy",
+        &package.semantic.roots.block_pending_io_policy_roots,
     );
 }
 
@@ -15916,6 +16136,60 @@ mod tests {
         assert_eq!(view["cleanup"]["released_dma_buffer_count"], 1);
         assert_eq!(view["cleanup"]["revoked_device_capability_count"], 1);
         assert_eq!(view["last_transition"]["completed_at_event"], 127);
+    }
+
+    #[test]
+    fn block_pending_io_policy_view_v1_exposes_retry_and_eio_policy() {
+        let retry_policy = BlockPendingIoPolicyManifest {
+            id: 127,
+            block_wait: 103,
+            block_wait_generation: 1,
+            wait: 102,
+            wait_generation: 1,
+            block_request: 101,
+            block_request_generation: 1,
+            retry_request: Some(112),
+            retry_request_generation: Some(1),
+            block_device: 31,
+            block_device_generation: 1,
+            block_range: 100,
+            block_range_generation: 1,
+            operation: "read".to_owned(),
+            sequence: 2,
+            byte_len: 4096,
+            action: "retry".to_owned(),
+            errno: 11,
+            retry_attempt: 1,
+            max_retries: 2,
+            generation: 1,
+            state: "retry-scheduled".to_owned(),
+            recorded_at_event: 128,
+            note: "pending io retry policy".to_owned(),
+        };
+        let view = block_pending_io_policy_view_v1(&retry_policy);
+        assert_eq!(view["kind"], "block-pending-io-policy");
+        assert_eq!(view["owner"]["block_wait"]["id"], 103);
+        assert_eq!(view["references"]["wait"]["kind"], "wait-token");
+        assert_eq!(view["references"]["retry_request"]["id"], 112);
+        assert_eq!(view["policy"]["action"], "retry");
+        assert_eq!(view["policy"]["retry_attempt"], 1);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 128);
+        assert!(view["last_error"].is_null());
+
+        let eio = block_pending_io_policy_view_v1(&BlockPendingIoPolicyManifest {
+            id: 129,
+            retry_request: None,
+            retry_request_generation: None,
+            action: "eio".to_owned(),
+            errno: 5,
+            retry_attempt: 0,
+            max_retries: 0,
+            state: "eio-returned".to_owned(),
+            recorded_at_event: 130,
+            note: "pending io eio policy".to_owned(),
+            ..retry_policy
+        });
+        assert_eq!(eio["last_error"]["errno"], 5);
     }
 
     #[test]
