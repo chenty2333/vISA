@@ -894,6 +894,57 @@ impl IntegratedNetworkDiskIoRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntegratedDisplaySchedulerLoadRecord {
+    pub id: IntegratedDisplaySchedulerLoadId,
+    pub scenario: String,
+    pub framebuffer_benchmark: FramebufferBenchmarkId,
+    pub framebuffer_benchmark_generation: Generation,
+    pub scheduler_decision: SchedulerDecisionId,
+    pub scheduler_decision_generation: Generation,
+    pub owner_store: StoreId,
+    pub owner_store_generation: Generation,
+    pub owner_task: TaskId,
+    pub owner_task_generation: Generation,
+    pub queue: RunnableQueueId,
+    pub queue_generation: Generation,
+    pub selected_activation: ActivationId,
+    pub selected_activation_generation: Generation,
+    pub display: DisplayObjectId,
+    pub display_generation: Generation,
+    pub framebuffer: FramebufferObjectId,
+    pub framebuffer_generation: Generation,
+    pub display_capability: DisplayCapabilityId,
+    pub display_capability_generation: Generation,
+    pub framebuffer_write: FramebufferWriteId,
+    pub framebuffer_write_generation: Generation,
+    pub framebuffer_flush_region: FramebufferFlushRegionId,
+    pub framebuffer_flush_region_generation: Generation,
+    pub display_event_log: DisplayEventLogId,
+    pub display_event_log_generation: Generation,
+    pub sample_frames: u32,
+    pub sample_bytes: u64,
+    pub scheduler_load_units: u64,
+    pub display_measured_nanos: u64,
+    pub scheduler_decided_at_event: EventId,
+    pub display_recorded_at_event: EventId,
+    pub invariant_checks: u32,
+    pub generation: Generation,
+    pub state: IntegratedDisplaySchedulerLoadState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl IntegratedDisplaySchedulerLoadRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::IntegratedDisplaySchedulerLoad,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceObjectRecord {
     pub id: DeviceObjectId,
     pub name: String,

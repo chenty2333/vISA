@@ -1,0 +1,187 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "X5-integrated-display-scheduler-load",
+  "phase": "Phase 8 Integrated System Scenarios",
+  "status": "pass",
+  "scope": [
+    "Add IntegratedDisplaySchedulerLoadRecord as first-class integrated scenario evidence",
+    "Tie G12 FramebufferBenchmark and P5 SchedulerDecision evidence into one generation-checked display-under-load scenario",
+    "Require exact generations for FramebufferBenchmark, SchedulerDecision, Store, RunnableQueue, DisplayObject, FramebufferObject, DisplayCapability, FramebufferWrite, FramebufferFlushRegion, and DisplayEventLog",
+    "Derive display sample frames, sample bytes, measured nanos, and scheduler load units from semantic benchmark and scheduler evidence",
+    "Reject missing, stale, unrecorded, over-budget, or ordering-invalid display/scheduler evidence",
+    "Emit IntegratedDisplaySchedulerLoadRecorded event and stable osctl ViewV1 JSON",
+    "Expose historical graph edges without creating live ownership or adapter-internal semantic truth",
+    "Publish target_executor semantic package roots and count validation for X5 evidence"
+  ],
+  "no_goals": [
+    "real display hardware execution",
+    "real preemptive scheduler execution",
+    "new graphics or scheduler third-party dependency",
+    "new runtime-only executor behavior",
+    "target-side cwasm execution"
+  ],
+  "implemented_contract_clauses": [
+    {
+      "spec": "references/roadmap.md",
+      "clause": "X5 display update during scheduler load"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+      "clause": "all integrated display/scheduler load references carry kind/id/generation"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+      "clause": "integrated scenario uses Historical graph edges for display benchmark and scheduler decision attribution"
+    },
+    {
+      "spec": "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+      "clause": "osctl exposes stable ViewV1 JSON and contract validation output"
+    }
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/integrated_display_scheduler_load.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/integrated/golden_x5_display_scheduler_load.trace.json",
+    "tests/reports/checkpoints/x5_integrated_display_scheduler_load.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/integrated/golden_x5_display_scheduler_load.trace.json",
+    "tests/reports/checkpoints/x5_integrated_display_scheduler_load.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "contract graph models IntegratedDisplaySchedulerLoad as exact-generation integrated evidence",
+      "contract graph validates the scheduler decision root instead of treating task or activation current generations as the source of truth for historical attribution",
+      "target_executor writes X5 records, roots, and counts into the semantic package",
+      "osctl command, inspect, replay, and graph history expose integrated-display-scheduler-load evidence through stable ViewV1 JSON",
+      "semantic validation rejects stale scheduler decision generations and missing display benchmark evidence"
+    ],
+    "bad_smells_checked": [
+      "No display adapter internal state became semantic truth",
+      "No real display hardware execution is claimed",
+      "No real preemptive scheduler execution is claimed",
+      "No adapter internal structs are serialized as osctl stable views",
+      "No target-side cwasm execution path was changed",
+      "No third-party dependency was introduced in semantic_core"
+    ],
+    "residual_notes": [
+      "X6 owns snapshot barrier blocking active IO leases",
+      "Future real display and scheduler runtime paths must feed the same semantic benchmark and scheduler objects rather than replacing the X5 integrated evidence contract"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core integrated_runtime_x5 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core integrated_display_scheduler_load -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl integrated_display_scheduler_load -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo check -p semantic_core -p artifact_manifest -p contract_core -p target_executor -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo build -p osctl",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl integrated-display-scheduler-load list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect integrated-display-scheduler-load --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/check-doc-consistency.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-target-runtime-contract.sh --full",
+      "status": "pass"
+    },
+    {
+      "command": "./scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "integrated_display_scheduler_load": "integrated-display-scheduler-load:26501@1",
+    "framebuffer_benchmark": "framebuffer-benchmark:25101@1",
+    "scheduler_decision": "scheduler-decision:9001@1",
+    "owner_store": "store:14@3",
+    "owner_task": "task:9002@1",
+    "runnable_queue": "runnable-queue:9002@2",
+    "selected_activation": "activation:9002@4",
+    "display": "display-object:23101@1",
+    "framebuffer": "framebuffer-object:23001@1",
+    "display_capability": "display-capability:23201@1",
+    "framebuffer_flush_region": "framebuffer-flush-region:23601@1",
+    "recorded_at_event": 575,
+    "contract_validation": "ok"
+  },
+  "no_goals_respected": {
+    "no_real_target_side_cwasm_execution": true,
+    "no_full_wasi_component_runtime": true,
+    "no_real_display_hardware_execution": true,
+    "no_real_preemptive_scheduler_execution": true,
+    "no_global_object_id_authority": true,
+    "no_substrate_mapping_as_semantic_truth": true
+  },
+  "residual_gaps": [
+    "X6 owns snapshot barrier blocking active IO leases",
+    "Real display updates under scheduler load must later provide runtime-backed benchmark evidence through the existing semantic objects"
+  ],
+  "next_checkpoint": "X6-integrated-snapshot-barrier-active-io-leases"
+}

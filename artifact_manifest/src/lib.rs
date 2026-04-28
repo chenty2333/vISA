@@ -275,6 +275,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_network_disk_io_count: usize,
     #[serde(default)]
+    pub integrated_display_scheduler_load_count: usize,
+    #[serde(default)]
     pub device_object_count: usize,
     #[serde(default)]
     pub queue_object_count: usize,
@@ -553,6 +555,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub integrated_network_disk_ios: Vec<IntegratedNetworkDiskIoManifest>,
     #[serde(default)]
+    pub integrated_display_scheduler_loads: Vec<IntegratedDisplaySchedulerLoadManifest>,
+    #[serde(default)]
     pub device_objects: Vec<DeviceObjectManifest>,
     #[serde(default)]
     pub queue_objects: Vec<QueueObjectManifest>,
@@ -810,6 +814,8 @@ pub struct SemanticRootSetManifest {
     pub integrated_simd_migration_roots: Vec<String>,
     #[serde(default)]
     pub integrated_network_disk_io_roots: Vec<String>,
+    #[serde(default)]
+    pub integrated_display_scheduler_load_roots: Vec<String>,
     #[serde(default)]
     pub device_object_roots: Vec<String>,
     #[serde(default)]
@@ -1779,6 +1785,47 @@ pub struct IntegratedNetworkDiskIoManifest {
     pub concurrent_window_nanos: u64,
     pub combined_throughput_bytes_per_sec: u64,
     pub max_p99_latency_nanos: u64,
+    pub invariant_checks: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IntegratedDisplaySchedulerLoadManifest {
+    pub id: u64,
+    pub scenario: String,
+    pub framebuffer_benchmark: u64,
+    pub framebuffer_benchmark_generation: u64,
+    pub scheduler_decision: u64,
+    pub scheduler_decision_generation: u64,
+    pub owner_store: u64,
+    pub owner_store_generation: u64,
+    pub owner_task: u64,
+    pub owner_task_generation: u64,
+    pub queue: u64,
+    pub queue_generation: u64,
+    pub selected_activation: u64,
+    pub selected_activation_generation: u64,
+    pub display: u64,
+    pub display_generation: u64,
+    pub framebuffer: u64,
+    pub framebuffer_generation: u64,
+    pub display_capability: u64,
+    pub display_capability_generation: u64,
+    pub framebuffer_write: u64,
+    pub framebuffer_write_generation: u64,
+    pub framebuffer_flush_region: u64,
+    pub framebuffer_flush_region_generation: u64,
+    pub display_event_log: u64,
+    pub display_event_log_generation: u64,
+    pub sample_frames: u32,
+    pub sample_bytes: u64,
+    pub scheduler_load_units: u64,
+    pub display_measured_nanos: u64,
+    pub scheduler_decided_at_event: u64,
+    pub display_recorded_at_event: u64,
     pub invariant_checks: u32,
     pub generation: u64,
     pub state: String,

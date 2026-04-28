@@ -323,6 +323,16 @@ pub enum SemanticCommand {
         invariant_checks: u32,
         note: String,
     },
+    RecordIntegratedDisplaySchedulerLoad {
+        integrated: IntegratedDisplaySchedulerLoadId,
+        scenario: String,
+        framebuffer_benchmark: FramebufferBenchmarkId,
+        framebuffer_benchmark_generation: Generation,
+        scheduler_decision: SchedulerDecisionId,
+        scheduler_decision_generation: Generation,
+        invariant_checks: u32,
+        note: String,
+    },
     RecordDeviceObject {
         device: DeviceObjectId,
         name: String,
@@ -1710,6 +1720,9 @@ impl SemanticCommand {
             Self::RecordIntegratedDiskPreemptFault { .. } => "record-integrated-disk-preempt-fault",
             Self::RecordIntegratedSimdMigration { .. } => "record-integrated-simd-migration",
             Self::RecordIntegratedNetworkDiskIo { .. } => "record-integrated-network-disk-io",
+            Self::RecordIntegratedDisplaySchedulerLoad { .. } => {
+                "record-integrated-display-scheduler-load"
+            }
             Self::RecordDeviceObject { .. } => "record-device-object",
             Self::RecordPacketDeviceObject { .. } => "record-packet-device-object",
             Self::RecordPacketBufferObject { .. } => "record-packet-buffer-object",
@@ -3063,6 +3076,26 @@ impl SemanticGraph {
                     *network_benchmark_generation,
                     *block_benchmark,
                     *block_benchmark_generation,
+                    *invariant_checks,
+                )
+                .map_err(CommandError::precondition),
+            SemanticCommand::RecordIntegratedDisplaySchedulerLoad {
+                integrated,
+                scenario,
+                framebuffer_benchmark,
+                framebuffer_benchmark_generation,
+                scheduler_decision,
+                scheduler_decision_generation,
+                invariant_checks,
+                ..
+            } => self
+                .validate_integrated_display_scheduler_load(
+                    *integrated,
+                    scenario,
+                    *framebuffer_benchmark,
+                    *framebuffer_benchmark_generation,
+                    *scheduler_decision,
+                    *scheduler_decision_generation,
                     *invariant_checks,
                 )
                 .map_err(CommandError::precondition),
@@ -6613,6 +6646,25 @@ impl SemanticGraph {
                 network_benchmark_generation,
                 block_benchmark,
                 block_benchmark_generation,
+                invariant_checks,
+                &note,
+            ),
+            SemanticCommand::RecordIntegratedDisplaySchedulerLoad {
+                integrated,
+                scenario,
+                framebuffer_benchmark,
+                framebuffer_benchmark_generation,
+                scheduler_decision,
+                scheduler_decision_generation,
+                invariant_checks,
+                note,
+            } => self.record_integrated_display_scheduler_load_with_id(
+                integrated,
+                &scenario,
+                framebuffer_benchmark,
+                framebuffer_benchmark_generation,
+                scheduler_decision,
+                scheduler_decision_generation,
                 invariant_checks,
                 &note,
             ),

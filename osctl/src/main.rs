@@ -26,11 +26,12 @@ use artifact_manifest::{
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    IntegratedDiskPreemptFaultManifest, IntegratedNetworkDiskIoManifest,
-    IntegratedSimdMigrationManifest, IntegratedSmpNetworkFaultManifest,
-    IntegratedSmpPreemptionCleanupManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    IntegratedDiskPreemptFaultManifest, IntegratedDisplaySchedulerLoadManifest,
+    IntegratedNetworkDiskIoManifest, IntegratedSimdMigrationManifest,
+    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -293,6 +294,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "integrated-network-disk-io"
         | "network-disk-io"
         | "integrated-io-concurrency"
+        | "integrated-display-scheduler-load"
+        | "display-scheduler-load"
+        | "integrated-display-load"
         | "device"
         | "device-object"
         | "queue"
@@ -641,7 +645,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|integrated-smp-preemption-cleanup|integrated-smp-network-fault|integrated-disk-preempt-fault|integrated-simd-migration|integrated-network-disk-io|integrated-display-scheduler-load|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|display-object|display|display-capability|display-cap|framebuffer-window-lease|fb-window-lease|display-lease|framebuffer-mapping|fb-mapping|display-mapping|framebuffer-write|fb-write|display-write|framebuffer-flush-region|flush-region|display-flush|framebuffer-dirty-region|dirty-region|display-dirty|display-event-log|display-log|display-cleanup|display-snapshot-barrier|display-panic-last-frame|framebuffer-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -961,6 +965,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "integrated-network-disk-io" | "network-disk-io" | "integrated-io-concurrency" => {
             "integrated-network-disk-io"
         }
+        "integrated-display-scheduler-load"
+        | "display-scheduler-load"
+        | "integrated-display-load" => "integrated-display-scheduler-load",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -2365,6 +2372,110 @@ fn integrated_network_disk_io_view_v1(
             "event": record.recorded_at_event,
             "state": record.state,
         },
+    })
+}
+
+fn integrated_display_scheduler_load_view_v1(
+    record: &IntegratedDisplaySchedulerLoadManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "integrated-display-scheduler-load",
+        "id": record.id,
+        "generation": record.generation,
+        "state": record.state,
+        "owner": {
+            "store": object_ref_json(
+                "store",
+                record.owner_store,
+                record.owner_store_generation,
+            ),
+            "task": object_ref_json(
+                "task",
+                record.owner_task,
+                record.owner_task_generation,
+            ),
+            "display": object_ref_json(
+                "display-object",
+                record.display,
+                record.display_generation,
+            ),
+            "framebuffer": object_ref_json(
+                "framebuffer-object",
+                record.framebuffer,
+                record.framebuffer_generation,
+            ),
+        },
+        "references": {
+            "framebuffer_benchmark": object_ref_json(
+                "framebuffer-benchmark",
+                record.framebuffer_benchmark,
+                record.framebuffer_benchmark_generation,
+            ),
+            "scheduler_decision": object_ref_json(
+                "scheduler-decision",
+                record.scheduler_decision,
+                record.scheduler_decision_generation,
+            ),
+            "runnable_queue": object_ref_json(
+                "runnable-queue",
+                record.queue,
+                record.queue_generation,
+            ),
+            "selected_activation": object_ref_json(
+                "activation",
+                record.selected_activation,
+                record.selected_activation_generation,
+            ),
+            "display_capability": object_ref_json(
+                "display-capability",
+                record.display_capability,
+                record.display_capability_generation,
+            ),
+            "framebuffer_write": object_ref_json(
+                "framebuffer-write",
+                record.framebuffer_write,
+                record.framebuffer_write_generation,
+            ),
+            "framebuffer_flush_region": object_ref_json(
+                "framebuffer-flush-region",
+                record.framebuffer_flush_region,
+                record.framebuffer_flush_region_generation,
+            ),
+            "display_event_log": object_ref_json(
+                "display-event-log",
+                record.display_event_log,
+                record.display_event_log_generation,
+            ),
+            "event": {
+                "id": record.recorded_at_event,
+            },
+        },
+        "closure": {
+            "scenario": record.scenario,
+            "sample_frames": record.sample_frames,
+            "sample_bytes": record.sample_bytes,
+            "scheduler_load_units": record.scheduler_load_units,
+            "display_measured_nanos": record.display_measured_nanos,
+            "scheduler_decided_at_event": record.scheduler_decided_at_event,
+            "display_recorded_at_event": record.display_recorded_at_event,
+            "invariant_checks": record.invariant_checks,
+            "requires_recorded_framebuffer_benchmark": true,
+            "requires_generation_exact_scheduler_decision": true,
+        },
+        "authority": {
+            "uses_semantic_framebuffer_benchmark": true,
+            "uses_semantic_scheduler_decision": true,
+            "real_display_hardware_executed": false,
+            "real_preemptive_scheduler_executed": false,
+            "adapter_internal_state_is_not_semantic_truth": true,
+        },
+        "note": record.note,
+        "last_transition": {
+            "event": record.recorded_at_event,
+            "state": record.state,
+        },
+        "last_error": serde_json::Value::Null,
     })
 }
 
@@ -8064,6 +8175,14 @@ fn stable_views_for_kind(
                 .map(integrated_network_disk_io_view_v1)
                 .collect())
         }
+        "integrated-display-scheduler-load"
+        | "display-scheduler-load"
+        | "integrated-display-load" => Ok(package
+            .semantic
+            .integrated_display_scheduler_loads
+            .iter()
+            .map(integrated_display_scheduler_load_view_v1)
+            .collect()),
         "device" | "device-object" => Ok(package
             .semantic
             .device_objects
@@ -9502,6 +9621,13 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     print_roots(
         "integrated-network-disk-io",
         &package.semantic.roots.integrated_network_disk_io_roots,
+    );
+    print_roots(
+        "integrated-display-scheduler-load",
+        &package
+            .semantic
+            .roots
+            .integrated_display_scheduler_load_roots,
     );
     print_roots("device", &package.semantic.roots.device_object_roots);
     print_roots("queue", &package.semantic.roots.queue_object_roots);
@@ -11460,6 +11586,95 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "historical",
             Some(record.recorded_at_event),
         ));
+    }
+    for record in &package.semantic.integrated_display_scheduler_loads {
+        let from = object_ref_json(
+            "integrated-display-scheduler-load",
+            record.id,
+            record.generation,
+        );
+        for (label, kind, id, generation) in [
+            (
+                "integrated-framebuffer-benchmark",
+                "framebuffer-benchmark",
+                record.framebuffer_benchmark,
+                record.framebuffer_benchmark_generation,
+            ),
+            (
+                "integrated-scheduler-decision",
+                "scheduler-decision",
+                record.scheduler_decision,
+                record.scheduler_decision_generation,
+            ),
+            (
+                "integrated-owner-store",
+                "store",
+                record.owner_store,
+                record.owner_store_generation,
+            ),
+            (
+                "integrated-owner-task",
+                "task",
+                record.owner_task,
+                record.owner_task_generation,
+            ),
+            (
+                "integrated-runnable-queue",
+                "runnable-queue",
+                record.queue,
+                record.queue_generation,
+            ),
+            (
+                "integrated-selected-activation",
+                "activation",
+                record.selected_activation,
+                record.selected_activation_generation,
+            ),
+            (
+                "integrated-display",
+                "display-object",
+                record.display,
+                record.display_generation,
+            ),
+            (
+                "integrated-framebuffer",
+                "framebuffer-object",
+                record.framebuffer,
+                record.framebuffer_generation,
+            ),
+            (
+                "integrated-display-capability",
+                "display-capability",
+                record.display_capability,
+                record.display_capability_generation,
+            ),
+            (
+                "integrated-framebuffer-write",
+                "framebuffer-write",
+                record.framebuffer_write,
+                record.framebuffer_write_generation,
+            ),
+            (
+                "integrated-framebuffer-flush-region",
+                "framebuffer-flush-region",
+                record.framebuffer_flush_region,
+                record.framebuffer_flush_region_generation,
+            ),
+            (
+                "integrated-display-event-log",
+                "display-event-log",
+                record.display_event_log,
+                record.display_event_log_generation,
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_json(kind, id, generation),
+                label,
+                "historical",
+                Some(record.recorded_at_event),
+            ));
+        }
     }
     for completion in &package.semantic.block_completion_objects {
         if completion.state != "recorded" {
@@ -16988,6 +17203,67 @@ fn inspect_package_object(
                 );
             }
         }
+        "integrated-display-scheduler-load"
+        | "display-scheduler-load"
+        | "integrated-display-load" => {
+            println!(
+                "inspect integrated-display-scheduler-load package={} count={}",
+                package.package_id, package.semantic.integrated_display_scheduler_load_count
+            );
+            for record in &package.semantic.integrated_display_scheduler_loads {
+                let line = format!(
+                    "integrated-display-scheduler-load id={} scenario={} framebuffer_benchmark={}@{} scheduler_decision={}@{} owner_store={}@{} owner_task={}@{} queue={}@{} activation={}@{} display={}@{} framebuffer={}@{} display_capability={}@{} framebuffer_write={}@{} framebuffer_flush_region={}@{} display_event_log={}@{} sample_frames={} sample_bytes={} scheduler_load_units={} display_measured_nanos={} invariants={} state={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.framebuffer_benchmark,
+                    record.framebuffer_benchmark_generation,
+                    record.scheduler_decision,
+                    record.scheduler_decision_generation,
+                    record.owner_store,
+                    record.owner_store_generation,
+                    record.owner_task,
+                    record.owner_task_generation,
+                    record.queue,
+                    record.queue_generation,
+                    record.selected_activation,
+                    record.selected_activation_generation,
+                    record.display,
+                    record.display_generation,
+                    record.framebuffer,
+                    record.framebuffer_generation,
+                    record.display_capability,
+                    record.display_capability_generation,
+                    record.framebuffer_write,
+                    record.framebuffer_write_generation,
+                    record.framebuffer_flush_region,
+                    record.framebuffer_flush_region_generation,
+                    record.display_event_log,
+                    record.display_event_log_generation,
+                    record.sample_frames,
+                    record.sample_bytes,
+                    record.scheduler_load_units,
+                    record.display_measured_nanos,
+                    record.invariant_checks,
+                    record.state,
+                    record.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package
+                .semantic
+                .integrated_display_scheduler_loads
+                .is_empty()
+            {
+                print_roots_filtered(
+                    "integrated-display-scheduler-load",
+                    &package
+                        .semantic
+                        .roots
+                        .integrated_display_scheduler_load_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -17561,6 +17837,25 @@ fn inspect_package_object_json(
                     .len()
             }),
         ),
+        "integrated-display-scheduler-load"
+        | "display-scheduler-load"
+        | "integrated-display-load" => (
+            "integrated-display-scheduler-load",
+            package.semantic.integrated_display_scheduler_load_count,
+            package
+                .semantic
+                .integrated_display_scheduler_loads
+                .iter()
+                .map(integrated_display_scheduler_load_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package
+                    .semantic
+                    .roots
+                    .integrated_display_scheduler_load_roots
+                    .len()
+            }),
+        ),
         "command" => (
             "command",
             package.semantic.command_result_count,
@@ -18074,6 +18369,13 @@ fn replay_until(
     }
     for integrated in &package.semantic.roots.integrated_network_disk_io_roots {
         println!("replay integrated-network-disk-io {integrated}");
+    }
+    for integrated in &package
+        .semantic
+        .roots
+        .integrated_display_scheduler_load_roots
+    {
+        println!("replay integrated-display-scheduler-load {integrated}");
     }
     for device in &package.semantic.roots.device_object_roots {
         println!("replay device {device}");
@@ -22787,6 +23089,130 @@ mod tests {
             && edge["from"]["kind"] == "integrated-network-disk-io"
             && edge["relation"] == "integrated-block-dma-buffer"
             && edge["to"]["kind"] == "block-dma-buffer"
+            && edge["to"]["generation"] == 1));
+    }
+
+    #[test]
+    fn integrated_display_scheduler_load_view_v1_exposes_display_and_scheduler_refs() {
+        let view =
+            integrated_display_scheduler_load_view_v1(&IntegratedDisplaySchedulerLoadManifest {
+                id: 26_501,
+                scenario: "x5-display-update-during-scheduler-load".to_owned(),
+                framebuffer_benchmark: 25_101,
+                framebuffer_benchmark_generation: 1,
+                scheduler_decision: 9_001,
+                scheduler_decision_generation: 1,
+                owner_store: 1,
+                owner_store_generation: 2,
+                owner_task: 7,
+                owner_task_generation: 1,
+                queue: 9_002,
+                queue_generation: 2,
+                selected_activation: 9_002,
+                selected_activation_generation: 4,
+                display: 23_101,
+                display_generation: 1,
+                framebuffer: 23_001,
+                framebuffer_generation: 1,
+                display_capability: 23_201,
+                display_capability_generation: 1,
+                framebuffer_write: 23_501,
+                framebuffer_write_generation: 1,
+                framebuffer_flush_region: 23_601,
+                framebuffer_flush_region_generation: 1,
+                display_event_log: 23_801,
+                display_event_log_generation: 1,
+                sample_frames: 1,
+                sample_bytes: 3_200,
+                scheduler_load_units: 1,
+                display_measured_nanos: 100_000,
+                scheduler_decided_at_event: 50,
+                display_recorded_at_event: 571,
+                invariant_checks: 6,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 575,
+                note: "x5 integrated display scheduler load".to_owned(),
+            });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "integrated-display-scheduler-load");
+        assert_eq!(view["owner"]["store"]["generation"], 2);
+        assert_eq!(view["references"]["framebuffer_benchmark"]["id"], 25_101);
+        assert_eq!(view["references"]["scheduler_decision"]["id"], 9_001);
+        assert_eq!(view["references"]["selected_activation"]["generation"], 4);
+        assert_eq!(view["closure"]["sample_bytes"], 3_200);
+        assert_eq!(view["closure"]["scheduler_load_units"], 1);
+        assert_eq!(view["authority"]["real_display_hardware_executed"], false);
+        assert_eq!(
+            view["authority"]["real_preemptive_scheduler_executed"],
+            false
+        );
+    }
+
+    #[test]
+    fn integrated_display_scheduler_load_graph_edges_are_history_only() {
+        let mut package = minimal_graph_package();
+        package.semantic.integrated_display_scheduler_load_count = 1;
+        package.semantic.integrated_display_scheduler_loads.push(
+            IntegratedDisplaySchedulerLoadManifest {
+                id: 26_501,
+                scenario: "x5-display-update-during-scheduler-load".to_owned(),
+                framebuffer_benchmark: 25_101,
+                framebuffer_benchmark_generation: 1,
+                scheduler_decision: 9_001,
+                scheduler_decision_generation: 1,
+                owner_store: 1,
+                owner_store_generation: 2,
+                owner_task: 7,
+                owner_task_generation: 1,
+                queue: 9_002,
+                queue_generation: 2,
+                selected_activation: 9_002,
+                selected_activation_generation: 4,
+                display: 23_101,
+                display_generation: 1,
+                framebuffer: 23_001,
+                framebuffer_generation: 1,
+                display_capability: 23_201,
+                display_capability_generation: 1,
+                framebuffer_write: 23_501,
+                framebuffer_write_generation: 1,
+                framebuffer_flush_region: 23_601,
+                framebuffer_flush_region_generation: 1,
+                display_event_log: 23_801,
+                display_event_log_generation: 1,
+                sample_frames: 1,
+                sample_bytes: 3_200,
+                scheduler_load_units: 1,
+                display_measured_nanos: 100_000,
+                scheduler_decided_at_event: 50,
+                display_recorded_at_event: 571,
+                invariant_checks: 6,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 575,
+                note: "x5 integrated display scheduler load".to_owned(),
+            },
+        );
+
+        let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
+        assert!(
+            !live
+                .iter()
+                .any(|edge| edge["from"]["kind"] == "integrated-display-scheduler-load")
+        );
+
+        let history = graph_edges_for_package(&package, GraphEdgeMode::History);
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-display-scheduler-load"
+            && edge["relation"] == "integrated-framebuffer-benchmark"
+            && edge["to"]["kind"] == "framebuffer-benchmark"
+            && edge["to"]["generation"] == 1));
+        assert!(history.iter().any(|edge| edge["mode"] == "historical"
+            && edge["from"]["kind"] == "integrated-display-scheduler-load"
+            && edge["relation"] == "integrated-scheduler-decision"
+            && edge["to"]["kind"] == "scheduler-decision"
             && edge["to"]["generation"] == 1));
     }
 

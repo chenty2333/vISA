@@ -828,6 +828,16 @@ pub enum SemanticInvariantError {
     IntegratedNetworkDiskIoMissingEvent {
         integrated: IntegratedNetworkDiskIoId,
     },
+    IntegratedDisplaySchedulerLoadInvalid {
+        integrated: IntegratedDisplaySchedulerLoadId,
+    },
+    IntegratedDisplaySchedulerLoadMissingEvidence {
+        integrated: IntegratedDisplaySchedulerLoadId,
+        evidence: &'static str,
+    },
+    IntegratedDisplaySchedulerLoadMissingEvent {
+        integrated: IntegratedDisplaySchedulerLoadId,
+    },
     DeviceObjectInvalid {
         device: DeviceObjectId,
     },

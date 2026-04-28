@@ -23,6 +23,7 @@ pub type IntegratedSmpNetworkFaultId = u64;
 pub type IntegratedDiskPreemptFaultId = u64;
 pub type IntegratedSimdMigrationId = u64;
 pub type IntegratedNetworkDiskIoId = u64;
+pub type IntegratedDisplaySchedulerLoadId = u64;
 pub type DeviceObjectId = u64;
 pub type QueueObjectId = u64;
 pub type DescriptorObjectId = u64;

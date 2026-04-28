@@ -97,6 +97,7 @@ pub struct ContractGraphSnapshot {
     pub display_snapshot_barriers: Vec<DisplaySnapshotBarrierRecord>,
     pub display_panic_last_frames: Vec<DisplayPanicLastFrameRecord>,
     pub framebuffer_benchmarks: Vec<FramebufferBenchmarkRecord>,
+    pub integrated_display_scheduler_loads: Vec<IntegratedDisplaySchedulerLoadRecord>,
     pub integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
     pub integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
     pub integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultRecord>,
@@ -119,7 +120,10 @@ pub struct ContractGraphSnapshot {
     pub block_request_queues: Vec<BlockRequestQueueRecord>,
     pub block_dma_buffers: Vec<BlockDmaBufferRecord>,
     pub harts: Vec<HartRecord>,
+    pub tasks: Vec<TaskRecord>,
+    pub runtime_activations: Vec<RuntimeActivationRecord>,
     pub runnable_queues: Vec<RunnableQueueRecord>,
+    pub scheduler_decisions: Vec<SchedulerDecisionRecord>,
     pub activation_contexts: Vec<ActivationContextRecord>,
     pub activation_migrations: Vec<ActivationMigrationRecord>,
     pub saved_contexts: Vec<SavedContextRecord>,
@@ -244,6 +248,7 @@ impl ContractGraphValidator {
         Self::validate_display_snapshot_barriers(snapshot, &mut violations);
         Self::validate_display_panic_last_frames(snapshot, &mut violations);
         Self::validate_framebuffer_benchmarks(snapshot, &mut violations);
+        Self::validate_integrated_display_scheduler_loads(snapshot, &mut violations);
         Self::validate_integrated_smp_preemption_cleanups(snapshot, &mut violations);
         Self::validate_integrated_smp_network_faults(snapshot, &mut violations);
         Self::validate_integrated_disk_preempt_faults(snapshot, &mut violations);
@@ -3720,6 +3725,171 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_integrated_display_scheduler_loads(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for record in &snapshot.integrated_display_scheduler_loads {
+            let from = record.object_ref();
+            if record.id == 0
+                || record.generation == 0
+                || record.scenario.is_empty()
+                || record.state != IntegratedDisplaySchedulerLoadState::Recorded
+                || record.framebuffer_benchmark_generation == 0
+                || record.scheduler_decision_generation == 0
+                || record.owner_store_generation == 0
+                || record.owner_task_generation == 0
+                || record.queue_generation == 0
+                || record.selected_activation_generation == 0
+                || record.display_generation == 0
+                || record.framebuffer_generation == 0
+                || record.display_capability_generation == 0
+                || record.framebuffer_write_generation == 0
+                || record.framebuffer_flush_region_generation == 0
+                || record.display_event_log_generation == 0
+                || record.sample_frames == 0
+                || record.sample_bytes == 0
+                || record.scheduler_load_units == 0
+                || record.display_measured_nanos == 0
+                || record.scheduler_decided_at_event == 0
+                || record.display_recorded_at_event == 0
+                || record.scheduler_decided_at_event > record.display_recorded_at_event
+                || record.invariant_checks == 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "integrated-display-scheduler-load->contract",
+                    from,
+                    None,
+                    "integrated display/scheduler load requires exact display benchmark and scheduler evidence",
+                ));
+                continue;
+            }
+            for (label, kind, id, generation) in [
+                (
+                    "integrated-display-scheduler-load->framebuffer-benchmark",
+                    ContractObjectKind::FramebufferBenchmark,
+                    record.framebuffer_benchmark,
+                    record.framebuffer_benchmark_generation,
+                ),
+                (
+                    "integrated-display-scheduler-load->scheduler-decision",
+                    ContractObjectKind::SchedulerDecision,
+                    record.scheduler_decision,
+                    record.scheduler_decision_generation,
+                ),
+                (
+                    "integrated-display-scheduler-load->owner-store",
+                    ContractObjectKind::Store,
+                    record.owner_store,
+                    record.owner_store_generation,
+                ),
+                (
+                    "integrated-display-scheduler-load->runnable-queue",
+                    ContractObjectKind::RunnableQueue,
+                    record.queue,
+                    record.queue_generation,
+                ),
+                (
+                    "integrated-display-scheduler-load->display",
+                    ContractObjectKind::DisplayObject,
+                    record.display,
+                    record.display_generation,
+                ),
+                (
+                    "integrated-display-scheduler-load->framebuffer",
+                    ContractObjectKind::FramebufferObject,
+                    record.framebuffer,
+                    record.framebuffer_generation,
+                ),
+                (
+                    "integrated-display-scheduler-load->display-capability",
+                    ContractObjectKind::DisplayCapability,
+                    record.display_capability,
+                    record.display_capability_generation,
+                ),
+                (
+                    "integrated-display-scheduler-load->framebuffer-write",
+                    ContractObjectKind::FramebufferWrite,
+                    record.framebuffer_write,
+                    record.framebuffer_write_generation,
+                ),
+                (
+                    "integrated-display-scheduler-load->framebuffer-flush-region",
+                    ContractObjectKind::FramebufferFlushRegion,
+                    record.framebuffer_flush_region,
+                    record.framebuffer_flush_region_generation,
+                ),
+                (
+                    "integrated-display-scheduler-load->display-event-log",
+                    ContractObjectKind::DisplayEventLog,
+                    record.display_event_log,
+                    record.display_event_log_generation,
+                ),
+            ] {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    label,
+                    kind,
+                    id,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            let benchmark = snapshot.framebuffer_benchmarks.iter().find(|benchmark| {
+                benchmark.id == record.framebuffer_benchmark
+                    && benchmark.generation == record.framebuffer_benchmark_generation
+            });
+            let decision = snapshot.scheduler_decisions.iter().find(|decision| {
+                decision.id == record.scheduler_decision
+                    && decision.generation == record.scheduler_decision_generation
+            });
+            if let (Some(benchmark), Some(decision)) = (benchmark, decision) {
+                if benchmark.state != FramebufferBenchmarkState::Recorded
+                    || decision.state == SchedulerDecisionState::Dropped
+                    || benchmark.owner_store != record.owner_store
+                    || benchmark.owner_store_generation != record.owner_store_generation
+                    || decision.owner_task != record.owner_task
+                    || decision.owner_task_generation != record.owner_task_generation
+                    || decision.queue != record.queue
+                    || decision.queue_generation != record.queue_generation
+                    || decision.selected_activation != record.selected_activation
+                    || decision.selected_activation_generation
+                        != record.selected_activation_generation
+                    || benchmark.display != record.display
+                    || benchmark.display_generation != record.display_generation
+                    || benchmark.framebuffer != record.framebuffer
+                    || benchmark.framebuffer_generation != record.framebuffer_generation
+                    || benchmark.display_capability != record.display_capability
+                    || benchmark.display_capability_generation
+                        != record.display_capability_generation
+                    || benchmark.framebuffer_write != record.framebuffer_write
+                    || benchmark.framebuffer_write_generation != record.framebuffer_write_generation
+                    || benchmark.framebuffer_flush_region != record.framebuffer_flush_region
+                    || benchmark.framebuffer_flush_region_generation
+                        != record.framebuffer_flush_region_generation
+                    || benchmark.display_event_log != record.display_event_log
+                    || benchmark.display_event_log_generation != record.display_event_log_generation
+                    || benchmark.sample_frames != record.sample_frames
+                    || benchmark.sample_bytes != record.sample_bytes
+                    || benchmark.measured_nanos != record.display_measured_nanos
+                    || decision.decided_at_event != record.scheduler_decided_at_event
+                    || benchmark.recorded_at_event != record.display_recorded_at_event
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "integrated-display-scheduler-load->evidence-binding",
+                        from,
+                        Some(benchmark.object_ref()),
+                        "integrated display/scheduler load record does not match source evidence",
+                    ));
+                }
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -4843,11 +5013,25 @@ impl ContractGraphValidator {
         generation: Generation,
     ) -> Option<ContractObjectRef> {
         match kind {
+            ContractObjectKind::Task => snapshot
+                .tasks
+                .iter()
+                .find(|task| u64::from(task.id) == id && task.generation == generation)
+                .map(TaskRecord::object_ref),
             ContractObjectKind::Activation => snapshot
-                .activations
+                .runtime_activations
                 .iter()
                 .find(|activation| activation.id == id && activation.generation == generation)
-                .map(ActivationRecord::object_ref),
+                .map(RuntimeActivationRecord::object_ref)
+                .or_else(|| {
+                    snapshot
+                        .activations
+                        .iter()
+                        .find(|activation| {
+                            activation.id == id && activation.generation == generation
+                        })
+                        .map(ActivationRecord::object_ref)
+                }),
             ContractObjectKind::Store => snapshot
                 .stores
                 .iter()
@@ -4888,6 +5072,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|run| run.id == id && run.generation == generation)
                 .map(SmpStressRunRecord::object_ref),
+            ContractObjectKind::SchedulerDecision => snapshot
+                .scheduler_decisions
+                .iter()
+                .find(|decision| decision.id == id && decision.generation == generation)
+                .map(SchedulerDecisionRecord::object_ref),
             ContractObjectKind::RemotePreempt => snapshot
                 .remote_preempts
                 .iter()
@@ -5003,6 +5192,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id && record.generation == generation)
                 .map(IntegratedNetworkDiskIoRecord::object_ref),
+            ContractObjectKind::IntegratedDisplaySchedulerLoad => snapshot
+                .integrated_display_scheduler_loads
+                .iter()
+                .find(|record| record.id == id && record.generation == generation)
+                .map(IntegratedDisplaySchedulerLoadRecord::object_ref),
             ContractObjectKind::NetworkDriverCleanup => snapshot
                 .network_driver_cleanups
                 .iter()
@@ -5235,6 +5429,16 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|run| run.id == id)
                 .map(SmpStressRunRecord::object_ref),
+            ContractObjectKind::Task => snapshot
+                .tasks
+                .iter()
+                .find(|task| u64::from(task.id) == id)
+                .map(TaskRecord::object_ref),
+            ContractObjectKind::SchedulerDecision => snapshot
+                .scheduler_decisions
+                .iter()
+                .find(|decision| decision.id == id)
+                .map(SchedulerDecisionRecord::object_ref),
             ContractObjectKind::RemotePreempt => snapshot
                 .remote_preempts
                 .iter()
@@ -5350,6 +5554,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|record| record.id == id)
                 .map(IntegratedNetworkDiskIoRecord::object_ref),
+            ContractObjectKind::IntegratedDisplaySchedulerLoad => snapshot
+                .integrated_display_scheduler_loads
+                .iter()
+                .find(|record| record.id == id)
+                .map(IntegratedDisplaySchedulerLoadRecord::object_ref),
             ContractObjectKind::NetworkDriverCleanup => snapshot
                 .network_driver_cleanups
                 .iter()
@@ -5466,10 +5675,17 @@ impl ContractGraphValidator {
                 .find(|store| store.id == id)
                 .map(StoreRecord::object_ref),
             ContractObjectKind::Activation => snapshot
-                .activations
+                .runtime_activations
                 .iter()
                 .find(|activation| activation.id == id)
-                .map(ActivationRecord::object_ref),
+                .map(RuntimeActivationRecord::object_ref)
+                .or_else(|| {
+                    snapshot
+                        .activations
+                        .iter()
+                        .find(|activation| activation.id == id)
+                        .map(ActivationRecord::object_ref)
+                }),
             ContractObjectKind::Trap => snapshot
                 .traps
                 .iter()
@@ -5500,10 +5716,8 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|external| external.object.id == id)
                 .map(|external| external.object),
-            ContractObjectKind::Task
-            | ContractObjectKind::IpiEvent
+            ContractObjectKind::IpiEvent
             | ContractObjectKind::RemotePark
-            | ContractObjectKind::SchedulerDecision
             | ContractObjectKind::CrossHartSchedulerDecision
             | ContractObjectKind::SmpSafePoint
             | ContractObjectKind::StopTheWorldRendezvous
@@ -5589,6 +5803,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::DisplaySnapshotBarrier
                 | ContractObjectKind::DisplayPanicLastFrame
                 | ContractObjectKind::FramebufferBenchmark
+                | ContractObjectKind::IntegratedDisplaySchedulerLoad
                 | ContractObjectKind::IntegratedSmpPreemptionCleanup
                 | ContractObjectKind::IntegratedSmpNetworkFault
                 | ContractObjectKind::IntegratedDiskPreemptFault
@@ -5599,6 +5814,9 @@ impl ContractGraphValidator {
                 | ContractObjectKind::BlockRequestObject
                 | ContractObjectKind::BlockDeviceObject
                 | ContractObjectKind::BlockRangeObject
+                | ContractObjectKind::Task
+                | ContractObjectKind::SchedulerDecision
+                | ContractObjectKind::RunnableQueue
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -5845,6 +6063,38 @@ impl ContractGraphValidator {
                 .and_then(|record| {
                     (record.state != IntegratedNetworkDiskIoState::Recorded)
                         .then_some("live edge references unrecorded integrated network/disk IO evidence")
+                }),
+            ContractObjectKind::IntegratedDisplaySchedulerLoad => snapshot
+                .integrated_display_scheduler_loads
+                .iter()
+                .find(|record| record.id == object.id && record.generation == object.generation)
+                .and_then(|record| {
+                    (record.state != IntegratedDisplaySchedulerLoadState::Recorded).then_some(
+                        "live edge references unrecorded integrated display/scheduler load evidence",
+                    )
+                }),
+            ContractObjectKind::Task => snapshot
+                .tasks
+                .iter()
+                .find(|task| {
+                    u64::from(task.id) == object.id && task.generation == object.generation
+                })
+                .and_then(|task| {
+                    matches!(
+                        task.state,
+                        TaskState::Cancelled | TaskState::Faulted | TaskState::Exited
+                    )
+                    .then_some("live edge references inactive task")
+                }),
+            ContractObjectKind::SchedulerDecision => snapshot
+                .scheduler_decisions
+                .iter()
+                .find(|decision| {
+                    decision.id == object.id && decision.generation == object.generation
+                })
+                .and_then(|decision| {
+                    (decision.state == SchedulerDecisionState::Dropped)
+                        .then_some("live edge references dropped scheduler decision")
                 }),
             ContractObjectKind::SocketObject => snapshot
                 .socket_objects

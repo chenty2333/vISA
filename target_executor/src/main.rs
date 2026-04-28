@@ -30,20 +30,21 @@ use artifact_manifest::{
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
     HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    IntegratedDiskPreemptFaultManifest, IntegratedNetworkDiskIoManifest,
-    IntegratedSimdMigrationManifest, IntegratedSmpNetworkFaultManifest,
-    IntegratedSmpPreemptionCleanupManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    IntegratedDiskPreemptFaultManifest, IntegratedDisplaySchedulerLoadManifest,
+    IntegratedNetworkDiskIoManifest, IntegratedSimdMigrationManifest,
+    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8399,6 +8400,7 @@ fn build_target_executor_v1(
     run_integrated_disk_preempt_fault_harness(semantic)?;
     run_integrated_simd_migration_harness(semantic)?;
     run_integrated_network_disk_io_harness(semantic)?;
+    run_integrated_display_scheduler_load_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8490,6 +8492,7 @@ fn build_target_executor_v1(
         display_snapshot_barriers: semantic.display_snapshot_barriers().to_vec(),
         display_panic_last_frames: semantic.display_panic_last_frames().to_vec(),
         framebuffer_benchmarks: semantic.framebuffer_benchmarks().to_vec(),
+        integrated_display_scheduler_loads: semantic.integrated_display_scheduler_loads().to_vec(),
         integrated_smp_preemption_cleanups: semantic.integrated_smp_preemption_cleanups().to_vec(),
         integrated_smp_network_faults: semantic.integrated_smp_network_faults().to_vec(),
         integrated_disk_preempt_faults: semantic.integrated_disk_preempt_faults().to_vec(),
@@ -8512,7 +8515,10 @@ fn build_target_executor_v1(
         block_request_queues: semantic.block_request_queues().to_vec(),
         block_dma_buffers: semantic.block_dma_buffers().to_vec(),
         harts: semantic.harts().to_vec(),
+        tasks: semantic.tasks().to_vec(),
+        runtime_activations: semantic.runtime_activations().to_vec(),
         runnable_queues: semantic.runnable_queues().to_vec(),
+        scheduler_decisions: semantic.scheduler_decisions().to_vec(),
         activation_contexts: semantic.activation_contexts().to_vec(),
         activation_migrations: semantic.activation_migrations().to_vec(),
         saved_contexts: semantic.saved_contexts().to_vec(),
@@ -10916,6 +10922,36 @@ fn run_integrated_network_disk_io_harness(
     Ok(())
 }
 
+fn run_integrated_display_scheduler_load_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        100_006,
+        "integrated-runtime-x5",
+        SemanticCommand::RecordIntegratedDisplaySchedulerLoad {
+            integrated: 26_501,
+            scenario: "x5-display-update-during-scheduler-load".to_owned(),
+            framebuffer_benchmark: 25_101,
+            framebuffer_benchmark_generation: 1,
+            scheduler_decision: 9_001,
+            scheduler_decision_generation: 1,
+            invariant_checks: 6,
+            note: "x5 records display update evidence under scheduler decision load".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "integrated runtime x5 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11731,6 +11767,8 @@ fn demo_migration_package(
             integrated_disk_preempt_fault_count: semantic.integrated_disk_preempt_fault_count(),
             integrated_simd_migration_count: semantic.integrated_simd_migration_count(),
             integrated_network_disk_io_count: semantic.integrated_network_disk_io_count(),
+            integrated_display_scheduler_load_count: semantic
+                .integrated_display_scheduler_load_count(),
             device_object_count: semantic.device_object_count(),
             queue_object_count: semantic.queue_object_count(),
             descriptor_object_count: semantic.descriptor_object_count(),
@@ -11967,6 +12005,11 @@ fn demo_migration_package(
                 .integrated_network_disk_ios()
                 .iter()
                 .map(integrated_network_disk_io_manifest)
+                .collect(),
+            integrated_display_scheduler_loads: semantic
+                .integrated_display_scheduler_loads()
+                .iter()
+                .map(integrated_display_scheduler_load_manifest)
                 .collect(),
             device_objects: semantic
                 .device_objects()
@@ -12974,6 +13017,30 @@ fn semantic_roots(
                     record.block_sample_bytes,
                     record.concurrent_window_nanos,
                     record.combined_throughput_bytes_per_sec,
+                    record.generation
+                )
+            })
+            .collect(),
+        integrated_display_scheduler_load_roots: semantic
+            .integrated_display_scheduler_loads()
+            .iter()
+            .map(|record| {
+                format!(
+                    "integrated-display-scheduler-load id={} scenario={} framebuffer_benchmark={}@{} scheduler_decision={}@{} display={}@{} framebuffer={}@{} sample_frames={} sample_bytes={} scheduler_load_units={} display_measured_nanos={} generation={}",
+                    record.id,
+                    record.scenario,
+                    record.framebuffer_benchmark,
+                    record.framebuffer_benchmark_generation,
+                    record.scheduler_decision,
+                    record.scheduler_decision_generation,
+                    record.display,
+                    record.display_generation,
+                    record.framebuffer,
+                    record.framebuffer_generation,
+                    record.sample_frames,
+                    record.sample_bytes,
+                    record.scheduler_load_units,
+                    record.display_measured_nanos,
                     record.generation
                 )
             })
@@ -16279,6 +16346,50 @@ fn integrated_network_disk_io_manifest(
         concurrent_window_nanos: record.concurrent_window_nanos,
         combined_throughput_bytes_per_sec: record.combined_throughput_bytes_per_sec,
         max_p99_latency_nanos: record.max_p99_latency_nanos,
+        invariant_checks: record.invariant_checks,
+        generation: record.generation,
+        state: record.state.as_str().to_owned(),
+        recorded_at_event: record.recorded_at_event,
+        note: record.note.clone(),
+    }
+}
+
+fn integrated_display_scheduler_load_manifest(
+    record: &semantic_core::IntegratedDisplaySchedulerLoadRecord,
+) -> IntegratedDisplaySchedulerLoadManifest {
+    IntegratedDisplaySchedulerLoadManifest {
+        id: record.id,
+        scenario: record.scenario.clone(),
+        framebuffer_benchmark: record.framebuffer_benchmark,
+        framebuffer_benchmark_generation: record.framebuffer_benchmark_generation,
+        scheduler_decision: record.scheduler_decision,
+        scheduler_decision_generation: record.scheduler_decision_generation,
+        owner_store: record.owner_store,
+        owner_store_generation: record.owner_store_generation,
+        owner_task: u64::from(record.owner_task),
+        owner_task_generation: record.owner_task_generation,
+        queue: record.queue,
+        queue_generation: record.queue_generation,
+        selected_activation: record.selected_activation,
+        selected_activation_generation: record.selected_activation_generation,
+        display: record.display,
+        display_generation: record.display_generation,
+        framebuffer: record.framebuffer,
+        framebuffer_generation: record.framebuffer_generation,
+        display_capability: record.display_capability,
+        display_capability_generation: record.display_capability_generation,
+        framebuffer_write: record.framebuffer_write,
+        framebuffer_write_generation: record.framebuffer_write_generation,
+        framebuffer_flush_region: record.framebuffer_flush_region,
+        framebuffer_flush_region_generation: record.framebuffer_flush_region_generation,
+        display_event_log: record.display_event_log,
+        display_event_log_generation: record.display_event_log_generation,
+        sample_frames: record.sample_frames,
+        sample_bytes: record.sample_bytes,
+        scheduler_load_units: record.scheduler_load_units,
+        display_measured_nanos: record.display_measured_nanos,
+        scheduler_decided_at_event: record.scheduler_decided_at_event,
+        display_recorded_at_event: record.display_recorded_at_event,
         invariant_checks: record.invariant_checks,
         generation: record.generation,
         state: record.state.as_str().to_owned(),

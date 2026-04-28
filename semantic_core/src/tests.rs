@@ -26511,6 +26511,187 @@ fn integrated_runtime_x4_contract_graph_rejects_block_dma_generation_drift() {
     }));
 }
 
+fn x5_display_scheduler_load_graph() -> SemanticGraph {
+    let (mut graph, owner_store, owner_store_generation, sample_bytes, frame_area_pixels) =
+        g12_framebuffer_benchmark_graph();
+    let hart_generation = register_idle_test_hart(&mut graph);
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+    assert!(graph.enqueue_runnable_activation(1, 11, 1));
+    assert!(graph.dequeue_runnable_activation(1, 11));
+    assert!(graph.record_timer_interrupt_with_id(
+        5,
+        1,
+        1,
+        hart_generation,
+        Some(11),
+        Some(3),
+        "x5 timer tick"
+    ));
+    assert!(graph.preempt_running_activation_with_id(6, 11, 3, 5, 1, 1, "x5 timer preempt"));
+    assert!(graph.record_scheduler_decision_with_id(
+        14,
+        1,
+        1,
+        11,
+        4,
+        "display-update-load",
+        "x5 scheduler decision"
+    ));
+    assert!(graph.record_framebuffer_benchmark_with_id(
+        25_101,
+        "display-g12-single-flush",
+        owner_store,
+        owner_store_generation,
+        23_201,
+        1,
+        23_501,
+        1,
+        23_601,
+        1,
+        23_801,
+        1,
+        24_011,
+        1,
+        1,
+        sample_bytes,
+        frame_area_pixels,
+        40_000,
+        60_000,
+        100_000,
+        200_000,
+        100_000,
+        100_000,
+        "x5 framebuffer benchmark",
+    ));
+    graph
+}
+
+#[test]
+fn integrated_runtime_x5_records_display_scheduler_load() {
+    let mut graph = x5_display_scheduler_load_graph();
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "x5-test",
+        SemanticCommand::RecordIntegratedDisplaySchedulerLoad {
+            integrated: 801,
+            scenario: "x5-display-update-during-scheduler-load".to_string(),
+            framebuffer_benchmark: 25_101,
+            framebuffer_benchmark_generation: 1,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 1,
+            invariant_checks: 6,
+            note: "integrate display update and scheduler load evidence".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    assert_eq!(graph.integrated_display_scheduler_load_count(), 1);
+    let record = &graph.integrated_display_scheduler_loads()[0];
+    assert_eq!(record.id, 801);
+    assert_eq!(record.framebuffer_benchmark, 25_101);
+    assert_eq!(record.scheduler_decision, 14);
+    assert_eq!(record.owner_task, 7);
+    assert_eq!(record.queue, 1);
+    assert_eq!(record.selected_activation, 11);
+    assert_eq!(record.display, 23_101);
+    assert_eq!(record.framebuffer, 23_001);
+    assert_eq!(record.sample_frames, 1);
+    assert_eq!(record.sample_bytes, 3_200);
+    assert_eq!(record.scheduler_load_units, 1);
+    assert_eq!(record.display_measured_nanos, 100_000);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "IntegratedDisplaySchedulerLoadRecorded integrated=801 scenario=x5-display-update-during-scheduler-load framebuffer_benchmark=25101@1 scheduler_decision=14@1 owner_store=1@2 queue=1@1 activation=11@4 display=23101@1 framebuffer=23001@1 sample_frames=1 sample_bytes=3200 scheduler_load_units=1 display_measured_nanos=100000 invariant_checks=6 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn integrated_runtime_x5_rejects_missing_or_stale_evidence_refs() {
+    let missing = SemanticGraph::new().apply_envelope(CommandEnvelope::new(
+        1,
+        "x5-test",
+        SemanticCommand::RecordIntegratedDisplaySchedulerLoad {
+            integrated: 801,
+            scenario: "x5-display-update-during-scheduler-load".to_string(),
+            framebuffer_benchmark: 25_101,
+            framebuffer_benchmark_generation: 1,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 1,
+            invariant_checks: 6,
+            note: "missing evidence rejects".to_string(),
+        },
+    ));
+    assert_eq!(missing.status, CommandStatus::Rejected);
+    assert_eq!(
+        missing.violations,
+        vec![
+            "integrated display/scheduler load missing framebuffer benchmark evidence".to_string()
+        ]
+    );
+
+    let stale = x5_display_scheduler_load_graph().apply_envelope(CommandEnvelope::new(
+        2,
+        "x5-test",
+        SemanticCommand::RecordIntegratedDisplaySchedulerLoad {
+            integrated: 801,
+            scenario: "x5-display-update-during-scheduler-load".to_string(),
+            framebuffer_benchmark: 25_101,
+            framebuffer_benchmark_generation: 1,
+            scheduler_decision: 14,
+            scheduler_decision_generation: 2,
+            invariant_checks: 6,
+            note: "stale scheduler decision rejects".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale.violations,
+        vec!["integrated display/scheduler load missing scheduler decision evidence".to_string()]
+    );
+}
+
+#[test]
+fn integrated_runtime_x5_contract_graph_rejects_scheduler_generation_drift() {
+    let mut graph = x5_display_scheduler_load_graph();
+    assert!(graph.record_integrated_display_scheduler_load_with_id(
+        801,
+        "x5-display-update-during-scheduler-load",
+        25_101,
+        1,
+        14,
+        1,
+        6,
+        "integrated display scheduler load",
+    ));
+    let mut integrated = graph.integrated_display_scheduler_loads().to_vec();
+    integrated[0].scheduler_decision_generation = 99;
+    let snapshot = ContractGraphSnapshot {
+        integrated_display_scheduler_loads: integrated,
+        framebuffer_benchmarks: graph.framebuffer_benchmarks().to_vec(),
+        scheduler_decisions: graph.scheduler_decisions().to_vec(),
+        stores: graph.stores().to_vec(),
+        tasks: graph.tasks().to_vec(),
+        runtime_activations: graph.runtime_activations().to_vec(),
+        runnable_queues: graph.runnable_queues().to_vec(),
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        display_capabilities: graph.display_capabilities().to_vec(),
+        framebuffer_writes: graph.framebuffer_writes().to_vec(),
+        framebuffer_flush_regions: graph.framebuffer_flush_regions().to_vec(),
+        display_event_logs: graph.display_event_logs().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "integrated-display-scheduler-load->scheduler-decision"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
 fn test_substrate_boundary() -> SubstrateBoundarySnapshot {
     SubstrateBoundarySnapshot {
         timer_epoch: 0,

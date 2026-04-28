@@ -91,6 +91,7 @@ pub enum ObjectKind {
     IntegratedDiskPreemptFault,
     IntegratedSimdMigration,
     IntegratedNetworkDiskIo,
+    IntegratedDisplaySchedulerLoad,
     DeviceObject,
     QueueObject,
     DescriptorObject,
@@ -223,6 +224,7 @@ impl ObjectKind {
             Self::IntegratedDiskPreemptFault => "integrated-disk-preempt-fault",
             Self::IntegratedSimdMigration => "integrated-simd-migration",
             Self::IntegratedNetworkDiskIo => "integrated-network-disk-io",
+            Self::IntegratedDisplaySchedulerLoad => "integrated-display-scheduler-load",
             Self::DeviceObject => "device-object",
             Self::QueueObject => "queue-object",
             Self::DescriptorObject => "descriptor-object",
@@ -529,6 +531,10 @@ typed_ref!(
 typed_ref!(
     IntegratedNetworkDiskIoRef,
     ObjectKind::IntegratedNetworkDiskIo
+);
+typed_ref!(
+    IntegratedDisplaySchedulerLoadRef,
+    ObjectKind::IntegratedDisplaySchedulerLoad
 );
 typed_ref!(DeviceObjectRef, ObjectKind::DeviceObject);
 typed_ref!(QueueObjectRef, ObjectKind::QueueObject);
@@ -1951,6 +1957,15 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "integrated network disk io root/count mismatch",
         ));
     }
+    if roots.integrated_display_scheduler_load_roots.len()
+        != package.semantic.integrated_display_scheduler_load_count
+        || package.semantic.integrated_display_scheduler_loads.len()
+            != package.semantic.integrated_display_scheduler_load_count
+    {
+        return Err(ContractError::new(
+            "integrated display scheduler load root/count mismatch",
+        ));
+    }
     if roots.device_object_roots.len() != package.semantic.device_object_count
         || package.semantic.device_objects.len() != package.semantic.device_object_count
     {
@@ -3000,6 +3015,7 @@ mod tests {
                 integrated_disk_preempt_fault_count: 0,
                 integrated_simd_migration_count: 0,
                 integrated_network_disk_io_count: 0,
+                integrated_display_scheduler_load_count: 0,
                 device_object_count: 0,
                 queue_object_count: 0,
                 descriptor_object_count: 0,
@@ -3141,6 +3157,7 @@ mod tests {
                 integrated_disk_preempt_faults: Vec::new(),
                 integrated_simd_migrations: Vec::new(),
                 integrated_network_disk_ios: Vec::new(),
+                integrated_display_scheduler_loads: Vec::new(),
                 device_objects: Vec::new(),
                 queue_objects: Vec::new(),
                 descriptor_objects: Vec::new(),
@@ -4183,6 +4200,59 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "integrated network disk io root/count mismatch"
+        );
+    }
+
+    #[test]
+    fn semantic_roots_reject_integrated_display_scheduler_load_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.integrated_display_scheduler_load_count = 1;
+        package.semantic.integrated_display_scheduler_loads.push(
+            artifact_manifest::IntegratedDisplaySchedulerLoadManifest {
+                id: 26_501,
+                scenario: "x5-display-update-during-scheduler-load".to_owned(),
+                framebuffer_benchmark: 25_101,
+                framebuffer_benchmark_generation: 1,
+                scheduler_decision: 9_001,
+                scheduler_decision_generation: 1,
+                owner_store: 1,
+                owner_store_generation: 2,
+                owner_task: 7,
+                owner_task_generation: 1,
+                queue: 9_002,
+                queue_generation: 2,
+                selected_activation: 9_002,
+                selected_activation_generation: 4,
+                display: 23_101,
+                display_generation: 1,
+                framebuffer: 23_001,
+                framebuffer_generation: 1,
+                display_capability: 23_201,
+                display_capability_generation: 1,
+                framebuffer_write: 23_501,
+                framebuffer_write_generation: 1,
+                framebuffer_flush_region: 23_601,
+                framebuffer_flush_region_generation: 1,
+                display_event_log: 23_801,
+                display_event_log_generation: 1,
+                sample_frames: 1,
+                sample_bytes: 3_200,
+                scheduler_load_units: 1,
+                display_measured_nanos: 100_000,
+                scheduler_decided_at_event: 50,
+                display_recorded_at_event: 571,
+                invariant_checks: 6,
+                generation: 1,
+                state: "recorded".to_owned(),
+                recorded_at_event: 575,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "integrated display scheduler load root/count mismatch"
         );
     }
 
@@ -7422,6 +7492,12 @@ mod tests {
         let integrated_network_disk_io =
             ObjectRef::new(ObjectKind::IntegratedNetworkDiskIo, 21, 1).unwrap();
         assert!(IntegratedNetworkDiskIoRef::try_from_ref(integrated_network_disk_io).is_ok());
+        let integrated_display_scheduler_load =
+            ObjectRef::new(ObjectKind::IntegratedDisplaySchedulerLoad, 22, 1).unwrap();
+        assert!(
+            IntegratedDisplaySchedulerLoadRef::try_from_ref(integrated_display_scheduler_load)
+                .is_ok()
+        );
         let device_object = ObjectRef::new(ObjectKind::DeviceObject, 17, 1).unwrap();
         assert!(DeviceObjectRef::try_from_ref(device_object).is_ok());
         let packet_device_object = ObjectRef::new(ObjectKind::PacketDeviceObject, 30, 1).unwrap();
