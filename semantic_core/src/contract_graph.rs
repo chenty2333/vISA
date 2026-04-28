@@ -91,6 +91,7 @@ pub struct ContractGraphSnapshot {
     pub framebuffer_mappings: Vec<FramebufferMappingRecord>,
     pub framebuffer_writes: Vec<FramebufferWriteRecord>,
     pub framebuffer_flush_regions: Vec<FramebufferFlushRegionRecord>,
+    pub framebuffer_dirty_regions: Vec<FramebufferDirtyRegionRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -201,6 +202,7 @@ impl ContractGraphValidator {
         Self::validate_framebuffer_mappings(snapshot, &mut violations);
         Self::validate_framebuffer_writes(snapshot, &mut violations);
         Self::validate_framebuffer_flush_regions(snapshot, &mut violations);
+        Self::validate_framebuffer_dirty_regions(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -1559,6 +1561,183 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_framebuffer_dirty_regions(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for dirty in &snapshot.framebuffer_dirty_regions {
+            let from = dirty.object_ref();
+            let state_valid = matches!(
+                dirty.state,
+                FramebufferDirtyRegionState::Dirty | FramebufferDirtyRegionState::Clean
+            );
+            let clean_has_flush = dirty.framebuffer_flush_region.is_some()
+                && dirty.framebuffer_flush_region_generation.unwrap_or(0) != 0
+                && dirty.cleaned_at_event.unwrap_or(0) != 0;
+            let dirty_has_no_flush = dirty.framebuffer_flush_region.is_none()
+                && dirty.framebuffer_flush_region_generation.is_none()
+                && dirty.cleaned_at_event.is_none();
+            if dirty.id == 0
+                || dirty.generation == 0
+                || dirty.owner_store_generation == 0
+                || dirty.framebuffer_write_generation == 0
+                || dirty.width == 0
+                || dirty.height == 0
+                || dirty.byte_len == 0
+                || dirty.pixel_format.is_empty()
+                || dirty.payload_digest == 0
+                || !state_valid
+                || (dirty.state == FramebufferDirtyRegionState::Clean && !clean_has_flush)
+                || (dirty.state == FramebufferDirtyRegionState::Dirty && !dirty_has_no_flush)
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "framebuffer-dirty-region->contract",
+                    from,
+                    None,
+                    "framebuffer dirty region requires exact refs, state-consistent flush refs, payload digest, and byte window",
+                ));
+                continue;
+            }
+            let owner_edge_mode = if dirty.state == FramebufferDirtyRegionState::Dirty {
+                ContractEdgeMode::Live
+            } else {
+                ContractEdgeMode::Historical
+            };
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-dirty-region->owner-store",
+                ContractObjectKind::Store,
+                dirty.owner_store,
+                dirty.owner_store_generation,
+                owner_edge_mode,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-dirty-region->framebuffer-write",
+                ContractObjectKind::FramebufferWrite,
+                dirty.framebuffer_write,
+                dirty.framebuffer_write_generation,
+                ContractEdgeMode::Historical,
+            );
+            if let (Some(flush), Some(generation)) = (
+                dirty.framebuffer_flush_region,
+                dirty.framebuffer_flush_region_generation,
+            ) {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "framebuffer-dirty-region->framebuffer-flush-region",
+                    ContractObjectKind::FramebufferFlushRegion,
+                    flush,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+            }
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-dirty-region->display-capability",
+                ContractObjectKind::DisplayCapability,
+                dirty.display_capability,
+                dirty.display_capability_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-dirty-region->display-object",
+                ContractObjectKind::DisplayObject,
+                dirty.display,
+                dirty.display_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-dirty-region->framebuffer-object",
+                ContractObjectKind::FramebufferObject,
+                dirty.framebuffer,
+                dirty.framebuffer_generation,
+                ContractEdgeMode::Historical,
+            );
+            if let Some(write) = snapshot.framebuffer_writes.iter().find(|write| {
+                write.id == dirty.framebuffer_write
+                    && write.generation == dirty.framebuffer_write_generation
+            }) {
+                if write.owner_store != dirty.owner_store
+                    || write.owner_store_generation != dirty.owner_store_generation
+                    || write.display_capability != dirty.display_capability
+                    || write.display_capability_generation != dirty.display_capability_generation
+                    || write.display != dirty.display
+                    || write.display_generation != dirty.display_generation
+                    || write.framebuffer != dirty.framebuffer
+                    || write.framebuffer_generation != dirty.framebuffer_generation
+                    || write.x != dirty.x
+                    || write.y != dirty.y
+                    || write.width != dirty.width
+                    || write.height != dirty.height
+                    || write.byte_offset != dirty.byte_offset
+                    || write.byte_len != dirty.byte_len
+                    || write.pixel_format != dirty.pixel_format
+                    || write.payload_digest != dirty.payload_digest
+                    || write.recorded_at_event != dirty.dirty_at_event
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "framebuffer-dirty-region->write-binding",
+                        from,
+                        Some(write.object_ref()),
+                        "framebuffer dirty region does not match the written framebuffer region",
+                    ));
+                }
+            }
+            if let (Some(flush_id), Some(flush_generation)) = (
+                dirty.framebuffer_flush_region,
+                dirty.framebuffer_flush_region_generation,
+            ) && let Some(flush) = snapshot
+                .framebuffer_flush_regions
+                .iter()
+                .find(|flush| flush.id == flush_id && flush.generation == flush_generation)
+                && (flush.owner_store != dirty.owner_store
+                    || flush.owner_store_generation != dirty.owner_store_generation
+                    || flush.framebuffer_write != dirty.framebuffer_write
+                    || flush.framebuffer_write_generation != dirty.framebuffer_write_generation
+                    || flush.display_capability != dirty.display_capability
+                    || flush.display_capability_generation != dirty.display_capability_generation
+                    || flush.display != dirty.display
+                    || flush.display_generation != dirty.display_generation
+                    || flush.framebuffer != dirty.framebuffer
+                    || flush.framebuffer_generation != dirty.framebuffer_generation
+                    || flush.x != dirty.x
+                    || flush.y != dirty.y
+                    || flush.width != dirty.width
+                    || flush.height != dirty.height
+                    || flush.byte_offset != dirty.byte_offset
+                    || flush.byte_len != dirty.byte_len
+                    || flush.pixel_format != dirty.pixel_format
+                    || flush.payload_digest != dirty.payload_digest
+                    || Some(flush.recorded_at_event) != dirty.cleaned_at_event)
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::GenerationMismatch,
+                    "framebuffer-dirty-region->flush-binding",
+                    from,
+                    Some(flush.object_ref()),
+                    "clean framebuffer dirty region does not match the clearing flush region",
+                ));
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -2757,6 +2936,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|flush| flush.id == id && flush.generation == generation)
                 .map(FramebufferFlushRegionRecord::object_ref),
+            ContractObjectKind::FramebufferDirtyRegion => snapshot
+                .framebuffer_dirty_regions
+                .iter()
+                .find(|dirty| dirty.id == id && dirty.generation == generation)
+                .map(FramebufferDirtyRegionRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2917,6 +3101,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|flush| flush.id == id)
                 .map(FramebufferFlushRegionRecord::object_ref),
+            ContractObjectKind::FramebufferDirtyRegion => snapshot
+                .framebuffer_dirty_regions
+                .iter()
+                .find(|dirty| dirty.id == id)
+                .map(FramebufferDirtyRegionRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -3076,6 +3265,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::FramebufferMapping
                 | ContractObjectKind::FramebufferWrite
                 | ContractObjectKind::FramebufferFlushRegion
+                | ContractObjectKind::FramebufferDirtyRegion
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -3229,6 +3419,14 @@ impl ContractGraphValidator {
                 .and_then(|flush| {
                     (flush.state != FramebufferFlushRegionState::Applied)
                         .then_some("live edge references unapplied framebuffer flush region")
+                }),
+            ContractObjectKind::FramebufferDirtyRegion => snapshot
+                .framebuffer_dirty_regions
+                .iter()
+                .find(|dirty| dirty.id == object.id && dirty.generation == object.generation)
+                .and_then(|dirty| {
+                    (dirty.state != FramebufferDirtyRegionState::Dirty)
+                        .then_some("live edge references clean framebuffer dirty region")
                 }),
             _ => None,
         }

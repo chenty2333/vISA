@@ -858,6 +858,31 @@ pub enum EventKind {
         state: FramebufferFlushRegionState,
         generation: Generation,
     },
+    FramebufferDirtyRegionTracked {
+        framebuffer_dirty_region: FramebufferDirtyRegionId,
+        owner_store: StoreId,
+        owner_store_generation: Generation,
+        framebuffer_write: FramebufferWriteId,
+        framebuffer_write_generation: Generation,
+        framebuffer_flush_region: Option<FramebufferFlushRegionId>,
+        framebuffer_flush_region_generation: Option<Generation>,
+        display_capability: DisplayCapabilityId,
+        display_capability_generation: Generation,
+        display: DisplayObjectId,
+        display_generation: Generation,
+        framebuffer: FramebufferObjectId,
+        framebuffer_generation: Generation,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        byte_offset: u64,
+        byte_len: u64,
+        pixel_format: String,
+        payload_digest: u64,
+        state: FramebufferDirtyRegionState,
+        generation: Generation,
+    },
     FakeBlockBackendObjectBound {
         fake_block_backend: FakeBlockBackendObjectId,
         block_device: BlockDeviceObjectId,
@@ -3002,6 +3027,40 @@ impl EventKind {
                 generation,
             } => format!(
                 "FramebufferFlushRegionRecorded framebuffer_flush_region={framebuffer_flush_region} owner_store={owner_store}@{owner_store_generation} framebuffer_write={framebuffer_write}@{framebuffer_write_generation} display_capability={display_capability}@{display_capability_generation} display={display}@{display_generation} framebuffer={framebuffer}@{framebuffer_generation} region={x},{y} {width}x{height} byte_range={byte_offset}+{byte_len} pixel_format={pixel_format} payload_digest={payload_digest} state={} generation={generation}",
+                state.as_str()
+            ),
+            Self::FramebufferDirtyRegionTracked {
+                framebuffer_dirty_region,
+                owner_store,
+                owner_store_generation,
+                framebuffer_write,
+                framebuffer_write_generation,
+                framebuffer_flush_region,
+                framebuffer_flush_region_generation,
+                display_capability,
+                display_capability_generation,
+                display,
+                display_generation,
+                framebuffer,
+                framebuffer_generation,
+                x,
+                y,
+                width,
+                height,
+                byte_offset,
+                byte_len,
+                pixel_format,
+                payload_digest,
+                state,
+                generation,
+            } => format!(
+                "FramebufferDirtyRegionTracked framebuffer_dirty_region={framebuffer_dirty_region} owner_store={owner_store}@{owner_store_generation} framebuffer_write={framebuffer_write}@{framebuffer_write_generation} framebuffer_flush_region={}:{} display_capability={display_capability}@{display_capability_generation} display={display}@{display_generation} framebuffer={framebuffer}@{framebuffer_generation} region={x},{y} {width}x{height} byte_range={byte_offset}+{byte_len} pixel_format={pixel_format} payload_digest={payload_digest} state={} generation={generation}",
+                framebuffer_flush_region
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                framebuffer_flush_region_generation
+                    .map(|generation| generation.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
                 state.as_str()
             ),
             Self::FakeBlockBackendObjectBound {

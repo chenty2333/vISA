@@ -1926,6 +1926,21 @@ impl FramebufferFlushRegionState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FramebufferDirtyRegionState {
+    Dirty,
+    Clean,
+}
+
+impl FramebufferDirtyRegionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dirty => "dirty",
+            Self::Clean => "clean",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

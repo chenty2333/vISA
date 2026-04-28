@@ -1,0 +1,126 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "G7-dirty-region-tracking",
+  "phase": "Phase 7 Display / Graphics Minimal Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add FramebufferDirtyRegionRecord as first-class semantic dirty-region evidence",
+    "Add RecordFramebufferDirtyRegion command and FramebufferDirtyRegionTracked event",
+    "Validate dirty owner Store, applied FramebufferWrite generation, and clean-state FramebufferFlushRegion generation",
+    "Reject stale flush references, missing clean-state flush refs, and payload digest mismatch",
+    "Record deterministic host-validation dirty-region tracking in target_executor",
+    "Expose framebuffer-dirty-region stable ViewV1 and graph edges through osctl"
+  ],
+  "no_goals": [
+    "real framebuffer present or scanout flush",
+    "raw framebuffer pointer exposure",
+    "DMW pointer-mode framebuffer mapping",
+    "GPU or desktop graphics stack"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/framebuffer_dirty_region.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/display/golden_g7_framebuffer_dirty_region.trace.json",
+    "tests/reports/checkpoints/g7_framebuffer_dirty_region.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/display/golden_g7_framebuffer_dirty_region.trace.json",
+    "tests/reports/checkpoints/g7_framebuffer_dirty_region.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "FramebufferDirtyRegion validates exact FramebufferWrite generation instead of tracking by framebuffer id",
+      "Clean FramebufferDirtyRegion state requires exact FramebufferFlushRegion generation",
+      "FramebufferDirtyRegion rejects stale flush generations and mismatched payload digests",
+      "ContractGraph models clean dirty-region references as historical edges to avoid false live ownership",
+      "osctl ViewV1 exposes dirty tracking without leaking raw mappings or claiming real present"
+    ],
+    "bad_smells_checked": [
+      "No real framebuffer present path was added",
+      "No raw framebuffer pointer or DMW pointer-mode mapping was added",
+      "No third-party graphics crate was added",
+      "No adapter-internal state became semantic truth",
+      "Dirty region tracking is event-visible and generation-attributed"
+    ],
+    "residual_notes": [
+      "G8 owns broader display event-log surface",
+      "G9 owns display cleanup",
+      "G10 owns snapshot barrier enforcement for active framebuffer leases, mappings, and dirty regions"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core display_runtime_g7 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core semantic_roots_reject_framebuffer_dirty_region_root_mismatch -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl framebuffer_dirty_region_view_v1_exposes_dirty_tracking_refs -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl framebuffer-dirty-region list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect framebuffer-dirty-region --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "framebuffer_dirty_region": "framebuffer-dirty-region:23701@1",
+    "owner_store": "store:14@3",
+    "framebuffer_write": "framebuffer-write:23501@1",
+    "framebuffer_flush_region": "framebuffer-flush-region:23601@1",
+    "display_capability": "display-capability:23201@1",
+    "display_object": "display-object:23101@1",
+    "framebuffer_object": "framebuffer-object:23001@1",
+    "dirty_at_event": 560,
+    "cleaned_at_event": 561,
+    "recorded_at_event": 562,
+    "payload_digest": 9562158844241690816,
+    "contract_validation": "ok"
+  },
+  "residual_gaps": [
+    "G8 owns broader display event-log surface",
+    "G9 owns display cleanup",
+    "G10 owns snapshot barrier enforcement for active framebuffer leases, mappings, and dirty regions"
+  ],
+  "next_checkpoint": "G8-display-event-log"
+}

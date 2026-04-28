@@ -102,6 +102,7 @@ pub enum ContractObjectKind {
     FramebufferMapping,
     FramebufferWrite,
     FramebufferFlushRegion,
+    FramebufferDirtyRegion,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -220,6 +221,7 @@ impl ContractObjectKind {
             Self::FramebufferMapping => "framebuffer-mapping",
             Self::FramebufferWrite => "framebuffer-write",
             Self::FramebufferFlushRegion => "framebuffer-flush-region",
+            Self::FramebufferDirtyRegion => "framebuffer-dirty-region",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -5720,6 +5722,7 @@ mod tests {
             framebuffer_mappings: Vec::new(),
             framebuffer_writes: Vec::new(),
             framebuffer_flush_regions: Vec::new(),
+            framebuffer_dirty_regions: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -5827,6 +5830,7 @@ mod tests {
             framebuffer_mappings: Vec::new(),
             framebuffer_writes: Vec::new(),
             framebuffer_flush_regions: Vec::new(),
+            framebuffer_dirty_regions: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6068,6 +6072,7 @@ mod tests {
             framebuffer_mappings: Vec::new(),
             framebuffer_writes: Vec::new(),
             framebuffer_flush_regions: Vec::new(),
+            framebuffer_dirty_regions: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6179,6 +6184,7 @@ mod tests {
             framebuffer_mappings: Vec::new(),
             framebuffer_writes: Vec::new(),
             framebuffer_flush_regions: Vec::new(),
+            framebuffer_dirty_regions: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6377,6 +6383,7 @@ mod tests {
             framebuffer_mappings: Vec::new(),
             framebuffer_writes: Vec::new(),
             framebuffer_flush_regions: Vec::new(),
+            framebuffer_dirty_regions: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {

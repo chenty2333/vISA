@@ -97,6 +97,7 @@ pub struct SemanticGraph {
     framebuffer_mappings: Vec<FramebufferMappingRecord>,
     framebuffer_writes: Vec<FramebufferWriteRecord>,
     framebuffer_flush_regions: Vec<FramebufferFlushRegionRecord>,
+    framebuffer_dirty_regions: Vec<FramebufferDirtyRegionRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -205,6 +206,7 @@ pub struct SemanticGraph {
     next_framebuffer_mapping_id: FramebufferMappingId,
     next_framebuffer_write_id: FramebufferWriteId,
     next_framebuffer_flush_region_id: FramebufferFlushRegionId,
+    next_framebuffer_dirty_region_id: FramebufferDirtyRegionId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -259,6 +261,7 @@ mod fake_net_backend_object;
 mod fat_adapter_object;
 mod file_handle_capability;
 mod file_object;
+mod framebuffer_dirty_region;
 mod framebuffer_flush_region;
 mod framebuffer_mapping;
 mod framebuffer_object;
@@ -423,6 +426,7 @@ impl SemanticGraph {
             framebuffer_mappings: Vec::new(),
             framebuffer_writes: Vec::new(),
             framebuffer_flush_regions: Vec::new(),
+            framebuffer_dirty_regions: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -531,6 +535,7 @@ impl SemanticGraph {
             next_framebuffer_mapping_id: 1,
             next_framebuffer_write_id: 1,
             next_framebuffer_flush_region_id: 1,
+            next_framebuffer_dirty_region_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

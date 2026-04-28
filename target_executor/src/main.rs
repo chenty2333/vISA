@@ -24,21 +24,22 @@ use artifact_manifest::{
     DisplayCapabilityManifest, DisplayObjectManifest, DmaBufferObjectManifest,
     DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
     FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
-    FileHandleCapabilityManifest, FileObjectManifest, FramebufferFlushRegionManifest,
-    FramebufferMappingManifest, FramebufferObjectManifest, FramebufferWindowLeaseManifest,
-    FramebufferWriteManifest, FsWaitManifest, GuestStateManifest, HartEventAttributionManifest,
-    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
-    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
-    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
-    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
-    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
-    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
-    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
-    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
-    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
-    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
-    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    FileHandleCapabilityManifest, FileObjectManifest, FramebufferDirtyRegionManifest,
+    FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
+    FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
+    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
+    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
+    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
+    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
+    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
+    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
+    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
+    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
+    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
+    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
+    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8383,6 +8384,7 @@ fn build_target_executor_v1(
     run_framebuffer_mapping_harness(semantic)?;
     run_framebuffer_write_harness(semantic)?;
     run_framebuffer_flush_region_harness(semantic)?;
+    run_framebuffer_dirty_region_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8466,6 +8468,7 @@ fn build_target_executor_v1(
         framebuffer_mappings: semantic.framebuffer_mappings().to_vec(),
         framebuffer_writes: semantic.framebuffer_writes().to_vec(),
         framebuffer_flush_regions: semantic.framebuffer_flush_regions().to_vec(),
+        framebuffer_dirty_regions: semantic.framebuffer_dirty_regions().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: contract_stores,
@@ -10333,6 +10336,51 @@ fn run_framebuffer_flush_region_harness(
     Ok(())
 }
 
+fn run_framebuffer_dirty_region_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let flush = semantic
+        .framebuffer_flush_regions()
+        .iter()
+        .find(|record| record.id == 23_601)
+        .cloned()
+        .ok_or("display runtime g7 requires g6 framebuffer flush region evidence")?;
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_027,
+        "display-runtime-g7",
+        SemanticCommand::RecordFramebufferDirtyRegion {
+            framebuffer_dirty_region: 23_701,
+            owner_store: flush.owner_store,
+            owner_store_generation: flush.owner_store_generation,
+            framebuffer_write: flush.framebuffer_write,
+            framebuffer_write_generation: flush.framebuffer_write_generation,
+            framebuffer_flush_region: Some(flush.id),
+            framebuffer_flush_region_generation: Some(flush.generation),
+            state: semantic_core::FramebufferDirtyRegionState::Clean,
+            x: flush.x,
+            y: flush.y,
+            width: flush.width,
+            height: flush.height,
+            byte_offset: flush.byte_offset,
+            byte_len: flush.byte_len,
+            payload_digest: flush.payload_digest,
+            note: "g7 records dirty region tracking and clean state after semantic flush"
+                .to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g7 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11174,6 +11222,7 @@ fn demo_migration_package(
             framebuffer_mapping_count: semantic.framebuffer_mapping_count(),
             framebuffer_write_count: semantic.framebuffer_write_count(),
             framebuffer_flush_region_count: semantic.framebuffer_flush_region_count(),
+            framebuffer_dirty_region_count: semantic.framebuffer_dirty_region_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11651,6 +11700,11 @@ fn demo_migration_package(
                 .framebuffer_flush_regions()
                 .iter()
                 .map(framebuffer_flush_region_manifest)
+                .collect(),
+            framebuffer_dirty_regions: semantic
+                .framebuffer_dirty_regions()
+                .iter()
+                .map(framebuffer_dirty_region_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -13924,6 +13978,49 @@ fn semantic_roots(
                     flush.payload_digest,
                     flush.state.as_str(),
                     flush.generation
+                )
+            })
+            .collect(),
+        framebuffer_dirty_region_roots: semantic
+            .framebuffer_dirty_regions()
+            .iter()
+            .map(|dirty| {
+                format!(
+                    "framebuffer-dirty-region id={} owner_store={}@{} framebuffer_write={}@{} framebuffer_flush_region={}:{} display_capability={}@{} display={}@{} framebuffer={}@{} region={},{} {}x{} byte_range={}+{} pixel_format={} payload_digest={} dirty_at_event={} cleaned_at_event={} state={} generation={}",
+                    dirty.id,
+                    dirty.owner_store,
+                    dirty.owner_store_generation,
+                    dirty.framebuffer_write,
+                    dirty.framebuffer_write_generation,
+                    dirty
+                        .framebuffer_flush_region
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    dirty
+                        .framebuffer_flush_region_generation
+                        .map(|generation| generation.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    dirty.display_capability,
+                    dirty.display_capability_generation,
+                    dirty.display,
+                    dirty.display_generation,
+                    dirty.framebuffer,
+                    dirty.framebuffer_generation,
+                    dirty.x,
+                    dirty.y,
+                    dirty.width,
+                    dirty.height,
+                    dirty.byte_offset,
+                    dirty.byte_len,
+                    dirty.pixel_format,
+                    dirty.payload_digest,
+                    dirty.dirty_at_event,
+                    dirty
+                        .cleaned_at_event
+                        .map(|event| event.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    dirty.state.as_str(),
+                    dirty.generation
                 )
             })
             .collect(),
@@ -16965,6 +17062,40 @@ fn framebuffer_flush_region_manifest(
         state: flush.state.as_str().to_owned(),
         recorded_at_event: flush.recorded_at_event,
         note: flush.note.clone(),
+    }
+}
+
+fn framebuffer_dirty_region_manifest(
+    dirty: &semantic_core::FramebufferDirtyRegionRecord,
+) -> FramebufferDirtyRegionManifest {
+    FramebufferDirtyRegionManifest {
+        id: dirty.id,
+        owner_store: dirty.owner_store,
+        owner_store_generation: dirty.owner_store_generation,
+        framebuffer_write: dirty.framebuffer_write,
+        framebuffer_write_generation: dirty.framebuffer_write_generation,
+        framebuffer_flush_region: dirty.framebuffer_flush_region,
+        framebuffer_flush_region_generation: dirty.framebuffer_flush_region_generation,
+        display_capability: dirty.display_capability,
+        display_capability_generation: dirty.display_capability_generation,
+        display: dirty.display,
+        display_generation: dirty.display_generation,
+        framebuffer: dirty.framebuffer,
+        framebuffer_generation: dirty.framebuffer_generation,
+        x: dirty.x,
+        y: dirty.y,
+        width: dirty.width,
+        height: dirty.height,
+        byte_offset: dirty.byte_offset,
+        byte_len: dirty.byte_len,
+        pixel_format: dirty.pixel_format.clone(),
+        payload_digest: dirty.payload_digest,
+        generation: dirty.generation,
+        state: dirty.state.as_str().to_owned(),
+        dirty_at_event: dirty.dirty_at_event,
+        cleaned_at_event: dirty.cleaned_at_event,
+        recorded_at_event: dirty.recorded_at_event,
+        note: dirty.note.clone(),
     }
 }
 

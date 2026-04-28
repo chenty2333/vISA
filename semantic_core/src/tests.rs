@@ -22230,6 +22230,340 @@ fn display_runtime_g6_contract_graph_rejects_flush_write_binding_drift() {
     }));
 }
 
+fn g7_framebuffer_dirty_region_graph() -> (
+    SemanticGraph,
+    StoreId,
+    Generation,
+    FramebufferWriteId,
+    Generation,
+    FramebufferFlushRegionId,
+    Generation,
+    u64,
+) {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        payload_digest,
+    ) = g6_framebuffer_flush_region_graph();
+    assert!(graph.record_framebuffer_flush_region_with_id(
+        23_601,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+        payload_digest,
+        "g6 framebuffer flush for g7",
+    ));
+    (
+        graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        23_601,
+        1,
+        payload_digest,
+    )
+}
+
+#[test]
+fn display_runtime_g7_dirty_region_tracks_clean_state_after_flush() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        framebuffer_flush_region,
+        framebuffer_flush_region_generation,
+        payload_digest,
+    ) = g7_framebuffer_dirty_region_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        8,
+        "display-runtime-g7",
+        SemanticCommand::RecordFramebufferDirtyRegion {
+            framebuffer_dirty_region: 23_701,
+            owner_store,
+            owner_store_generation,
+            framebuffer_write,
+            framebuffer_write_generation,
+            framebuffer_flush_region: Some(framebuffer_flush_region),
+            framebuffer_flush_region_generation: Some(framebuffer_flush_region_generation),
+            state: FramebufferDirtyRegionState::Clean,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3_200,
+            payload_digest,
+            note: "g7 framebuffer dirty region clean".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.framebuffer_dirty_region_count(), 1);
+    let dirty = &graph.framebuffer_dirty_regions()[0];
+    assert_eq!(
+        dirty.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::FramebufferDirtyRegion, 23_701, 1)
+    );
+    assert_eq!(dirty.state, FramebufferDirtyRegionState::Clean);
+    assert_eq!(dirty.framebuffer_write, framebuffer_write);
+    assert_eq!(
+        dirty.framebuffer_flush_region,
+        Some(framebuffer_flush_region)
+    );
+    assert_eq!(dirty.payload_digest, payload_digest);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "FramebufferDirtyRegionTracked framebuffer_dirty_region=23701 owner_store={owner_store}@{owner_store_generation} framebuffer_write={framebuffer_write}@{framebuffer_write_generation} framebuffer_flush_region={framebuffer_flush_region}:{framebuffer_flush_region_generation} display_capability=23201@1 display=23101@1 framebuffer=23001@1 region=0,0 800x1 byte_range=0+3200 pixel_format=xrgb8888 payload_digest={payload_digest} state=clean generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g7_rejects_clean_region_without_exact_flush_or_with_bad_digest() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        framebuffer_flush_region,
+        framebuffer_flush_region_generation,
+        payload_digest,
+    ) = g7_framebuffer_dirty_region_graph();
+
+    let missing_flush = graph.apply_envelope(CommandEnvelope::new(
+        8,
+        "display-runtime-g7",
+        SemanticCommand::RecordFramebufferDirtyRegion {
+            framebuffer_dirty_region: 23_702,
+            owner_store,
+            owner_store_generation,
+            framebuffer_write,
+            framebuffer_write_generation,
+            framebuffer_flush_region: None,
+            framebuffer_flush_region_generation: None,
+            state: FramebufferDirtyRegionState::Clean,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3_200,
+            payload_digest,
+            note: "g7 missing flush".to_string(),
+        },
+    ));
+    assert_eq!(missing_flush.status, CommandStatus::Rejected);
+
+    let stale_flush = graph.apply_envelope(CommandEnvelope::new(
+        9,
+        "display-runtime-g7",
+        SemanticCommand::RecordFramebufferDirtyRegion {
+            framebuffer_dirty_region: 23_703,
+            owner_store,
+            owner_store_generation,
+            framebuffer_write,
+            framebuffer_write_generation,
+            framebuffer_flush_region: Some(framebuffer_flush_region),
+            framebuffer_flush_region_generation: Some(framebuffer_flush_region_generation + 1),
+            state: FramebufferDirtyRegionState::Clean,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3_200,
+            payload_digest,
+            note: "g7 stale flush".to_string(),
+        },
+    ));
+    assert_eq!(stale_flush.status, CommandStatus::Rejected);
+
+    let bad_digest = graph.apply_envelope(CommandEnvelope::new(
+        10,
+        "display-runtime-g7",
+        SemanticCommand::RecordFramebufferDirtyRegion {
+            framebuffer_dirty_region: 23_704,
+            owner_store,
+            owner_store_generation,
+            framebuffer_write,
+            framebuffer_write_generation,
+            framebuffer_flush_region: Some(framebuffer_flush_region),
+            framebuffer_flush_region_generation: Some(framebuffer_flush_region_generation),
+            state: FramebufferDirtyRegionState::Clean,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3_200,
+            payload_digest: payload_digest + 1,
+            note: "g7 bad digest".to_string(),
+        },
+    ));
+    assert_eq!(bad_digest.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn display_runtime_g7_invariants_reject_flush_generation_leak() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        framebuffer_flush_region,
+        framebuffer_flush_region_generation,
+        payload_digest,
+    ) = g7_framebuffer_dirty_region_graph();
+    assert!(graph.record_framebuffer_dirty_region_with_id(
+        23_705,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        Some(framebuffer_flush_region),
+        Some(framebuffer_flush_region_generation),
+        FramebufferDirtyRegionState::Clean,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+        payload_digest,
+        "g7 invariant dirty region",
+    ));
+    graph.corrupt_framebuffer_dirty_region_flush_generation_for_test(
+        23_705,
+        Some(framebuffer_flush_region_generation + 1),
+    );
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::FramebufferDirtyRegionMissingFlush {
+            framebuffer_dirty_region: 23_705,
+            framebuffer_flush_region,
+        })
+    );
+}
+
+#[test]
+fn display_runtime_g7_contract_graph_rejects_missing_flush_edge_for_clean_region() {
+    let dirty = FramebufferDirtyRegionRecord {
+        id: 23_706,
+        owner_store: 1,
+        owner_store_generation: 1,
+        framebuffer_write: 23_501,
+        framebuffer_write_generation: 1,
+        framebuffer_flush_region: Some(23_601),
+        framebuffer_flush_region_generation: Some(9),
+        display_capability: 23_201,
+        display_capability_generation: 1,
+        display: 23_101,
+        display_generation: 1,
+        framebuffer: 23_001,
+        framebuffer_generation: 1,
+        x: 0,
+        y: 0,
+        width: 16,
+        height: 1,
+        byte_offset: 0,
+        byte_len: 64,
+        pixel_format: "xrgb8888".to_string(),
+        payload_digest: 1,
+        generation: 1,
+        state: FramebufferDirtyRegionState::Clean,
+        dirty_at_event: 1,
+        cleaned_at_event: Some(2),
+        recorded_at_event: 3,
+        note: "g7 missing flush".to_string(),
+    };
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_dirty_regions: Vec::from([dirty]),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-dirty-region->framebuffer-flush-region"
+            && violation.kind == ContractViolationKind::DanglingEdge
+    }));
+}
+
+#[test]
+fn display_runtime_g7_contract_graph_rejects_dirty_region_flush_binding_drift() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        framebuffer_flush_region,
+        framebuffer_flush_region_generation,
+        payload_digest,
+    ) = g7_framebuffer_dirty_region_graph();
+    assert!(graph.record_framebuffer_dirty_region_with_id(
+        23_707,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        Some(framebuffer_flush_region),
+        Some(framebuffer_flush_region_generation),
+        FramebufferDirtyRegionState::Clean,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+        payload_digest,
+        "g7 contract graph dirty region",
+    ));
+    let mut framebuffer_dirty_regions = graph.framebuffer_dirty_regions().to_vec();
+    framebuffer_dirty_regions[0].byte_len = 3_196;
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        display_capabilities: graph.display_capabilities().to_vec(),
+        framebuffer_window_leases: graph.framebuffer_window_leases().to_vec(),
+        framebuffer_mappings: graph.framebuffer_mappings().to_vec(),
+        framebuffer_writes: graph.framebuffer_writes().to_vec(),
+        framebuffer_flush_regions: graph.framebuffer_flush_regions().to_vec(),
+        framebuffer_dirty_regions,
+        stores: graph.stores().to_vec(),
+        capabilities: graph.capabilities().records().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-dirty-region->write-binding"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-dirty-region->flush-binding"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();
