@@ -1,0 +1,118 @@
+{
+  "schema": "vmos-experiment-report",
+  "schema_version": 1,
+  "name": "m9_framebuffer_flush_latency_host_validation",
+  "checkpoint": "M9-framebuffer-flush-latency",
+  "commands": [
+    {
+      "command": "cargo run -p target_executor",
+      "purpose": "generate semantic package containing FramebufferBenchmark evidence"
+    },
+    {
+      "command": "cargo run -p osctl -- framebuffer-benchmark list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "inspect stable FramebufferBenchmark ViewV1 JSON"
+    },
+    {
+      "command": "cargo run -p osctl -- display-snapshot-barrier list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "prove the benchmark is tied to quiescent display snapshot barrier evidence"
+    },
+    {
+      "command": "cargo run -p osctl -- graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "purpose": "prove framebuffer benchmark evidence remains historical exact-generation graph evidence"
+    }
+  ],
+  "events": [
+    {
+      "kind": "FramebufferBenchmarkRecorded",
+      "source": "SemanticGraph::record_framebuffer_benchmark_with_id",
+      "event": 569,
+      "object": "framebuffer-benchmark:25101@1"
+    }
+  ],
+  "final_views": {
+    "framebuffer_benchmark": {
+      "schema": 1,
+      "kind": "framebuffer-benchmark",
+      "id": 25101,
+      "generation": 1,
+      "state": "recorded",
+      "references": {
+        "framebuffer_write": {
+          "kind": "framebuffer-write",
+          "id": 23501,
+          "generation": 1
+        },
+        "framebuffer_flush_region": {
+          "kind": "framebuffer-flush-region",
+          "id": 23601,
+          "generation": 1
+        },
+        "display_snapshot_barrier": {
+          "kind": "display-snapshot-barrier",
+          "id": 24001,
+          "generation": 1
+        },
+        "display_capability": {
+          "kind": "display-capability",
+          "id": 23201,
+          "generation": 1
+        }
+      },
+      "metrics": {
+        "sample_frames": 1,
+        "sample_bytes": 3200,
+        "frame_area_pixels": 800,
+        "write_nanos": 40000,
+        "flush_nanos": 60000,
+        "measured_nanos": 100000,
+        "budget_nanos": 200000,
+        "throughput_bytes_per_sec": 32000000,
+        "flushes_per_sec_milli": 10000000,
+        "p50_latency_nanos": 100000,
+        "p99_latency_nanos": 100000,
+        "within_budget": true
+      }
+    },
+    "authority": {
+      "uses_semantic_write_flush_evidence": true,
+      "requires_quiescent_snapshot_barrier": true,
+      "real_scanout_measured": false,
+      "real_gpu_pipeline_measured": false
+    },
+    "contract_validation": {
+      "ok": true,
+      "violation_count": 0
+    },
+    "osctl": {
+      "schema": "vmos-osctl-json-v1",
+      "stable_view": "framebuffer-benchmark.list",
+      "read_only": true
+    }
+  },
+  "metrics": {
+    "benchmark_count": 1,
+    "sample_frames": 1,
+    "sample_bytes": 3200,
+    "frame_area_pixels": 800,
+    "write_nanos": 40000,
+    "flush_nanos": 60000,
+    "measured_nanos": 100000,
+    "budget_nanos": 200000,
+    "throughput_bytes_per_sec": 32000000,
+    "flushes_per_sec_milli": 10000000,
+    "p50_latency_nanos": 100000,
+    "p99_latency_nanos": 100000,
+    "within_budget": true,
+    "measurement_source": "framebuffer-benchmark:25101@1",
+    "hardware_dependency": "none"
+  },
+  "validation": {
+    "contract_ok": true,
+    "golden_replay_ok": true,
+    "osctl_view_ok": true,
+    "semantic_object": "FramebufferBenchmark",
+    "semantic_command": "RecordFramebufferBenchmark",
+    "semantic_event": "FramebufferBenchmarkRecorded",
+    "semantic_invariant": "exact display object generations, quiescent snapshot barrier, derived measured_nanos, throughput and flush-rate metrics"
+  }
+}

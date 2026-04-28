@@ -1,0 +1,117 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "M9-framebuffer-flush-latency",
+  "name": "golden_m9_framebuffer_flush_latency",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "real framebuffer present or scanout timing",
+    "real GPU pipeline benchmark",
+    "third-party graphics stack",
+    "raw framebuffer byte export",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "G12 recorded framebuffer-benchmark:25101@1 as semantic display write/flush evidence",
+      "benchmark references exact display capability, framebuffer write, flush region, display event log, and snapshot barrier generations",
+      "osctl framebuffer-benchmark list --json exposes stable ViewV1 output"
+    ],
+    "commands": [
+      {
+        "command": "record-framebuffer-benchmark",
+        "benchmark": "framebuffer-benchmark:25101@1",
+        "framebuffer_write": "framebuffer-write:23501@1",
+        "framebuffer_flush_region": "framebuffer-flush-region:23601@1",
+        "display_snapshot_barrier": "display-snapshot-barrier:24001@1",
+        "write_nanos": 40000,
+        "flush_nanos": 60000,
+        "measured_nanos": 100000,
+        "expected": "applied"
+      },
+      {
+        "command": "record-framebuffer-benchmark",
+        "scenario": "stale or non-quiescent snapshot barrier cannot record benchmark evidence",
+        "expected": "rejected",
+        "violation": "framebuffer benchmark snapshot barrier generation is missing or not quiescent"
+      },
+      {
+        "command": "record-framebuffer-benchmark",
+        "scenario": "non-closed timing metrics cannot record benchmark evidence",
+        "expected": "rejected",
+        "violation": "framebuffer benchmark measured_nanos must equal write_nanos + flush_nanos"
+      },
+      {
+        "command": "osctl experiment report --json tests/reports/experiments/m9_framebuffer_flush_latency.experiment.json",
+        "result": "experiment report validates as vmos-experiment-report"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "FramebufferBenchmarkRecorded",
+      "benchmark": "framebuffer-benchmark:25101@1",
+      "event": 569,
+      "write_nanos": 40000,
+      "flush_nanos": 60000,
+      "measured_nanos": 100000
+    }
+  ],
+  "expected": {
+    "views": {
+      "framebuffer-benchmark": {
+        "kind": "framebuffer-benchmark",
+        "id": 25101,
+        "generation": 1,
+        "state": "recorded",
+        "sample_frames": 1,
+        "sample_bytes": 3200,
+        "write_nanos": 40000,
+        "flush_nanos": 60000,
+        "measured_nanos": 100000,
+        "budget_nanos": 200000,
+        "throughput_bytes_per_sec": 32000000,
+        "flushes_per_sec_milli": 10000000,
+        "p50_latency_nanos": 100000,
+        "p99_latency_nanos": 100000
+      },
+      "experiment_report": {
+        "schema": "vmos-experiment-report",
+        "name": "m9_framebuffer_flush_latency_host_validation",
+        "checkpoint": "M9-framebuffer-flush-latency",
+        "contract_ok": true,
+        "golden_replay_ok": true
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      }
+    },
+    "invariants": [
+      "M9 experiment evidence is backed by first-class FramebufferBenchmark ObjectRef",
+      "M9 reuses G12 semantic command, event, ViewV1, and invariant rather than treating scanout logs as truth",
+      "write_nanos plus flush_nanos equals measured_nanos",
+      "benchmark is tied to a quiescent display snapshot barrier",
+      "real scanout and GPU timing remain explicit no-goals"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "display_runtime_g12_records_framebuffer_benchmark",
+      "display_runtime_g12_rejects_stale_barrier_and_bad_timing",
+      "display_runtime_g12_invariants_reject_throughput_drift",
+      "display_runtime_g12_contract_graph_rejects_metric_drift",
+      "framebuffer_benchmark_view_v1_exposes_semantic_display_metrics"
+    ],
+    "experiment_report": "tests/reports/experiments/m9_framebuffer_flush_latency.experiment.json",
+    "osctl_json_view": "framebuffer-benchmark list --json",
+    "framebuffer_benchmark": "framebuffer-benchmark:25101@1"
+  }
+}
