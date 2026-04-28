@@ -2445,6 +2445,36 @@ impl BlockRecoveryBenchmarkRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TargetFeatureSetRecord {
+    pub id: TargetFeatureSetId,
+    pub name: String,
+    pub discovery_source: String,
+    pub target_profile: String,
+    pub target_arch: String,
+    pub base_isa: String,
+    pub simd_abi: String,
+    pub simd_supported: bool,
+    pub vector_register_count: u16,
+    pub vector_register_bits: u16,
+    pub scalar_fallback: bool,
+    pub unsupported_reason: String,
+    pub generation: Generation,
+    pub state: TargetFeatureSetState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl TargetFeatureSetRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::TargetFeatureSet,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

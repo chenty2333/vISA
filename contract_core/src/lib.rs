@@ -144,6 +144,7 @@ pub enum ObjectKind {
     BlockRequestGenerationAudit,
     BlockBenchmark,
     BlockRecoveryBenchmark,
+    TargetFeatureSet,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -253,6 +254,7 @@ impl ObjectKind {
             Self::BlockRequestGenerationAudit => "block-request-generation-audit",
             Self::BlockBenchmark => "block-benchmark",
             Self::BlockRecoveryBenchmark => "block-recovery-benchmark",
+            Self::TargetFeatureSet => "target-feature-set",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -551,6 +553,7 @@ typed_ref!(
     BlockRecoveryBenchmarkRef,
     ObjectKind::BlockRecoveryBenchmark
 );
+typed_ref!(TargetFeatureSetRef, ObjectKind::TargetFeatureSet);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2192,6 +2195,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "block recovery benchmark root/count mismatch",
         ));
     }
+    if roots.target_feature_set_roots.len() != package.semantic.target_feature_set_count
+        || package.semantic.target_feature_sets.len() != package.semantic.target_feature_set_count
+    {
+        return Err(ContractError::new("target feature set root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2792,6 +2800,7 @@ mod tests {
                 block_request_generation_audit_count: 0,
                 block_benchmark_count: 0,
                 block_recovery_benchmark_count: 0,
+                target_feature_set_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2910,6 +2919,7 @@ mod tests {
                 block_request_generation_audits: Vec::new(),
                 block_benchmarks: Vec::new(),
                 block_recovery_benchmarks: Vec::new(),
+                target_feature_sets: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4943,6 +4953,36 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_target_feature_set_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.target_feature_set_count = 1;
+        package
+            .semantic
+            .target_feature_sets
+            .push(artifact_manifest::TargetFeatureSetManifest {
+                id: 86,
+                name: "riscv64-qemu-virt-research-target".to_owned(),
+                discovery_source: "target-runtime-default-profile".to_owned(),
+                target_profile: "riscv64-qemu-virt-research".to_owned(),
+                target_arch: "riscv64".to_owned(),
+                base_isa: "rv64imac".to_owned(),
+                simd_abi: "riscv-v".to_owned(),
+                simd_supported: false,
+                vector_register_count: 0,
+                vector_register_bits: 0,
+                scalar_fallback: true,
+                unsupported_reason: "default profile does not declare RVV/SIMD".to_owned(),
+                generation: 1,
+                state: "discovered".to_owned(),
+                recorded_at_event: 96,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "target feature set root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -6256,6 +6296,8 @@ mod tests {
         let block_recovery_benchmark =
             ObjectRef::new(ObjectKind::BlockRecoveryBenchmark, 74, 1).unwrap();
         assert!(BlockRecoveryBenchmarkRef::try_from_ref(block_recovery_benchmark).is_ok());
+        let target_feature_set = ObjectRef::new(ObjectKind::TargetFeatureSet, 75, 1).unwrap();
+        assert!(TargetFeatureSetRef::try_from_ref(target_feature_set).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

@@ -18962,6 +18962,133 @@ fn preemptive_runtime_p9_invariants_reject_latency_delta_drift() {
 }
 
 #[test]
+fn simd_runtime_v0_target_feature_set_records_default_discovery() {
+    let mut graph = SemanticGraph::new();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v0-test",
+        SemanticCommand::RecordTargetFeatureSet {
+            feature_set: 21_000,
+            name: "riscv64-qemu-virt-research-target".to_string(),
+            discovery_source: "target-runtime-default-profile".to_string(),
+            target_profile: "riscv64-qemu-virt-research".to_string(),
+            target_arch: "riscv64".to_string(),
+            base_isa: "rv64imac".to_string(),
+            simd_abi: "riscv-v".to_string(),
+            simd_supported: false,
+            vector_register_count: 0,
+            vector_register_bits: 0,
+            scalar_fallback: true,
+            unsupported_reason: "default profile does not declare RVV/SIMD".to_string(),
+            note: "v0 default SIMD discovery".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.target_feature_set_count(), 1);
+    let feature = &graph.target_feature_sets()[0];
+    assert_eq!(
+        feature.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::TargetFeatureSet, 21_000, 1)
+    );
+    assert_eq!(feature.state, TargetFeatureSetState::Discovered);
+    assert!(!feature.simd_supported);
+    assert!(feature.scalar_fallback);
+    assert_eq!(feature.vector_register_count, 0);
+    assert_eq!(feature.vector_register_bits, 0);
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "TargetFeatureSetDiscovered feature_set=21000 target_profile=riscv64-qemu-virt-research target_arch=riscv64 base_isa=rv64imac simd_abi=riscv-v simd_supported=false vector_register_count=0 vector_register_bits=0 scalar_fallback=true generation=1"
+    );
+}
+
+#[test]
+fn simd_runtime_v0_rejects_inconsistent_target_feature_discovery() {
+    let mut graph = SemanticGraph::new();
+
+    let supported_without_shape = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v0-test",
+        SemanticCommand::RecordTargetFeatureSet {
+            feature_set: 21_000,
+            name: "bad-supported".to_string(),
+            discovery_source: "unit-test".to_string(),
+            target_profile: "test-profile".to_string(),
+            target_arch: "riscv64".to_string(),
+            base_isa: "rv64imac".to_string(),
+            simd_abi: "riscv-v".to_string(),
+            simd_supported: true,
+            vector_register_count: 0,
+            vector_register_bits: 0,
+            scalar_fallback: true,
+            unsupported_reason: "".to_string(),
+            note: "bad".to_string(),
+        },
+    ));
+    assert_eq!(supported_without_shape.status, CommandStatus::Rejected);
+    assert_eq!(
+        supported_without_shape.violations,
+        vec!["supported SIMD discovery requires vector register shape".to_string()]
+    );
+
+    let unsupported_without_reason = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "v0-test",
+        SemanticCommand::RecordTargetFeatureSet {
+            feature_set: 21_001,
+            name: "bad-unsupported".to_string(),
+            discovery_source: "unit-test".to_string(),
+            target_profile: "test-profile".to_string(),
+            target_arch: "riscv64".to_string(),
+            base_isa: "rv64imac".to_string(),
+            simd_abi: "riscv-v".to_string(),
+            simd_supported: false,
+            vector_register_count: 0,
+            vector_register_bits: 0,
+            scalar_fallback: true,
+            unsupported_reason: "".to_string(),
+            note: "bad".to_string(),
+        },
+    ));
+    assert_eq!(unsupported_without_reason.status, CommandStatus::Rejected);
+    assert_eq!(
+        unsupported_without_reason.violations,
+        vec!["unsupported SIMD discovery requires a reason".to_string()]
+    );
+    assert!(graph.target_feature_sets().is_empty());
+}
+
+#[test]
+fn simd_runtime_v0_invariants_reject_vector_shape_drift() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.record_target_feature_set_with_id(
+        21_000,
+        "riscv64-qemu-virt-research-target",
+        "target-runtime-default-profile",
+        "riscv64-qemu-virt-research",
+        "riscv64",
+        "rv64imac",
+        "riscv-v",
+        false,
+        0,
+        0,
+        true,
+        "default profile does not declare RVV/SIMD",
+        "v0 default SIMD discovery",
+    ));
+    graph.corrupt_target_feature_set_vector_shape_for_test(21_000, 128);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::TargetFeatureSetInvalid {
+            feature_set: 21_000
+        })
+    );
+}
+
+#[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();
     let blocker = ContractObjectRef::new(ContractObjectKind::TimerInterrupt, 5, 1);

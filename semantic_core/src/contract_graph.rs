@@ -1459,6 +1459,7 @@ impl ContractGraphValidator {
             | ContractObjectKind::BlockRequestGenerationAudit
             | ContractObjectKind::BlockBenchmark
             | ContractObjectKind::BlockRecoveryBenchmark
+            | ContractObjectKind::TargetFeatureSet
             | ContractObjectKind::ActivationResume
             | ContractObjectKind::ActivationWait
             | ContractObjectKind::ActivationCleanup

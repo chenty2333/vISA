@@ -381,6 +381,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_recovery_benchmark_count: usize,
     #[serde(default)]
+    pub target_feature_set_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -613,6 +615,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_recovery_benchmarks: Vec<BlockRecoveryBenchmarkManifest>,
     #[serde(default)]
+    pub target_feature_sets: Vec<TargetFeatureSetManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -824,6 +828,8 @@ pub struct SemanticRootSetManifest {
     pub block_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub block_recovery_benchmark_roots: Vec<String>,
+    #[serde(default)]
+    pub target_feature_set_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2841,6 +2847,26 @@ pub struct BlockRecoveryBenchmarkManifest {
     pub revoked_device_capabilities: u32,
     pub recovery_nanos: u64,
     pub budget_nanos: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct TargetFeatureSetManifest {
+    pub id: u64,
+    pub name: String,
+    pub discovery_source: String,
+    pub target_profile: String,
+    pub target_arch: String,
+    pub base_isa: String,
+    pub simd_abi: String,
+    pub simd_supported: bool,
+    pub vector_register_count: u16,
+    pub vector_register_bits: u16,
+    pub scalar_fallback: bool,
+    pub unsupported_reason: String,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

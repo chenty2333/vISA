@@ -46,9 +46,10 @@ use artifact_manifest::{
     SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
     StopTheWorldRendezvousParticipantManifest, StoreRecordManifest, SubstrateBoundaryManifest,
     SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
-    TargetCapabilitySpecManifest, TargetMemoryPlanManifest, TargetTrapMetadataManifest,
-    TaskRecordManifest, TimerInterruptManifest, TombstoneManifest, TrapRecordManifest,
-    VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
+    TargetCapabilitySpecManifest, TargetFeatureSetManifest, TargetMemoryPlanManifest,
+    TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
+    TrapRecordManifest, VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest,
+    WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -238,6 +239,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b21_evidence(&mut semantic)?;
     record_block_runtime_b22_evidence(&mut semantic)?;
     record_block_runtime_b23_evidence(&mut semantic)?;
+    record_simd_runtime_v0_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -6650,6 +6652,110 @@ fn record_block_runtime_b23_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_simd_runtime_v0_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let feature_set = semantic.apply_envelope(CommandEnvelope::new(
+        333,
+        "target-executor-v0",
+        SemanticCommand::RecordTargetFeatureSet {
+            feature_set: 21_000,
+            name: "riscv64-qemu-virt-research-target".to_owned(),
+            discovery_source: "target-runtime-default-profile".to_owned(),
+            target_profile: "riscv64-qemu-virt-research".to_owned(),
+            target_arch: "riscv64".to_owned(),
+            base_isa: "rv64imac".to_owned(),
+            simd_abi: "riscv-v".to_owned(),
+            simd_supported: false,
+            vector_register_count: 0,
+            vector_register_bits: 0,
+            scalar_fallback: true,
+            unsupported_reason: "default profile does not declare RVV/SIMD".to_owned(),
+            note: "v0-record-default-target-feature-set".to_owned(),
+        },
+    ));
+    if feature_set.status != CommandStatus::Applied {
+        return Err(format!(
+            "simd runtime v0 feature set command {} ({}) failed: status={} violations={:?}",
+            feature_set.command_id,
+            feature_set.command,
+            feature_set.status.as_str(),
+            feature_set.violations
+        )
+        .into());
+    }
+
+    let bad_supported_shape = semantic.apply_envelope(CommandEnvelope::new(
+        334,
+        "target-executor-v0",
+        SemanticCommand::RecordTargetFeatureSet {
+            feature_set: 21_001,
+            name: "bad-supported-simd-discovery".to_owned(),
+            discovery_source: "target-runtime-default-profile".to_owned(),
+            target_profile: "riscv64-qemu-virt-research".to_owned(),
+            target_arch: "riscv64".to_owned(),
+            base_isa: "rv64imac".to_owned(),
+            simd_abi: "riscv-v".to_owned(),
+            simd_supported: true,
+            vector_register_count: 0,
+            vector_register_bits: 0,
+            scalar_fallback: true,
+            unsupported_reason: "".to_owned(),
+            note: "v0-reject-supported-simd-without-vector-shape".to_owned(),
+        },
+    ));
+    if bad_supported_shape.status != CommandStatus::Rejected
+        || !bad_supported_shape
+            .violations
+            .iter()
+            .any(|violation| violation.contains("vector register shape"))
+    {
+        return Err(format!(
+            "simd runtime v0 bad supported shape command {} ({}) was not rejected: status={} violations={:?}",
+            bad_supported_shape.command_id,
+            bad_supported_shape.command,
+            bad_supported_shape.status.as_str(),
+            bad_supported_shape.violations
+        )
+        .into());
+    }
+
+    let bad_unsupported_reason = semantic.apply_envelope(CommandEnvelope::new(
+        335,
+        "target-executor-v0",
+        SemanticCommand::RecordTargetFeatureSet {
+            feature_set: 21_001,
+            name: "bad-unsupported-simd-discovery".to_owned(),
+            discovery_source: "target-runtime-default-profile".to_owned(),
+            target_profile: "riscv64-qemu-virt-research".to_owned(),
+            target_arch: "riscv64".to_owned(),
+            base_isa: "rv64imac".to_owned(),
+            simd_abi: "riscv-v".to_owned(),
+            simd_supported: false,
+            vector_register_count: 0,
+            vector_register_bits: 0,
+            scalar_fallback: true,
+            unsupported_reason: "".to_owned(),
+            note: "v0-reject-unsupported-simd-without-reason".to_owned(),
+        },
+    ));
+    if bad_unsupported_reason.status != CommandStatus::Rejected
+        || !bad_unsupported_reason
+            .violations
+            .iter()
+            .any(|violation| violation.contains("requires a reason"))
+    {
+        return Err(format!(
+            "simd runtime v0 bad unsupported reason command {} ({}) was not rejected: status={} violations={:?}",
+            bad_unsupported_reason.command_id,
+            bad_unsupported_reason.command,
+            bad_unsupported_reason.status.as_str(),
+            bad_unsupported_reason.violations
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -9064,6 +9170,7 @@ fn demo_migration_package(
             block_request_generation_audit_count: semantic.block_request_generation_audit_count(),
             block_benchmark_count: semantic.block_benchmark_count(),
             block_recovery_benchmark_count: semantic.block_recovery_benchmark_count(),
+            target_feature_set_count: semantic.target_feature_set_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -9481,6 +9588,11 @@ fn demo_migration_package(
                 .block_recovery_benchmarks()
                 .iter()
                 .map(block_recovery_benchmark_manifest)
+                .collect(),
+            target_feature_sets: semantic
+                .target_feature_sets()
+                .iter()
+                .map(target_feature_set_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -11430,6 +11542,27 @@ fn semantic_roots(
                     benchmark.budget_nanos,
                     benchmark.state.as_str(),
                     benchmark.generation
+                )
+            })
+            .collect(),
+        target_feature_set_roots: semantic
+            .target_feature_sets()
+            .iter()
+            .map(|feature| {
+                format!(
+                    "target-feature-set id={} name={} profile={} arch={} base_isa={} simd_abi={} simd_supported={} vector_register_count={} vector_register_bits={} scalar_fallback={} state={} generation={}",
+                    feature.id,
+                    feature.name,
+                    feature.target_profile,
+                    feature.target_arch,
+                    feature.base_isa,
+                    feature.simd_abi,
+                    feature.simd_supported,
+                    feature.vector_register_count,
+                    feature.vector_register_bits,
+                    feature.scalar_fallback,
+                    feature.state.as_str(),
+                    feature.generation
                 )
             })
             .collect(),
@@ -14128,6 +14261,29 @@ fn block_recovery_benchmark_manifest(
         state: benchmark.state.as_str().to_owned(),
         recorded_at_event: benchmark.recorded_at_event,
         note: benchmark.note.clone(),
+    }
+}
+
+fn target_feature_set_manifest(
+    feature: &semantic_core::TargetFeatureSetRecord,
+) -> TargetFeatureSetManifest {
+    TargetFeatureSetManifest {
+        id: feature.id,
+        name: feature.name.clone(),
+        discovery_source: feature.discovery_source.clone(),
+        target_profile: feature.target_profile.clone(),
+        target_arch: feature.target_arch.clone(),
+        base_isa: feature.base_isa.clone(),
+        simd_abi: feature.simd_abi.clone(),
+        simd_supported: feature.simd_supported,
+        vector_register_count: feature.vector_register_count,
+        vector_register_bits: feature.vector_register_bits,
+        scalar_fallback: feature.scalar_fallback,
+        unsupported_reason: feature.unsupported_reason.clone(),
+        generation: feature.generation,
+        state: feature.state.as_str().to_owned(),
+        recorded_at_event: feature.recorded_at_event,
+        note: feature.note.clone(),
     }
 }
 

@@ -36,8 +36,9 @@ use artifact_manifest::{
     SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
     SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
     StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
-    TargetArtifactImageManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
-    VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
+    TargetArtifactImageManifest, TargetFeatureSetManifest, TaskRecordManifest,
+    TimerInterruptManifest, TrapRecordManifest, VirtioBlkBackendObjectManifest,
+    VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -400,6 +401,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-recovery-benchmark"
         | "disk-recovery-benchmark"
         | "disk-recovery"
+        | "target-feature-set"
+        | "target-feature"
+        | "target-feature-set-object"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -571,7 +575,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -579,7 +583,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -851,6 +855,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "block-benchmark" | "disk-benchmark" | "block-iops" => "block-benchmark",
         "block-recovery-benchmark" | "disk-recovery-benchmark" | "disk-recovery" => {
             "block-recovery-benchmark"
+        }
+        "target-feature-set" | "target-feature" | "target-feature-set-object" => {
+            "target-feature-set"
         }
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
@@ -3969,6 +3976,46 @@ fn block_recovery_benchmark_view_v1(
     })
 }
 
+fn target_feature_set_view_v1(feature: &TargetFeatureSetManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "target-feature-set",
+        "id": feature.id,
+        "generation": feature.generation,
+        "state": feature.state,
+        "owner": {
+            "target_profile": feature.target_profile,
+            "target_arch": feature.target_arch,
+        },
+        "references": {
+            "event": {
+                "id": feature.recorded_at_event,
+            },
+        },
+        "features": {
+            "base_isa": feature.base_isa,
+            "simd": {
+                "abi": feature.simd_abi,
+                "supported": feature.simd_supported,
+                "vector_register_count": feature.vector_register_count,
+                "vector_register_bits": feature.vector_register_bits,
+                "scalar_fallback": feature.scalar_fallback,
+                "unsupported_reason": feature.unsupported_reason,
+            },
+        },
+        "discovery": {
+            "name": feature.name,
+            "source": feature.discovery_source,
+        },
+        "note": feature.note,
+        "last_transition": {
+            "recorded_at_event": feature.recorded_at_event,
+            "simd_supported": feature.simd_supported,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn packet_buffer_object_view_v1(packet_buffer: &PacketBufferObjectManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -6699,6 +6746,12 @@ fn stable_views_for_kind(
             .iter()
             .map(block_recovery_benchmark_view_v1)
             .collect()),
+        "target-feature-set" | "target-feature" | "target-feature-set-object" => Ok(package
+            .semantic
+            .target_feature_sets
+            .iter()
+            .map(target_feature_set_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -7345,7 +7398,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
-            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
+            "semantic state package={} cursor={} harts={} tasks={} runtime_activations={} runnable_queues={} activation_contexts={} saved_contexts={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} preemptions={} scheduler_decisions={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} target_feature_sets={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} activation_resumes={} activation_waits={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} resources={} stores={} caps={} waits={} authorities={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={}",
             package.package_id,
             package.semantic.event_log_cursor,
             package.semantic.hart_count,
@@ -7369,6 +7422,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.semantic.smp_snapshot_barrier_count,
             package.semantic.smp_stress_run_count,
             package.semantic.smp_scaling_benchmark_count,
+            package.semantic.target_feature_set_count,
             package.semantic.device_object_count,
             package.semantic.queue_object_count,
             package.semantic.descriptor_object_count,
@@ -9923,6 +9977,16 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 benchmark.driver_binding_generation,
             ),
             "block-recovery-benchmark->driver-binding",
+            "historical",
+            event,
+        ));
+    }
+    for feature in &package.semantic.target_feature_sets {
+        let event = Some(feature.recorded_at_event);
+        edges.push(graph_edge(
+            object_ref_json("target-feature-set", feature.id, feature.generation),
+            object_ref_json("event", feature.recorded_at_event, 1),
+            "target-feature-set->event",
             "historical",
             event,
         ));
@@ -12830,6 +12894,38 @@ fn inspect_package_object(
                 );
             }
         }
+        "target-feature-set" | "target-feature" | "target-feature-set-object" => {
+            println!(
+                "inspect target-feature-set package={} count={}",
+                package.package_id, package.semantic.target_feature_set_count
+            );
+            for feature in &package.semantic.target_feature_sets {
+                let line = format!(
+                    "target-feature-set id={} name={} source={} profile={} arch={} base_isa={} simd_abi={} simd_supported={} vector_register_count={} vector_register_bits={} scalar_fallback={} state={} generation={}",
+                    feature.id,
+                    feature.name,
+                    feature.discovery_source,
+                    feature.target_profile,
+                    feature.target_arch,
+                    feature.base_isa,
+                    feature.simd_abi,
+                    feature.simd_supported,
+                    feature.vector_register_count,
+                    feature.vector_register_bits,
+                    feature.scalar_fallback,
+                    feature.state,
+                    feature.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.target_feature_sets.is_empty() {
+                print_roots_filtered(
+                    "target-feature-set",
+                    &package.semantic.roots.target_feature_set_roots,
+                    filter,
+                );
+            }
+        }
         "command" => {
             println!(
                 "inspect command package={} count={}",
@@ -13109,6 +13205,17 @@ fn inspect_package_object_json(
                 .map(block_recovery_benchmark_view_v1)
                 .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.block_recovery_benchmark_roots.len() }),
+        ),
+        "target-feature-set" | "target-feature" | "target-feature-set-object" => (
+            "target-feature-set",
+            package.semantic.target_feature_set_count,
+            package
+                .semantic
+                .target_feature_sets
+                .iter()
+                .map(target_feature_set_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "root_count": package.semantic.roots.target_feature_set_roots.len() }),
         ),
         "command" => (
             "command",
@@ -13472,7 +13579,7 @@ fn replay_until(
         package.semantic.network_rx_queue_bytes
     );
     println!(
-        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} fs_waits={} block_driver_cleanups={} block_recovery_benchmarks={} substrate_events={} command_results={} interface_events={} event_tail={}",
+        "replay roots: harts={} tasks={} resources={} authorities={} stores={} caps={} target_stores={} target_caps={} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} network_tx_completions={} network_stack_adapters={} socket_objects={} endpoint_objects={} socket_operations={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} fs_waits={} block_driver_cleanups={} block_recovery_benchmarks={} target_feature_sets={} substrate_events={} command_results={} interface_events={} event_tail={}",
         package.semantic.roots.hart_roots.len(),
         package.semantic.roots.task_roots.len(),
         package.semantic.roots.resource_roots.len(),
@@ -13551,6 +13658,7 @@ fn replay_until(
         package.semantic.roots.fs_wait_roots.len(),
         package.semantic.roots.block_driver_cleanup_roots.len(),
         package.semantic.roots.block_recovery_benchmark_roots.len(),
+        package.semantic.roots.target_feature_set_roots.len(),
         package.semantic.roots.substrate_event_roots.len(),
         package.semantic.roots.command_result_roots.len(),
         package.semantic.roots.interface_event_roots.len(),
@@ -13717,6 +13825,9 @@ fn replay_until(
     }
     for benchmark in &package.semantic.roots.block_recovery_benchmark_roots {
         println!("replay block-recovery-benchmark {benchmark}");
+    }
+    for feature in &package.semantic.roots.target_feature_set_roots {
+        println!("replay target-feature-set {feature}");
     }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
@@ -14103,6 +14214,10 @@ fn print_replay_json(
     roots.insert(
         "block_recovery_benchmarks".to_owned(),
         serde_json::json!(package.semantic.roots.block_recovery_benchmark_roots.len()),
+    );
+    roots.insert(
+        "target_feature_sets".to_owned(),
+        serde_json::json!(package.semantic.roots.target_feature_set_roots.len()),
     );
     roots.insert(
         "resources".to_owned(),
@@ -14532,6 +14647,10 @@ fn print_replay_json(
         "block_recovery_benchmark_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.block_recovery_benchmark_roots),
     );
+    roots.insert(
+        "target_feature_set_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.target_feature_set_roots),
+    );
 
     let value = serde_json::json!({
         "status": "accepted",
@@ -14576,7 +14695,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} fs_waits={} block_driver_cleanups={} block_recovery_benchmarks={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} fs_waits={} block_driver_cleanups={} block_recovery_benchmarks={} target_feature_sets={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -14657,6 +14776,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.fs_wait_count,
         package.semantic.block_driver_cleanup_count,
         package.semantic.block_recovery_benchmark_count,
+        package.semantic.target_feature_set_count,
         package.semantic.activation_cleanup_count,
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
@@ -14764,6 +14884,10 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
     print_roots(
         "block-recovery-benchmark",
         &package.semantic.roots.block_recovery_benchmark_roots,
+    );
+    print_roots(
+        "target-feature-set",
+        &package.semantic.roots.target_feature_set_roots,
     );
 }
 
@@ -17028,6 +17152,38 @@ mod tests {
         assert_eq!(view["benchmark"]["released_dma_buffers"], 1);
         assert_eq!(view["benchmark"]["recovery_nanos"], 70_000);
         assert_eq!(view["last_transition"]["recorded_at_event"], 488);
+    }
+
+    #[test]
+    fn target_feature_set_view_v1_exposes_simd_discovery() {
+        let view = target_feature_set_view_v1(&TargetFeatureSetManifest {
+            id: 21_000,
+            name: "riscv64-qemu-virt-research-target".to_owned(),
+            discovery_source: "target-runtime-default-profile".to_owned(),
+            target_profile: "riscv64-qemu-virt-research".to_owned(),
+            target_arch: "riscv64".to_owned(),
+            base_isa: "rv64imac".to_owned(),
+            simd_abi: "riscv-v".to_owned(),
+            simd_supported: false,
+            vector_register_count: 0,
+            vector_register_bits: 0,
+            scalar_fallback: true,
+            unsupported_reason: "default profile does not declare RVV/SIMD".to_owned(),
+            generation: 1,
+            state: "discovered".to_owned(),
+            recorded_at_event: 489,
+            note: "target feature discovery".to_owned(),
+        });
+        assert_eq!(view["kind"], "target-feature-set");
+        assert_eq!(
+            view["owner"]["target_profile"],
+            "riscv64-qemu-virt-research"
+        );
+        assert_eq!(view["features"]["base_isa"], "rv64imac");
+        assert_eq!(view["features"]["simd"]["abi"], "riscv-v");
+        assert_eq!(view["features"]["simd"]["supported"], false);
+        assert_eq!(view["features"]["simd"]["scalar_fallback"], true);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 489);
     }
 
     #[test]

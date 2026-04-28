@@ -602,6 +602,18 @@ pub enum EventKind {
         budget_nanos: u64,
         generation: Generation,
     },
+    TargetFeatureSetDiscovered {
+        feature_set: TargetFeatureSetId,
+        target_profile: String,
+        target_arch: String,
+        base_isa: String,
+        simd_abi: String,
+        simd_supported: bool,
+        vector_register_count: u16,
+        vector_register_bits: u16,
+        scalar_fallback: bool,
+        generation: Generation,
+    },
     FakeBlockBackendObjectBound {
         fake_block_backend: FakeBlockBackendObjectId,
         block_device: BlockDeviceObjectId,
@@ -2407,6 +2419,20 @@ impl EventKind {
                 backend.kind.as_str(),
                 backend.id,
                 backend.generation
+            ),
+            Self::TargetFeatureSetDiscovered {
+                feature_set,
+                target_profile,
+                target_arch,
+                base_isa,
+                simd_abi,
+                simd_supported,
+                vector_register_count,
+                vector_register_bits,
+                scalar_fallback,
+                generation,
+            } => format!(
+                "TargetFeatureSetDiscovered feature_set={feature_set} target_profile={target_profile} target_arch={target_arch} base_isa={base_isa} simd_abi={simd_abi} simd_supported={simd_supported} vector_register_count={vector_register_count} vector_register_bits={vector_register_bits} scalar_fallback={scalar_fallback} generation={generation}"
             ),
             Self::FakeBlockBackendObjectBound {
                 fake_block_backend,

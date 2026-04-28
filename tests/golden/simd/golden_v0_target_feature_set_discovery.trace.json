@@ -1,0 +1,121 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "V0-target-feature-set-simd-discovery",
+  "name": "golden_v0_target_feature_set_discovery",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md"
+  ],
+  "no_goals": [
+    "CodeObject SIMD requirement",
+    "artifact profile SIMD rejection",
+    "SIMD trap classification",
+    "VectorState object",
+    "real vector register save or restore"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "The default target runtime profile is riscv64-qemu-virt-research",
+      "The default profile does not declare RVV/SIMD support",
+      "V0 records discovery evidence only"
+    ],
+    "commands": [
+      {
+        "id": 333,
+        "command": "record-target-feature-set",
+        "feature_set": "target-feature-set:21000@1",
+        "target_profile": "riscv64-qemu-virt-research",
+        "target_arch": "riscv64",
+        "base_isa": "rv64imac",
+        "simd_abi": "riscv-v",
+        "simd_supported": false,
+        "scalar_fallback": true,
+        "expected": "applied"
+      },
+      {
+        "id": 334,
+        "command": "record-target-feature-set",
+        "scenario": "supported SIMD discovery without vector register shape is invalid",
+        "expected": "rejected",
+        "violation": "supported SIMD discovery requires vector register shape"
+      },
+      {
+        "id": 335,
+        "command": "record-target-feature-set",
+        "scenario": "unsupported SIMD discovery without reason is invalid",
+        "expected": "rejected",
+        "violation": "unsupported SIMD discovery requires a reason"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 487,
+      "kind": "TargetFeatureSetDiscovered",
+      "feature_set": "target-feature-set:21000@1",
+      "target_profile": "riscv64-qemu-virt-research",
+      "target_arch": "riscv64",
+      "base_isa": "rv64imac",
+      "simd_abi": "riscv-v",
+      "simd_supported": false,
+      "vector_register_count": 0,
+      "vector_register_bits": 0,
+      "scalar_fallback": true
+    }
+  ],
+  "expected": {
+    "views": {
+      "target-feature-set": {
+        "count": 1,
+        "feature_set": "target-feature-set:21000@1",
+        "target_profile": "riscv64-qemu-virt-research",
+        "target_arch": "riscv64",
+        "base_isa": "rv64imac",
+        "simd_abi": "riscv-v",
+        "simd_supported": false,
+        "vector_register_count": 0,
+        "vector_register_bits": 0,
+        "scalar_fallback": true,
+        "unsupported_reason": "default profile does not declare RVV/SIMD"
+      },
+      "command": {
+        "discovery_applied": "command-result:333:record-target-feature-set:applied",
+        "bad_supported_shape_rejected": "command-result:334:record-target-feature-set:rejected",
+        "bad_unsupported_reason_rejected": "command-result:335:record-target-feature-set:rejected"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "historical_edges": [
+          "target-feature-set->event"
+        ],
+        "live_edges": []
+      }
+    },
+    "invariants": [
+      "TargetFeatureSet identity is kind/id/generation precise",
+      "unsupported SIMD discovery must carry a reason",
+      "unsupported SIMD discovery cannot expose vector register shape",
+      "supported SIMD discovery must expose vector register count and width",
+      "TargetFeatureSet is discovery evidence only and creates no live ownership edge"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "simd_runtime_v0_target_feature_set_records_default_discovery",
+      "simd_runtime_v0_rejects_inconsistent_target_feature_discovery",
+      "simd_runtime_v0_invariants_reject_vector_shape_drift",
+      "target_feature_set_view_v1_exposes_simd_discovery",
+      "semantic_roots_reject_target_feature_set_root_mismatch"
+    ],
+    "osctl_json_view": "target-feature-set list --json",
+    "target_executor_event_cursor": 489
+  }
+}

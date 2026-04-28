@@ -1679,6 +1679,19 @@ impl BlockRecoveryBenchmarkState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TargetFeatureSetState {
+    Discovered,
+}
+
+impl TargetFeatureSetState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Discovered => "discovered",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockDmaBufferState {
     Bound,
     Released,

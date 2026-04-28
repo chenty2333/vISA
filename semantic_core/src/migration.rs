@@ -1470,6 +1470,13 @@ pub enum SemanticInvariantError {
         benchmark: BlockRecoveryBenchmarkId,
         event: EventId,
     },
+    TargetFeatureSetInvalid {
+        feature_set: TargetFeatureSetId,
+    },
+    TargetFeatureSetMissingEvent {
+        feature_set: TargetFeatureSetId,
+        event: EventId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

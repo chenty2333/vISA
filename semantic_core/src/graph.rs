@@ -85,6 +85,7 @@ pub struct SemanticGraph {
     block_request_generation_audits: Vec<BlockRequestGenerationAuditRecord>,
     block_benchmarks: Vec<BlockBenchmarkRecord>,
     block_recovery_benchmarks: Vec<BlockRecoveryBenchmarkRecord>,
+    target_feature_sets: Vec<TargetFeatureSetRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -181,6 +182,7 @@ pub struct SemanticGraph {
     next_block_request_generation_audit_id: BlockRequestGenerationAuditId,
     next_block_benchmark_id: BlockBenchmarkId,
     next_block_recovery_benchmark_id: BlockRecoveryBenchmarkId,
+    next_target_feature_set_id: TargetFeatureSetId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -281,6 +283,7 @@ mod socket_wait;
 mod stop_the_world;
 mod store;
 mod substrate;
+mod target_feature_set;
 mod task;
 mod timer;
 mod transaction;
@@ -375,6 +378,7 @@ impl SemanticGraph {
             block_request_generation_audits: Vec::new(),
             block_benchmarks: Vec::new(),
             block_recovery_benchmarks: Vec::new(),
+            target_feature_sets: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -471,6 +475,7 @@ impl SemanticGraph {
             next_block_request_generation_audit_id: 1,
             next_block_benchmark_id: 1,
             next_block_recovery_benchmark_id: 1,
+            next_target_feature_set_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,
