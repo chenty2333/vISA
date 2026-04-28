@@ -1633,6 +1633,20 @@ pub enum SemanticInvariantError {
     FramebufferWriteMissingEvent {
         framebuffer_write: FramebufferWriteId,
     },
+    FramebufferFlushRegionInvalid {
+        framebuffer_flush_region: FramebufferFlushRegionId,
+    },
+    FramebufferFlushRegionMissingStore {
+        framebuffer_flush_region: FramebufferFlushRegionId,
+        store: StoreId,
+    },
+    FramebufferFlushRegionMissingWrite {
+        framebuffer_flush_region: FramebufferFlushRegionId,
+        framebuffer_write: FramebufferWriteId,
+    },
+    FramebufferFlushRegionMissingEvent {
+        framebuffer_flush_region: FramebufferFlushRegionId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

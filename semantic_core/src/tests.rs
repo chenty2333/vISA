@@ -21930,6 +21930,306 @@ fn display_runtime_g5_contract_graph_rejects_write_mapping_binding_drift() {
     }));
 }
 
+fn g6_framebuffer_flush_region_graph() -> (
+    SemanticGraph,
+    StoreId,
+    Generation,
+    FramebufferWriteId,
+    Generation,
+    u64,
+) {
+    let (mut graph, owner_store, owner_store_generation, mapping, mapping_generation) =
+        g5_framebuffer_write_graph();
+    let payload_digest = SemanticGraph::expected_framebuffer_write_payload_digest_v1(
+        mapping,
+        mapping_generation,
+        23_001,
+        1,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+    );
+    assert!(graph.record_framebuffer_write_with_id(
+        23_501,
+        owner_store,
+        owner_store_generation,
+        mapping,
+        mapping_generation,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+        payload_digest,
+        "g5 framebuffer write for g6",
+    ));
+    (
+        graph,
+        owner_store,
+        owner_store_generation,
+        23_501,
+        1,
+        payload_digest,
+    )
+}
+
+#[test]
+fn display_runtime_g6_flush_region_records_semantic_flush() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        payload_digest,
+    ) = g6_framebuffer_flush_region_graph();
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        8,
+        "display-runtime-g6",
+        SemanticCommand::RecordFramebufferFlushRegion {
+            framebuffer_flush_region: 23_601,
+            owner_store,
+            owner_store_generation,
+            framebuffer_write,
+            framebuffer_write_generation,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3_200,
+            payload_digest,
+            note: "g6 framebuffer flush".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.framebuffer_flush_region_count(), 1);
+    let flush = &graph.framebuffer_flush_regions()[0];
+    assert_eq!(
+        flush.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::FramebufferFlushRegion, 23_601, 1)
+    );
+    assert_eq!(flush.framebuffer_write, framebuffer_write);
+    assert_eq!(
+        flush.framebuffer_write_generation,
+        framebuffer_write_generation
+    );
+    assert_eq!(flush.payload_digest, payload_digest);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        format!(
+            "FramebufferFlushRegionRecorded framebuffer_flush_region=23601 owner_store={owner_store}@{owner_store_generation} framebuffer_write={framebuffer_write}@{framebuffer_write_generation} display_capability=23201@1 display=23101@1 framebuffer=23001@1 region=0,0 800x1 byte_range=0+3200 pixel_format=xrgb8888 payload_digest={payload_digest} state=applied generation=1"
+        )
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g6_rejects_stale_write_mismatched_region_and_digest() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        payload_digest,
+    ) = g6_framebuffer_flush_region_graph();
+
+    let stale_write = graph.apply_envelope(CommandEnvelope::new(
+        8,
+        "display-runtime-g6",
+        SemanticCommand::RecordFramebufferFlushRegion {
+            framebuffer_flush_region: 23_602,
+            owner_store,
+            owner_store_generation,
+            framebuffer_write,
+            framebuffer_write_generation: framebuffer_write_generation + 1,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3_200,
+            payload_digest,
+            note: "g6 stale write".to_string(),
+        },
+    ));
+    assert_eq!(stale_write.status, CommandStatus::Rejected);
+
+    let mismatched_region = graph.apply_envelope(CommandEnvelope::new(
+        9,
+        "display-runtime-g6",
+        SemanticCommand::RecordFramebufferFlushRegion {
+            framebuffer_flush_region: 23_603,
+            owner_store,
+            owner_store_generation,
+            framebuffer_write,
+            framebuffer_write_generation,
+            x: 0,
+            y: 0,
+            width: 799,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3_196,
+            payload_digest,
+            note: "g6 mismatched region".to_string(),
+        },
+    ));
+    assert_eq!(mismatched_region.status, CommandStatus::Rejected);
+
+    let bad_digest = graph.apply_envelope(CommandEnvelope::new(
+        10,
+        "display-runtime-g6",
+        SemanticCommand::RecordFramebufferFlushRegion {
+            framebuffer_flush_region: 23_604,
+            owner_store,
+            owner_store_generation,
+            framebuffer_write,
+            framebuffer_write_generation,
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 1,
+            byte_offset: 0,
+            byte_len: 3_200,
+            payload_digest: payload_digest + 1,
+            note: "g6 bad digest".to_string(),
+        },
+    ));
+    assert_eq!(bad_digest.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn display_runtime_g6_invariants_reject_write_generation_leak() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        payload_digest,
+    ) = g6_framebuffer_flush_region_graph();
+    assert!(graph.record_framebuffer_flush_region_with_id(
+        23_605,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+        payload_digest,
+        "g6 invariant flush",
+    ));
+    graph.corrupt_framebuffer_flush_region_write_generation_for_test(
+        23_605,
+        framebuffer_write_generation + 1,
+    );
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::FramebufferFlushRegionMissingWrite {
+            framebuffer_flush_region: 23_605,
+            framebuffer_write,
+        })
+    );
+}
+
+#[test]
+fn display_runtime_g6_contract_graph_rejects_missing_write_edge() {
+    let flush = FramebufferFlushRegionRecord {
+        id: 23_606,
+        owner_store: 1,
+        owner_store_generation: 1,
+        framebuffer_write: 23_501,
+        framebuffer_write_generation: 7,
+        display_capability: 23_201,
+        display_capability_generation: 1,
+        display: 23_101,
+        display_generation: 1,
+        framebuffer: 23_001,
+        framebuffer_generation: 1,
+        x: 0,
+        y: 0,
+        width: 16,
+        height: 1,
+        byte_offset: 0,
+        byte_len: 64,
+        pixel_format: "xrgb8888".to_string(),
+        payload_digest: 1,
+        generation: 1,
+        state: FramebufferFlushRegionState::Applied,
+        recorded_at_event: 1,
+        note: "g6 missing write".to_string(),
+    };
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_flush_regions: Vec::from([flush]),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-flush-region->framebuffer-write"
+            && violation.kind == ContractViolationKind::DanglingEdge
+    }));
+}
+
+#[test]
+fn display_runtime_g6_contract_graph_rejects_flush_write_binding_drift() {
+    let (
+        mut graph,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        payload_digest,
+    ) = g6_framebuffer_flush_region_graph();
+    assert!(graph.record_framebuffer_flush_region_with_id(
+        23_607,
+        owner_store,
+        owner_store_generation,
+        framebuffer_write,
+        framebuffer_write_generation,
+        0,
+        0,
+        800,
+        1,
+        0,
+        3_200,
+        payload_digest,
+        "g6 contract graph flush",
+    ));
+    let mut framebuffer_flush_regions = graph.framebuffer_flush_regions().to_vec();
+    framebuffer_flush_regions[0].byte_len = 3_196;
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: graph.framebuffer_objects().to_vec(),
+        display_objects: graph.display_objects().to_vec(),
+        display_capabilities: graph.display_capabilities().to_vec(),
+        framebuffer_window_leases: graph.framebuffer_window_leases().to_vec(),
+        framebuffer_mappings: graph.framebuffer_mappings().to_vec(),
+        framebuffer_writes: graph.framebuffer_writes().to_vec(),
+        framebuffer_flush_regions,
+        stores: graph.stores().to_vec(),
+        capabilities: graph.capabilities().records().to_vec(),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-flush-region->write-binding"
+            && violation.kind == ContractViolationKind::GenerationMismatch
+    }));
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();

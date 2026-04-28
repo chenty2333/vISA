@@ -87,6 +87,7 @@ pub type DisplayCapabilityId = u64;
 pub type FramebufferWindowLeaseId = u64;
 pub type FramebufferMappingId = u64;
 pub type FramebufferWriteId = u64;
+pub type FramebufferFlushRegionId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;

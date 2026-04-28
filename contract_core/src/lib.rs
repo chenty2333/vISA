@@ -155,6 +155,7 @@ pub enum ObjectKind {
     FramebufferWindowLease,
     FramebufferMapping,
     FramebufferWrite,
+    FramebufferFlushRegion,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -275,6 +276,7 @@ impl ObjectKind {
             Self::FramebufferWindowLease => "framebuffer-window-lease",
             Self::FramebufferMapping => "framebuffer-mapping",
             Self::FramebufferWrite => "framebuffer-write",
+            Self::FramebufferFlushRegion => "framebuffer-flush-region",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -590,6 +592,10 @@ typed_ref!(
 );
 typed_ref!(FramebufferMappingRef, ObjectKind::FramebufferMapping);
 typed_ref!(FramebufferWriteRef, ObjectKind::FramebufferWrite);
+typed_ref!(
+    FramebufferFlushRegionRef,
+    ObjectKind::FramebufferFlushRegion
+);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2298,6 +2304,14 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("framebuffer write root/count mismatch"));
     }
+    if roots.framebuffer_flush_region_roots.len() != package.semantic.framebuffer_flush_region_count
+        || package.semantic.framebuffer_flush_regions.len()
+            != package.semantic.framebuffer_flush_region_count
+    {
+        return Err(ContractError::new(
+            "framebuffer flush region root/count mismatch",
+        ));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2909,6 +2923,7 @@ mod tests {
                 framebuffer_window_lease_count: 0,
                 framebuffer_mapping_count: 0,
                 framebuffer_write_count: 0,
+                framebuffer_flush_region_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -3038,6 +3053,7 @@ mod tests {
                 framebuffer_window_leases: Vec::new(),
                 framebuffer_mappings: Vec::new(),
                 framebuffer_writes: Vec::new(),
+                framebuffer_flush_regions: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -5497,6 +5513,45 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_framebuffer_flush_region_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.framebuffer_flush_region_count = 1;
+        package.semantic.framebuffer_flush_regions.push(
+            artifact_manifest::FramebufferFlushRegionManifest {
+                id: 96,
+                owner_store: 7,
+                owner_store_generation: 1,
+                framebuffer_write: 95,
+                framebuffer_write_generation: 1,
+                display_capability: 92,
+                display_capability_generation: 1,
+                display: 91,
+                display_generation: 1,
+                framebuffer: 90,
+                framebuffer_generation: 1,
+                x: 0,
+                y: 0,
+                width: 16,
+                height: 16,
+                byte_offset: 0,
+                byte_len: 1024,
+                pixel_format: "xrgb8888".to_owned(),
+                payload_digest: 1,
+                generation: 1,
+                state: "applied".to_owned(),
+                recorded_at_event: 107,
+                note: "test".to_owned(),
+            },
+        );
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(
+            err.to_string(),
+            "framebuffer flush region root/count mismatch"
+        );
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -6838,6 +6893,9 @@ mod tests {
         assert!(FramebufferMappingRef::try_from_ref(framebuffer_mapping).is_ok());
         let framebuffer_write = ObjectRef::new(ObjectKind::FramebufferWrite, 85, 1).unwrap();
         assert!(FramebufferWriteRef::try_from_ref(framebuffer_write).is_ok());
+        let framebuffer_flush_region =
+            ObjectRef::new(ObjectKind::FramebufferFlushRegion, 86, 1).unwrap();
+        assert!(FramebufferFlushRegionRef::try_from_ref(framebuffer_flush_region).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

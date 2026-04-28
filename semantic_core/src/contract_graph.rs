@@ -90,6 +90,7 @@ pub struct ContractGraphSnapshot {
     pub framebuffer_window_leases: Vec<FramebufferWindowLeaseRecord>,
     pub framebuffer_mappings: Vec<FramebufferMappingRecord>,
     pub framebuffer_writes: Vec<FramebufferWriteRecord>,
+    pub framebuffer_flush_regions: Vec<FramebufferFlushRegionRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -199,6 +200,7 @@ impl ContractGraphValidator {
         Self::validate_framebuffer_window_leases(snapshot, &mut violations);
         Self::validate_framebuffer_mappings(snapshot, &mut violations);
         Self::validate_framebuffer_writes(snapshot, &mut violations);
+        Self::validate_framebuffer_flush_regions(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -1448,6 +1450,115 @@ impl ContractGraphValidator {
         }
     }
 
+    fn validate_framebuffer_flush_regions(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for flush in &snapshot.framebuffer_flush_regions {
+            let from = flush.object_ref();
+            if flush.id == 0
+                || flush.generation == 0
+                || flush.owner_store_generation == 0
+                || flush.framebuffer_write_generation == 0
+                || flush.width == 0
+                || flush.height == 0
+                || flush.byte_len == 0
+                || flush.pixel_format.is_empty()
+                || flush.payload_digest == 0
+                || flush.state != FramebufferFlushRegionState::Applied
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "framebuffer-flush-region->contract",
+                    from,
+                    None,
+                    "framebuffer flush region requires exact refs, applied state, payload digest, and byte window",
+                ));
+                continue;
+            }
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-flush-region->owner-store",
+                ContractObjectKind::Store,
+                flush.owner_store,
+                flush.owner_store_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-flush-region->framebuffer-write",
+                ContractObjectKind::FramebufferWrite,
+                flush.framebuffer_write,
+                flush.framebuffer_write_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-flush-region->display-capability",
+                ContractObjectKind::DisplayCapability,
+                flush.display_capability,
+                flush.display_capability_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-flush-region->display-object",
+                ContractObjectKind::DisplayObject,
+                flush.display,
+                flush.display_generation,
+                ContractEdgeMode::Historical,
+            );
+            Self::check_generation_edge(
+                snapshot,
+                violations,
+                from,
+                "framebuffer-flush-region->framebuffer-object",
+                ContractObjectKind::FramebufferObject,
+                flush.framebuffer,
+                flush.framebuffer_generation,
+                ContractEdgeMode::Historical,
+            );
+            if let Some(write) = snapshot.framebuffer_writes.iter().find(|write| {
+                write.id == flush.framebuffer_write
+                    && write.generation == flush.framebuffer_write_generation
+            }) {
+                if write.owner_store != flush.owner_store
+                    || write.owner_store_generation != flush.owner_store_generation
+                    || write.display_capability != flush.display_capability
+                    || write.display_capability_generation != flush.display_capability_generation
+                    || write.display != flush.display
+                    || write.display_generation != flush.display_generation
+                    || write.framebuffer != flush.framebuffer
+                    || write.framebuffer_generation != flush.framebuffer_generation
+                    || write.x != flush.x
+                    || write.y != flush.y
+                    || write.width != flush.width
+                    || write.height != flush.height
+                    || write.byte_offset != flush.byte_offset
+                    || write.byte_len != flush.byte_len
+                    || write.pixel_format != flush.pixel_format
+                    || write.payload_digest != flush.payload_digest
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
+                        "framebuffer-flush-region->write-binding",
+                        from,
+                        Some(write.object_ref()),
+                        "framebuffer flush region does not match the written framebuffer region",
+                    ));
+                }
+            }
+        }
+    }
+
     fn validate_activations(
         snapshot: &ContractGraphSnapshot,
         violations: &mut Vec<ContractViolation>,
@@ -2641,6 +2752,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|write| write.id == id && write.generation == generation)
                 .map(FramebufferWriteRecord::object_ref),
+            ContractObjectKind::FramebufferFlushRegion => snapshot
+                .framebuffer_flush_regions
+                .iter()
+                .find(|flush| flush.id == id && flush.generation == generation)
+                .map(FramebufferFlushRegionRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2796,6 +2912,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|write| write.id == id)
                 .map(FramebufferWriteRecord::object_ref),
+            ContractObjectKind::FramebufferFlushRegion => snapshot
+                .framebuffer_flush_regions
+                .iter()
+                .find(|flush| flush.id == id)
+                .map(FramebufferFlushRegionRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2954,6 +3075,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::FramebufferWindowLease
                 | ContractObjectKind::FramebufferMapping
                 | ContractObjectKind::FramebufferWrite
+                | ContractObjectKind::FramebufferFlushRegion
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -3099,6 +3221,14 @@ impl ContractGraphValidator {
                 .and_then(|write| {
                     (write.state != FramebufferWriteState::Applied)
                         .then_some("live edge references unapplied framebuffer write")
+                }),
+            ContractObjectKind::FramebufferFlushRegion => snapshot
+                .framebuffer_flush_regions
+                .iter()
+                .find(|flush| flush.id == object.id && flush.generation == object.generation)
+                .and_then(|flush| {
+                    (flush.state != FramebufferFlushRegionState::Applied)
+                        .then_some("live edge references unapplied framebuffer flush region")
                 }),
             _ => None,
         }

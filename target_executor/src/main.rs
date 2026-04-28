@@ -24,11 +24,11 @@ use artifact_manifest::{
     DisplayCapabilityManifest, DisplayObjectManifest, DmaBufferObjectManifest,
     DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
     FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
-    FileHandleCapabilityManifest, FileObjectManifest, FramebufferMappingManifest,
-    FramebufferObjectManifest, FramebufferWindowLeaseManifest, FramebufferWriteManifest,
-    FsWaitManifest, GuestStateManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
-    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    FileHandleCapabilityManifest, FileObjectManifest, FramebufferFlushRegionManifest,
+    FramebufferMappingManifest, FramebufferObjectManifest, FramebufferWindowLeaseManifest,
+    FramebufferWriteManifest, FsWaitManifest, GuestStateManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
     IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
     IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
     MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
@@ -8382,6 +8382,7 @@ fn build_target_executor_v1(
     run_framebuffer_window_lease_harness(semantic)?;
     run_framebuffer_mapping_harness(semantic)?;
     run_framebuffer_write_harness(semantic)?;
+    run_framebuffer_flush_region_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8464,6 +8465,7 @@ fn build_target_executor_v1(
         framebuffer_window_leases: semantic.framebuffer_window_leases().to_vec(),
         framebuffer_mappings: semantic.framebuffer_mappings().to_vec(),
         framebuffer_writes: semantic.framebuffer_writes().to_vec(),
+        framebuffer_flush_regions: semantic.framebuffer_flush_regions().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: contract_stores,
@@ -10290,6 +10292,47 @@ fn run_framebuffer_write_harness(semantic: &mut SemanticGraph) -> Result<(), Box
     Ok(())
 }
 
+fn run_framebuffer_flush_region_harness(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let write = semantic
+        .framebuffer_writes()
+        .iter()
+        .find(|record| record.id == 23_501)
+        .cloned()
+        .ok_or("display runtime g6 requires g5 framebuffer write evidence")?;
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_026,
+        "display-runtime-g6",
+        SemanticCommand::RecordFramebufferFlushRegion {
+            framebuffer_flush_region: 23_601,
+            owner_store: write.owner_store,
+            owner_store_generation: write.owner_store_generation,
+            framebuffer_write: write.id,
+            framebuffer_write_generation: write.generation,
+            x: write.x,
+            y: write.y,
+            width: write.width,
+            height: write.height,
+            byte_offset: write.byte_offset,
+            byte_len: write.byte_len,
+            payload_digest: write.payload_digest,
+            note: "g6 records semantic flush region evidence without real present".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g6 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn append_display_capability_contract_evidence(
     semantic: &SemanticGraph,
     store_records: &mut Vec<StoreRecordManifest>,
@@ -11130,6 +11173,7 @@ fn demo_migration_package(
             framebuffer_window_lease_count: semantic.framebuffer_window_lease_count(),
             framebuffer_mapping_count: semantic.framebuffer_mapping_count(),
             framebuffer_write_count: semantic.framebuffer_write_count(),
+            framebuffer_flush_region_count: semantic.framebuffer_flush_region_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11602,6 +11646,11 @@ fn demo_migration_package(
                 .framebuffer_writes()
                 .iter()
                 .map(framebuffer_write_manifest)
+                .collect(),
+            framebuffer_flush_regions: semantic
+                .framebuffer_flush_regions()
+                .iter()
+                .map(framebuffer_flush_region_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -13845,6 +13894,36 @@ fn semantic_roots(
                     write.payload_digest,
                     write.state.as_str(),
                     write.generation
+                )
+            })
+            .collect(),
+        framebuffer_flush_region_roots: semantic
+            .framebuffer_flush_regions()
+            .iter()
+            .map(|flush| {
+                format!(
+                    "framebuffer-flush-region id={} owner_store={}@{} framebuffer_write={}@{} display_capability={}@{} display={}@{} framebuffer={}@{} region={},{} {}x{} byte_range={}+{} pixel_format={} payload_digest={} state={} generation={}",
+                    flush.id,
+                    flush.owner_store,
+                    flush.owner_store_generation,
+                    flush.framebuffer_write,
+                    flush.framebuffer_write_generation,
+                    flush.display_capability,
+                    flush.display_capability_generation,
+                    flush.display,
+                    flush.display_generation,
+                    flush.framebuffer,
+                    flush.framebuffer_generation,
+                    flush.x,
+                    flush.y,
+                    flush.width,
+                    flush.height,
+                    flush.byte_offset,
+                    flush.byte_len,
+                    flush.pixel_format,
+                    flush.payload_digest,
+                    flush.state.as_str(),
+                    flush.generation
                 )
             })
             .collect(),
@@ -16856,6 +16935,36 @@ fn framebuffer_write_manifest(
         state: write.state.as_str().to_owned(),
         recorded_at_event: write.recorded_at_event,
         note: write.note.clone(),
+    }
+}
+
+fn framebuffer_flush_region_manifest(
+    flush: &semantic_core::FramebufferFlushRegionRecord,
+) -> FramebufferFlushRegionManifest {
+    FramebufferFlushRegionManifest {
+        id: flush.id,
+        owner_store: flush.owner_store,
+        owner_store_generation: flush.owner_store_generation,
+        framebuffer_write: flush.framebuffer_write,
+        framebuffer_write_generation: flush.framebuffer_write_generation,
+        display_capability: flush.display_capability,
+        display_capability_generation: flush.display_capability_generation,
+        display: flush.display,
+        display_generation: flush.display_generation,
+        framebuffer: flush.framebuffer,
+        framebuffer_generation: flush.framebuffer_generation,
+        x: flush.x,
+        y: flush.y,
+        width: flush.width,
+        height: flush.height,
+        byte_offset: flush.byte_offset,
+        byte_len: flush.byte_len,
+        pixel_format: flush.pixel_format.clone(),
+        payload_digest: flush.payload_digest,
+        generation: flush.generation,
+        state: flush.state.as_str().to_owned(),
+        recorded_at_event: flush.recorded_at_event,
+        note: flush.note.clone(),
     }
 }
 

@@ -403,6 +403,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub framebuffer_write_count: usize,
     #[serde(default)]
+    pub framebuffer_flush_region_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -657,6 +659,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub framebuffer_writes: Vec<FramebufferWriteManifest>,
     #[serde(default)]
+    pub framebuffer_flush_regions: Vec<FramebufferFlushRegionManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -890,6 +894,8 @@ pub struct SemanticRootSetManifest {
     pub framebuffer_mapping_roots: Vec<String>,
     #[serde(default)]
     pub framebuffer_write_roots: Vec<String>,
+    #[serde(default)]
+    pub framebuffer_flush_region_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -3164,6 +3170,33 @@ pub struct FramebufferWriteManifest {
     pub map_handle_slot: u32,
     pub map_handle_generation: u32,
     pub map_handle_tag: u64,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub byte_offset: u64,
+    pub byte_len: u64,
+    pub pixel_format: String,
+    pub payload_digest: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct FramebufferFlushRegionManifest {
+    pub id: u64,
+    pub owner_store: u64,
+    pub owner_store_generation: u64,
+    pub framebuffer_write: u64,
+    pub framebuffer_write_generation: u64,
+    pub display_capability: u64,
+    pub display_capability_generation: u64,
+    pub display: u64,
+    pub display_generation: u64,
+    pub framebuffer: u64,
+    pub framebuffer_generation: u64,
     pub x: u32,
     pub y: u32,
     pub width: u32,

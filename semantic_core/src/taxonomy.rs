@@ -1913,6 +1913,19 @@ impl FramebufferWriteState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FramebufferFlushRegionState {
+    Applied,
+}
+
+impl FramebufferFlushRegionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivationResumeState {
     Applied,
     Superseded,

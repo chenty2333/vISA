@@ -101,6 +101,7 @@ pub enum ContractObjectKind {
     FramebufferWindowLease,
     FramebufferMapping,
     FramebufferWrite,
+    FramebufferFlushRegion,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -218,6 +219,7 @@ impl ContractObjectKind {
             Self::FramebufferWindowLease => "framebuffer-window-lease",
             Self::FramebufferMapping => "framebuffer-mapping",
             Self::FramebufferWrite => "framebuffer-write",
+            Self::FramebufferFlushRegion => "framebuffer-flush-region",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -5717,6 +5719,7 @@ mod tests {
             framebuffer_window_leases: Vec::new(),
             framebuffer_mappings: Vec::new(),
             framebuffer_writes: Vec::new(),
+            framebuffer_flush_regions: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -5823,6 +5826,7 @@ mod tests {
             framebuffer_window_leases: Vec::new(),
             framebuffer_mappings: Vec::new(),
             framebuffer_writes: Vec::new(),
+            framebuffer_flush_regions: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6063,6 +6067,7 @@ mod tests {
             framebuffer_window_leases: Vec::new(),
             framebuffer_mappings: Vec::new(),
             framebuffer_writes: Vec::new(),
+            framebuffer_flush_regions: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6173,6 +6178,7 @@ mod tests {
             framebuffer_window_leases: Vec::new(),
             framebuffer_mappings: Vec::new(),
             framebuffer_writes: Vec::new(),
+            framebuffer_flush_regions: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6370,6 +6376,7 @@ mod tests {
             framebuffer_window_leases: Vec::new(),
             framebuffer_mappings: Vec::new(),
             framebuffer_writes: Vec::new(),
+            framebuffer_flush_regions: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
