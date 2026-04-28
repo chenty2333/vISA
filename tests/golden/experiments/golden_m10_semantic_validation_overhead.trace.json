@@ -1,0 +1,119 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "M10-semantic-validation-overhead",
+  "name": "golden_m10_semantic_validation_overhead",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/07-osctl-control-plane.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md"
+  ],
+  "no_goals": [
+    "calibrated wall-clock semantic validator timing",
+    "osctl mutating semantic state",
+    "adapter-internal state as semantic truth",
+    "substrate mapping as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "X9 recorded integrated-osctl-trace-replay:26901@1 as first-class control-plane replay evidence",
+      "X9 requires contract validation, replay validation, stable ViewV1, historical graph edges, and roots/count closure",
+      "osctl contract validate --json exposes stable ContractValidationViewV1"
+    ],
+    "commands": [
+      {
+        "command": "record-integrated-osctl-trace-replay",
+        "integrated": "integrated-osctl-trace-replay:26901@1",
+        "integrated_scenario_count": 9,
+        "invariant_checks": 9,
+        "contract_validation_ok": true,
+        "replay_validation_ok": true,
+        "expected": "applied"
+      },
+      {
+        "command": "record-integrated-osctl-trace-replay",
+        "scenario": "missing contract validation cannot record validation closure",
+        "expected": "rejected",
+        "violation": "integrated osctl trace replay requires complete stable evidence"
+      },
+      {
+        "command": "record-integrated-osctl-trace-replay",
+        "scenario": "dangling integrated scenario reference cannot record validation closure",
+        "expected": "rejected",
+        "violation": "integrated osctl trace replay missing integrated scenario evidence"
+      },
+      {
+        "command": "osctl experiment report --json tests/reports/experiments/m10_semantic_validation_overhead.experiment.json",
+        "result": "experiment report validates as vmos-experiment-report"
+      }
+    ]
+  },
+  "events": [
+    {
+      "kind": "IntegratedOsctlTraceReplayRecorded",
+      "integrated": "integrated-osctl-trace-replay:26901@1",
+      "event": 580,
+      "replay_event_cursor": 579,
+      "invariant_checks": 9
+    }
+  ],
+  "expected": {
+    "views": {
+      "integrated-osctl-trace-replay": {
+        "kind": "integrated-osctl-trace-replay",
+        "id": 26901,
+        "generation": 1,
+        "state": "recorded",
+        "integrated_scenario_count": 9,
+        "stable_view_count": 9,
+        "historical_edge_count": 9,
+        "golden_trace_count": 9,
+        "contract_validation_ok": true,
+        "replay_validation_ok": true
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "experiment_report": {
+        "schema": "vmos-experiment-report",
+        "name": "m10_semantic_validation_overhead_host_validation",
+        "checkpoint": "M10-semantic-validation-overhead",
+        "contract_ok": true,
+        "golden_replay_ok": true
+      }
+    },
+    "metrics": {
+      "validation_workload_count": 1,
+      "invariant_checks": 9,
+      "historical_edge_count": 9,
+      "validation_event_delta": 1,
+      "measurement_unit": "semantic-validation-work-unit"
+    },
+    "invariants": [
+      "M10 experiment evidence is backed by first-class IntegratedOsctlTraceReplay ObjectRef",
+      "M10 does not invent calibrated wall-clock validation timing",
+      "contract validation and replay validation must both be true",
+      "X0-X8 integrated roots are referenced through exact historical edges",
+      "osctl remains read-only control-plane evidence"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "integrated_runtime_x9_records_full_osctl_trace_replay",
+      "integrated_runtime_x9_rejects_missing_source_or_incomplete_closure",
+      "integrated_osctl_trace_replay_view_v1_exposes_closure",
+      "semantic_roots_reject_integrated_osctl_trace_replay_root_mismatch"
+    ],
+    "experiment_report": "tests/reports/experiments/m10_semantic_validation_overhead.experiment.json",
+    "osctl_json_views": [
+      "integrated-osctl-trace-replay list --json",
+      "contract validate --json"
+    ],
+    "integrated_osctl_trace_replay": "integrated-osctl-trace-replay:26901@1"
+  }
+}
