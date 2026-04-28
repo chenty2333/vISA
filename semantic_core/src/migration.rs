@@ -1477,6 +1477,17 @@ pub enum SemanticInvariantError {
         feature_set: TargetFeatureSetId,
         event: EventId,
     },
+    VectorStateInvalid {
+        vector_state: VectorStateId,
+    },
+    VectorStateMissingTargetFeatureSet {
+        vector_state: VectorStateId,
+        target_feature_set: ContractObjectRef,
+    },
+    VectorStateMissingEvent {
+        vector_state: VectorStateId,
+        event: EventId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

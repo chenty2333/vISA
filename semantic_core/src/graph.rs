@@ -86,6 +86,7 @@ pub struct SemanticGraph {
     block_benchmarks: Vec<BlockBenchmarkRecord>,
     block_recovery_benchmarks: Vec<BlockRecoveryBenchmarkRecord>,
     target_feature_sets: Vec<TargetFeatureSetRecord>,
+    vector_states: Vec<VectorStateRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -183,6 +184,7 @@ pub struct SemanticGraph {
     next_block_benchmark_id: BlockBenchmarkId,
     next_block_recovery_benchmark_id: BlockRecoveryBenchmarkId,
     next_target_feature_set_id: TargetFeatureSetId,
+    next_vector_state_id: VectorStateId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -287,6 +289,7 @@ mod target_feature_set;
 mod task;
 mod timer;
 mod transaction;
+mod vector_state;
 mod virtio_blk_backend_object;
 mod virtio_net_backend_object;
 mod wait;
@@ -379,6 +382,7 @@ impl SemanticGraph {
             block_benchmarks: Vec::new(),
             block_recovery_benchmarks: Vec::new(),
             target_feature_sets: Vec::new(),
+            vector_states: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -476,6 +480,7 @@ impl SemanticGraph {
             next_block_benchmark_id: 1,
             next_block_recovery_benchmark_id: 1,
             next_target_feature_set_id: 1,
+            next_vector_state_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

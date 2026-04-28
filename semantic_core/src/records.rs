@@ -2475,6 +2475,29 @@ impl TargetFeatureSetRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VectorStateRecord {
+    pub id: VectorStateId,
+    pub owner_activation: ContractObjectRef,
+    pub owner_store: ContractObjectRef,
+    pub code_object: ContractObjectRef,
+    pub target_feature_set: ContractObjectRef,
+    pub simd_abi: String,
+    pub vector_register_count: u16,
+    pub vector_register_bits: u16,
+    pub register_bytes: u32,
+    pub generation: Generation,
+    pub state: VectorStateState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl VectorStateRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::VectorState, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

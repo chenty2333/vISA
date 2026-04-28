@@ -49,8 +49,8 @@ use artifact_manifest::{
     SubstrateEventManifest, TargetAddressMapEntryManifest, TargetArtifactImageManifest,
     TargetCapabilitySpecManifest, TargetFeatureSetManifest, TargetMemoryPlanManifest,
     TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
-    TrapRecordManifest, VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest,
-    WaitRecordManifest,
+    TrapRecordManifest, VectorStateManifest, VirtioBlkBackendObjectManifest,
+    VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
@@ -82,8 +82,8 @@ use semantic_core::{
     SemanticCommand, SemanticGraph, SemanticWaitKind, SnapshotBarrierValidationState,
     SnapshotBarrierValidator, StoreRecord, StoreState, TargetAddressMapEntry, TargetArtifactImage,
     TargetCapabilitySpec, TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass,
-    TargetTrapMetadata, TaskState, TombstoneRecord, TrapSurfaceState, VerifiedArtifact,
-    WaitCancelReason, memory_class_policies, validate_contract_graph,
+    TargetTrapMetadata, TaskState, TombstoneRecord, TrapSurfaceState, VectorStateState,
+    VerifiedArtifact, WaitCancelReason, memory_class_policies, validate_contract_graph,
 };
 use service_core::fake_block::{
     FAKE_BLOCK_BACKEND_PROFILE, FAKE_BLOCK_BACKEND_PROVIDER, FakeBlockBackendConfig,
@@ -244,7 +244,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
-    let target_v1 = build_target_executor_v1(&plan, &semantic, &stores)?;
+    let target_v1 = build_target_executor_v1(&plan, &mut semantic, &stores)?;
 
     println!(
         "target executor loaded {} runtime-only stores with {} capability grants across {} fault domains in {} mode",
@@ -8154,7 +8154,7 @@ fn substrate_requester_parts(
 
 fn build_target_executor_v1(
     plan: &ValidatedArtifactPlan,
-    semantic: &SemanticGraph,
+    semantic: &mut SemanticGraph,
     runtime_stores: &[runtime::LoadedRuntimeStore],
 ) -> Result<TargetExecutorV1Report, Box<dyn Error>> {
     let mut registry = ArtifactRegistry::with_expected(expected_target_artifacts(plan));
@@ -8324,6 +8324,7 @@ fn build_target_executor_v1(
         &mut store_manager,
         &mut executor,
     )?;
+    run_simd_vector_state_harness(semantic, &publisher, &executor)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8389,6 +8390,7 @@ fn build_target_executor_v1(
         artifacts: verified_artifacts,
         code_objects: publisher.objects().to_vec(),
         target_feature_sets: semantic.target_feature_sets().to_vec(),
+        vector_states: semantic.vector_states().to_vec(),
         stores: store_manager
             .records()
             .iter()
@@ -8493,6 +8495,71 @@ fn run_simd_trap_classification_harness(
     executor
         .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
         .map_err(|error| error.message())?;
+    Ok(())
+}
+
+fn run_simd_vector_state_harness(
+    semantic: &mut SemanticGraph,
+    publisher: &CodePublisher,
+    executor: &TargetExecutor,
+) -> Result<(), Box<dyn Error>> {
+    let Some(feature_set) = semantic.target_feature_sets().first().cloned() else {
+        return Ok(());
+    };
+    let Some(code) = publisher
+        .objects()
+        .iter()
+        .find(|code| code.simd_requirement.uses_simd)
+    else {
+        return Ok(());
+    };
+    let Some(activation) = executor.activations().iter().find(|activation| {
+        activation.code_object == code.id && activation.code_generation == code.generation
+    }) else {
+        return Ok(());
+    };
+    let state = if feature_set.simd_supported {
+        VectorStateState::Reserved
+    } else {
+        VectorStateState::Unavailable
+    };
+    let register_bytes = u32::from(code.simd_requirement.min_vector_register_count)
+        * (u32::from(code.simd_requirement.min_vector_register_bits) / 8);
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        60_004,
+        "simd-runtime-v4",
+        SemanticCommand::RecordVectorState {
+            vector_state: 22_000,
+            owner_activation: ContractObjectRef::new(
+                ContractObjectKind::Activation,
+                activation.id,
+                activation.generation,
+            ),
+            owner_store: ContractObjectRef::new(
+                ContractObjectKind::Store,
+                activation.store,
+                activation.store_generation,
+            ),
+            code_object: code.object_ref(),
+            target_feature_set: feature_set.object_ref(),
+            simd_abi: code.simd_requirement.required_abi.clone(),
+            vector_register_count: code.simd_requirement.min_vector_register_count,
+            vector_register_bits: code.simd_requirement.min_vector_register_bits,
+            register_bytes,
+            state,
+            note: "v4 vector state object records SIMD context ownership boundary".to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "simd runtime v4 vector state command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
     Ok(())
 }
 
@@ -9251,6 +9318,7 @@ fn demo_migration_package(
             block_benchmark_count: semantic.block_benchmark_count(),
             block_recovery_benchmark_count: semantic.block_recovery_benchmark_count(),
             target_feature_set_count: semantic.target_feature_set_count(),
+            vector_state_count: semantic.vector_state_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -9673,6 +9741,11 @@ fn demo_migration_package(
                 .target_feature_sets()
                 .iter()
                 .map(target_feature_set_manifest)
+                .collect(),
+            vector_states: semantic
+                .vector_states()
+                .iter()
+                .map(vector_state_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -11643,6 +11716,34 @@ fn semantic_roots(
                     feature.scalar_fallback,
                     feature.state.as_str(),
                     feature.generation
+                )
+            })
+            .collect(),
+        vector_state_roots: semantic
+            .vector_states()
+            .iter()
+            .map(|vector_state| {
+                format!(
+                    "vector-state id={} activation={}:{}@{} store={}:{}@{} code_object={}:{}@{} target_feature_set={}:{}@{} simd_abi={} vector_register_count={} vector_register_bits={} register_bytes={} state={} generation={}",
+                    vector_state.id,
+                    vector_state.owner_activation.kind.as_str(),
+                    vector_state.owner_activation.id,
+                    vector_state.owner_activation.generation,
+                    vector_state.owner_store.kind.as_str(),
+                    vector_state.owner_store.id,
+                    vector_state.owner_store.generation,
+                    vector_state.code_object.kind.as_str(),
+                    vector_state.code_object.id,
+                    vector_state.code_object.generation,
+                    vector_state.target_feature_set.kind.as_str(),
+                    vector_state.target_feature_set.id,
+                    vector_state.target_feature_set.generation,
+                    vector_state.simd_abi,
+                    vector_state.vector_register_count,
+                    vector_state.vector_register_bits,
+                    vector_state.register_bytes,
+                    vector_state.state.as_str(),
+                    vector_state.generation
                 )
             })
             .collect(),
@@ -14383,6 +14484,24 @@ fn target_feature_set_manifest(
         state: feature.state.as_str().to_owned(),
         recorded_at_event: feature.recorded_at_event,
         note: feature.note.clone(),
+    }
+}
+
+fn vector_state_manifest(vector_state: &semantic_core::VectorStateRecord) -> VectorStateManifest {
+    VectorStateManifest {
+        id: vector_state.id,
+        owner_activation: contract_object_ref_manifest(vector_state.owner_activation),
+        owner_store: contract_object_ref_manifest(vector_state.owner_store),
+        code_object: contract_object_ref_manifest(vector_state.code_object),
+        target_feature_set: contract_object_ref_manifest(vector_state.target_feature_set),
+        simd_abi: vector_state.simd_abi.clone(),
+        vector_register_count: vector_state.vector_register_count,
+        vector_register_bits: vector_state.vector_register_bits,
+        register_bytes: vector_state.register_bytes,
+        generation: vector_state.generation,
+        state: vector_state.state.as_str().to_owned(),
+        recorded_at_event: vector_state.recorded_at_event,
+        note: vector_state.note.clone(),
     }
 }
 

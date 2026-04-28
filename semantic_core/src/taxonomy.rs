@@ -1692,6 +1692,27 @@ impl TargetFeatureSetState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VectorStateState {
+    Reserved,
+    Unavailable,
+    Dropped,
+}
+
+impl VectorStateState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Reserved => "reserved",
+            Self::Unavailable => "unavailable",
+            Self::Dropped => "dropped",
+        }
+    }
+
+    pub const fn is_live_owned(self) -> bool {
+        matches!(self, Self::Reserved)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockDmaBufferState {
     Bound,
     Released,

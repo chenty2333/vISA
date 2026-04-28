@@ -91,6 +91,7 @@ pub enum ContractObjectKind {
     BlockBenchmark,
     BlockRecoveryBenchmark,
     TargetFeatureSet,
+    VectorState,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -198,6 +199,7 @@ impl ContractObjectKind {
             Self::BlockBenchmark => "block-benchmark",
             Self::BlockRecoveryBenchmark => "block-recovery-benchmark",
             Self::TargetFeatureSet => "target-feature-set",
+            Self::VectorState => "vector-state",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -5682,6 +5684,7 @@ mod tests {
                 objects
             },
             target_feature_sets: Vec::new(),
+            vector_states: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(stale_store);
@@ -5776,6 +5779,7 @@ mod tests {
                 objects
             },
             target_feature_sets: Vec::new(),
+            vector_states: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(store.store);
@@ -6004,6 +6008,7 @@ mod tests {
                 objects
             },
             target_feature_sets: Vec::new(),
+            vector_states: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(store.store);
@@ -6102,6 +6107,7 @@ mod tests {
                 objects
             },
             target_feature_sets: Vec::new(),
+            vector_states: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(dead_store.clone());
@@ -6287,6 +6293,7 @@ mod tests {
                 objects
             },
             target_feature_sets: Vec::new(),
+            vector_states: Vec::new(),
             stores: {
                 let mut stores = Vec::new();
                 stores.push(current_store.clone());
@@ -6929,6 +6936,107 @@ mod tests {
         assert!(violations.iter().any(|violation| {
             violation.edge == "trap->simd-requirement"
                 && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+        }));
+    }
+
+    #[test]
+    fn simd_runtime_v4_vector_state_edges_validate_exact_generations() {
+        let (artifact, store, mut code, _capabilities) = running_store_and_code();
+        let feature_set = target_feature_set_record();
+        code.simd_requirement = CodeObjectSimdRequirement::declared_simd(
+            "riscv-v",
+            32,
+            128,
+            feature_set.object_ref(),
+            "v4 vector state object",
+        );
+        code.generation += 1;
+        let mut executor = TargetExecutor::new();
+        executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("simd_vector_state".to_string()),
+            )
+            .unwrap();
+        let activation = executor.activations()[0].clone();
+        let vector_state = VectorStateRecord {
+            id: 22_000,
+            owner_activation: activation.object_ref(),
+            owner_store: store.store.object_ref(),
+            code_object: code.object_ref(),
+            target_feature_set: feature_set.object_ref(),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            register_bytes: 512,
+            generation: 1,
+            state: VectorStateState::Reserved,
+            recorded_at_event: 1,
+            note: "v4 vector state object".to_string(),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([artifact]),
+            code_objects: Vec::from([code]),
+            target_feature_sets: Vec::from([feature_set]),
+            vector_states: Vec::from([vector_state]),
+            stores: Vec::from([store.store]),
+            activations: executor.activations().to_vec(),
+            ..ContractGraphSnapshot::default()
+        };
+        assert_eq!(validate_contract_graph(&snapshot), Vec::new());
+    }
+
+    #[test]
+    fn simd_runtime_v4_rejects_live_vector_state_owned_by_dead_activation() {
+        let (artifact, store, mut code, _capabilities) = running_store_and_code();
+        let feature_set = target_feature_set_record();
+        code.simd_requirement = CodeObjectSimdRequirement::declared_simd(
+            "riscv-v",
+            32,
+            128,
+            feature_set.object_ref(),
+            "v4 vector state object",
+        );
+        code.generation += 1;
+        let mut executor = TargetExecutor::new();
+        executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("simd_vector_state".to_string()),
+            )
+            .unwrap();
+        let mut activation = executor.activations()[0].clone();
+        activation.state = ActivationState::Dropped;
+        let vector_state = VectorStateRecord {
+            id: 22_000,
+            owner_activation: activation.object_ref(),
+            owner_store: store.store.object_ref(),
+            code_object: code.object_ref(),
+            target_feature_set: feature_set.object_ref(),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            register_bytes: 512,
+            generation: 1,
+            state: VectorStateState::Reserved,
+            recorded_at_event: 1,
+            note: "v4 vector state object".to_string(),
+        };
+        let snapshot = ContractGraphSnapshot {
+            artifacts: Vec::from([artifact]),
+            code_objects: Vec::from([code]),
+            target_feature_sets: Vec::from([feature_set]),
+            vector_states: Vec::from([vector_state]),
+            stores: Vec::from([store.store]),
+            activations: Vec::from([activation]),
+            ..ContractGraphSnapshot::default()
+        };
+        let violations = validate_contract_graph(&snapshot);
+        assert!(violations.iter().any(|violation| {
+            violation.edge == "vector-state->activation"
+                && violation.kind == ContractViolationKind::LiveEdgeReferencesInactiveObject
         }));
     }
 

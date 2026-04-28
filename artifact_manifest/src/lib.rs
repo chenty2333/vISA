@@ -383,6 +383,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub target_feature_set_count: usize,
     #[serde(default)]
+    pub vector_state_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -617,6 +619,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub target_feature_sets: Vec<TargetFeatureSetManifest>,
     #[serde(default)]
+    pub vector_states: Vec<VectorStateManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -830,6 +834,8 @@ pub struct SemanticRootSetManifest {
     pub block_recovery_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub target_feature_set_roots: Vec<String>,
+    #[serde(default)]
+    pub vector_state_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2867,6 +2873,23 @@ pub struct TargetFeatureSetManifest {
     pub vector_register_bits: u16,
     pub scalar_fallback: bool,
     pub unsupported_reason: String,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct VectorStateManifest {
+    pub id: u64,
+    pub owner_activation: ContractObjectRefManifest,
+    pub owner_store: ContractObjectRefManifest,
+    pub code_object: ContractObjectRefManifest,
+    pub target_feature_set: ContractObjectRefManifest,
+    pub simd_abi: String,
+    pub vector_register_count: u16,
+    pub vector_register_bits: u16,
+    pub register_bytes: u32,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

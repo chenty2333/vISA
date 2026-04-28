@@ -80,6 +80,7 @@ pub struct ContractGraphSnapshot {
     pub artifacts: Vec<VerifiedArtifact>,
     pub code_objects: Vec<CodeObject>,
     pub target_feature_sets: Vec<TargetFeatureSetRecord>,
+    pub vector_states: Vec<VectorStateRecord>,
     pub stores: Vec<StoreRecord>,
     pub activations: Vec<ActivationRecord>,
     pub traps: Vec<TargetTrapRecord>,
@@ -177,6 +178,7 @@ impl ContractGraphValidator {
     pub fn validate(snapshot: &ContractGraphSnapshot) -> Vec<ContractViolation> {
         let mut violations = Vec::new();
         Self::validate_code_objects(snapshot, &mut violations);
+        Self::validate_vector_states(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -242,6 +244,94 @@ impl ContractGraphValidator {
                     feature_set.generation,
                     ContractEdgeMode::Live,
                 );
+            }
+        }
+    }
+
+    fn validate_vector_states(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for vector_state in &snapshot.vector_states {
+            let from = vector_state.object_ref();
+            let edge_mode = if vector_state.state.is_live_owned() {
+                ContractEdgeMode::Live
+            } else {
+                ContractEdgeMode::Historical
+            };
+            Self::check_contract_ref_edge(
+                snapshot,
+                violations,
+                from,
+                "vector-state->activation",
+                vector_state.owner_activation,
+                edge_mode,
+                None,
+            );
+            Self::check_contract_ref_edge(
+                snapshot,
+                violations,
+                from,
+                "vector-state->store",
+                vector_state.owner_store,
+                edge_mode,
+                None,
+            );
+            Self::check_contract_ref_edge(
+                snapshot,
+                violations,
+                from,
+                "vector-state->code-object",
+                vector_state.code_object,
+                edge_mode,
+                None,
+            );
+            Self::check_contract_ref_edge(
+                snapshot,
+                violations,
+                from,
+                "vector-state->target-feature-set",
+                vector_state.target_feature_set,
+                edge_mode,
+                None,
+            );
+            if vector_state.state == VectorStateState::Reserved {
+                let Some(feature) = snapshot.target_feature_sets.iter().find(|feature| {
+                    feature.id == vector_state.target_feature_set.id
+                        && feature.generation == vector_state.target_feature_set.generation
+                }) else {
+                    continue;
+                };
+                if !feature.simd_supported
+                    || feature.simd_abi != vector_state.simd_abi
+                    || feature.vector_register_count < vector_state.vector_register_count
+                    || feature.vector_register_bits < vector_state.vector_register_bits
+                {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "vector-state->target-feature-set",
+                        from,
+                        Some(vector_state.target_feature_set),
+                        "reserved vector state is incompatible with target SIMD feature set",
+                    ));
+                }
+            }
+            if vector_state.state == VectorStateState::Unavailable {
+                let Some(feature) = snapshot.target_feature_sets.iter().find(|feature| {
+                    feature.id == vector_state.target_feature_set.id
+                        && feature.generation == vector_state.target_feature_set.generation
+                }) else {
+                    continue;
+                };
+                if feature.simd_supported {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "vector-state->target-feature-set",
+                        from,
+                        Some(vector_state.target_feature_set),
+                        "unavailable vector state cannot point at a supported SIMD feature set",
+                    ));
+                }
             }
         }
     }
@@ -1297,6 +1387,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|feature| feature.id == id)
                 .map(TargetFeatureSetRecord::object_ref),
+            ContractObjectKind::VectorState => snapshot
+                .vector_states
+                .iter()
+                .find(|vector_state| vector_state.id == id)
+                .map(VectorStateRecord::object_ref),
             ContractObjectKind::Artifact => snapshot
                 .artifacts
                 .iter()
@@ -1465,6 +1560,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|feature| feature.id == id)
                 .map(TargetFeatureSetRecord::object_ref),
+            ContractObjectKind::VectorState => snapshot
+                .vector_states
+                .iter()
+                .find(|vector_state| vector_state.id == id)
+                .map(VectorStateRecord::object_ref),
             ContractObjectKind::Store => snapshot
                 .stores
                 .iter()
@@ -1604,6 +1704,8 @@ impl ContractGraphValidator {
             kind,
             ContractObjectKind::Artifact
                 | ContractObjectKind::CodeObject
+                | ContractObjectKind::TargetFeatureSet
+                | ContractObjectKind::VectorState
                 | ContractObjectKind::Store
                 | ContractObjectKind::Activation
                 | ContractObjectKind::Trap
@@ -1685,6 +1787,16 @@ impl ContractGraphValidator {
                 .and_then(|wait| {
                     (wait.state != WaitState::Pending)
                         .then_some("live edge references inactive wait token")
+                }),
+            ContractObjectKind::VectorState => snapshot
+                .vector_states
+                .iter()
+                .find(|vector_state| {
+                    vector_state.id == object.id && vector_state.generation == object.generation
+                })
+                .and_then(|vector_state| {
+                    (!vector_state.state.is_live_owned())
+                        .then_some("live edge references inactive vector state")
                 }),
             _ => None,
         }

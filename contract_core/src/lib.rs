@@ -145,6 +145,7 @@ pub enum ObjectKind {
     BlockBenchmark,
     BlockRecoveryBenchmark,
     TargetFeatureSet,
+    VectorState,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -255,6 +256,7 @@ impl ObjectKind {
             Self::BlockBenchmark => "block-benchmark",
             Self::BlockRecoveryBenchmark => "block-recovery-benchmark",
             Self::TargetFeatureSet => "target-feature-set",
+            Self::VectorState => "vector-state",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -554,6 +556,7 @@ typed_ref!(
     ObjectKind::BlockRecoveryBenchmark
 );
 typed_ref!(TargetFeatureSetRef, ObjectKind::TargetFeatureSet);
+typed_ref!(VectorStateRef, ObjectKind::VectorState);
 typed_ref!(ActivationResumeRef, ObjectKind::ActivationResume);
 typed_ref!(ActivationWaitRef, ObjectKind::ActivationWait);
 typed_ref!(ActivationCleanupRef, ObjectKind::ActivationCleanup);
@@ -2200,6 +2203,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("target feature set root/count mismatch"));
     }
+    if roots.vector_state_roots.len() != package.semantic.vector_state_count
+        || package.semantic.vector_states.len() != package.semantic.vector_state_count
+    {
+        return Err(ContractError::new("vector state root/count mismatch"));
+    }
     if roots.activation_resume_roots.len() != package.semantic.activation_resume_count
         || package.semantic.activation_resumes.len() != package.semantic.activation_resume_count
     {
@@ -2801,6 +2809,7 @@ mod tests {
                 block_benchmark_count: 0,
                 block_recovery_benchmark_count: 0,
                 target_feature_set_count: 0,
+                vector_state_count: 0,
                 activation_resume_count: 0,
                 activation_wait_count: 0,
                 activation_cleanup_count: 0,
@@ -2920,6 +2929,7 @@ mod tests {
                 block_benchmarks: Vec::new(),
                 block_recovery_benchmarks: Vec::new(),
                 target_feature_sets: Vec::new(),
+                vector_states: Vec::new(),
                 activation_resumes: Vec::new(),
                 activation_waits: Vec::new(),
                 activation_cleanups: Vec::new(),
@@ -4983,6 +4993,49 @@ mod tests {
     }
 
     #[test]
+    fn semantic_roots_reject_vector_state_root_mismatch() {
+        let mut package = minimal_migration_package();
+        package.semantic.vector_state_count = 1;
+        package
+            .semantic
+            .vector_states
+            .push(artifact_manifest::VectorStateManifest {
+                id: 87,
+                owner_activation: artifact_manifest::ContractObjectRefManifest {
+                    kind: "activation".to_owned(),
+                    id: 7,
+                    generation: 1,
+                },
+                owner_store: artifact_manifest::ContractObjectRefManifest {
+                    kind: "store".to_owned(),
+                    id: 2,
+                    generation: 1,
+                },
+                code_object: artifact_manifest::ContractObjectRefManifest {
+                    kind: "code-object".to_owned(),
+                    id: 9,
+                    generation: 1,
+                },
+                target_feature_set: artifact_manifest::ContractObjectRefManifest {
+                    kind: "target-feature-set".to_owned(),
+                    id: 86,
+                    generation: 1,
+                },
+                simd_abi: "riscv-v".to_owned(),
+                vector_register_count: 32,
+                vector_register_bits: 128,
+                register_bytes: 512,
+                generation: 1,
+                state: "unavailable".to_owned(),
+                recorded_at_event: 97,
+                note: "test".to_owned(),
+            });
+
+        let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+        assert_eq!(err.to_string(), "vector state root/count mismatch");
+    }
+
+    #[test]
     fn semantic_roots_reject_network_rx_interrupt_root_mismatch() {
         let mut package = minimal_migration_package();
         package.semantic.network_rx_interrupt_count = 1;
@@ -6298,6 +6351,8 @@ mod tests {
         assert!(BlockRecoveryBenchmarkRef::try_from_ref(block_recovery_benchmark).is_ok());
         let target_feature_set = ObjectRef::new(ObjectKind::TargetFeatureSet, 75, 1).unwrap();
         assert!(TargetFeatureSetRef::try_from_ref(target_feature_set).is_ok());
+        let vector_state = ObjectRef::new(ObjectKind::VectorState, 76, 1).unwrap();
+        assert!(VectorStateRef::try_from_ref(vector_state).is_ok());
         let queue_object = ObjectRef::new(ObjectKind::QueueObject, 18, 1).unwrap();
         assert!(QueueObjectRef::try_from_ref(queue_object).is_ok());
         let descriptor_object = ObjectRef::new(ObjectKind::DescriptorObject, 19, 1).unwrap();

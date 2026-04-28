@@ -37,8 +37,8 @@ use artifact_manifest::{
     SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
     StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
     TargetArtifactImageManifest, TargetFeatureSetManifest, TaskRecordManifest,
-    TimerInterruptManifest, TrapRecordManifest, VirtioBlkBackendObjectManifest,
-    VirtioNetBackendObjectManifest, WaitRecordManifest,
+    TimerInterruptManifest, TrapRecordManifest, VectorStateManifest,
+    VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
@@ -404,6 +404,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "target-feature-set"
         | "target-feature"
         | "target-feature-set-object"
+        | "vector-state"
+        | "vector"
+        | "simd-vector-state"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -575,7 +578,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -583,7 +586,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -859,6 +862,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "target-feature-set" | "target-feature" | "target-feature-set-object" => {
             "target-feature-set"
         }
+        "vector-state" | "vector" | "simd-vector-state" => "vector-state",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -4016,6 +4020,43 @@ fn target_feature_set_view_v1(feature: &TargetFeatureSetManifest) -> serde_json:
     })
 }
 
+fn vector_state_view_v1(vector_state: &VectorStateManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "vector-state",
+        "id": vector_state.id,
+        "generation": vector_state.generation,
+        "state": vector_state.state,
+        "owner": {
+            "activation": object_ref_manifest_json(&vector_state.owner_activation),
+            "store": object_ref_manifest_json(&vector_state.owner_store),
+        },
+        "references": {
+            "code_object": object_ref_manifest_json(&vector_state.code_object),
+            "target_feature_set": object_ref_manifest_json(&vector_state.target_feature_set),
+            "event": {
+                "id": vector_state.recorded_at_event,
+            },
+        },
+        "simd": {
+            "abi": vector_state.simd_abi,
+            "vector_register_count": vector_state.vector_register_count,
+            "vector_register_bits": vector_state.vector_register_bits,
+            "register_bytes": vector_state.register_bytes,
+        },
+        "note": vector_state.note,
+        "last_transition": {
+            "recorded_at_event": vector_state.recorded_at_event,
+            "state": vector_state.state,
+        },
+        "last_error": if vector_state.state == "unavailable" {
+            serde_json::json!("simd-unavailable")
+        } else {
+            serde_json::Value::Null
+        },
+    })
+}
+
 fn packet_buffer_object_view_v1(packet_buffer: &PacketBufferObjectManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -6778,6 +6819,12 @@ fn stable_views_for_kind(
             .target_feature_sets
             .iter()
             .map(target_feature_set_view_v1)
+            .collect()),
+        "vector-state" | "vector" | "simd-vector-state" => Ok(package
+            .semantic
+            .vector_states
+            .iter()
+            .map(vector_state_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -10018,6 +10065,63 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             event,
         ));
     }
+    for vector_state in &package.semantic.vector_states {
+        let event = Some(vector_state.recorded_at_event);
+        let from = object_ref_json("vector-state", vector_state.id, vector_state.generation);
+        for (target, label, mode) in [
+            (
+                &vector_state.owner_activation,
+                "vector-state->activation",
+                if vector_state.state == "reserved" {
+                    "live"
+                } else {
+                    "historical"
+                },
+            ),
+            (
+                &vector_state.owner_store,
+                "vector-state->store",
+                if vector_state.state == "reserved" {
+                    "live"
+                } else {
+                    "historical"
+                },
+            ),
+            (
+                &vector_state.code_object,
+                "vector-state->code-object",
+                if vector_state.state == "reserved" {
+                    "live"
+                } else {
+                    "historical"
+                },
+            ),
+            (
+                &vector_state.target_feature_set,
+                "vector-state->target-feature-set",
+                if vector_state.state == "reserved" {
+                    "live"
+                } else {
+                    "historical"
+                },
+            ),
+        ] {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(target),
+                label,
+                mode,
+                event,
+            ));
+        }
+        edges.push(graph_edge(
+            from,
+            object_ref_json("event", vector_state.recorded_at_event, 1),
+            "vector-state->event",
+            "historical",
+            event,
+        ));
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -12953,6 +13057,40 @@ fn inspect_package_object(
                 );
             }
         }
+        "vector-state" | "vector" | "simd-vector-state" => {
+            println!(
+                "inspect vector-state package={} count={}",
+                package.package_id, package.semantic.vector_state_count
+            );
+            for vector_state in &package.semantic.vector_states {
+                let line = format!(
+                    "vector-state id={} activation={}@{} store={}@{} code_object={}@{} target_feature_set={}@{} simd_abi={} vector_register_count={} vector_register_bits={} register_bytes={} state={} generation={}",
+                    vector_state.id,
+                    vector_state.owner_activation.id,
+                    vector_state.owner_activation.generation,
+                    vector_state.owner_store.id,
+                    vector_state.owner_store.generation,
+                    vector_state.code_object.id,
+                    vector_state.code_object.generation,
+                    vector_state.target_feature_set.id,
+                    vector_state.target_feature_set.generation,
+                    vector_state.simd_abi,
+                    vector_state.vector_register_count,
+                    vector_state.vector_register_bits,
+                    vector_state.register_bytes,
+                    vector_state.state,
+                    vector_state.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.vector_states.is_empty() {
+                print_roots_filtered(
+                    "vector-state",
+                    &package.semantic.roots.vector_state_roots,
+                    filter,
+                );
+            }
+        }
         "command" => {
             println!(
                 "inspect command package={} count={}",
@@ -13243,6 +13381,17 @@ fn inspect_package_object_json(
                 .map(target_feature_set_view_v1)
                 .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.target_feature_set_roots.len() }),
+        ),
+        "vector-state" | "vector" | "simd-vector-state" => (
+            "vector-state",
+            package.semantic.vector_state_count,
+            package
+                .semantic
+                .vector_states
+                .iter()
+                .map(vector_state_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "root_count": package.semantic.roots.vector_state_roots.len() }),
         ),
         "command" => (
             "command",
@@ -17211,6 +17360,48 @@ mod tests {
         assert_eq!(view["features"]["simd"]["supported"], false);
         assert_eq!(view["features"]["simd"]["scalar_fallback"], true);
         assert_eq!(view["last_transition"]["recorded_at_event"], 489);
+    }
+
+    #[test]
+    fn vector_state_view_v1_exposes_owner_and_simd_shape() {
+        let view = vector_state_view_v1(&VectorStateManifest {
+            id: 22_000,
+            owner_activation: ContractObjectRefManifest {
+                kind: "activation".to_owned(),
+                id: 7,
+                generation: 3,
+            },
+            owner_store: ContractObjectRefManifest {
+                kind: "store".to_owned(),
+                id: 2,
+                generation: 5,
+            },
+            code_object: ContractObjectRefManifest {
+                kind: "code-object".to_owned(),
+                id: 9,
+                generation: 4,
+            },
+            target_feature_set: ContractObjectRefManifest {
+                kind: "target-feature-set".to_owned(),
+                id: 21_000,
+                generation: 1,
+            },
+            simd_abi: "riscv-v".to_owned(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            register_bytes: 512,
+            generation: 1,
+            state: "unavailable".to_owned(),
+            recorded_at_event: 490,
+            note: "v4 vector state".to_owned(),
+        });
+        assert_eq!(view["kind"], "vector-state");
+        assert_eq!(view["owner"]["activation"]["generation"], 3);
+        assert_eq!(view["owner"]["store"]["generation"], 5);
+        assert_eq!(view["references"]["code_object"]["id"], 9);
+        assert_eq!(view["references"]["target_feature_set"]["generation"], 1);
+        assert_eq!(view["simd"]["register_bytes"], 512);
+        assert_eq!(view["last_error"], "simd-unavailable");
     }
 
     #[test]

@@ -19089,6 +19089,154 @@ fn simd_runtime_v0_invariants_reject_vector_shape_drift() {
 }
 
 #[test]
+fn simd_runtime_v4_vector_state_records_unavailable_context_object() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.record_target_feature_set_with_id(
+        21_000,
+        "riscv64-qemu-virt-research-target",
+        "target-runtime-default-profile",
+        "riscv64-qemu-virt-research",
+        "riscv64",
+        "rv64imac",
+        "riscv-v",
+        false,
+        0,
+        0,
+        true,
+        "default profile does not declare RVV/SIMD",
+        "v0 default SIMD discovery",
+    ));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v4-test",
+        SemanticCommand::RecordVectorState {
+            vector_state: 22_000,
+            owner_activation: ContractObjectRef::new(ContractObjectKind::Activation, 7, 3),
+            owner_store: ContractObjectRef::new(ContractObjectKind::Store, 2, 5),
+            code_object: ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4),
+            target_feature_set: ContractObjectRef::new(
+                ContractObjectKind::TargetFeatureSet,
+                21_000,
+                1,
+            ),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            register_bytes: 512,
+            state: VectorStateState::Unavailable,
+            note: "v4 unavailable vector state".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.vector_state_count(), 1);
+    let vector_state = &graph.vector_states()[0];
+    assert_eq!(
+        vector_state.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::VectorState, 22_000, 1)
+    );
+    assert_eq!(vector_state.state, VectorStateState::Unavailable);
+    assert_eq!(vector_state.register_bytes, 512);
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "VectorStateRecorded vector_state=22000 activation=activation:7@3 store=store:2@5 code_object=code-object:9@4 target_feature_set=target-feature-set:21000@1 simd_abi=riscv-v vector_register_count=32 vector_register_bits=128 register_bytes=512 state=unavailable generation=1"
+    );
+}
+
+#[test]
+fn simd_runtime_v4_rejects_reserved_vector_state_without_target_support() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.record_target_feature_set_with_id(
+        21_000,
+        "riscv64-qemu-virt-research-target",
+        "target-runtime-default-profile",
+        "riscv64-qemu-virt-research",
+        "riscv64",
+        "rv64imac",
+        "riscv-v",
+        false,
+        0,
+        0,
+        true,
+        "default profile does not declare RVV/SIMD",
+        "v0 default SIMD discovery",
+    ));
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v4-test",
+        SemanticCommand::RecordVectorState {
+            vector_state: 22_000,
+            owner_activation: ContractObjectRef::new(ContractObjectKind::Activation, 7, 3),
+            owner_store: ContractObjectRef::new(ContractObjectKind::Store, 2, 5),
+            code_object: ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4),
+            target_feature_set: ContractObjectRef::new(
+                ContractObjectKind::TargetFeatureSet,
+                21_000,
+                1,
+            ),
+            simd_abi: "riscv-v".to_string(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            register_bytes: 512,
+            state: VectorStateState::Reserved,
+            note: "bad reserved vector state".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Rejected);
+    assert_eq!(
+        result.violations,
+        vec!["reserved vector state requires supported SIMD target feature set".to_string()]
+    );
+    assert!(graph.vector_states().is_empty());
+}
+
+#[test]
+fn simd_runtime_v4_invariants_reject_vector_state_event_drift() {
+    let mut graph = SemanticGraph::new();
+    assert!(graph.record_target_feature_set_with_id(
+        21_000,
+        "riscv64-qemu-virt-research-target",
+        "target-runtime-default-profile",
+        "riscv64-qemu-virt-research",
+        "riscv64",
+        "rv64imac",
+        "riscv-v",
+        false,
+        0,
+        0,
+        true,
+        "default profile does not declare RVV/SIMD",
+        "v0 default SIMD discovery",
+    ));
+    assert!(graph.record_vector_state_with_id(
+        22_000,
+        ContractObjectRef::new(ContractObjectKind::Activation, 7, 3),
+        ContractObjectRef::new(ContractObjectKind::Store, 2, 5),
+        ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4),
+        ContractObjectRef::new(ContractObjectKind::TargetFeatureSet, 21_000, 1),
+        "riscv-v",
+        32,
+        128,
+        512,
+        VectorStateState::Unavailable,
+        "v4 unavailable vector state",
+    ));
+    graph.corrupt_vector_state_owner_activation_generation_for_test(22_000, 4);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::VectorStateMissingEvent {
+            vector_state: 22_000,
+            event: 2
+        })
+    );
+}
+
+#[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();
     let blocker = ContractObjectRef::new(ContractObjectKind::TimerInterrupt, 5, 1);
