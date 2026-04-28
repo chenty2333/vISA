@@ -12820,6 +12820,42 @@ fn b10_expected_digest(access: DmaBufferObjectAccess) -> u64 {
     )
 }
 
+fn setup_b21_stale_block_request_generation_graph() -> SemanticGraph {
+    let mut graph = setup_b9_block_request_queue_graph();
+    assert!(graph.record_queue_object_with_id(
+        1831,
+        "fake-block9-submit",
+        QueueObjectRole::Submission,
+        0,
+        8,
+        1823,
+        1,
+        "b21 block submission queue",
+    ));
+    assert!(graph.record_descriptor_object_with_id(
+        1832,
+        1831,
+        1,
+        0,
+        DescriptorObjectAccess::ReadWrite,
+        4096,
+        "b21 block dma descriptor",
+    ));
+    let dma_resource = graph.register_resource(ResourceKind::DmaBuffer, None, "dma:block9-b21");
+    let dma_resource_generation = graph.resource_handle(dma_resource).unwrap().generation;
+    assert!(graph.record_dma_buffer_object_with_id(
+        1833,
+        1832,
+        1,
+        dma_resource,
+        dma_resource_generation,
+        DmaBufferObjectAccess::ReadWrite,
+        4096,
+        "b21 block dma buffer",
+    ));
+    graph
+}
+
 #[test]
 fn block_runtime_b10_dma_backed_block_buffer_binds_request_to_dma_generation() {
     let mut graph = setup_b10_block_dma_buffer_graph(DmaBufferObjectAccess::ReadWrite);
@@ -15329,6 +15365,242 @@ fn block_runtime_b20_rejects_stale_retry_and_detects_policy_generation_leak() {
             SemanticInvariantError::BlockPendingIoPolicyMissingRetryRequest {
                 policy: 1892,
                 block_request: 1891,
+            }
+        )
+    );
+}
+
+#[test]
+fn block_runtime_b21_records_stale_block_request_generation_audit() {
+    let mut graph = setup_b21_stale_block_request_generation_graph();
+    let backend = ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1);
+    let dma_buffer = ContractObjectRef::new(ContractObjectKind::DmaBufferObject, 1833, 1);
+
+    let stale_completion = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "b21-test",
+        SemanticCommand::RecordBlockCompletionObject {
+            block_completion: 1840,
+            block_request: 1828,
+            block_request_generation: 2,
+            sequence: 2,
+            completed_bytes: 4096,
+            status: BlockCompletionStatus::Success,
+            note: "b21 stale completion generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_completion.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_completion.violations,
+        vec!["block completion object block request generation is missing".to_string()]
+    );
+
+    graph.ensure_task(21, FrontendKind::Supervisor, "b21-stale-wait-owner");
+    graph.record_wait_created_with_details(
+        1841,
+        Some(21),
+        None,
+        None,
+        SemanticWaitKind::DriverCompletion,
+        1,
+        vec![ContractObjectRef::new(
+            ContractObjectKind::BlockRequestObject,
+            1828,
+            2,
+        )],
+        None,
+        RestartPolicy::InternalOnly,
+        Some("b21 stale wait probe".to_string()),
+    );
+    let stale_wait = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "b21-test",
+        SemanticCommand::RecordBlockWait {
+            block_wait: 1842,
+            wait: 1841,
+            wait_generation: 1,
+            block_request: 1828,
+            block_request_generation: 2,
+            note: "b21 stale block wait generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_wait.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_wait.violations,
+        vec!["block wait request generation is missing or not submitted".to_string()]
+    );
+    graph.record_wait_cancelled_with_reason(1841, 125, WaitCancelReason::GenerationMismatch);
+
+    let stale_dma = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "b21-test",
+        SemanticCommand::RecordBlockDmaBuffer {
+            block_dma_buffer: 1843,
+            backend,
+            block_request: 1828,
+            block_request_generation: 2,
+            dma_buffer: 1833,
+            dma_buffer_generation: 1,
+            buffer_digest: b10_expected_digest(DmaBufferObjectAccess::ReadWrite),
+            note: "b21 stale dma request generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_dma.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_dma.violations,
+        vec!["block dma buffer request generation is missing".to_string()]
+    );
+
+    let stale_queue = graph.apply_envelope(CommandEnvelope::new(
+        4,
+        "b21-test",
+        SemanticCommand::RecordBlockRequestQueue {
+            queue: 1844,
+            backend,
+            block_device: 1824,
+            block_device_generation: 1,
+            depth: 4,
+            entries: vec![BlockRequestQueueEntryRef::pending(1828, 2)],
+            note: "b21 stale queue request generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_queue.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_queue.violations,
+        vec!["block request queue request generation is missing".to_string()]
+    );
+
+    let audit = graph.apply_envelope(CommandEnvelope::new(
+        5,
+        "b21-test",
+        SemanticCommand::RecordBlockRequestGenerationAudit {
+            audit: 1845,
+            block_device: 1824,
+            block_device_generation: 1,
+            block_range: 1825,
+            block_range_generation: 1,
+            block_request: 1828,
+            block_request_generation: 1,
+            backend,
+            dma_buffer,
+            rejected_completion_generation_probes: 1,
+            rejected_wait_generation_probes: 1,
+            rejected_dma_generation_probes: 1,
+            rejected_queue_generation_probes: 1,
+            note: "b21 stale request generation audit".to_string(),
+        },
+    ));
+    assert_eq!(audit.status, CommandStatus::Applied, "{audit:?}");
+    assert_eq!(graph.block_request_generation_audit_count(), 1);
+    let audit = &graph.block_request_generation_audits()[0];
+    assert_eq!(
+        audit.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::BlockRequestGenerationAudit, 1845, 1)
+    );
+    assert_eq!(audit.block_request, 1828);
+    assert_eq!(audit.block_request_generation, 1);
+    assert_eq!(audit.backend, backend);
+    assert_eq!(audit.dma_buffer, dma_buffer);
+    assert_eq!(audit.rejected_completion_generation_probes, 1);
+    assert_eq!(audit.rejected_wait_generation_probes, 1);
+    assert_eq!(audit.rejected_dma_generation_probes, 1);
+    assert_eq!(audit.rejected_queue_generation_probes, 1);
+    assert!(
+        graph.event_log_tail(1)[0]
+            .kind
+            .summary()
+            .contains("BlockRequestGenerationAuditRecorded audit=1845")
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn block_runtime_b21_rejects_missing_probe_counts_and_stale_audit_refs() {
+    let mut graph = setup_b21_stale_block_request_generation_graph();
+    let backend = ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1);
+    let dma_buffer = ContractObjectRef::new(ContractObjectKind::DmaBufferObject, 1833, 1);
+
+    let missing_probe = graph.apply_envelope(CommandEnvelope::new(
+        6,
+        "b21-test",
+        SemanticCommand::RecordBlockRequestGenerationAudit {
+            audit: 1845,
+            block_device: 1824,
+            block_device_generation: 1,
+            block_range: 1825,
+            block_range_generation: 1,
+            block_request: 1828,
+            block_request_generation: 1,
+            backend,
+            dma_buffer,
+            rejected_completion_generation_probes: 1,
+            rejected_wait_generation_probes: 0,
+            rejected_dma_generation_probes: 1,
+            rejected_queue_generation_probes: 1,
+            note: "b21 missing wait probe".to_string(),
+        },
+    ));
+    assert_eq!(missing_probe.status, CommandStatus::Rejected);
+    assert_eq!(
+        missing_probe.violations,
+        vec!["block request generation audit requires rejected probes for all paths".to_string()]
+    );
+
+    let stale_request = graph.apply_envelope(CommandEnvelope::new(
+        7,
+        "b21-test",
+        SemanticCommand::RecordBlockRequestGenerationAudit {
+            audit: 1845,
+            block_device: 1824,
+            block_device_generation: 1,
+            block_range: 1825,
+            block_range_generation: 1,
+            block_request: 1828,
+            block_request_generation: 2,
+            backend,
+            dma_buffer,
+            rejected_completion_generation_probes: 1,
+            rejected_wait_generation_probes: 1,
+            rejected_dma_generation_probes: 1,
+            rejected_queue_generation_probes: 1,
+            note: "b21 stale audit request ref".to_string(),
+        },
+    ));
+    assert_eq!(stale_request.status, CommandStatus::Rejected);
+    assert_eq!(
+        stale_request.violations,
+        vec![
+            "block request generation audit request generation is missing or inactive".to_string()
+        ]
+    );
+}
+
+#[test]
+fn block_runtime_b21_invariants_reject_stale_audit_request_generation() {
+    let mut graph = setup_b21_stale_block_request_generation_graph();
+    assert!(graph.record_block_request_generation_audit_with_id(
+        1845,
+        1824,
+        1,
+        1825,
+        1,
+        1828,
+        1,
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 1829, 1),
+        ContractObjectRef::new(ContractObjectKind::DmaBufferObject, 1833, 1),
+        1,
+        1,
+        1,
+        1,
+        "b21 generation audit",
+    ));
+    graph.corrupt_block_request_generation_audit_request_generation_for_test(1845, 2);
+    assert_eq!(
+        graph.check_invariants(),
+        Err(
+            SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
+                audit: 1845,
+                target: ContractObjectRef::new(ContractObjectKind::BlockRequestObject, 1828, 2),
             }
         )
     );

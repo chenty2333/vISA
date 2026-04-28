@@ -1,0 +1,162 @@
+{
+  "schema": "vmos-golden-trace",
+  "schema_version": 1,
+  "checkpoint": "B21-stale-block-request-generation-tests",
+  "name": "golden_b21_stale_block_request_generation",
+  "contract_refs": [
+    "references/roadmap.md",
+    "references/specs/execution-flow/agent-checkpoint-report.md",
+    "references/specs/semantic-contract-v0.1/02-object-identity-and-refs.md",
+    "references/specs/semantic-contract-v0.1/03-contract-graph-edges.md",
+    "references/specs/semantic-contract-v0.1/06-store-fault-cleanup.md",
+    "references/specs/semantic-contract-v0.1/10-command-transaction-surface.md"
+  ],
+  "no_goals": [
+    "real virtio-blk MMIO/DMA/IRQ execution",
+    "real block scheduler",
+    "adapter-local disk state as semantic truth",
+    "target-side cwasm execution"
+  ],
+  "stimulus": {
+    "preconditions": [
+      "B5 already binds fake-block-backend-object:20026@1 to block-device-object:20002@1",
+      "B10 already records dma-buffer-object:20060@1",
+      "B20 already records pending block-request-object:20111@1 on block-device-object:20002@1 and block-range-object:20005@1"
+    ],
+    "commands": [
+      {
+        "id": 320,
+        "command": "record-block-completion-object",
+        "scenario": "stale completion request generation",
+        "block_request": "block-request-object:20111@2",
+        "expected": "rejected",
+        "violation": "block completion object block request generation is missing"
+      },
+      {
+        "id": 321,
+        "command": "create-wait",
+        "wait": "wait-token:20127@1",
+        "blocker": "block-request-object:20111@2",
+        "expected": "applied"
+      },
+      {
+        "id": 322,
+        "command": "record-block-wait",
+        "scenario": "stale wait request generation",
+        "wait": "wait-token:20127@1",
+        "block_request": "block-request-object:20111@2",
+        "expected": "rejected",
+        "violation": "block wait request generation is missing or not submitted"
+      },
+      {
+        "id": 323,
+        "command": "cancel-wait",
+        "wait": "wait-token:20127@1",
+        "reason": "generation-mismatch",
+        "expected": "applied"
+      },
+      {
+        "id": 324,
+        "command": "record-block-dma-buffer",
+        "scenario": "stale dma request generation",
+        "block_request": "block-request-object:20111@2",
+        "dma_buffer": "dma-buffer-object:20060@1",
+        "expected": "rejected",
+        "violation": "block dma buffer request generation is missing"
+      },
+      {
+        "id": 325,
+        "command": "record-block-request-queue",
+        "scenario": "stale queue request generation",
+        "block_request": "block-request-object:20111@2",
+        "expected": "rejected",
+        "violation": "block request queue request generation is missing"
+      },
+      {
+        "id": 326,
+        "command": "record-block-request-generation-audit",
+        "audit": "block-request-generation-audit:20131@1",
+        "block_request": "block-request-object:20111@1",
+        "backend": "fake-block-backend-object:20026@1",
+        "dma_buffer": "dma-buffer-object:20060@1",
+        "expected": "applied"
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": 481,
+      "kind": "WaitCreated",
+      "wait": "wait-token:20127@1",
+      "blocker": "block-request-object:20111@2"
+    },
+    {
+      "id": 483,
+      "kind": "WaitCancelled",
+      "wait": "wait-token:20127@1",
+      "reason": "generation-mismatch"
+    },
+    {
+      "id": 484,
+      "kind": "BlockRequestGenerationAuditRecorded",
+      "audit": "block-request-generation-audit:20131@1",
+      "block_request": "block-request-object:20111@1",
+      "backend": "fake-block-backend-object:20026@1",
+      "dma_buffer": "dma-buffer-object:20060@1"
+    }
+  ],
+  "expected": {
+    "views": {
+      "block-request-generation-audit": {
+        "count": 1,
+        "audit": "block-request-generation-audit:20131@1",
+        "block_request": "block-request-object:20111@1",
+        "backend": "fake-block-backend-object:20026@1",
+        "dma_buffer": "dma-buffer-object:20060@1",
+        "rejected_completion_generation_probes": 1,
+        "rejected_wait_generation_probes": 1,
+        "rejected_dma_generation_probes": 1,
+        "rejected_queue_generation_probes": 1
+      },
+      "command": {
+        "stale_completion_rejected": "command-result:320:record-block-completion-object:rejected",
+        "stale_wait_rejected": "command-result:322:record-block-wait:rejected",
+        "stale_dma_rejected": "command-result:324:record-block-dma-buffer:rejected",
+        "stale_queue_rejected": "command-result:325:record-block-request-queue:rejected",
+        "audit_applied": "command-result:326:record-block-request-generation-audit:applied"
+      },
+      "contract-validation": {
+        "ok": true,
+        "violation_count": 0
+      },
+      "graph": {
+        "historical_edges": [
+          "block-request-generation-audit->block-device",
+          "block-request-generation-audit->block-range",
+          "block-request-generation-audit->block-request",
+          "block-request-generation-audit->backend",
+          "block-request-generation-audit->dma-buffer"
+        ]
+      }
+    },
+    "invariants": [
+      "Stale BlockRequestObject generations are rejected at completion, wait, DMA buffer, and queue boundaries before mutation",
+      "The audit record is historical evidence only and creates no live ownership edge",
+      "The audit record carries exact-generation refs for BlockDevice, BlockRange, BlockRequest, FakeBlockBackend, and DmaBuffer",
+      "The probe WaitToken created for the stale wait path is cancelled with GenerationMismatch before package export",
+      "osctl exposes stable ViewV1 evidence for the audit, rejected commands, replay roots, and historical graph edges"
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "required_tests": [
+      "semantic_roots_reject_block_request_generation_audit_root_mismatch",
+      "block_runtime_b21_records_stale_block_request_generation_audit",
+      "block_runtime_b21_rejects_missing_probe_counts_and_stale_audit_refs",
+      "block_runtime_b21_invariants_reject_stale_audit_request_generation",
+      "block_request_generation_audit_view_v1_exposes_exact_generation_refs"
+    ],
+    "osctl_json_view": "block-request-generation-audit list --json",
+    "target_executor_event_cursor": 486
+  }
+}

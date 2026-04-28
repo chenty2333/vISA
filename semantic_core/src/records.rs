@@ -2333,6 +2333,37 @@ impl BlockPendingIoPolicyRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockRequestGenerationAuditRecord {
+    pub id: BlockRequestGenerationAuditId,
+    pub block_device: BlockDeviceObjectId,
+    pub block_device_generation: Generation,
+    pub block_range: BlockRangeObjectId,
+    pub block_range_generation: Generation,
+    pub block_request: BlockRequestObjectId,
+    pub block_request_generation: Generation,
+    pub backend: ContractObjectRef,
+    pub dma_buffer: ContractObjectRef,
+    pub rejected_completion_generation_probes: u32,
+    pub rejected_wait_generation_probes: u32,
+    pub rejected_dma_generation_probes: u32,
+    pub rejected_queue_generation_probes: u32,
+    pub generation: Generation,
+    pub state: BlockRequestGenerationAuditState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl BlockRequestGenerationAuditRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::BlockRequestGenerationAudit,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,

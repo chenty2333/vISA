@@ -11,18 +11,18 @@ use artifact_manifest::{
     ArtifactBundleManifest, BlockCompletionObjectManifest, BlockDeviceObjectManifest,
     BlockDmaBufferManifest, BlockDriverCleanupManifest, BlockPageObjectManifest,
     BlockPendingIoPolicyManifest, BlockRangeObjectManifest, BlockReadPathManifest,
-    BlockRequestObjectManifest, BlockRequestQueueManifest, BlockWaitManifest,
-    BlockWritePathManifest, BoundaryValidationReportManifest, BufferCacheObjectManifest,
-    CapabilityRecordManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandResultManifest, ContractObjectRefManifest, CrossHartSchedulerDecisionManifest,
-    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
-    DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
-    EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
-    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
-    FileObjectManifest, FsWaitManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    BlockRequestGenerationAuditManifest, BlockRequestObjectManifest, BlockRequestQueueManifest,
+    BlockWaitManifest, BlockWritePathManifest, BoundaryValidationReportManifest,
+    BufferCacheObjectManifest, CapabilityRecordManifest, CleanupTransactionManifest,
+    CodeObjectManifest, CommandResultManifest, ContractObjectRefManifest,
+    CrossHartSchedulerDecisionManifest, DescriptorObjectManifest, DeviceCapabilityManifest,
+    DeviceObjectManifest, DirectoryObjectManifest, DmaBufferObjectManifest,
+    DriverStoreBindingManifest, EndpointObjectManifest, Ext4AdapterObjectManifest,
+    FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest, FatAdapterObjectManifest,
+    FileHandleCapabilityManifest, FileObjectManifest, FsWaitManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -390,6 +390,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "block-pending-io-policy"
         | "pending-block-io"
         | "pending-io-policy"
+        | "block-request-generation-audit"
+        | "stale-block-request-generation"
+        | "block-generation-audit"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -561,7 +564,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -569,7 +572,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -835,6 +838,9 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "block-pending-io-policy" | "pending-block-io" | "pending-io-policy" => {
             "block-pending-io-policy"
         }
+        "block-request-generation-audit"
+        | "stale-block-request-generation"
+        | "block-generation-audit" => "block-request-generation-audit",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -3730,6 +3736,68 @@ fn block_pending_io_policy_view_v1(policy: &BlockPendingIoPolicyManifest) -> ser
     })
 }
 
+fn block_request_generation_audit_view_v1(
+    audit: &BlockRequestGenerationAuditManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "block-request-generation-audit",
+        "id": audit.id,
+        "generation": audit.generation,
+        "state": audit.state,
+        "owner": {
+            "block_request": object_ref_json(
+                "block-request",
+                audit.block_request,
+                audit.block_request_generation,
+            ),
+            "block_device": object_ref_json(
+                "block-device",
+                audit.block_device,
+                audit.block_device_generation,
+            ),
+        },
+        "references": {
+            "block_device": object_ref_json(
+                "block-device",
+                audit.block_device,
+                audit.block_device_generation,
+            ),
+            "block_range": object_ref_json(
+                "block-range",
+                audit.block_range,
+                audit.block_range_generation,
+            ),
+            "block_request": object_ref_json(
+                "block-request",
+                audit.block_request,
+                audit.block_request_generation,
+            ),
+            "backend": object_ref_manifest_json(&audit.backend),
+            "dma_buffer": object_ref_manifest_json(&audit.dma_buffer),
+            "event": {
+                "id": audit.recorded_at_event,
+            },
+        },
+        "audit": {
+            "rejected_completion_generation_probes": audit.rejected_completion_generation_probes,
+            "rejected_wait_generation_probes": audit.rejected_wait_generation_probes,
+            "rejected_dma_generation_probes": audit.rejected_dma_generation_probes,
+            "rejected_queue_generation_probes": audit.rejected_queue_generation_probes,
+        },
+        "note": audit.note,
+        "last_transition": {
+            "recorded_at_event": audit.recorded_at_event,
+            "block_device_generation": audit.block_device_generation,
+            "block_range_generation": audit.block_range_generation,
+            "block_request_generation": audit.block_request_generation,
+            "backend_generation": audit.backend.generation,
+            "dma_buffer_generation": audit.dma_buffer.generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn packet_buffer_object_view_v1(packet_buffer: &PacketBufferObjectManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -6439,6 +6507,14 @@ fn stable_views_for_kind(
             .block_pending_io_policies
             .iter()
             .map(block_pending_io_policy_view_v1)
+            .collect()),
+        "block-request-generation-audit"
+        | "stale-block-request-generation"
+        | "block-generation-audit" => Ok(package
+            .semantic
+            .block_request_generation_audits
+            .iter()
+            .map(block_request_generation_audit_view_v1)
             .collect()),
         "activation-resume" => Ok(package
             .semantic
@@ -9463,6 +9539,57 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             event,
         ));
     }
+    for audit in &package.semantic.block_request_generation_audits {
+        let event = Some(audit.recorded_at_event);
+        let from = object_ref_json("block-request-generation-audit", audit.id, audit.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-device",
+                audit.block_device,
+                audit.block_device_generation,
+            ),
+            "block-request-generation-audit->block-device",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-range",
+                audit.block_range,
+                audit.block_range_generation,
+            ),
+            "block-request-generation-audit->block-range",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "block-request",
+                audit.block_request,
+                audit.block_request_generation,
+            ),
+            "block-request-generation-audit->block-request",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_manifest_json(&audit.backend),
+            "block-request-generation-audit->backend",
+            "historical",
+            event,
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_manifest_json(&audit.dma_buffer),
+            "block-request-generation-audit->dma-buffer",
+            "historical",
+            event,
+        ));
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -12236,6 +12363,46 @@ fn inspect_package_object(
                 );
             }
         }
+        "block-request-generation-audit"
+        | "stale-block-request-generation"
+        | "block-generation-audit" => {
+            println!(
+                "inspect block-request-generation-audit package={} count={}",
+                package.package_id, package.semantic.block_request_generation_audit_count
+            );
+            for audit in &package.semantic.block_request_generation_audits {
+                let line = format!(
+                    "block-request-generation-audit id={} block_device={}@{} block_range={}@{} block_request={}@{} backend={}:{}@{} dma_buffer={}:{}@{} rejected_completion_generation_probes={} rejected_wait_generation_probes={} rejected_dma_generation_probes={} rejected_queue_generation_probes={} state={} generation={}",
+                    audit.id,
+                    audit.block_device,
+                    audit.block_device_generation,
+                    audit.block_range,
+                    audit.block_range_generation,
+                    audit.block_request,
+                    audit.block_request_generation,
+                    audit.backend.kind,
+                    audit.backend.id,
+                    audit.backend.generation,
+                    audit.dma_buffer.kind,
+                    audit.dma_buffer.id,
+                    audit.dma_buffer.generation,
+                    audit.rejected_completion_generation_probes,
+                    audit.rejected_wait_generation_probes,
+                    audit.rejected_dma_generation_probes,
+                    audit.rejected_queue_generation_probes,
+                    audit.state,
+                    audit.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.block_request_generation_audits.is_empty() {
+                print_roots_filtered(
+                    "block-request-generation-audit",
+                    &package.semantic.roots.block_request_generation_audit_roots,
+                    filter,
+                );
+            }
+        }
         "command" => {
             println!(
                 "inspect command package={} count={}",
@@ -12480,6 +12647,19 @@ fn inspect_package_object_json(
                 .map(block_pending_io_policy_view_v1)
                 .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.block_pending_io_policy_roots.len() }),
+        ),
+        "block-request-generation-audit"
+        | "stale-block-request-generation"
+        | "block-generation-audit" => (
+            "block-request-generation-audit",
+            package.semantic.block_request_generation_audit_count,
+            package
+                .semantic
+                .block_request_generation_audits
+                .iter()
+                .map(block_request_generation_audit_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({ "root_count": package.semantic.roots.block_request_generation_audit_roots.len() }),
         ),
         "command" => (
             "command",
@@ -13079,6 +13259,9 @@ fn replay_until(
     for policy in &package.semantic.roots.block_pending_io_policy_roots {
         println!("replay block-pending-io-policy {policy}");
     }
+    for audit in &package.semantic.roots.block_request_generation_audit_roots {
+        println!("replay block-request-generation-audit {audit}");
+    }
     for packet_buffer in &package.semantic.roots.packet_buffer_object_roots {
         println!("replay packet-buffer {packet_buffer}");
     }
@@ -13446,6 +13629,16 @@ fn print_replay_json(
     roots.insert(
         "block_pending_io_policies".to_owned(),
         serde_json::json!(package.semantic.roots.block_pending_io_policy_roots.len()),
+    );
+    roots.insert(
+        "block_request_generation_audits".to_owned(),
+        serde_json::json!(
+            package
+                .semantic
+                .roots
+                .block_request_generation_audit_roots
+                .len()
+        ),
     );
     roots.insert(
         "resources".to_owned(),
@@ -13862,6 +14055,10 @@ fn print_replay_json(
     roots.insert(
         "block_pending_io_policy_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.block_pending_io_policy_roots),
+    );
+    roots.insert(
+        "block_request_generation_audit_roots".to_owned(),
+        serde_json::json!(&package.semantic.roots.block_request_generation_audit_roots),
     );
 
     let value = serde_json::json!({
@@ -16190,6 +16387,54 @@ mod tests {
             ..retry_policy
         });
         assert_eq!(eio["last_error"]["errno"], 5);
+    }
+
+    #[test]
+    fn block_request_generation_audit_view_v1_exposes_exact_generation_refs() {
+        let view = block_request_generation_audit_view_v1(&BlockRequestGenerationAuditManifest {
+            id: 131,
+            block_device: 2,
+            block_device_generation: 3,
+            block_range: 5,
+            block_range_generation: 7,
+            block_request: 11,
+            block_request_generation: 13,
+            backend: ContractObjectRefManifest {
+                kind: "fake-block-backend-object".to_owned(),
+                id: 17,
+                generation: 19,
+            },
+            dma_buffer: ContractObjectRefManifest {
+                kind: "dma-buffer-object".to_owned(),
+                id: 23,
+                generation: 29,
+            },
+            rejected_completion_generation_probes: 1,
+            rejected_wait_generation_probes: 2,
+            rejected_dma_generation_probes: 3,
+            rejected_queue_generation_probes: 4,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 31,
+            note: "stale request generation audit".to_owned(),
+        });
+        assert_eq!(view["kind"], "block-request-generation-audit");
+        assert_eq!(view["owner"]["block_request"]["generation"], 13);
+        assert_eq!(
+            view["references"]["backend"]["kind"],
+            "fake-block-backend-object"
+        );
+        assert_eq!(view["references"]["backend"]["generation"], 19);
+        assert_eq!(
+            view["references"]["dma_buffer"]["kind"],
+            "dma-buffer-object"
+        );
+        assert_eq!(view["references"]["dma_buffer"]["generation"], 29);
+        assert_eq!(view["audit"]["rejected_completion_generation_probes"], 1);
+        assert_eq!(view["audit"]["rejected_wait_generation_probes"], 2);
+        assert_eq!(view["audit"]["rejected_dma_generation_probes"], 3);
+        assert_eq!(view["audit"]["rejected_queue_generation_probes"], 4);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 31);
     }
 
     #[test]

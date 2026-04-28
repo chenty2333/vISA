@@ -11,30 +11,30 @@ use artifact_manifest::{
     ActivationWaitManifest, ArtifactBundleManifest, AuthorityObjectRefManifest,
     BlockCompletionObjectManifest, BlockDeviceObjectManifest, BlockDmaBufferManifest,
     BlockDriverCleanupManifest, BlockPageObjectManifest, BlockPendingIoPolicyManifest,
-    BlockRangeObjectManifest, BlockReadPathManifest, BlockRequestObjectManifest,
-    BlockRequestQueueEntryManifest, BlockRequestQueueManifest, BlockWaitManifest,
-    BlockWritePathManifest, BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
-    BufferCacheObjectManifest, CapabilityHandleArgManifest, CapabilityRecordManifest,
-    CleanupEffectManifest, CleanupStepManifest, CleanupTransactionManifest, CodeObjectManifest,
-    CommandEffectManifest, CommandResultManifest, ContractObjectRefManifest,
-    ContractViolationManifest, CrossHartSchedulerDecisionManifest, DescriptorObjectManifest,
-    DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
-    DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
-    Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest, FsWaitManifest,
-    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
-    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
-    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    BlockRangeObjectManifest, BlockReadPathManifest, BlockRequestGenerationAuditManifest,
+    BlockRequestObjectManifest, BlockRequestQueueEntryManifest, BlockRequestQueueManifest,
+    BlockWaitManifest, BlockWritePathManifest, BoundaryValidationReportManifest,
+    BoundaryValidationViolationManifest, BufferCacheObjectManifest, CapabilityHandleArgManifest,
+    CapabilityRecordManifest, CleanupEffectManifest, CleanupStepManifest,
+    CleanupTransactionManifest, CodeObjectManifest, CommandEffectManifest, CommandResultManifest,
+    ContractObjectRefManifest, ContractViolationManifest, CrossHartSchedulerDecisionManifest,
+    DescriptorObjectManifest, DeviceCapabilityManifest, DeviceObjectManifest,
+    DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
+    EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
+    FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
+    FileObjectManifest, FsWaitManifest, GuestStateManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SmpCleanupQuiescenceManifest,
@@ -234,6 +234,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b18_evidence(&mut semantic)?;
     record_block_runtime_b19_evidence(&mut semantic)?;
     record_block_runtime_b20_evidence(&mut semantic)?;
+    record_block_runtime_b21_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
@@ -6134,6 +6135,240 @@ fn record_block_runtime_b20_evidence(semantic: &mut SemanticGraph) -> Result<(),
     Ok(())
 }
 
+fn record_block_runtime_b21_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let driver_store = semantic
+        .store_id("b4.block.driver")
+        .ok_or("block runtime b21 driver store is missing")?;
+    let driver_store_generation = semantic
+        .store_handle(driver_store)
+        .map(|handle| handle.generation)
+        .ok_or("block runtime b21 driver store generation is missing")?;
+    let backend = ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, 20_026, 1);
+    let dma_buffer = ContractObjectRef::new(ContractObjectKind::DmaBufferObject, 20_060, 1);
+
+    let stale_completion = semantic.apply_envelope(CommandEnvelope::new(
+        320,
+        "target-executor-b21",
+        SemanticCommand::RecordBlockCompletionObject {
+            block_completion: 20_126,
+            block_request: 20_111,
+            block_request_generation: 2,
+            sequence: 1000,
+            completed_bytes: 4096,
+            status: BlockCompletionStatus::Success,
+            note: "b21-reject-stale-completion-request-generation".to_owned(),
+        },
+    ));
+    if stale_completion.status != CommandStatus::Rejected
+        || !stale_completion
+            .violations
+            .iter()
+            .any(|violation| violation.contains("block request generation"))
+    {
+        return Err(format!(
+            "block runtime b21 stale completion command {} ({}) was not rejected: status={} violations={:?}",
+            stale_completion.command_id,
+            stale_completion.command,
+            stale_completion.status.as_str(),
+            stale_completion.violations
+        )
+        .into());
+    }
+
+    let create_stale_wait = semantic.apply_envelope(CommandEnvelope::new(
+        321,
+        "target-executor-b21",
+        SemanticCommand::CreateWait {
+            wait: 20_127,
+            owner_task: None,
+            owner_store: Some(driver_store),
+            owner_store_generation: Some(driver_store_generation),
+            kind: SemanticWaitKind::DriverCompletion,
+            generation: 1,
+            blockers: vec![ContractObjectRef::new(
+                ContractObjectKind::BlockRequestObject,
+                20_111,
+                2,
+            )],
+            deadline: None,
+            restart_policy: RestartPolicy::InternalOnly,
+            saved_context: Some("b21-stale-request-wait-probe".to_owned()),
+        },
+    ));
+    if create_stale_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b21 create stale wait command {} ({}) failed: status={} violations={:?}",
+            create_stale_wait.command_id,
+            create_stale_wait.command,
+            create_stale_wait.status.as_str(),
+            create_stale_wait.violations
+        )
+        .into());
+    }
+
+    let stale_block_wait = semantic.apply_envelope(CommandEnvelope::new(
+        322,
+        "target-executor-b21",
+        SemanticCommand::RecordBlockWait {
+            block_wait: 20_128,
+            wait: 20_127,
+            wait_generation: 1,
+            block_request: 20_111,
+            block_request_generation: 2,
+            note: "b21-reject-stale-block-wait-request-generation".to_owned(),
+        },
+    ));
+    if stale_block_wait.status != CommandStatus::Rejected
+        || !stale_block_wait
+            .violations
+            .iter()
+            .any(|violation| violation.contains("request generation"))
+    {
+        return Err(format!(
+            "block runtime b21 stale block wait command {} ({}) was not rejected: status={} violations={:?}",
+            stale_block_wait.command_id,
+            stale_block_wait.command,
+            stale_block_wait.status.as_str(),
+            stale_block_wait.violations
+        )
+        .into());
+    }
+
+    let cancel_probe_wait = semantic.apply_envelope(CommandEnvelope::new(
+        323,
+        "target-executor-b21",
+        SemanticCommand::CancelWait {
+            wait: 20_127,
+            errno: 125,
+            reason: WaitCancelReason::GenerationMismatch,
+        },
+    ));
+    if cancel_probe_wait.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b21 cancel stale wait command {} ({}) failed: status={} violations={:?}",
+            cancel_probe_wait.command_id,
+            cancel_probe_wait.command,
+            cancel_probe_wait.status.as_str(),
+            cancel_probe_wait.violations
+        )
+        .into());
+    }
+
+    let stale_dma = semantic.apply_envelope(CommandEnvelope::new(
+        324,
+        "target-executor-b21",
+        SemanticCommand::RecordBlockDmaBuffer {
+            block_dma_buffer: 20_129,
+            backend,
+            block_request: 20_111,
+            block_request_generation: 2,
+            dma_buffer: 20_060,
+            dma_buffer_generation: 1,
+            buffer_digest: 1,
+            note: "b21-reject-stale-dma-request-generation".to_owned(),
+        },
+    ));
+    if stale_dma.status != CommandStatus::Rejected
+        || !stale_dma
+            .violations
+            .iter()
+            .any(|violation| violation.contains("request generation"))
+    {
+        return Err(format!(
+            "block runtime b21 stale dma command {} ({}) was not rejected: status={} violations={:?}",
+            stale_dma.command_id,
+            stale_dma.command,
+            stale_dma.status.as_str(),
+            stale_dma.violations
+        )
+        .into());
+    }
+
+    let stale_queue = semantic.apply_envelope(CommandEnvelope::new(
+        325,
+        "target-executor-b21",
+        SemanticCommand::RecordBlockRequestQueue {
+            queue: 20_130,
+            backend,
+            block_device: 20_002,
+            block_device_generation: 1,
+            depth: 4,
+            entries: vec![BlockRequestQueueEntryRef::pending(20_111, 2)],
+            note: "b21-reject-stale-queue-request-generation".to_owned(),
+        },
+    ));
+    if stale_queue.status != CommandStatus::Rejected
+        || !stale_queue
+            .violations
+            .iter()
+            .any(|violation| violation.contains("request generation"))
+    {
+        return Err(format!(
+            "block runtime b21 stale queue command {} ({}) was not rejected: status={} violations={:?}",
+            stale_queue.command_id,
+            stale_queue.command,
+            stale_queue.status.as_str(),
+            stale_queue.violations
+        )
+        .into());
+    }
+
+    let audit = semantic.apply_envelope(CommandEnvelope::new(
+        326,
+        "target-executor-b21",
+        SemanticCommand::RecordBlockRequestGenerationAudit {
+            audit: 20_131,
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_range: 20_005,
+            block_range_generation: 1,
+            block_request: 20_111,
+            block_request_generation: 1,
+            backend,
+            dma_buffer,
+            rejected_completion_generation_probes: 1,
+            rejected_wait_generation_probes: 1,
+            rejected_dma_generation_probes: 1,
+            rejected_queue_generation_probes: 1,
+            note: "b21-record-stale-block-request-generation-audit".to_owned(),
+        },
+    ));
+    if audit.status != CommandStatus::Applied {
+        return Err(format!(
+            "block runtime b21 audit command {} ({}) failed: status={} violations={:?}",
+            audit.command_id,
+            audit.command,
+            audit.status.as_str(),
+            audit.violations
+        )
+        .into());
+    }
+    if semantic.block_request_generation_audit_count() != 1 {
+        return Err(format!(
+            "block runtime b21 expected 1 generation audit, got {}",
+            semantic.block_request_generation_audit_count()
+        )
+        .into());
+    }
+    if !semantic
+        .block_request_generation_audits()
+        .iter()
+        .any(|audit| {
+            audit.id == 20_131
+                && audit.block_request == 20_111
+                && audit.block_request_generation == 1
+                && audit.rejected_completion_generation_probes == 1
+                && audit.rejected_wait_generation_probes == 1
+                && audit.rejected_dma_generation_probes == 1
+                && audit.rejected_queue_generation_probes == 1
+        })
+    {
+        return Err("block runtime b21 generation audit evidence is missing".into());
+    }
+
+    Ok(())
+}
+
 fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph) {
     record_substrate_event(
         semantic,
@@ -8545,6 +8780,7 @@ fn demo_migration_package(
             fs_wait_count: semantic.fs_wait_count(),
             block_driver_cleanup_count: semantic.block_driver_cleanup_count(),
             block_pending_io_policy_count: semantic.block_pending_io_policy_count(),
+            block_request_generation_audit_count: semantic.block_request_generation_audit_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -8947,6 +9183,11 @@ fn demo_migration_package(
                 .block_pending_io_policies()
                 .iter()
                 .map(block_pending_io_policy_manifest)
+                .collect(),
+            block_request_generation_audits: semantic
+                .block_request_generation_audits()
+                .iter()
+                .map(block_request_generation_audit_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -10798,6 +11039,34 @@ fn semantic_roots(
                     policy.max_retries,
                     policy.state.as_str(),
                     policy.generation
+                )
+            })
+            .collect(),
+        block_request_generation_audit_roots: semantic
+            .block_request_generation_audits()
+            .iter()
+            .map(|audit| {
+                format!(
+                    "block-request-generation-audit id={} block_device={}@{} block_range={}@{} block_request={}@{} backend={}:{}@{} dma_buffer={}:{}@{} rejected_completion_generation_probes={} rejected_wait_generation_probes={} rejected_dma_generation_probes={} rejected_queue_generation_probes={} state={} generation={}",
+                    audit.id,
+                    audit.block_device,
+                    audit.block_device_generation,
+                    audit.block_range,
+                    audit.block_range_generation,
+                    audit.block_request,
+                    audit.block_request_generation,
+                    audit.backend.kind.as_str(),
+                    audit.backend.id,
+                    audit.backend.generation,
+                    audit.dma_buffer.kind.as_str(),
+                    audit.dma_buffer.id,
+                    audit.dma_buffer.generation,
+                    audit.rejected_completion_generation_probes,
+                    audit.rejected_wait_generation_probes,
+                    audit.rejected_dma_generation_probes,
+                    audit.rejected_queue_generation_probes,
+                    audit.state.as_str(),
+                    audit.generation
                 )
             })
             .collect(),
@@ -13401,6 +13670,30 @@ fn block_pending_io_policy_manifest(
         state: policy.state.as_str().to_owned(),
         recorded_at_event: policy.recorded_at_event,
         note: policy.note.clone(),
+    }
+}
+
+fn block_request_generation_audit_manifest(
+    audit: &semantic_core::BlockRequestGenerationAuditRecord,
+) -> BlockRequestGenerationAuditManifest {
+    BlockRequestGenerationAuditManifest {
+        id: audit.id,
+        block_device: audit.block_device,
+        block_device_generation: audit.block_device_generation,
+        block_range: audit.block_range,
+        block_range_generation: audit.block_range_generation,
+        block_request: audit.block_request,
+        block_request_generation: audit.block_request_generation,
+        backend: contract_object_ref_manifest(audit.backend),
+        dma_buffer: contract_object_ref_manifest(audit.dma_buffer),
+        rejected_completion_generation_probes: audit.rejected_completion_generation_probes,
+        rejected_wait_generation_probes: audit.rejected_wait_generation_probes,
+        rejected_dma_generation_probes: audit.rejected_dma_generation_probes,
+        rejected_queue_generation_probes: audit.rejected_queue_generation_probes,
+        generation: audit.generation,
+        state: audit.state.as_str().to_owned(),
+        recorded_at_event: audit.recorded_at_event,
+        note: audit.note.clone(),
     }
 }
 

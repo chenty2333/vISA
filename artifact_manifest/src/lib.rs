@@ -375,6 +375,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_pending_io_policy_count: usize,
     #[serde(default)]
+    pub block_request_generation_audit_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -601,6 +603,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_pending_io_policies: Vec<BlockPendingIoPolicyManifest>,
     #[serde(default)]
+    pub block_request_generation_audits: Vec<BlockRequestGenerationAuditManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -806,6 +810,8 @@ pub struct SemanticRootSetManifest {
     pub block_driver_cleanup_roots: Vec<String>,
     #[serde(default)]
     pub block_pending_io_policy_roots: Vec<String>,
+    #[serde(default)]
+    pub block_request_generation_audit_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2737,6 +2743,27 @@ pub struct BlockPendingIoPolicyManifest {
     pub errno: i32,
     pub retry_attempt: u32,
     pub max_retries: u32,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct BlockRequestGenerationAuditManifest {
+    pub id: u64,
+    pub block_device: u64,
+    pub block_device_generation: u64,
+    pub block_range: u64,
+    pub block_range_generation: u64,
+    pub block_request: u64,
+    pub block_request_generation: u64,
+    pub backend: ContractObjectRefManifest,
+    pub dma_buffer: ContractObjectRefManifest,
+    pub rejected_completion_generation_probes: u32,
+    pub rejected_wait_generation_probes: u32,
+    pub rejected_dma_generation_probes: u32,
+    pub rejected_queue_generation_probes: u32,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

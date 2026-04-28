@@ -533,6 +533,22 @@ pub enum EventKind {
         max_retries: u32,
         generation: Generation,
     },
+    BlockRequestGenerationAuditRecorded {
+        audit: BlockRequestGenerationAuditId,
+        block_device: BlockDeviceObjectId,
+        block_device_generation: Generation,
+        block_range: BlockRangeObjectId,
+        block_range_generation: Generation,
+        block_request: BlockRequestObjectId,
+        block_request_generation: Generation,
+        backend: ContractObjectRef,
+        dma_buffer: ContractObjectRef,
+        rejected_completion_generation_probes: u32,
+        rejected_wait_generation_probes: u32,
+        rejected_dma_generation_probes: u32,
+        rejected_queue_generation_probes: u32,
+        generation: Generation,
+    },
     FakeBlockBackendObjectBound {
         fake_block_backend: FakeBlockBackendObjectId,
         block_device: BlockDeviceObjectId,
@@ -2251,6 +2267,30 @@ impl EventKind {
                     .map(|(id, generation)| format!("{id}@{generation}"))
                     .unwrap_or_else(|| "none".to_string()),
                 action.as_str()
+            ),
+            Self::BlockRequestGenerationAuditRecorded {
+                audit,
+                block_device,
+                block_device_generation,
+                block_range,
+                block_range_generation,
+                block_request,
+                block_request_generation,
+                backend,
+                dma_buffer,
+                rejected_completion_generation_probes,
+                rejected_wait_generation_probes,
+                rejected_dma_generation_probes,
+                rejected_queue_generation_probes,
+                generation,
+            } => format!(
+                "BlockRequestGenerationAuditRecorded audit={audit} block_device={block_device}@{block_device_generation} block_range={block_range}@{block_range_generation} block_request={block_request}@{block_request_generation} backend={}:{}@{} dma_buffer={}:{}@{} rejected_completion_generation_probes={rejected_completion_generation_probes} rejected_wait_generation_probes={rejected_wait_generation_probes} rejected_dma_generation_probes={rejected_dma_generation_probes} rejected_queue_generation_probes={rejected_queue_generation_probes} generation={generation}",
+                backend.kind.as_str(),
+                backend.id,
+                backend.generation,
+                dma_buffer.kind.as_str(),
+                dma_buffer.id,
+                dma_buffer.generation
             ),
             Self::FakeBlockBackendObjectBound {
                 fake_block_backend,

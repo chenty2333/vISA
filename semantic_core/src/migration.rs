@@ -1431,6 +1431,17 @@ pub enum SemanticInvariantError {
         policy: BlockPendingIoPolicyId,
         event: EventId,
     },
+    BlockRequestGenerationAuditInvalid {
+        audit: BlockRequestGenerationAuditId,
+    },
+    BlockRequestGenerationAuditMissingTarget {
+        audit: BlockRequestGenerationAuditId,
+        target: ContractObjectRef,
+    },
+    BlockRequestGenerationAuditMissingEvent {
+        audit: BlockRequestGenerationAuditId,
+        event: EventId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

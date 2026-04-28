@@ -73,6 +73,7 @@ pub type FileHandleCapabilityId = u64;
 pub type FsWaitId = u64;
 pub type BlockDriverCleanupId = u64;
 pub type BlockPendingIoPolicyId = u64;
+pub type BlockRequestGenerationAuditId = u64;
 pub type ActivationResumeId = u64;
 pub type ActivationWaitId = u64;
 pub type ActivationCleanupId = u64;
