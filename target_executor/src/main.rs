@@ -8349,6 +8349,14 @@ fn build_target_executor_v1(
         &mut executor,
         &mut ledger,
     )?;
+    run_simd_cross_hart_vector_migration_harness(
+        &verified_artifacts,
+        semantic,
+        &mut publisher,
+        &mut store_manager,
+        &mut executor,
+        &mut ledger,
+    )?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -9262,6 +9270,339 @@ fn run_simd_resume_vector_restore_harness(
         if result.status != CommandStatus::Applied {
             return Err(format!(
                 "simd runtime v8 command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn run_simd_cross_hart_vector_migration_harness(
+    verified_artifacts: &[VerifiedArtifact],
+    semantic: &mut SemanticGraph,
+    publisher: &mut CodePublisher,
+    store_manager: &mut TargetStoreManager,
+    executor: &mut TargetExecutor,
+    ledger: &mut CapabilityLedger,
+) -> Result<(), Box<dyn Error>> {
+    let Some(artifact) = verified_artifacts.first() else {
+        return Ok(());
+    };
+    let feature_set = 21_003;
+    let feature_recorded = semantic.apply_envelope(CommandEnvelope::new(
+        90_001,
+        "simd-runtime-v9",
+        SemanticCommand::RecordTargetFeatureSet {
+            feature_set,
+            name: "v9-simd-cross-hart-migration-fixture".to_owned(),
+            discovery_source: "target-executor-v9-cross-hart-vector-migration-harness".to_owned(),
+            target_profile: "riscv64-vector-host-validation-fixture".to_owned(),
+            target_arch: "riscv64".to_owned(),
+            base_isa: "rv64gcv".to_owned(),
+            simd_abi: "riscv-v".to_owned(),
+            simd_supported: true,
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            scalar_fallback: false,
+            unsupported_reason: String::new(),
+            note: "v9 synthetic supported SIMD fixture for cross-hart migration".to_owned(),
+        },
+    ));
+    if feature_recorded.status != CommandStatus::Applied {
+        return Err(format!(
+            "simd runtime v9 target feature command {} ({}) failed: status={} violations={:?}",
+            feature_recorded.command_id,
+            feature_recorded.command,
+            feature_recorded.status.as_str(),
+            feature_recorded.violations
+        )
+        .into());
+    }
+    let feature_ref = semantic
+        .target_feature_sets()
+        .iter()
+        .find(|feature| feature.id == feature_set)
+        .map(|feature| feature.object_ref())
+        .ok_or("v9 target feature fixture missing")?;
+
+    let store_id =
+        store_manager.register_verified_artifact(artifact, "restartable", "simd-vector-migration");
+    store_manager
+        .set_running(store_id)
+        .map_err(|error| error.message())?;
+    let store = store_manager
+        .record(store_id)
+        .ok_or("SIMD vector migration store missing after registration")?
+        .store
+        .clone();
+    let code_id = publisher
+        .allocate(artifact)
+        .map_err(|error| error.message())?;
+    publisher
+        .declare_simd_requirement(
+            code_id,
+            feature_ref,
+            "riscv-v",
+            32,
+            128,
+            "v9 cross-hart vector migration harness",
+        )
+        .map_err(|error| error.message())?;
+    publisher.fill(code_id).map_err(|error| error.message())?;
+    publisher.seal(code_id).map_err(|error| error.message())?;
+    publisher
+        .publish_rx(code_id)
+        .map_err(|error| error.message())?;
+    publisher
+        .bind_to_store(code_id, &store)
+        .map_err(|error| error.message())?;
+    let code = publisher
+        .object(code_id)
+        .ok_or("SIMD vector migration code missing after bind")?
+        .clone();
+    let activation = executor
+        .start_activation(
+            &store,
+            &code,
+            ActivationEntry::Symbol("simd_cross_hart_vector_migration".to_owned()),
+        )
+        .map_err(|error| error.message())?;
+    let hostcall_spec = code
+        .hostcalls
+        .iter()
+        .find(|spec| {
+            spec.number == 1 && spec.object == "console.write" && spec.operation == "write"
+        })
+        .ok_or("SIMD vector migration hostcall spec missing")?;
+    ledger
+        .grant_manifest_binding(
+            &code.package,
+            &hostcall_spec.object,
+            &[hostcall_spec.operation.as_str()],
+            "activation",
+            CapabilityClass::ServiceImport,
+            Some(store.id),
+            Some(store.generation),
+            None,
+            "v9-cross-hart-vector-migration-hostcall",
+        )
+        .map_err(|error| error.message())?;
+    for hostcall_seq in 1..=2 {
+        let activation_generation = executor
+            .activations()
+            .iter()
+            .find(|record| record.id == activation)
+            .map(|record| record.generation)
+            .ok_or("SIMD vector migration activation missing before generation advance")?;
+        let mut frame = HostcallFrame::new_bound(
+            activation,
+            &store,
+            &code,
+            hostcall_spec.number,
+            &hostcall_spec.object,
+            &hostcall_spec.operation,
+            ledger
+                .generation_of(&code.package, &hostcall_spec.object)
+                .unwrap_or(1),
+        )
+        .with_hostcall_seq(hostcall_seq);
+        frame.activation_generation = activation_generation;
+        if let Some(cap_arg) = capability_handle_arg_for(ledger, &code.package, hostcall_spec) {
+            frame = frame.with_cap_args(vec![cap_arg]);
+        }
+        executor
+            .invoke_hostcall(&code, frame.to_wire_frame(), ledger)
+            .map_err(|error| error.message())?;
+    }
+
+    semantic.ensure_task(
+        9_080,
+        FrontendKind::WasmApp,
+        "v9-simd-cross-hart-vector-migration-task",
+    );
+    let commands = [
+        CommandEnvelope::new(
+            90_002,
+            "simd-runtime-v9",
+            SemanticCommand::RegisterHart {
+                hart: 8,
+                hardware_id: 8,
+                label: "v9-vector-source-hart".to_owned(),
+                boot: false,
+                note: "v9 source hart for vector migration evidence".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            90_003,
+            "simd-runtime-v9",
+            SemanticCommand::SetHartState {
+                hart: 8,
+                hart_generation: 1,
+                state: HartState::Idle,
+                reason: "v9-source-ready".to_owned(),
+                note: "v9 source hart idle before migration".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            90_004,
+            "simd-runtime-v9",
+            SemanticCommand::RegisterHart {
+                hart: 9,
+                hardware_id: 9,
+                label: "v9-vector-target-hart".to_owned(),
+                boot: false,
+                note: "v9 target hart for vector migration evidence".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            90_005,
+            "simd-runtime-v9",
+            SemanticCommand::SetHartState {
+                hart: 9,
+                hart_generation: 1,
+                state: HartState::Idle,
+                reason: "v9-target-ready".to_owned(),
+                note: "v9 target hart idle before migration".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            90_006,
+            "simd-runtime-v9",
+            SemanticCommand::CreateRunnableQueue {
+                queue: 9_080,
+                label: "v9-vector-source-runnable-queue".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            90_007,
+            "simd-runtime-v9",
+            SemanticCommand::BindRunnableQueueOwner {
+                queue: 9_080,
+                queue_generation: 1,
+                hart: 8,
+                hart_generation: 2,
+                note: "v9 source queue owned by source hart".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            90_008,
+            "simd-runtime-v9",
+            SemanticCommand::CreateRunnableQueue {
+                queue: 9_081,
+                label: "v9-vector-target-runnable-queue".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            90_009,
+            "simd-runtime-v9",
+            SemanticCommand::BindRunnableQueueOwner {
+                queue: 9_081,
+                queue_generation: 1,
+                hart: 9,
+                hart_generation: 2,
+                note: "v9 target queue owned by target hart".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            90_010,
+            "simd-runtime-v9",
+            SemanticCommand::CreateRuntimeActivation {
+                activation,
+                owner_task: 9_080,
+                owner_task_generation: 1,
+                owner_store: None,
+                owner_store_generation: None,
+                code_object: Some(code.object_ref()),
+            },
+        ),
+        CommandEnvelope::new(
+            90_011,
+            "simd-runtime-v9",
+            SemanticCommand::EnqueueRunnable {
+                queue: 9_080,
+                activation,
+                activation_generation: 1,
+            },
+        ),
+        CommandEnvelope::new(
+            90_012,
+            "simd-runtime-v9",
+            SemanticCommand::CreateActivationContext {
+                context: 9_080,
+                activation,
+                activation_generation: 2,
+            },
+        ),
+        CommandEnvelope::new(
+            90_013,
+            "simd-runtime-v9",
+            SemanticCommand::RecordVectorState {
+                vector_state: 22_004,
+                owner_activation: ContractObjectRef::new(
+                    ContractObjectKind::Activation,
+                    activation,
+                    2,
+                ),
+                owner_store: ContractObjectRef::new(
+                    ContractObjectKind::Store,
+                    store.id,
+                    store.generation,
+                ),
+                code_object: code.object_ref(),
+                target_feature_set: feature_ref,
+                simd_abi: "riscv-v".to_owned(),
+                vector_register_count: 32,
+                vector_register_bits: 128,
+                register_bytes: 512,
+                state: VectorStateState::Reserved,
+                note: "v9 reserved clean vector state before cross-hart migration".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            90_014,
+            "simd-runtime-v9",
+            SemanticCommand::UpdateActivationContextVectorState {
+                context: 9_080,
+                context_generation: 1,
+                vector_state: Some(ContractObjectRef::new(
+                    ContractObjectKind::VectorState,
+                    22_004,
+                    1,
+                )),
+                vector_status: ActivationVectorState::Clean,
+                note: "v9 activation context carries clean vector state before migration"
+                    .to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            90_015,
+            "simd-runtime-v9",
+            SemanticCommand::MigrateRunnableActivation {
+                migration: 9_080,
+                activation,
+                activation_generation: 2,
+                source_queue: 9_080,
+                source_queue_generation: 2,
+                target_queue: 9_081,
+                target_queue_generation: 2,
+                source_hart: 8,
+                source_hart_generation: 2,
+                target_hart: 9,
+                target_hart_generation: 2,
+                reason: "v9-cross-hart-vector-rebalance".to_owned(),
+                note: "v9 migration rehomes clean vector state".to_owned(),
+            },
+        ),
+    ];
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "simd runtime v9 command {} ({}) failed: status={} violations={:?}",
                 result.command_id,
                 result.command,
                 result.status.as_str(),
@@ -10812,7 +11153,7 @@ fn semantic_roots(
             .iter()
             .map(|migration| {
                 format!(
-                    "activation-migration id={} activation={}@{}->{} source_hart={}@{} target_hart={}@{} source_queue={}@{} target_queue={}@{} state={} generation={}",
+                    "activation-migration id={} activation={}@{}->{} source_hart={}@{} target_hart={}@{} source_queue={}@{} target_queue={}@{} vector_status={} source_vector_state={} migrated_vector_state={} state={} generation={}",
                     migration.id,
                     migration.activation,
                     migration.activation_generation_before,
@@ -10825,6 +11166,15 @@ fn semantic_roots(
                     migration.source_queue_generation,
                     migration.target_queue,
                     migration.target_queue_generation,
+                    migration.vector_status.as_str(),
+                    migration
+                        .source_vector_state
+                        .map(|vector_state| vector_state.summary())
+                        .unwrap_or_else(|| "none".to_owned()),
+                    migration
+                        .migrated_vector_state
+                        .map(|vector_state| vector_state.summary())
+                        .unwrap_or_else(|| "none".to_owned()),
                     migration.state.as_str(),
                     migration.generation
                 )
@@ -13372,6 +13722,17 @@ fn activation_migration_manifest(
         target_queue: migration.target_queue,
         target_queue_generation: migration.target_queue_generation,
         target_queue_owner_hart_generation: migration.target_queue_owner_hart_generation,
+        context: migration.context,
+        context_generation_before: migration.context_generation_before,
+        context_generation_after: migration.context_generation_after,
+        source_vector_state: migration
+            .source_vector_state
+            .map(contract_object_ref_manifest),
+        migrated_vector_state: migration
+            .migrated_vector_state
+            .map(contract_object_ref_manifest),
+        vector_status: migration.vector_status.as_str().to_owned(),
+        vector_migrated_at_event: migration.vector_migrated_at_event,
         generation: migration.generation,
         state: migration.state.as_str().to_owned(),
         migrated_at_event: migration.migrated_at_event,

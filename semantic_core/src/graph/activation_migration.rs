@@ -138,6 +138,35 @@ impl SemanticGraph {
                 return Err("activation migration owner store generation is missing or dead");
             }
         }
+        if let Some(context) = self.activation_contexts.iter().find(|record| {
+            record.activation == activation
+                && record.activation_generation == activation_generation
+                && record.state != ActivationContextState::Dropped
+        }) {
+            if context.current_saved_context.is_some()
+                || context.current_saved_context_generation.is_some()
+            {
+                return Err("activation migration pending saved context is not migratable");
+            }
+            match context.vector_status {
+                ActivationVectorState::Absent => {
+                    if context.vector_state.is_some() {
+                        return Err("activation migration vector state mismatch");
+                    }
+                }
+                ActivationVectorState::Clean => self
+                    .validate_activation_context_vector_state(
+                        context.id,
+                        context.generation,
+                        context.vector_state,
+                        context.vector_status,
+                    )
+                    .map_err(|_| "activation migration vector state mismatch")?,
+                ActivationVectorState::Dirty => {
+                    return Err("activation migration requires clean vector state");
+                }
+            }
+        }
         Ok(())
     }
 
@@ -213,6 +242,24 @@ impl SemanticGraph {
         else {
             return false;
         };
+        let context_index = self.activation_contexts.iter().position(|record| {
+            record.activation == activation
+                && record.activation_generation == activation_generation
+                && record.state != ActivationContextState::Dropped
+        });
+        let source_vector_record = context_index.and_then(|index| {
+            let context = &self.activation_contexts[index];
+            context.vector_state.and_then(|vector_state| {
+                self.vector_states
+                    .iter()
+                    .find(|record| {
+                        record.id == vector_state.id
+                            && record.generation == vector_state.generation
+                            && record.state.is_live_owned()
+                    })
+                    .cloned()
+            })
+        });
 
         self.next_activation_migration_id = self.next_activation_migration_id.max(migration + 1);
         self.runnable_queues[source_index]
@@ -270,6 +317,98 @@ impl SemanticGraph {
                 activation_generation: activation_generation_after,
                 enqueued_at: queued_event,
             });
+        let mut context = None;
+        let mut context_generation_before = None;
+        let mut context_generation_after = None;
+        let mut source_vector_state = None;
+        let mut migrated_vector_state = None;
+        let mut vector_status = ActivationVectorState::Absent;
+        let mut vector_migrated_at_event = None;
+        if let Some(context_index) = context_index {
+            context = Some(self.activation_contexts[context_index].id);
+            context_generation_before = Some(self.activation_contexts[context_index].generation);
+            self.activation_contexts[context_index].generation += 1;
+            self.activation_contexts[context_index].activation_generation =
+                activation_generation_after;
+            context_generation_after = Some(self.activation_contexts[context_index].generation);
+            self.activation_contexts[context_index].last_event = Some(migration_event);
+            if let Some(source) = source_vector_record {
+                let migrated_id = self.next_vector_state_id;
+                self.next_vector_state_id = self.next_vector_state_id.max(migrated_id + 1);
+                let migrated_ref =
+                    ContractObjectRef::new(ContractObjectKind::VectorState, migrated_id, 1);
+                let owner_activation = ContractObjectRef::new(
+                    ContractObjectKind::Activation,
+                    activation,
+                    activation_generation_after,
+                );
+                let recorded_at_event = self.event_log.push(
+                    "scheduler",
+                    EventKind::VectorStateRecorded {
+                        vector_state: migrated_id,
+                        owner_activation,
+                        owner_store: source.owner_store,
+                        code_object: source.code_object,
+                        target_feature_set: source.target_feature_set,
+                        simd_abi: source.simd_abi.clone(),
+                        vector_register_count: source.vector_register_count,
+                        vector_register_bits: source.vector_register_bits,
+                        register_bytes: source.register_bytes,
+                        state: source.state,
+                        generation: 1,
+                    },
+                );
+                self.vector_states.push(VectorStateRecord {
+                    id: migrated_id,
+                    owner_activation,
+                    owner_store: source.owner_store,
+                    code_object: source.code_object,
+                    target_feature_set: source.target_feature_set,
+                    simd_abi: source.simd_abi.clone(),
+                    vector_register_count: source.vector_register_count,
+                    vector_register_bits: source.vector_register_bits,
+                    register_bytes: source.register_bytes,
+                    generation: 1,
+                    state: source.state,
+                    recorded_at_event,
+                    note: format!(
+                        "migrated across hart from {} by activation-migration:{}@1",
+                        source.object_ref().summary(),
+                        migration
+                    ),
+                });
+                let event = self.event_log.push(
+                    "scheduler",
+                    EventKind::VectorStateMigratedAcrossHart {
+                        migration,
+                        migration_generation: 1,
+                        context: self.activation_contexts[context_index].id,
+                        context_generation: self.activation_contexts[context_index].generation,
+                        source_vector_state: source.object_ref(),
+                        migrated_vector_state: migrated_ref,
+                        generation: 1,
+                    },
+                );
+                if let Some(record) = self
+                    .vector_states
+                    .iter_mut()
+                    .find(|record| record.id == source.id && record.generation == source.generation)
+                {
+                    record.state = VectorStateState::Dropped;
+                    record.recorded_at_event = event;
+                }
+                self.activation_contexts[context_index].vector_state = Some(migrated_ref);
+                self.activation_contexts[context_index].vector_status =
+                    ActivationVectorState::Clean;
+                self.activation_contexts[context_index].vector_state_event = Some(event);
+                self.activation_contexts[context_index].last_event = Some(event);
+                self.runtime_activations[activation_index].last_event = Some(event);
+                source_vector_state = Some(source.object_ref());
+                migrated_vector_state = Some(migrated_ref);
+                vector_status = ActivationVectorState::Clean;
+                vector_migrated_at_event = Some(event);
+            }
+        }
         self.activation_migrations.push(ActivationMigrationRecord {
             id: migration,
             activation,
@@ -287,6 +426,13 @@ impl SemanticGraph {
             target_queue,
             target_queue_generation,
             target_queue_owner_hart_generation,
+            context,
+            context_generation_before,
+            context_generation_after,
+            source_vector_state,
+            migrated_vector_state,
+            vector_status,
+            vector_migrated_at_event,
             generation: 1,
             state: ActivationMigrationState::Applied,
             migrated_at_event: migration_event,
@@ -475,6 +621,122 @@ impl SemanticGraph {
                 return Err(SemanticInvariantError::ActivationMigrationMissingEvent {
                     migration: migration.id,
                 });
+            }
+            match (
+                migration.vector_status.requires_vector_state(),
+                migration.context,
+                migration.context_generation_after,
+                migration.source_vector_state,
+                migration.migrated_vector_state,
+                migration.vector_migrated_at_event,
+            ) {
+                (false, None, None, None, None, None) => {}
+                (
+                    true,
+                    Some(context),
+                    Some(context_generation),
+                    Some(source),
+                    Some(migrated),
+                    Some(event_id),
+                ) => {
+                    if migration.vector_status != ActivationVectorState::Clean
+                        || source.kind != ContractObjectKind::VectorState
+                        || migrated.kind != ContractObjectKind::VectorState
+                    {
+                        return Err(SemanticInvariantError::ActivationMigrationInvalid {
+                            migration: migration.id,
+                        });
+                    }
+                    let Some(context_record) = self.activation_contexts.iter().find(|record| {
+                        record.id == context && record.generation >= context_generation
+                    }) else {
+                        return Err(SemanticInvariantError::ActivationMigrationInvalid {
+                            migration: migration.id,
+                        });
+                    };
+                    if context_record.activation != migration.activation
+                        || context_record.activation_generation
+                            < migration.activation_generation_after
+                    {
+                        return Err(SemanticInvariantError::ActivationMigrationInvalid {
+                            migration: migration.id,
+                        });
+                    }
+                    if context_record.generation == context_generation
+                        && (context_record.activation_generation
+                            != migration.activation_generation_after
+                            || context_record.vector_status != ActivationVectorState::Clean
+                            || context_record.vector_state != Some(migrated))
+                    {
+                        return Err(SemanticInvariantError::ActivationMigrationInvalid {
+                            migration: migration.id,
+                        });
+                    }
+                    let Some(source_record) = self.vector_states.iter().find(|record| {
+                        record.id == source.id && record.generation == source.generation
+                    }) else {
+                        return Err(SemanticInvariantError::ActivationMigrationInvalid {
+                            migration: migration.id,
+                        });
+                    };
+                    if source_record.state != VectorStateState::Dropped {
+                        return Err(SemanticInvariantError::ActivationMigrationInvalid {
+                            migration: migration.id,
+                        });
+                    }
+                    let Some(migrated_record) = self.vector_states.iter().find(|record| {
+                        record.id == migrated.id && record.generation == migrated.generation
+                    }) else {
+                        return Err(SemanticInvariantError::ActivationMigrationInvalid {
+                            migration: migration.id,
+                        });
+                    };
+                    if migrated_record.state == VectorStateState::Unavailable
+                        || migrated_record.owner_activation
+                            != ContractObjectRef::new(
+                                ContractObjectKind::Activation,
+                                migration.activation,
+                                migration.activation_generation_after,
+                            )
+                        || migrated_record.owner_store != source_record.owner_store
+                        || migrated_record.code_object != source_record.code_object
+                        || migrated_record.target_feature_set != source_record.target_feature_set
+                    {
+                        return Err(SemanticInvariantError::ActivationMigrationInvalid {
+                            migration: migration.id,
+                        });
+                    }
+                    if !self.event_log.events.iter().any(|event| {
+                        event.id == event_id
+                            && matches!(
+                                &event.kind,
+                                EventKind::VectorStateMigratedAcrossHart {
+                                    migration: event_migration,
+                                    migration_generation,
+                                    context: event_context,
+                                    context_generation: event_context_generation,
+                                    source_vector_state,
+                                    migrated_vector_state,
+                                    generation,
+                                } if *event_migration == migration.id
+                                    && *migration_generation == migration.generation
+                                    && *event_context == context
+                                    && *event_context_generation == context_generation
+                                    && *source_vector_state == source
+                                    && *migrated_vector_state == migrated
+                                    && *generation == 1
+                            )
+                    }) {
+                        return Err(SemanticInvariantError::ActivationMigrationMissingEvent {
+                            migration: migration.id,
+                        });
+                    }
+                }
+                _ => {
+                    return Err(SemanticInvariantError::ActivationMigrationInvalid {
+                        migration: migration.id,
+                    });
+                }
             }
             if !self.event_log.events.iter().any(|event| {
                 matches!(

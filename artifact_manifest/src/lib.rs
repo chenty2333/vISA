@@ -1255,6 +1255,20 @@ pub struct ActivationMigrationManifest {
     pub target_queue: u64,
     pub target_queue_generation: u64,
     pub target_queue_owner_hart_generation: u64,
+    #[serde(default)]
+    pub context: Option<u64>,
+    #[serde(default)]
+    pub context_generation_before: Option<u64>,
+    #[serde(default)]
+    pub context_generation_after: Option<u64>,
+    #[serde(default)]
+    pub source_vector_state: Option<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub migrated_vector_state: Option<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub vector_status: String,
+    #[serde(default)]
+    pub vector_migrated_at_event: Option<u64>,
     pub generation: u64,
     pub state: String,
     pub migrated_at_event: u64,

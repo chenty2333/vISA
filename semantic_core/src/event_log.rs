@@ -230,6 +230,15 @@ pub enum EventKind {
         target_queue_generation: Generation,
         generation: Generation,
     },
+    VectorStateMigratedAcrossHart {
+        migration: ActivationMigrationId,
+        migration_generation: Generation,
+        context: ActivationContextId,
+        context_generation: Generation,
+        source_vector_state: ContractObjectRef,
+        migrated_vector_state: ContractObjectRef,
+        generation: Generation,
+    },
     SmpSafePointRecorded {
         safe_point: SmpSafePointId,
         coordinator_hart: HartId,
@@ -2021,6 +2030,19 @@ impl EventKind {
                 generation,
             } => format!(
                 "ActivationMigrated migration={migration} activation={activation}@{from_generation}->{to_generation} source_hart={source_hart}@{source_hart_generation} target_hart={target_hart}@{target_hart_generation} source_queue={source_queue}@{source_queue_generation} target_queue={target_queue}@{target_queue_generation} generation={generation}"
+            ),
+            Self::VectorStateMigratedAcrossHart {
+                migration,
+                migration_generation,
+                context,
+                context_generation,
+                source_vector_state,
+                migrated_vector_state,
+                generation,
+            } => format!(
+                "VectorStateMigratedAcrossHart migration={migration}@{migration_generation} context={context}@{context_generation} source_vector_state={} migrated_vector_state={} vector_status=clean generation={generation}",
+                source_vector_state.summary(),
+                migrated_vector_state.summary()
             ),
             Self::SmpSafePointRecorded {
                 safe_point,

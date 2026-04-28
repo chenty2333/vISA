@@ -975,6 +975,17 @@ impl SemanticGraph {
                                     && Some(*restored_vector_state) == context.vector_state
                                     && context.vector_status == ActivationVectorState::Clean
                             }
+                            EventKind::VectorStateMigratedAcrossHart {
+                                context: event_context,
+                                context_generation,
+                                migrated_vector_state,
+                                ..
+                            } => {
+                                *event_context == context.id
+                                    && *context_generation <= context.generation
+                                    && Some(*migrated_vector_state) == context.vector_state
+                                    && context.vector_status == ActivationVectorState::Clean
+                            }
                             _ => false,
                         }
                     }) {

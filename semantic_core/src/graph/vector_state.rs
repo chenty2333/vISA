@@ -275,7 +275,19 @@ impl SemanticGraph {
                         && *vector_state == record.object_ref()
                         && *generation == 1
                 );
-                recorded_event_matches || resume_release_event_matches
+                let migration_release_event_matches = matches!(
+                    &event.kind,
+                    EventKind::VectorStateMigratedAcrossHart {
+                        source_vector_state,
+                        generation,
+                        ..
+                    } if record.state == VectorStateState::Dropped
+                        && *source_vector_state == record.object_ref()
+                        && *generation == 1
+                );
+                recorded_event_matches
+                    || resume_release_event_matches
+                    || migration_release_event_matches
             });
             if !has_state_event {
                 return Err(SemanticInvariantError::VectorStateMissingEvent {

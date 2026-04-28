@@ -1441,6 +1441,13 @@ fn activation_migration_view_v1(migration: &ActivationMigrationManifest) -> serd
                 "generation_before": migration.activation_generation_before,
                 "generation_after": migration.activation_generation_after,
             },
+            "context": migration.context.map(|context| serde_json::json!({
+                "id": context,
+                "generation_before": migration.context_generation_before,
+                "generation_after": migration.context_generation_after,
+            })),
+            "source_vector_state": migration.source_vector_state.as_ref().map(object_ref_manifest_json),
+            "migrated_vector_state": migration.migrated_vector_state.as_ref().map(object_ref_manifest_json),
             "source_queue": {
                 "id": migration.source_queue,
                 "generation": migration.source_queue_generation,
@@ -1455,11 +1462,22 @@ fn activation_migration_view_v1(migration: &ActivationMigrationManifest) -> serd
                 "id": migration.migrated_at_event,
             },
         },
+        "vector_migration": {
+            "status": if migration.vector_status.is_empty() {
+                "absent"
+            } else {
+                migration.vector_status.as_str()
+            },
+            "source_vector_state": migration.source_vector_state.as_ref().map(object_ref_manifest_json),
+            "migrated_vector_state": migration.migrated_vector_state.as_ref().map(object_ref_manifest_json),
+            "event": migration.vector_migrated_at_event,
+        },
         "reason": migration.reason,
         "note": migration.note,
         "last_transition": {
             "migrated_at_event": migration.migrated_at_event,
             "activation_generation_after": migration.activation_generation_after,
+            "vector_migrated_at_event": migration.vector_migrated_at_event,
         },
         "last_error": serde_json::Value::Null,
     })
@@ -11350,7 +11368,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             Some(migration.migrated_at_event),
         ));
         edges.push(graph_edge(
-            from,
+            from.clone(),
             object_ref_json(
                 "runnable-queue",
                 migration.target_queue,
@@ -11360,6 +11378,28 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "historical",
             Some(migration.migrated_at_event),
         ));
+        if let Some(source_vector_state) = &migration.source_vector_state {
+            edges.push(graph_edge(
+                from.clone(),
+                object_ref_manifest_json(source_vector_state),
+                "source-vector-state",
+                "historical",
+                migration
+                    .vector_migrated_at_event
+                    .or(Some(migration.migrated_at_event)),
+            ));
+        }
+        if let Some(migrated_vector_state) = &migration.migrated_vector_state {
+            edges.push(graph_edge(
+                from,
+                object_ref_manifest_json(migrated_vector_state),
+                "migrated-vector-state",
+                "historical",
+                migration
+                    .vector_migrated_at_event
+                    .or(Some(migration.migrated_at_event)),
+            ));
+        }
     }
     for safe_point in &package.semantic.smp_safe_points {
         let from = object_ref_json("smp-safe-point", safe_point.id, safe_point.generation);
@@ -17601,6 +17641,55 @@ mod tests {
     }
 
     #[test]
+    fn activation_migration_view_v1_exposes_vector_migration_refs() {
+        let view = activation_migration_view_v1(&ActivationMigrationManifest {
+            id: 71,
+            activation: 11,
+            activation_generation_before: 4,
+            activation_generation_after: 5,
+            owner_task: 7,
+            owner_task_generation: 1,
+            source_hart: 2,
+            source_hart_generation: 4,
+            target_hart: 1,
+            target_hart_generation: 2,
+            source_queue: 2,
+            source_queue_generation: 2,
+            source_queue_owner_hart_generation: 4,
+            target_queue: 3,
+            target_queue_generation: 2,
+            target_queue_owner_hart_generation: 2,
+            context: Some(12),
+            context_generation_before: Some(2),
+            context_generation_after: Some(3),
+            source_vector_state: Some(ContractObjectRefManifest {
+                kind: "vector-state".to_owned(),
+                id: 22_004,
+                generation: 1,
+            }),
+            migrated_vector_state: Some(ContractObjectRefManifest {
+                kind: "vector-state".to_owned(),
+                id: 22_005,
+                generation: 1,
+            }),
+            vector_status: "clean".to_owned(),
+            vector_migrated_at_event: Some(99),
+            generation: 1,
+            state: "applied".to_owned(),
+            migrated_at_event: 98,
+            reason: "vector-rebalance".to_owned(),
+            note: "cross-hart migration rehomes vector state".to_owned(),
+        });
+
+        assert_eq!(view["kind"], "activation-migration");
+        assert_eq!(view["vector_migration"]["status"], "clean");
+        assert_eq!(view["references"]["context"]["id"], 12);
+        assert_eq!(view["references"]["source_vector_state"]["id"], 22_004);
+        assert_eq!(view["references"]["migrated_vector_state"]["id"], 22_005);
+        assert_eq!(view["vector_migration"]["event"], 99);
+    }
+
+    #[test]
     fn preemptive_runtime_views_expose_task_activation_and_scheduler_state() {
         let task = task_view_v1(&TaskRecordManifest {
             id: 7,
@@ -17964,6 +18053,13 @@ mod tests {
                 target_queue: 1,
                 target_queue_generation: 1,
                 target_queue_owner_hart_generation: 2,
+                context: None,
+                context_generation_before: None,
+                context_generation_after: None,
+                source_vector_state: None,
+                migrated_vector_state: None,
+                vector_status: "absent".to_owned(),
+                vector_migrated_at_event: None,
                 generation: 1,
                 state: "applied".to_owned(),
                 migrated_at_event: 21,

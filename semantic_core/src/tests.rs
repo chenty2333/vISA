@@ -19839,6 +19839,207 @@ fn simd_runtime_v8_rejects_resume_vector_generation_mismatch() {
     );
 }
 
+fn v9_cross_hart_clean_vector_migration_graph(
+    vector_status: ActivationVectorState,
+) -> SemanticGraph {
+    let mut graph = s9_activation_migration_graph();
+    assert!(graph.create_activation_context_with_id(12, 11, 4));
+    assert!(graph.record_target_feature_set_with_id(
+        21_003,
+        "riscv64-vector-migration-test-target",
+        "semantic-contract-v9-test",
+        "riscv64-vector-migration-test",
+        "riscv64",
+        "rv64gcv",
+        "riscv-v",
+        true,
+        32,
+        128,
+        false,
+        "",
+        "v9 supported SIMD migration fixture",
+    ));
+    assert!(graph.record_vector_state_with_id(
+        22_004,
+        ContractObjectRef::new(ContractObjectKind::Activation, 11, 4),
+        ContractObjectRef::new(ContractObjectKind::Store, 2, 5),
+        ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4),
+        ContractObjectRef::new(ContractObjectKind::TargetFeatureSet, 21_003, 1),
+        "riscv-v",
+        32,
+        128,
+        512,
+        VectorStateState::Reserved,
+        "v9 reserved vector state before cross-hart migration",
+    ));
+    assert!(graph.update_activation_context_vector_state(
+        12,
+        1,
+        Some(ContractObjectRef::new(
+            ContractObjectKind::VectorState,
+            22_004,
+            1,
+        )),
+        vector_status,
+        "v9 context vector state before cross-hart migration",
+    ));
+    graph
+}
+
+#[test]
+fn simd_runtime_v9_cross_hart_migration_rehomes_clean_vector_state() {
+    let mut graph = v9_cross_hart_clean_vector_migration_graph(ActivationVectorState::Clean);
+    let source_vector_ref = ContractObjectRef::new(ContractObjectKind::VectorState, 22_004, 1);
+    let migrated_vector_ref = ContractObjectRef::new(ContractObjectKind::VectorState, 22_005, 1);
+
+    let migrated = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v9-test",
+        SemanticCommand::MigrateRunnableActivation {
+            migration: 71,
+            activation: 11,
+            activation_generation: 4,
+            source_queue: 2,
+            source_queue_generation: 2,
+            target_queue: 3,
+            target_queue_generation: 2,
+            source_hart: 2,
+            source_hart_generation: 4,
+            target_hart: 1,
+            target_hart_generation: 2,
+            reason: "vector-rebalance".to_string(),
+            note: "cross-hart migration rehomes clean vector state".to_string(),
+        },
+    ));
+
+    assert_eq!(migrated.status, CommandStatus::Applied, "{migrated:?}");
+    let migration = &graph.activation_migrations()[0];
+    assert_eq!(migration.source_vector_state, Some(source_vector_ref));
+    assert_eq!(migration.migrated_vector_state, Some(migrated_vector_ref));
+    assert_eq!(migration.vector_status, ActivationVectorState::Clean);
+    assert!(migration.vector_migrated_at_event.is_some());
+    assert_eq!(migration.context, Some(12));
+    assert_eq!(migration.context_generation_before, Some(2));
+    assert_eq!(migration.context_generation_after, Some(3));
+    let context = &graph.activation_contexts()[0];
+    assert_eq!(context.activation_generation, 5);
+    assert_eq!(context.vector_state, Some(migrated_vector_ref));
+    assert_eq!(context.vector_status, ActivationVectorState::Clean);
+    let source_vector = graph
+        .vector_states()
+        .iter()
+        .find(|record| record.object_ref() == source_vector_ref)
+        .unwrap();
+    assert_eq!(source_vector.state, VectorStateState::Dropped);
+    let migrated_vector = graph
+        .vector_states()
+        .iter()
+        .find(|record| record.object_ref() == migrated_vector_ref)
+        .unwrap();
+    assert_eq!(
+        migrated_vector.owner_activation,
+        ContractObjectRef::new(ContractObjectKind::Activation, 11, 5)
+    );
+    assert_eq!(migrated_vector.state, VectorStateState::Reserved);
+    assert!(graph.check_invariants().is_ok());
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "VectorStateMigratedAcrossHart migration=71@1 context=12@3 source_vector_state=vector-state:22004@1 migrated_vector_state=vector-state:22005@1 vector_status=clean generation=1"
+    );
+}
+
+#[test]
+fn simd_runtime_v9_history_survives_context_generation_advance() {
+    let mut graph = v9_cross_hart_clean_vector_migration_graph(ActivationVectorState::Clean);
+    let migrated_vector_ref = ContractObjectRef::new(ContractObjectKind::VectorState, 22_005, 1);
+
+    assert!(graph.migrate_runnable_activation_with_id(
+        71,
+        11,
+        4,
+        2,
+        2,
+        3,
+        2,
+        2,
+        4,
+        1,
+        2,
+        "vector-rebalance",
+        "cross-hart migration rehomes clean vector state",
+    ));
+    assert!(graph.update_activation_context_vector_state(
+        12,
+        3,
+        Some(migrated_vector_ref),
+        ActivationVectorState::Clean,
+        "later context bookkeeping must not invalidate migration history",
+    ));
+
+    let migration = &graph.activation_migrations()[0];
+    assert_eq!(migration.context_generation_after, Some(3));
+    assert_eq!(graph.activation_contexts()[0].generation, 4);
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn simd_runtime_v9_rejects_dirty_vector_state_migration() {
+    let mut graph = v9_cross_hart_clean_vector_migration_graph(ActivationVectorState::Dirty);
+
+    let rejected = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "v9-test",
+        SemanticCommand::MigrateRunnableActivation {
+            migration: 71,
+            activation: 11,
+            activation_generation: 4,
+            source_queue: 2,
+            source_queue_generation: 2,
+            target_queue: 3,
+            target_queue_generation: 2,
+            source_hart: 2,
+            source_hart_generation: 4,
+            target_hart: 1,
+            target_hart_generation: 2,
+            reason: "vector-rebalance".to_string(),
+            note: "must reject dirty vector migration".to_string(),
+        },
+    ));
+
+    assert_eq!(rejected.status, CommandStatus::Rejected);
+    assert_eq!(
+        rejected.violations,
+        vec!["activation migration requires clean vector state".to_string()]
+    );
+    assert!(graph.activation_migrations().is_empty());
+}
+
+#[test]
+fn simd_runtime_v9_invariants_reject_migrated_vector_generation_drift() {
+    let mut graph = v9_cross_hart_clean_vector_migration_graph(ActivationVectorState::Clean);
+    assert!(graph.migrate_runnable_activation_with_id(
+        71,
+        11,
+        4,
+        2,
+        2,
+        3,
+        2,
+        2,
+        4,
+        1,
+        2,
+        "vector-rebalance",
+        "cross-hart migration rehomes clean vector state",
+    ));
+    graph.corrupt_vector_state_owner_activation_generation_for_test(22_005, 99);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::ActivationContextVectorStateInvalid { context: 12 })
+    );
+}
+
 #[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();
