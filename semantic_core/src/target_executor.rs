@@ -95,6 +95,7 @@ pub enum ContractObjectKind {
     SimdFaultInjection,
     SimdBenchmark,
     SimdContextSwitchBenchmark,
+    FramebufferObject,
     ActivationResume,
     ActivationWait,
     ActivationCleanup,
@@ -206,6 +207,7 @@ impl ContractObjectKind {
             Self::SimdFaultInjection => "simd-fault-injection",
             Self::SimdBenchmark => "simd-benchmark",
             Self::SimdContextSwitchBenchmark => "simd-context-switch-benchmark",
+            Self::FramebufferObject => "framebuffer-object",
             Self::ActivationResume => "activation-resume",
             Self::ActivationWait => "activation-wait",
             Self::ActivationCleanup => "activation-cleanup",
@@ -5694,6 +5696,7 @@ mod tests {
             simd_fault_injections: Vec::new(),
             simd_benchmarks: Vec::new(),
             simd_context_switch_benchmarks: Vec::new(),
+            framebuffer_objects: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -5794,6 +5797,7 @@ mod tests {
             simd_fault_injections: Vec::new(),
             simd_benchmarks: Vec::new(),
             simd_context_switch_benchmarks: Vec::new(),
+            framebuffer_objects: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6028,6 +6032,7 @@ mod tests {
             simd_fault_injections: Vec::new(),
             simd_benchmarks: Vec::new(),
             simd_context_switch_benchmarks: Vec::new(),
+            framebuffer_objects: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6132,6 +6137,7 @@ mod tests {
             simd_fault_injections: Vec::new(),
             simd_benchmarks: Vec::new(),
             simd_context_switch_benchmarks: Vec::new(),
+            framebuffer_objects: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {
@@ -6323,6 +6329,7 @@ mod tests {
             simd_fault_injections: Vec::new(),
             simd_benchmarks: Vec::new(),
             simd_context_switch_benchmarks: Vec::new(),
+            framebuffer_objects: Vec::new(),
             preemptions: Vec::new(),
             activation_resumes: Vec::new(),
             stores: {

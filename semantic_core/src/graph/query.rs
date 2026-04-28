@@ -151,6 +151,7 @@ impl SemanticGraph {
         self.check_simd_fault_injection_invariants()?;
         self.check_simd_benchmark_invariants()?;
         self.check_simd_context_switch_benchmark_invariants()?;
+        self.check_framebuffer_object_invariants()?;
         self.check_hart_event_attribution_invariants()?;
         self.check_wait_invariants()?;
         self.check_cleanup_invariants()?;

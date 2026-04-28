@@ -84,6 +84,7 @@ pub struct ContractGraphSnapshot {
     pub simd_fault_injections: Vec<SimdFaultInjectionRecord>,
     pub simd_benchmarks: Vec<SimdBenchmarkRecord>,
     pub simd_context_switch_benchmarks: Vec<SimdContextSwitchBenchmarkRecord>,
+    pub framebuffer_objects: Vec<FramebufferObjectRecord>,
     pub preemptions: Vec<PreemptionRecord>,
     pub activation_resumes: Vec<ActivationResumeRecord>,
     pub stores: Vec<StoreRecord>,
@@ -187,6 +188,7 @@ impl ContractGraphValidator {
         Self::validate_simd_fault_injections(snapshot, &mut violations);
         Self::validate_simd_benchmarks(snapshot, &mut violations);
         Self::validate_simd_context_switch_benchmarks(snapshot, &mut violations);
+        Self::validate_framebuffer_objects(snapshot, &mut violations);
         Self::validate_activations(snapshot, &mut violations);
         Self::validate_traps(snapshot, &mut violations);
         Self::validate_hostcalls(snapshot, &mut violations);
@@ -817,6 +819,64 @@ impl ContractGraphValidator {
                         "SIMD context switch benchmark vector state shape does not match benchmark target",
                     ));
                 }
+            }
+        }
+    }
+
+    fn validate_framebuffer_objects(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for framebuffer in &snapshot.framebuffer_objects {
+            let from = framebuffer.object_ref();
+            if framebuffer.id == 0
+                || framebuffer.generation == 0
+                || framebuffer.resource == 0
+                || framebuffer.resource_generation == 0
+                || framebuffer.name.is_empty()
+                || framebuffer.width == 0
+                || framebuffer.height == 0
+                || framebuffer.stride_bytes == 0
+                || framebuffer.pixel_format.is_empty()
+                || framebuffer.byte_len == 0
+                || framebuffer.state != FramebufferObjectState::Registered
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "framebuffer-object->contract",
+                    from,
+                    None,
+                    "framebuffer object requires nonzero identity, backing resource, geometry, pixel format, and registered state",
+                ));
+                continue;
+            }
+
+            let bytes_per_pixel = match framebuffer.pixel_format.as_str() {
+                "xrgb8888" | "argb8888" | "rgba8888" | "bgra8888" => 4,
+                "rgb565" => 2,
+                _ => {
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::ExternalEdgeMetadataMismatch,
+                        "framebuffer-object->pixel-format",
+                        from,
+                        None,
+                        "framebuffer object uses an unsupported pixel format",
+                    ));
+                    continue;
+                }
+            };
+            if framebuffer.stride_bytes < framebuffer.width.saturating_mul(bytes_per_pixel)
+                || framebuffer.byte_len
+                    < u64::from(framebuffer.stride_bytes)
+                        .saturating_mul(u64::from(framebuffer.height))
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "framebuffer-object->geometry",
+                    from,
+                    None,
+                    "framebuffer object stride/byte length do not cover visible geometry",
+                ));
             }
         }
     }
@@ -1892,6 +1952,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|benchmark| benchmark.id == id)
                 .map(SimdContextSwitchBenchmarkRecord::object_ref),
+            ContractObjectKind::FramebufferObject => snapshot
+                .framebuffer_objects
+                .iter()
+                .find(|framebuffer| framebuffer.id == id)
+                .map(FramebufferObjectRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2090,6 +2155,11 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|benchmark| benchmark.id == id)
                 .map(SimdContextSwitchBenchmarkRecord::object_ref),
+            ContractObjectKind::FramebufferObject => snapshot
+                .framebuffer_objects
+                .iter()
+                .find(|framebuffer| framebuffer.id == id)
+                .map(FramebufferObjectRecord::object_ref),
             ContractObjectKind::Preemption => snapshot
                 .preemptions
                 .iter()
@@ -2242,6 +2312,7 @@ impl ContractGraphValidator {
                 | ContractObjectKind::SimdFaultInjection
                 | ContractObjectKind::SimdBenchmark
                 | ContractObjectKind::SimdContextSwitchBenchmark
+                | ContractObjectKind::FramebufferObject
                 | ContractObjectKind::Preemption
                 | ContractObjectKind::ActivationResume
                 | ContractObjectKind::Store
@@ -2335,6 +2406,16 @@ impl ContractGraphValidator {
                 .and_then(|vector_state| {
                     (!vector_state.state.is_live_owned())
                         .then_some("live edge references inactive vector state")
+                }),
+            ContractObjectKind::FramebufferObject => snapshot
+                .framebuffer_objects
+                .iter()
+                .find(|framebuffer| {
+                    framebuffer.id == object.id && framebuffer.generation == object.generation
+                })
+                .and_then(|framebuffer| {
+                    (framebuffer.state != FramebufferObjectState::Registered)
+                        .then_some("live edge references inactive framebuffer object")
                 }),
             _ => None,
         }

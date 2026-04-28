@@ -20490,6 +20490,169 @@ fn simd_runtime_v12_invariants_reject_overhead_drift() {
 }
 
 #[test]
+fn display_runtime_g0_framebuffer_object_records_contract_identity() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::Framebuffer, None, "framebuffer:fb0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+
+    let result = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "display-runtime-g0",
+        SemanticCommand::RecordFramebufferObject {
+            framebuffer: 23_001,
+            name: "fb0".to_string(),
+            resource,
+            resource_generation,
+            width: 800,
+            height: 600,
+            stride_bytes: 3200,
+            pixel_format: "xrgb8888".to_string(),
+            byte_len: 1_920_000,
+            note: "g0 framebuffer object".to_string(),
+        },
+    ));
+
+    assert_eq!(result.status, CommandStatus::Applied);
+    assert_eq!(graph.framebuffer_object_count(), 1);
+    let framebuffer = &graph.framebuffer_objects()[0];
+    assert_eq!(
+        framebuffer.object_ref(),
+        ContractObjectRef::new(ContractObjectKind::FramebufferObject, 23_001, 1)
+    );
+    assert_eq!(framebuffer.resource, resource);
+    assert_eq!(framebuffer.resource_generation, resource_generation);
+    assert_eq!(framebuffer.width, 800);
+    assert_eq!(framebuffer.height, 600);
+    assert_eq!(framebuffer.stride_bytes, 3200);
+    assert_eq!(framebuffer.pixel_format, "xrgb8888");
+    assert_eq!(framebuffer.byte_len, 1_920_000);
+    assert_eq!(
+        graph.event_log_tail(1)[0].kind.summary(),
+        "FramebufferObjectRecorded framebuffer=23001 resource=1@1 width=800 height=600 stride_bytes=3200 pixel_format=xrgb8888 byte_len=1920000 generation=1"
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
+fn display_runtime_g0_rejects_bad_resource_or_geometry() {
+    let mut graph = SemanticGraph::new();
+    let wrong_resource = graph.register_resource(ResourceKind::Device, None, "device:not-fb");
+    let wrong_generation = graph.resource_handle(wrong_resource).unwrap().generation;
+    let wrong_kind = graph.apply_envelope(CommandEnvelope::new(
+        1,
+        "display-runtime-g0",
+        SemanticCommand::RecordFramebufferObject {
+            framebuffer: 23_002,
+            name: "fb0".to_string(),
+            resource: wrong_resource,
+            resource_generation: wrong_generation,
+            width: 800,
+            height: 600,
+            stride_bytes: 3200,
+            pixel_format: "xrgb8888".to_string(),
+            byte_len: 1_920_000,
+            note: "g0 wrong resource".to_string(),
+        },
+    ));
+    assert_eq!(wrong_kind.status, CommandStatus::Rejected);
+
+    let fb_resource = graph.register_resource(ResourceKind::Framebuffer, None, "framebuffer:fb1");
+    let fb_generation = graph.resource_handle(fb_resource).unwrap().generation;
+    let stale = graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "display-runtime-g0",
+        SemanticCommand::RecordFramebufferObject {
+            framebuffer: 23_003,
+            name: "fb1".to_string(),
+            resource: fb_resource,
+            resource_generation: fb_generation + 1,
+            width: 800,
+            height: 600,
+            stride_bytes: 3200,
+            pixel_format: "xrgb8888".to_string(),
+            byte_len: 1_920_000,
+            note: "g0 stale resource generation".to_string(),
+        },
+    ));
+    assert_eq!(stale.status, CommandStatus::Rejected);
+
+    let short_stride = graph.apply_envelope(CommandEnvelope::new(
+        3,
+        "display-runtime-g0",
+        SemanticCommand::RecordFramebufferObject {
+            framebuffer: 23_004,
+            name: "fb1".to_string(),
+            resource: fb_resource,
+            resource_generation: fb_generation,
+            width: 800,
+            height: 600,
+            stride_bytes: 3196,
+            pixel_format: "xrgb8888".to_string(),
+            byte_len: 1_920_000,
+            note: "g0 short stride".to_string(),
+        },
+    ));
+    assert_eq!(short_stride.status, CommandStatus::Rejected);
+}
+
+#[test]
+fn display_runtime_g0_invariants_reject_resource_generation_leak() {
+    let mut graph = SemanticGraph::new();
+    let resource = graph.register_resource(ResourceKind::Framebuffer, None, "framebuffer:fb0");
+    let resource_generation = graph.resource_handle(resource).unwrap().generation;
+    assert!(graph.record_framebuffer_object_with_id(
+        23_005,
+        "fb0",
+        resource,
+        resource_generation,
+        800,
+        600,
+        3200,
+        "xrgb8888",
+        1_920_000,
+        "g0 invariant framebuffer",
+    ));
+    graph.corrupt_framebuffer_object_resource_generation_for_test(23_005, resource_generation + 1);
+
+    assert_eq!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::FramebufferObjectMissingResource {
+            framebuffer: 23_005,
+            resource,
+        })
+    );
+}
+
+#[test]
+fn display_runtime_g0_contract_graph_rejects_bad_framebuffer_geometry() {
+    let framebuffer = FramebufferObjectRecord {
+        id: 23_006,
+        name: "fb0".to_string(),
+        resource: 1,
+        resource_generation: 1,
+        width: 800,
+        height: 600,
+        stride_bytes: 3196,
+        pixel_format: "xrgb8888".to_string(),
+        byte_len: 1_920_000,
+        generation: 1,
+        state: FramebufferObjectState::Registered,
+        recorded_at_event: 1,
+        note: "g0 bad geometry".to_string(),
+    };
+    let snapshot = ContractGraphSnapshot {
+        framebuffer_objects: Vec::from([framebuffer]),
+        ..ContractGraphSnapshot::default()
+    };
+    let violations = validate_contract_graph(&snapshot);
+
+    assert!(violations.iter().any(|violation| {
+        violation.edge == "framebuffer-object->geometry"
+            && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+    }));
+}
+
+#[test]
 fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     let mut graph = p7_resumed_activation();
     let blocker = ContractObjectRef::new(ContractObjectKind::TimerInterrupt, 5, 1);

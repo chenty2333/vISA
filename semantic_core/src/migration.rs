@@ -1529,6 +1529,16 @@ pub enum SemanticInvariantError {
         benchmark: SimdContextSwitchBenchmarkId,
         event: EventId,
     },
+    FramebufferObjectInvalid {
+        framebuffer: FramebufferObjectId,
+    },
+    FramebufferObjectMissingResource {
+        framebuffer: FramebufferObjectId,
+        resource: ResourceId,
+    },
+    FramebufferObjectMissingEvent {
+        framebuffer: FramebufferObjectId,
+    },
     VirtioNetBackendObjectInvalid {
         virtio_net_backend: VirtioNetBackendObjectId,
     },

@@ -723,6 +723,17 @@ pub enum EventKind {
         budget_nanos: u64,
         generation: Generation,
     },
+    FramebufferObjectRecorded {
+        framebuffer: FramebufferObjectId,
+        resource: ResourceId,
+        resource_generation: Generation,
+        width: u32,
+        height: u32,
+        stride_bytes: u32,
+        pixel_format: String,
+        byte_len: u64,
+        generation: Generation,
+    },
     FakeBlockBackendObjectBound {
         fake_block_backend: FakeBlockBackendObjectId,
         block_device: BlockDeviceObjectId,
@@ -2713,6 +2724,19 @@ impl EventKind {
                 saved_vector_state.summary(),
                 restored_vector_state.summary(),
                 target_feature_set.summary()
+            ),
+            Self::FramebufferObjectRecorded {
+                framebuffer,
+                resource,
+                resource_generation,
+                width,
+                height,
+                stride_bytes,
+                pixel_format,
+                byte_len,
+                generation,
+            } => format!(
+                "FramebufferObjectRecorded framebuffer={framebuffer} resource={resource}@{resource_generation} width={width} height={height} stride_bytes={stride_bytes} pixel_format={pixel_format} byte_len={byte_len} generation={generation}"
             ),
             Self::FakeBlockBackendObjectBound {
                 fake_block_backend,

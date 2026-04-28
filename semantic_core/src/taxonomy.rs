@@ -1810,6 +1810,21 @@ impl SimdContextSwitchBenchmarkState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FramebufferObjectState {
+    Registered,
+    Retired,
+}
+
+impl FramebufferObjectState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Registered => "registered",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockDmaBufferState {
     Bound,
     Released,
@@ -1957,6 +1972,7 @@ pub enum ResourceKind {
     Device,
     PacketDevice,
     BlockDevice,
+    Framebuffer,
     NetInterface,
     NetSocket,
     SocketQueue,
@@ -1983,6 +1999,7 @@ impl ResourceKind {
             Self::Device => "device",
             Self::PacketDevice => "packet-device",
             Self::BlockDevice => "block-device",
+            Self::Framebuffer => "framebuffer",
             Self::NetInterface => "net-interface",
             Self::NetSocket => "net-socket",
             Self::SocketQueue => "socket-queue",

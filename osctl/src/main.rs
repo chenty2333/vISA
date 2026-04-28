@@ -20,10 +20,10 @@ use artifact_manifest::{
     DirectoryObjectManifest, DmaBufferObjectManifest, DriverStoreBindingManifest,
     EndpointObjectManifest, Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest,
     FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
-    FileObjectManifest, FsWaitManifest, HartEventAttributionManifest, HartRecordManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    FileObjectManifest, FramebufferObjectManifest, FsWaitManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
@@ -415,6 +415,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         | "simd-context-switch-benchmark"
         | "simd-context-switch"
         | "simd-switch-benchmark"
+        | "framebuffer-object"
+        | "framebuffer"
+        | "fb"
         | "file"
         | "activation-resume"
         | "activation-wait"
@@ -586,7 +589,7 @@ fn print_usage() {
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
-        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
+        "  osctl hart|task|activation|activation-context|saved-context|timer-interrupt|ipi-event|remote-preempt|remote-park|preemption|scheduler-decision|cross-hart-scheduler-decision|activation-migration|smp-safe-point|safepoint|stop-the-world-rendezvous|stop-the-world|stw|smp-code-publish-barrier|smp-cleanup-quiescence|smp-snapshot-barrier|smp-stress-run|smp-scaling-benchmark|device|queue|descriptor|dma-buffer|mmio-region|irq-line|irq-event|device-capability|driver-store-binding|io-wait|io-cleanup|io-fault-injection|io-validation-report|packet-device|packet-buffer|packet-queue|packet-descriptor|fake-net-backend|virtio-net-backend|network-rx-interrupt|network-rx-wait-resolution|network-tx-capability-gate|network-tx-completion|network-stack-adapter|socket-object|endpoint-object|socket-operation|socket-wait|network-backpressure|network-driver-cleanup|network-generation-audit|network-fault-injection|network-benchmark|network-recovery-benchmark|block-device|block-range|block-request|block-completion|block-wait|fake-block-backend|virtio-blk-backend|block-read-path|block-write-path|block-request-queue|block-dma-buffer|block-page-object|buffer-cache-object|fs-cache|file-object|file|directory-object|directory|fat-adapter-object|fat-adapter|ext4-adapter-object|ext4-adapter|file-handle-capability|file-handle|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|framebuffer|activation-resume|activation-wait|activation-cleanup|preemption-latency|hart-event|scheduler|runnable-queue|store|cap|wait|cleanup|command list --json <migration.json>"
     );
     eprintln!("  osctl store|cap|wait|cleanup|command show --json <migration.json> <id>");
     eprintln!("  osctl state <manifest-or-migration.json>");
@@ -594,7 +597,7 @@ fn print_usage() {
     eprintln!("  osctl activation [--blocked] <migration.json>");
     eprintln!("  osctl event-log tail <migration.json>");
     eprintln!(
-        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
+        "  osctl inspect artifact|code|store|activation|capability|wait|trap|hostcall|tombstone|contract|cleanup|file-handle-capability|fs-wait|block-driver-cleanup|block-pending-io-policy|block-request-generation-audit|block-benchmark|block-recovery-benchmark|target-feature-set|vector-state|simd-fault-injection|simd-benchmark|simd-context-switch-benchmark|framebuffer-object|memory-policy|snapshot-validation|replay-validation|event [--json] <manifest-or-migration.json> [filter]"
     );
     eprintln!("  osctl contract validate [--json] <migration.json>");
     eprintln!(
@@ -876,6 +879,7 @@ fn canonical_view_kind(kind: &str) -> &'static str {
         "simd-context-switch-benchmark" | "simd-context-switch" | "simd-switch-benchmark" => {
             "simd-context-switch-benchmark"
         }
+        "framebuffer-object" | "framebuffer" | "fb" => "framebuffer-object",
         "activation-resume" => "activation-resume",
         "activation-wait" => "activation-wait",
         "activation-cleanup" => "activation-cleanup",
@@ -5631,6 +5635,45 @@ fn network_recovery_benchmark_view_v1(
     })
 }
 
+fn framebuffer_object_view_v1(framebuffer: &FramebufferObjectManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "framebuffer-object",
+        "id": framebuffer.id,
+        "generation": framebuffer.generation,
+        "state": framebuffer.state,
+        "owner": {
+            "resource": object_ref_json("resource", framebuffer.resource, framebuffer.resource_generation),
+        },
+        "references": {
+            "resource": object_ref_json("resource", framebuffer.resource, framebuffer.resource_generation),
+            "event": {
+                "id": framebuffer.recorded_at_event,
+            },
+        },
+        "identity": {
+            "name": framebuffer.name,
+        },
+        "geometry": {
+            "width": framebuffer.width,
+            "height": framebuffer.height,
+            "stride_bytes": framebuffer.stride_bytes,
+            "pixel_format": framebuffer.pixel_format,
+            "byte_len": framebuffer.byte_len,
+        },
+        "authority": {
+            "write_requires": "display-capability-and-framebuffer-window-lease",
+            "raw_mapping_is_semantic_truth": false,
+        },
+        "note": framebuffer.note,
+        "last_transition": {
+            "recorded_at_event": framebuffer.recorded_at_event,
+            "state": framebuffer.state,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
     let vector_status = if resume.vector_status.is_empty() {
         "absent"
@@ -7034,6 +7077,12 @@ fn stable_views_for_kind(
                 .map(simd_context_switch_benchmark_view_v1)
                 .collect())
         }
+        "framebuffer-object" | "framebuffer" | "fb" => Ok(package
+            .semantic
+            .framebuffer_objects
+            .iter()
+            .map(framebuffer_object_view_v1)
+            .collect()),
         "activation-resume" => Ok(package
             .semantic
             .activation_resumes
@@ -10458,6 +10507,28 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             event,
         ));
     }
+    for framebuffer in &package.semantic.framebuffer_objects {
+        let event = Some(framebuffer.recorded_at_event);
+        let from = object_ref_json("framebuffer-object", framebuffer.id, framebuffer.generation);
+        edges.push(graph_edge(
+            from.clone(),
+            object_ref_json(
+                "resource",
+                framebuffer.resource,
+                framebuffer.resource_generation,
+            ),
+            "framebuffer-object->resource",
+            "live",
+            event,
+        ));
+        edges.push(graph_edge(
+            from,
+            object_ref_json("event", framebuffer.recorded_at_event, 1),
+            "framebuffer-object->event",
+            "historical",
+            event,
+        ));
+    }
     for operation in &package.semantic.socket_operations {
         if operation.state != "applied" {
             continue;
@@ -13629,6 +13700,36 @@ fn inspect_package_object(
                 );
             }
         }
+        "framebuffer-object" | "framebuffer" | "fb" => {
+            println!(
+                "inspect framebuffer-object package={} count={}",
+                package.package_id, package.semantic.framebuffer_object_count
+            );
+            for framebuffer in &package.semantic.framebuffer_objects {
+                let line = format!(
+                    "framebuffer-object id={} name={} resource={}@{} width={} height={} stride_bytes={} pixel_format={} byte_len={} state={} generation={}",
+                    framebuffer.id,
+                    framebuffer.name,
+                    framebuffer.resource,
+                    framebuffer.resource_generation,
+                    framebuffer.width,
+                    framebuffer.height,
+                    framebuffer.stride_bytes,
+                    framebuffer.pixel_format,
+                    framebuffer.byte_len,
+                    framebuffer.state,
+                    framebuffer.generation
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.framebuffer_objects.is_empty() {
+                print_roots_filtered(
+                    "framebuffer-object",
+                    &package.semantic.roots.framebuffer_object_roots,
+                    filter,
+                );
+            }
+        }
         "memory-policy" => {
             println!(
                 "inspect memory-policy package={} count={}",
@@ -13942,6 +14043,19 @@ fn inspect_package_object_json(
                     .roots
                     .simd_context_switch_benchmark_roots
                     .len()
+            }),
+        ),
+        "framebuffer-object" | "framebuffer" | "fb" => (
+            "framebuffer-object",
+            package.semantic.framebuffer_object_count,
+            package
+                .semantic
+                .framebuffer_objects
+                .iter()
+                .map(framebuffer_object_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package.semantic.roots.framebuffer_object_roots.len()
             }),
         ),
         "command" => (
@@ -18112,6 +18226,41 @@ mod tests {
         assert_eq!(view["metrics"]["overhead_nanos"], 16_384);
         assert_eq!(view["metrics"]["budget_nanos"], 50_000);
         assert_eq!(view["last_transition"]["recorded_at_event"], 493);
+    }
+
+    #[test]
+    fn framebuffer_object_view_v1_exposes_geometry_and_authority_boundary() {
+        let view = framebuffer_object_view_v1(&FramebufferObjectManifest {
+            id: 23_001,
+            name: "fb0".to_owned(),
+            resource: 101,
+            resource_generation: 2,
+            width: 800,
+            height: 600,
+            stride_bytes: 3200,
+            pixel_format: "xrgb8888".to_owned(),
+            byte_len: 1_920_000,
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 494,
+            note: "g0 framebuffer object".to_owned(),
+        });
+
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["kind"], "framebuffer-object");
+        assert_eq!(view["owner"]["resource"]["id"], 101);
+        assert_eq!(view["references"]["resource"]["generation"], 2);
+        assert_eq!(view["geometry"]["width"], 800);
+        assert_eq!(view["geometry"]["height"], 600);
+        assert_eq!(view["geometry"]["stride_bytes"], 3200);
+        assert_eq!(view["geometry"]["pixel_format"], "xrgb8888");
+        assert_eq!(view["geometry"]["byte_len"], 1_920_000);
+        assert_eq!(
+            view["authority"]["write_requires"],
+            "display-capability-and-framebuffer-window-lease"
+        );
+        assert_eq!(view["authority"]["raw_mapping_is_semantic_truth"], false);
+        assert_eq!(view["last_transition"]["recorded_at_event"], 494);
     }
 
     #[test]

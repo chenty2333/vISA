@@ -90,6 +90,7 @@ pub struct SemanticGraph {
     simd_fault_injections: Vec<SimdFaultInjectionRecord>,
     simd_benchmarks: Vec<SimdBenchmarkRecord>,
     simd_context_switch_benchmarks: Vec<SimdContextSwitchBenchmarkRecord>,
+    framebuffer_objects: Vec<FramebufferObjectRecord>,
     activation_resumes: Vec<ActivationResumeRecord>,
     activation_waits: Vec<ActivationWaitRecord>,
     activation_cleanups: Vec<ActivationCleanupRecord>,
@@ -191,6 +192,7 @@ pub struct SemanticGraph {
     next_simd_fault_injection_id: SimdFaultInjectionId,
     next_simd_benchmark_id: SimdBenchmarkId,
     next_simd_context_switch_benchmark_id: SimdContextSwitchBenchmarkId,
+    next_framebuffer_object_id: FramebufferObjectId,
     next_activation_resume_id: ActivationResumeId,
     next_activation_wait_id: ActivationWaitId,
     next_activation_cleanup_id: ActivationCleanupId,
@@ -243,6 +245,7 @@ mod fake_net_backend_object;
 mod fat_adapter_object;
 mod file_handle_capability;
 mod file_object;
+mod framebuffer_object;
 mod fs_wait;
 mod hart;
 mod hart_event;
@@ -395,6 +398,7 @@ impl SemanticGraph {
             simd_fault_injections: Vec::new(),
             simd_benchmarks: Vec::new(),
             simd_context_switch_benchmarks: Vec::new(),
+            framebuffer_objects: Vec::new(),
             activation_resumes: Vec::new(),
             activation_waits: Vec::new(),
             activation_cleanups: Vec::new(),
@@ -496,6 +500,7 @@ impl SemanticGraph {
             next_simd_fault_injection_id: 1,
             next_simd_benchmark_id: 1,
             next_simd_context_switch_benchmark_id: 1,
+            next_framebuffer_object_id: 1,
             next_activation_resume_id: 1,
             next_activation_wait_id: 1,
             next_activation_cleanup_id: 1,

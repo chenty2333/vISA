@@ -391,6 +391,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub simd_context_switch_benchmark_count: usize,
     #[serde(default)]
+    pub framebuffer_object_count: usize,
+    #[serde(default)]
     pub activation_resume_count: usize,
     #[serde(default)]
     pub activation_wait_count: usize,
@@ -633,6 +635,8 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub simd_context_switch_benchmarks: Vec<SimdContextSwitchBenchmarkManifest>,
     #[serde(default)]
+    pub framebuffer_objects: Vec<FramebufferObjectManifest>,
+    #[serde(default)]
     pub activation_resumes: Vec<ActivationResumeManifest>,
     #[serde(default)]
     pub activation_waits: Vec<ActivationWaitManifest>,
@@ -854,6 +858,8 @@ pub struct SemanticRootSetManifest {
     pub simd_benchmark_roots: Vec<String>,
     #[serde(default)]
     pub simd_context_switch_benchmark_roots: Vec<String>,
+    #[serde(default)]
+    pub framebuffer_object_roots: Vec<String>,
     #[serde(default)]
     pub activation_resume_roots: Vec<String>,
     #[serde(default)]
@@ -2996,6 +3002,23 @@ pub struct SimdContextSwitchBenchmarkManifest {
     pub vector_context_switch_nanos: u64,
     pub overhead_nanos: u64,
     pub budget_nanos: u64,
+    pub generation: u64,
+    pub state: String,
+    pub recorded_at_event: u64,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct FramebufferObjectManifest {
+    pub id: u64,
+    pub name: String,
+    pub resource: u64,
+    pub resource_generation: u64,
+    pub width: u32,
+    pub height: u32,
+    pub stride_bytes: u32,
+    pub pixel_format: String,
+    pub byte_len: u64,
     pub generation: u64,
     pub state: String,
     pub recorded_at_event: u64,

@@ -1065,6 +1065,18 @@ pub enum SemanticCommand {
         budget_nanos: u64,
         note: String,
     },
+    RecordFramebufferObject {
+        framebuffer: FramebufferObjectId,
+        name: String,
+        resource: ResourceId,
+        resource_generation: Generation,
+        width: u32,
+        height: u32,
+        stride_bytes: u32,
+        pixel_format: String,
+        byte_len: u64,
+        note: String,
+    },
     RecordQueueObject {
         queue: QueueObjectId,
         name: String,
@@ -1498,6 +1510,7 @@ impl SemanticCommand {
             Self::RecordSimdFaultInjection { .. } => "record-simd-fault-injection",
             Self::RecordSimdBenchmark { .. } => "record-simd-benchmark",
             Self::RecordSimdContextSwitchBenchmark { .. } => "record-simd-context-switch-benchmark",
+            Self::RecordFramebufferObject { .. } => "record-framebuffer-object",
             Self::RecordQueueObject { .. } => "record-queue-object",
             Self::RecordDescriptorObject { .. } => "record-descriptor-object",
             Self::RecordDmaBufferObject { .. } => "record-dma-buffer-object",
@@ -4414,6 +4427,30 @@ impl SemanticGraph {
                     .map_err(CommandError::precondition)
                 }
             }
+            SemanticCommand::RecordFramebufferObject {
+                framebuffer,
+                name,
+                resource,
+                resource_generation,
+                width,
+                height,
+                stride_bytes,
+                pixel_format,
+                byte_len,
+                ..
+            } => self
+                .validate_framebuffer_object(
+                    *framebuffer,
+                    name,
+                    *resource,
+                    *resource_generation,
+                    *width,
+                    *height,
+                    *stride_bytes,
+                    pixel_format,
+                    *byte_len,
+                )
+                .map_err(CommandError::precondition),
             SemanticCommand::RecordQueueObject {
                 queue,
                 name,
@@ -7224,6 +7261,29 @@ impl SemanticGraph {
                 vector_context_switch_nanos,
                 overhead_nanos,
                 budget_nanos,
+                &note,
+            ),
+            SemanticCommand::RecordFramebufferObject {
+                framebuffer,
+                name,
+                resource,
+                resource_generation,
+                width,
+                height,
+                stride_bytes,
+                pixel_format,
+                byte_len,
+                note,
+            } => self.record_framebuffer_object_with_id(
+                framebuffer,
+                &name,
+                resource,
+                resource_generation,
+                width,
+                height,
+                stride_bytes,
+                &pixel_format,
+                byte_len,
                 &note,
             ),
             SemanticCommand::RecordQueueObject {

@@ -1,0 +1,137 @@
+{
+  "schema": "vmos-checkpoint-report",
+  "schema_version": 1,
+  "checkpoint": "G0-framebuffer-object",
+  "phase": "Phase 7 Display / Graphics Minimal Full Vertical",
+  "status": "pass",
+  "scope": [
+    "Add FramebufferObjectRecord as first-class semantic display evidence",
+    "Add RecordFramebufferObject command and FramebufferObjectRecorded event",
+    "Validate framebuffer identity, resource generation, geometry, and supported pixel format",
+    "Record deterministic host-validation framebuffer evidence in target_executor",
+    "Expose framebuffer-object stable ViewV1 and history graph edges through osctl"
+  ],
+  "no_goals": [
+    "real framebuffer MMIO mapping",
+    "display capability gate",
+    "framebuffer window lease mapping",
+    "pixel writes or flush command execution",
+    "GPU or desktop graphics stack"
+  ],
+  "changed_files": [
+    "artifact_manifest/src/lib.rs",
+    "contract_core/src/lib.rs",
+    "osctl/src/main.rs",
+    "semantic_core/src/contract_graph.rs",
+    "semantic_core/src/event_log.rs",
+    "semantic_core/src/graph.rs",
+    "semantic_core/src/graph/command.rs",
+    "semantic_core/src/graph/framebuffer_object.rs",
+    "semantic_core/src/graph/query.rs",
+    "semantic_core/src/ids.rs",
+    "semantic_core/src/migration.rs",
+    "semantic_core/src/records.rs",
+    "semantic_core/src/target_executor.rs",
+    "semantic_core/src/taxonomy.rs",
+    "semantic_core/src/tests.rs",
+    "target_executor/src/main.rs",
+    "tests/golden/display/golden_g0_framebuffer_object.trace.json",
+    "tests/reports/checkpoints/g0_framebuffer_object.checkpoint.json"
+  ],
+  "tests_and_traces": [
+    "tests/golden/display/golden_g0_framebuffer_object.trace.json",
+    "tests/reports/checkpoints/g0_framebuffer_object.checkpoint.json"
+  ],
+  "code_review": {
+    "status": "pass",
+    "findings_fixed": [
+      "FramebufferObject is semantic evidence instead of a raw substrate mapping",
+      "FramebufferObject references a live Resource with exact generation",
+      "Geometry validation rejects short stride, missing backing resource, stale generation, and unsupported shape",
+      "ContractGraph rejects malformed framebuffer geometry",
+      "osctl ViewV1 exposes framebuffer authority boundary without leaking adapter internals"
+    ],
+    "bad_smells_checked": [
+      "No third-party graphics crate or GPU state is treated as semantic truth",
+      "No framebuffer write path was added before DisplayCapability and lease checkpoints",
+      "No target-side cwasm execution path was added",
+      "No substrate mapping is treated as semantic truth"
+    ],
+    "residual_notes": [
+      "G1 owns DisplayObject",
+      "G2/G3 own DisplayCapability and FramebufferWindowLease",
+      "G5/G6 own pixel writes and flush commands"
+    ]
+  },
+  "validation_commands": [
+    {
+      "command": "cargo test -p semantic_core display_runtime_g0 -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p contract_core semantic_roots_reject_framebuffer_object_root_mismatch -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p osctl framebuffer_object_view_v1_exposes_geometry_and_authority_boundary -- --nocapture",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p target_executor",
+      "status": "pass"
+    },
+    {
+      "command": "cargo run -p osctl -- contract validate --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl framebuffer-object list --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl inspect framebuffer-object --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "target/debug/osctl graph --history --json target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --golden-only",
+      "status": "pass"
+    },
+    {
+      "command": "python scripts/validate-runtime-evidence.py --reports-only",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --workspace",
+      "status": "pass"
+    },
+    {
+      "command": "scripts/validate-runtime-full.sh --full",
+      "status": "pass"
+    }
+  ],
+  "evidence": {
+    "semantic_package": "target/aotc/wasmtime/host-validation/debug/semantic-package-v1.json",
+    "framebuffer_object": "framebuffer-object:23001@1",
+    "resource": "resource:27@1",
+    "recorded_at_event": 554,
+    "contract_validation": "ok"
+  },
+  "residual_gaps": [
+    "G1 owns DisplayObject",
+    "G2/G3 own DisplayCapability and FramebufferWindowLease",
+    "G5/G6 own pixel writes and flush commands"
+  ],
+  "next_checkpoint": "G1-display-object"
+}

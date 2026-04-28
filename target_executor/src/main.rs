@@ -23,20 +23,20 @@ use artifact_manifest::{
     DeviceCapabilityManifest, DeviceObjectManifest, DirectoryObjectManifest,
     DmaBufferObjectManifest, DriverStoreBindingManifest, EndpointObjectManifest,
     Ext4AdapterObjectManifest, FakeBlockBackendObjectManifest, FakeNetBackendObjectManifest,
-    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest, FsWaitManifest,
-    GuestStateManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
-    HostcallTraceManifest, InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest,
-    IoFaultInjectionManifest, IoValidationReportManifest, IoValidationViolationManifest,
-    IoWaitManifest, IpiEventManifest, IrqEventManifest, IrqLineObjectManifest,
-    MemoryClassPolicyManifest, MigrationCapabilityManifest, MigrationHostManifest,
-    MigrationObjectManifest, MigrationPackageManifest, MigrationTargetManifest,
-    MmioRegionObjectManifest, NetworkBackpressureManifest, NetworkBenchmarkManifest,
-    NetworkDriverCleanupManifest, NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
+    FatAdapterObjectManifest, FileHandleCapabilityManifest, FileObjectManifest,
+    FramebufferObjectManifest, FsWaitManifest, GuestStateManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest, InterfaceEventManifest,
+    IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
     SemanticRootSetManifest, SemanticSnapshotManifest, SimdBenchmarkManifest,
@@ -8373,6 +8373,7 @@ fn build_target_executor_v1(
         &mut store_manager,
     )?;
     run_simd_context_switch_benchmark_harness(semantic)?;
+    run_framebuffer_object_harness(semantic)?;
 
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
@@ -8442,6 +8443,7 @@ fn build_target_executor_v1(
         simd_fault_injections: semantic.simd_fault_injections().to_vec(),
         simd_benchmarks: semantic.simd_benchmarks().to_vec(),
         simd_context_switch_benchmarks: semantic.simd_context_switch_benchmarks().to_vec(),
+        framebuffer_objects: semantic.framebuffer_objects().to_vec(),
         preemptions: semantic.preemptions().to_vec(),
         activation_resumes: semantic.activation_resumes().to_vec(),
         stores: store_manager
@@ -9966,6 +9968,44 @@ fn run_simd_context_switch_benchmark_harness(
     Ok(())
 }
 
+fn run_framebuffer_object_harness(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let framebuffer_resource =
+        semantic.register_resource(ResourceKind::Framebuffer, None, "framebuffer:fb0");
+    let framebuffer_resource_generation = semantic
+        .resource_handle(framebuffer_resource)
+        .ok_or("display runtime g0 framebuffer resource missing after registration")?
+        .generation;
+
+    let result = semantic.apply_envelope(CommandEnvelope::new(
+        90_020,
+        "display-runtime-g0",
+        SemanticCommand::RecordFramebufferObject {
+            framebuffer: 23_001,
+            name: "fb0".to_owned(),
+            resource: framebuffer_resource,
+            resource_generation: framebuffer_resource_generation,
+            width: 800,
+            height: 600,
+            stride_bytes: 3200,
+            pixel_format: "xrgb8888".to_owned(),
+            byte_len: 1_920_000,
+            note: "g0 records semantic framebuffer object without display write authority"
+                .to_owned(),
+        },
+    ));
+    if result.status != CommandStatus::Applied {
+        return Err(format!(
+            "display runtime g0 command {} ({}) failed: status={} violations={:?}",
+            result.command_id,
+            result.command,
+            result.status.as_str(),
+            result.violations
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn declared_authority_objects(capabilities: &[CapabilityRecord]) -> Vec<ExternalObjectDeclaration> {
     let mut declarations = Vec::new();
     for capability in capabilities {
@@ -10725,6 +10765,7 @@ fn demo_migration_package(
             simd_fault_injection_count: semantic.simd_fault_injection_count(),
             simd_benchmark_count: semantic.simd_benchmark_count(),
             simd_context_switch_benchmark_count: semantic.simd_context_switch_benchmark_count(),
+            framebuffer_object_count: semantic.framebuffer_object_count(),
             activation_resume_count: semantic.activation_resume_count(),
             activation_wait_count: semantic.activation_wait_count(),
             activation_cleanup_count: semantic.activation_cleanup_count(),
@@ -11167,6 +11208,11 @@ fn demo_migration_package(
                 .simd_context_switch_benchmarks()
                 .iter()
                 .map(simd_context_switch_benchmark_manifest)
+                .collect(),
+            framebuffer_objects: semantic
+                .framebuffer_objects()
+                .iter()
+                .map(framebuffer_object_manifest)
                 .collect(),
             activation_resumes: semantic
                 .activation_resumes()
@@ -13255,6 +13301,26 @@ fn semantic_roots(
                     benchmark.budget_nanos,
                     benchmark.state.as_str(),
                     benchmark.generation
+                )
+            })
+            .collect(),
+        framebuffer_object_roots: semantic
+            .framebuffer_objects()
+            .iter()
+            .map(|framebuffer| {
+                format!(
+                    "framebuffer-object id={} name={} resource={}@{} width={} height={} stride_bytes={} pixel_format={} byte_len={} state={} generation={}",
+                    framebuffer.id,
+                    framebuffer.name,
+                    framebuffer.resource,
+                    framebuffer.resource_generation,
+                    framebuffer.width,
+                    framebuffer.height,
+                    framebuffer.stride_bytes,
+                    framebuffer.pixel_format,
+                    framebuffer.byte_len,
+                    framebuffer.state.as_str(),
+                    framebuffer.generation
                 )
             })
             .collect(),
@@ -16110,6 +16176,26 @@ fn simd_context_switch_benchmark_manifest(
         state: benchmark.state.as_str().to_owned(),
         recorded_at_event: benchmark.recorded_at_event,
         note: benchmark.note.clone(),
+    }
+}
+
+fn framebuffer_object_manifest(
+    framebuffer: &semantic_core::FramebufferObjectRecord,
+) -> FramebufferObjectManifest {
+    FramebufferObjectManifest {
+        id: framebuffer.id,
+        name: framebuffer.name.clone(),
+        resource: framebuffer.resource,
+        resource_generation: framebuffer.resource_generation,
+        width: framebuffer.width,
+        height: framebuffer.height,
+        stride_bytes: framebuffer.stride_bytes,
+        pixel_format: framebuffer.pixel_format.clone(),
+        byte_len: framebuffer.byte_len,
+        generation: framebuffer.generation,
+        state: framebuffer.state.as_str().to_owned(),
+        recorded_at_event: framebuffer.recorded_at_event,
+        note: framebuffer.note.clone(),
     }
 }
 

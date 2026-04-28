@@ -2599,6 +2599,33 @@ impl SimdContextSwitchBenchmarkRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FramebufferObjectRecord {
+    pub id: FramebufferObjectId,
+    pub name: String,
+    pub resource: ResourceId,
+    pub resource_generation: Generation,
+    pub width: u32,
+    pub height: u32,
+    pub stride_bytes: u32,
+    pub pixel_format: String,
+    pub byte_len: u64,
+    pub generation: Generation,
+    pub state: FramebufferObjectState,
+    pub recorded_at_event: EventId,
+    pub note: String,
+}
+
+impl FramebufferObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(
+            ContractObjectKind::FramebufferObject,
+            self.id,
+            self.generation,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDriverCleanupRecord {
     pub id: NetworkDriverCleanupId,
     pub io_cleanup: IoCleanupId,
