@@ -6,7 +6,7 @@ name = "spin"
 allow = ["MIT"]
 
 [bans]
-multiple-versions = "warn"
+multiple-versions = "deny"
 wildcards = "deny"
 
 [advisories]

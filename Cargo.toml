@@ -30,6 +30,7 @@ members = [
     "crates/services/replay_snapshot",
     "crates/services/vfs_service",
     "crates/services/wasm_app",
+    "crates/benchmarks/vmos-bench",
 ]
 
 [workspace.dependencies]
@@ -50,6 +51,7 @@ net_stack_adapter = { path = "crates/services/net_stack_adapter" }
 smoltcp = { version = "0.13.0", default-features = false, features = ["alloc", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
 substrate_api = { path = "crates/backend/substrate_api" }
 substrate_virtio = { path = "crates/backend/substrate_virtio" }
+criterion = "0.5"
 sha2 = "0.10"
 spin = "0.9.8"
 supervisor_catalog = { path = "crates/runtime/supervisor_catalog" }
