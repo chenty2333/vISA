@@ -9093,12 +9093,18 @@ fn stable_views_for_kind(
 
 fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
-    let ok = package.semantic.contract_violation_count == 0
+    let structural_error = validate_migration_package(&package).err();
+    let ok = structural_error.is_none()
+        && package.semantic.contract_violation_count == 0
         && package.semantic.snapshot_validation.ok
         && package.semantic.replay_validation.ok;
+    let last_error = structural_error
+        .as_ref()
+        .map(|error| error.to_string())
+        .or_else(|| (!ok).then(|| "contract-validation-failed".to_owned()));
     if json {
         let state = if ok { "ok" } else { "failed" };
-        let violations = package
+        let mut violations = package
             .semantic
             .contract_violations
             .iter()
@@ -9117,6 +9123,20 @@ fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
                 })
             })
             .collect::<Vec<_>>();
+        if let Some(error) = &structural_error {
+            violations.push(serde_json::json!({
+                "code": "package-structure",
+                "severity": "error",
+                "subject": {
+                    "kind": "migration-package",
+                    "id": &package.package_id,
+                    "generation": 1,
+                },
+                "relation": "structure",
+                "message": error.to_string(),
+                "to": serde_json::Value::Null,
+            }));
+        }
         let value = serde_json::json!({
             "schema": VIEW_SCHEMA_V1,
             "schema_version": OSCTL_JSON_SCHEMA_VERSION,
@@ -9134,9 +9154,20 @@ fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
             },
             "violations": &violations,
             "contract": {
-                "ok": package.semantic.contract_violation_count == 0,
-                "violation_count": package.semantic.contract_violation_count,
+                "ok": structural_error.is_none() && package.semantic.contract_violation_count == 0,
+                "violation_count": violations.len(),
                 "violations": &violations
+            },
+            "structure_validation": {
+                "ok": structural_error.is_none(),
+                "violation_count": usize::from(structural_error.is_some()),
+                "violations": structural_error
+                    .as_ref()
+                    .map(|error| vec![serde_json::json!({
+                        "code": "package-structure",
+                        "message": error.to_string()
+                    })])
+                    .unwrap_or_default()
             },
             "snapshot_validation": &package.semantic.snapshot_validation,
             "replay_validation": &package.semantic.replay_validation,
@@ -9144,7 +9175,7 @@ fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
                 "snapshot_ok": package.semantic.snapshot_validation.ok,
                 "replay_ok": package.semantic.replay_validation.ok,
             },
-            "last_error": if ok { serde_json::Value::Null } else { serde_json::json!("contract-validation-failed") }
+            "last_error": last_error
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
@@ -9156,11 +9187,16 @@ fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
             package.semantic.snapshot_validation.ok,
             package.semantic.replay_validation.ok
         );
+        if let Some(error) = &structural_error {
+            println!("contract validate structure_error={error}");
+        }
     }
     if ok {
         Ok(())
     } else {
-        Err("contract validation failed".into())
+        Err(last_error
+            .unwrap_or_else(|| "contract validation failed".to_owned())
+            .into())
     }
 }
 
@@ -20558,11 +20594,11 @@ mod tests {
         AuthorityObjectRefManifest, CleanupEffectManifest, CleanupStepManifest,
         ContractObjectRefManifest,
     };
+    use semantic_core::target_executor::{CleanupStep, ContractObjectKind, ContractObjectRef};
     use semantic_core::{
-        AuthorityObjectRef, CapabilityClass, CleanupStep, ContractGraphSnapshot,
-        ContractObjectKind, ContractObjectRef, ExternalObjectDeclaration, FrontendKind,
-        RestartPolicy, SemanticCommand, SemanticGraph, SemanticWaitKind, WaitCancelReason,
-        WaitState, validate_contract_graph,
+        AuthorityObjectRef, CapabilityClass, ContractGraphSnapshot, ExternalObjectDeclaration,
+        FrontendKind, RestartPolicy, SemanticCommand, SemanticGraph, SemanticWaitKind,
+        WaitCancelReason, WaitState, validate_contract_graph,
     };
 
     #[test]

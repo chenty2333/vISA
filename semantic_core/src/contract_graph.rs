@@ -4289,6 +4289,112 @@ impl ContractGraphValidator {
     ) {
         for record in &snapshot.integrated_osctl_trace_replays {
             let from = record.object_ref();
+            let source_events = [
+                snapshot
+                    .integrated_smp_preemption_cleanups
+                    .iter()
+                    .find(|source| {
+                        source.id == record.integrated_smp_preemption_cleanup
+                            && source.generation
+                                == record.integrated_smp_preemption_cleanup_generation
+                            && source.state == IntegratedSmpPreemptionCleanupState::Recorded
+                    })
+                    .map(|source| source.recorded_at_event),
+                snapshot
+                    .integrated_smp_network_faults
+                    .iter()
+                    .find(|source| {
+                        source.id == record.integrated_smp_network_fault
+                            && source.generation == record.integrated_smp_network_fault_generation
+                            && source.state == IntegratedSmpNetworkFaultState::Recorded
+                    })
+                    .map(|source| source.recorded_at_event),
+                snapshot
+                    .integrated_disk_preempt_faults
+                    .iter()
+                    .find(|source| {
+                        source.id == record.integrated_disk_preempt_fault
+                            && source.generation == record.integrated_disk_preempt_fault_generation
+                            && source.state == IntegratedDiskPreemptFaultState::Recorded
+                    })
+                    .map(|source| source.recorded_at_event),
+                snapshot
+                    .integrated_simd_migrations
+                    .iter()
+                    .find(|source| {
+                        source.id == record.integrated_simd_migration
+                            && source.generation == record.integrated_simd_migration_generation
+                            && source.state == IntegratedSimdMigrationState::Recorded
+                    })
+                    .map(|source| source.recorded_at_event),
+                snapshot
+                    .integrated_network_disk_ios
+                    .iter()
+                    .find(|source| {
+                        source.id == record.integrated_network_disk_io
+                            && source.generation == record.integrated_network_disk_io_generation
+                            && source.state == IntegratedNetworkDiskIoState::Recorded
+                    })
+                    .map(|source| source.recorded_at_event),
+                snapshot
+                    .integrated_display_scheduler_loads
+                    .iter()
+                    .find(|source| {
+                        source.id == record.integrated_display_scheduler_load
+                            && source.generation
+                                == record.integrated_display_scheduler_load_generation
+                            && source.state == IntegratedDisplaySchedulerLoadState::Recorded
+                    })
+                    .map(|source| source.recorded_at_event),
+                snapshot
+                    .integrated_snapshot_io_lease_barriers
+                    .iter()
+                    .find(|source| {
+                        source.id == record.integrated_snapshot_io_lease_barrier
+                            && source.generation
+                                == record.integrated_snapshot_io_lease_barrier_generation
+                            && source.state == IntegratedSnapshotIoLeaseBarrierState::Recorded
+                    })
+                    .map(|source| source.recorded_at_event),
+                snapshot
+                    .integrated_code_publish_smp_workloads
+                    .iter()
+                    .find(|source| {
+                        source.id == record.integrated_code_publish_smp_workload
+                            && source.generation
+                                == record.integrated_code_publish_smp_workload_generation
+                            && source.state == IntegratedCodePublishSmpWorkloadState::Recorded
+                    })
+                    .map(|source| source.recorded_at_event),
+                snapshot
+                    .integrated_display_panics
+                    .iter()
+                    .find(|source| {
+                        source.id == record.integrated_display_panic
+                            && source.generation == record.integrated_display_panic_generation
+                            && source.state == IntegratedDisplayPanicState::Recorded
+                    })
+                    .map(|source| source.recorded_at_event),
+            ];
+            let roots_match_counts = record.integrated_scenario_count == 9
+                && record.stable_view_count >= record.integrated_scenario_count
+                && record.historical_edge_count >= record.integrated_scenario_count
+                && record.replayed_root_count >= record.integrated_scenario_count
+                && record.golden_trace_count >= record.integrated_scenario_count;
+            let graph_history_ok =
+                source_events.iter().all(Option::is_some) && record.historical_edge_count >= 9;
+            let max_source_event = source_events
+                .iter()
+                .filter_map(|event| *event)
+                .max()
+                .unwrap_or(0);
+            let replay_validation_ok = graph_history_ok
+                && record.replay_event_cursor >= max_source_event
+                && record.replay_event_cursor != 0;
+            let contract_validation_ok = graph_history_ok
+                && replay_validation_ok
+                && roots_match_counts
+                && record.invariant_checks != 0;
             if record.id == 0
                 || record.generation == 0
                 || record.scenario.is_empty()
@@ -4299,10 +4405,10 @@ impl ContractGraphValidator {
                 || record.historical_edge_count < 9
                 || record.replayed_root_count < 9
                 || record.golden_trace_count < 9
-                || !record.contract_validation_ok
-                || !record.replay_validation_ok
-                || !record.graph_history_ok
-                || !record.roots_match_counts
+                || record.contract_validation_ok != contract_validation_ok
+                || record.replay_validation_ok != replay_validation_ok
+                || record.graph_history_ok != graph_history_ok
+                || record.roots_match_counts != roots_match_counts
                 || record.invariant_checks == 0
                 || record.recorded_at_event == 0
             {
@@ -4311,9 +4417,8 @@ impl ContractGraphValidator {
                     "integrated-osctl-trace-replay->contract",
                     from,
                     None,
-                    "integrated osctl trace replay requires complete stable replay evidence",
+                    "integrated osctl trace replay derived evidence mismatch",
                 ));
-                continue;
             }
 
             for (label, kind, id, generation) in [

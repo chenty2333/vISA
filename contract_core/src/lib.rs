@@ -775,6 +775,9 @@ pub const TARGET_ARTIFACT_FORMAT_V1: &str = "target-artifact-image-v1";
 pub const CODE_PAYLOAD_FORMAT_CWASM: &str = SUPERVISOR_CODE_PAYLOAD_FORMAT;
 pub const WASMTIME_CRATE_VERSION: &str = "43.0.1";
 pub const WASMTIME_COMPILATION_STRATEGY: &str = "cranelift";
+pub const DEFAULT_MAX_MEMORY_PAGES: u32 = 16;
+pub const DEFAULT_MAX_TABLE_ELEMENTS: u32 = 0;
+pub const DEFAULT_MAX_HOSTCALLS_PER_ACTIVATION: u32 = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedArtifactPlan {
@@ -1025,7 +1028,11 @@ pub fn build_validated_artifact_plan(
                 cwasm_sha256: entry.cwasm_sha256.clone(),
                 target_artifact_sha256: entry.target_artifact_sha256.clone(),
                 code_payload_format: normalized_code_payload_format(entry).to_owned(),
-                expected_exports: entry.expected_exports.clone(),
+                expected_exports: spec
+                    .expected_exports
+                    .iter()
+                    .map(|export| (*export).to_owned())
+                    .collect(),
                 capabilities: entry.capabilities.clone(),
                 abi_fingerprint: entry.abi_fingerprint.clone(),
                 service_dependencies: entry.service_dependencies.clone(),
@@ -1539,8 +1546,103 @@ pub fn validate_manifest_entry(
             spec.package
         )));
     }
+    validate_expected_exports(spec, entry)?;
+    validate_exports(spec, entry)?;
+    validate_resource_limits(spec, entry)?;
     validate_capabilities(spec, entry)?;
     validate_interface_requirements(spec, entry)?;
+    Ok(())
+}
+
+fn validate_expected_exports(
+    spec: &WasmModuleSpec,
+    entry: &ModuleArtifactManifest,
+) -> ContractResult<()> {
+    if entry.expected_exports.len() == spec.expected_exports.len()
+        && spec
+            .expected_exports
+            .iter()
+            .zip(entry.expected_exports.iter())
+            .all(|(expected, actual)| actual == expected)
+    {
+        return Ok(());
+    }
+    Err(ContractError::new(format!(
+        "{} expected exports mismatch",
+        spec.package
+    )))
+}
+
+fn validate_exports(spec: &WasmModuleSpec, entry: &ModuleArtifactManifest) -> ContractResult<()> {
+    for export in &entry.exports {
+        if entry
+            .exports
+            .iter()
+            .filter(|candidate| candidate.name == export.name)
+            .count()
+            != 1
+        {
+            return Err(ContractError::new(format!(
+                "{} duplicate export {}",
+                spec.package, export.name
+            )));
+        }
+        if !spec
+            .expected_exports
+            .iter()
+            .any(|expected| *expected == export.name)
+            && !is_allowed_compiler_aux_export(&export.name)
+        {
+            return Err(ContractError::new(format!(
+                "{} unexpected export {}",
+                spec.package, export.name
+            )));
+        }
+    }
+    for expected in spec.expected_exports {
+        let Some(export) = entry
+            .exports
+            .iter()
+            .find(|candidate| candidate.name == *expected)
+        else {
+            return Err(ContractError::new(format!(
+                "{} missing export {}",
+                spec.package, expected
+            )));
+        };
+        let expected_kind = if *expected == "memory" {
+            "memory"
+        } else {
+            "func"
+        };
+        if export.kind != expected_kind {
+            return Err(ContractError::new(format!(
+                "{} export {} kind mismatch",
+                spec.package, expected
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn is_allowed_compiler_aux_export(name: &str) -> bool {
+    matches!(name, "__data_end" | "__heap_base")
+}
+
+fn validate_resource_limits(
+    spec: &WasmModuleSpec,
+    entry: &ModuleArtifactManifest,
+) -> ContractResult<()> {
+    if entry.resource_limits.max_memory_pages != DEFAULT_MAX_MEMORY_PAGES
+        || entry.resource_limits.max_table_elements != DEFAULT_MAX_TABLE_ELEMENTS
+        || entry.resource_limits.max_hostcalls_per_activation
+            != DEFAULT_MAX_HOSTCALLS_PER_ACTIVATION
+    {
+        return Err(ContractError::new(format!(
+            "{} resource limits mismatch",
+            spec.package
+        )));
+    }
     Ok(())
 }
 
@@ -1757,18 +1859,19 @@ pub fn validate_migration_against_manifest(
             "package compiler/artifact mode mismatch",
         ));
     }
-    if package.semantic.artifact_verification_count != 0
-        && package.semantic.artifact_verification_count != manifest.modules.len()
-    {
+    if package.semantic.artifact_verification_count != manifest.modules.len() {
         return Err(ContractError::new(
             "package artifact verification count does not match manifest",
         ));
     }
-    if package.semantic.store_activation_count != 0
-        && package.semantic.store_activation_count != manifest.modules.len()
-    {
+    if package.semantic.store_activation_count != manifest.modules.len() {
         return Err(ContractError::new(
             "package store activation count does not match manifest",
+        ));
+    }
+    if package.semantic.target_artifact_count != manifest.modules.len() {
+        return Err(ContractError::new(
+            "package target artifact count does not match manifest",
         ));
     }
     Ok(())
@@ -3374,12 +3477,68 @@ mod tests {
     }
 
     #[test]
+    fn manifest_validation_rejects_expected_export_tamper() {
+        let mut manifest = valid_manifest();
+        manifest.modules[0].expected_exports = vec!["evil_export".to_owned()];
+
+        let err = validate_artifact_manifest(&manifest).expect_err("bad exports must fail");
+        assert_eq!(err.to_string(), "console_service expected exports mismatch");
+    }
+
+    #[test]
+    fn manifest_validation_rejects_actual_export_tamper() {
+        let mut manifest = valid_manifest();
+        manifest.modules[0].exports[0].name = "evil_export".to_owned();
+
+        let err = validate_artifact_manifest(&manifest).expect_err("bad exports must fail");
+        assert_eq!(
+            err.to_string(),
+            "console_service unexpected export evil_export"
+        );
+    }
+
+    #[test]
+    fn validated_plan_derives_exports_from_catalog_spec() {
+        let manifest = valid_manifest();
+        let plan = build_validated_artifact_plan(&manifest).expect("valid plan");
+        let expected = SUPERVISOR_WASM_MODULES[0]
+            .expected_exports
+            .iter()
+            .map(|export| (*export).to_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(plan.modules[0].expected_exports, expected);
+    }
+
+    #[test]
+    fn manifest_validation_rejects_resource_limit_tamper() {
+        let mut manifest = valid_manifest();
+        manifest.modules[0].resource_limits.max_memory_pages = u32::MAX;
+
+        let err = validate_artifact_manifest(&manifest).expect_err("bad limits must fail");
+        assert_eq!(err.to_string(), "console_service resource limits mismatch");
+    }
+
+    #[test]
     fn manifest_validation_rejects_bad_entry_binding() {
         let mut manifest = valid_manifest();
         manifest.modules[0].signature.manifest_binding_hash = "stale-binding".to_owned();
 
         let err = validate_artifact_manifest(&manifest).expect_err("bad binding must fail");
         assert!(err.to_string().contains("manifest binding hash mismatch"));
+    }
+
+    #[test]
+    fn migration_against_manifest_rejects_missing_artifact_evidence() {
+        let manifest = valid_manifest();
+        let package = minimal_migration_package();
+
+        let err = validate_migration_against_manifest(&package, &manifest)
+            .expect_err("missing artifact evidence must fail");
+        assert_eq!(
+            err.to_string(),
+            "package artifact verification count does not match manifest"
+        );
     }
 
     #[test]

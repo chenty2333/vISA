@@ -73,30 +73,33 @@ use fs_adapter::{
 };
 use net_stack_adapter::{SmoltcpAdapterConfig, build_smoltcp_adapter_evidence};
 use runtime::{HostValidationSmokeTrace, RuntimeOnlyExecutor};
+use semantic_core::target_executor::{
+    ActivationEntry, ArtifactRegistry, CapabilityHandleArg, CodeObject, CodePublisher,
+    ContractObjectKind, ContractObjectRef, ExpectedTargetArtifact, HostcallCategory, HostcallFrame,
+    HostcallSpec, HostcallTraceRecord, ManagedStoreRecord, MigrationObjectRecord,
+    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
+    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TombstoneRecord,
+    VerifiedArtifact,
+};
 use semantic_core::{
-    ActivationContextState, ActivationEntry, ActivationVectorState, ArtifactRegistry,
-    ArtifactVerificationState, AuthorityObjectRef, BlockCompletionStatus, BlockPendingIoAction,
-    BlockRequestOperation, BlockRequestQueueEntryRef, BoundaryKind, BoundaryStatus,
-    BoundaryValidationReport, BoundaryValidationViolation, BufferCacheObjectState, CapabilityClass,
-    CapabilityHandleArg, CapabilityLedger, CapabilityRecord, CodeObject, CodePublishState,
-    CodePublisher, CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot,
-    ContractObjectKind, ContractObjectRef, ContractViolation, CowState, DescriptorObjectAccess,
-    DirectoryEntryKind, DirectoryObjectState, DmaBufferObjectAccess, EntrypointState, EventKind,
-    EventRecord, ExpectedTargetArtifact, Ext4AdapterObjectState, ExternalObjectDeclaration,
-    FatAdapterObjectState, FileObjectState, FrontendKind, HartState, HostcallCategory,
-    HostcallFrame, HostcallLinkState, HostcallSpec, HostcallTraceRecord, IpiEventKind,
-    IrqLinePolarity, IrqLineTrigger, ManagedStoreRecord, MemoryClassPolicy, MemoryLayoutState,
-    MigrationObjectRecord, MmioRegionObjectAccess, NetworkBackpressureAction,
+    ActivationContextState, ActivationVectorState, ArtifactVerificationState, AuthorityObjectRef,
+    BlockCompletionStatus, BlockPendingIoAction, BlockRequestOperation, BlockRequestQueueEntryRef,
+    BoundaryKind, BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation,
+    BufferCacheObjectState, CapabilityClass, CapabilityLedger, CapabilityRecord, CodePublishState,
+    CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot, ContractViolation,
+    CowState, DescriptorObjectAccess, DirectoryEntryKind, DirectoryObjectState,
+    DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord, Ext4AdapterObjectState,
+    ExternalObjectDeclaration, FatAdapterObjectState, FileObjectState, FrontendKind, HartState,
+    HostcallLinkState, IpiEventKind, IrqLinePolarity, IrqLineTrigger, MemoryClassPolicy,
+    MemoryLayoutState, MmioRegionObjectAccess, NetworkBackpressureAction,
     NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
     PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
     PageBacking, PageObjectState, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
     RestartPolicy, RuntimeActivationState, RuntimeMode, SavedContextReason, SemanticCommand,
     SemanticGraph, SemanticWaitKind, SimdFaultInjectionEffect, SimdFaultInjectionKind,
-    SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState,
-    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
-    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TaskState,
-    TombstoneRecord, TrapSurfaceState, VectorStateState, VerifiedArtifact, WaitCancelReason,
-    memory_class_policies, validate_contract_graph,
+    SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState, TaskState,
+    TrapSurfaceState, VectorStateState, WaitCancelReason, memory_class_policies,
+    validate_contract_graph,
 };
 use service_core::fake_block::{
     FAKE_BLOCK_BACKEND_PROFILE, FAKE_BLOCK_BACKEND_PROVIDER, FakeBlockBackendConfig,
@@ -11152,10 +11155,6 @@ fn run_integrated_osctl_trace_replay_harness(
             replayed_root_count: 9,
             integrated_scenario_count: 9,
             golden_trace_count: 9,
-            contract_validation_ok: true,
-            replay_validation_ok: true,
-            graph_history_ok: true,
-            roots_match_counts: true,
             invariant_checks: 9,
             note: "x9 records full osctl trace replay closure across integrated scenarios"
                 .to_owned(),
@@ -19191,7 +19190,7 @@ fn capability_record_manifest(capability: &CapabilityRecord) -> CapabilityRecord
 }
 
 fn activation_record_manifest(
-    activation: &semantic_core::ActivationRecord,
+    activation: &semantic_core::target_executor::ActivationRecord,
 ) -> ActivationRecordManifest {
     ActivationRecordManifest {
         id: activation.id,
@@ -19212,7 +19211,9 @@ fn activation_record_manifest(
     }
 }
 
-fn trap_record_manifest(trap: &semantic_core::TargetTrapRecord) -> TrapRecordManifest {
+fn trap_record_manifest(
+    trap: &semantic_core::target_executor::TargetTrapRecord,
+) -> TrapRecordManifest {
     TrapRecordManifest {
         id: trap.id,
         generation: trap.generation,
@@ -19515,7 +19516,7 @@ fn contract_violation_manifest(violation: &ContractViolation) -> ContractViolati
 }
 
 fn cleanup_transaction_manifest(
-    cleanup: &semantic_core::FaultCleanupTransaction,
+    cleanup: &semantic_core::target_executor::FaultCleanupTransaction,
 ) -> CleanupTransactionManifest {
     CleanupTransactionManifest {
         id: cleanup.id,

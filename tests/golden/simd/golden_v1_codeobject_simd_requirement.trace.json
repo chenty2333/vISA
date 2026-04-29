@@ -59,7 +59,16 @@
       }
     ]
   },
-  "events": [],
+  "events": [
+    {
+      "kind": "CodeObjectSimdRequirementRecorded",
+      "source": "target_executor host-validation code object view",
+      "code_object": "code-object:*",
+      "status": "scalar-only",
+      "uses_simd": false,
+      "recorded_at_event_cursor": 489
+    }
+  ],
   "expected": {
     "views": {
       "code-object": {

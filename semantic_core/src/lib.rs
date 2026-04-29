@@ -16,9 +16,10 @@ mod handles;
 mod ids;
 mod memory_boundary;
 mod migration;
+pub mod object_table;
 mod records;
 mod runtime_mode;
-mod target_executor;
+pub mod target_executor;
 mod taxonomy;
 
 pub use activation::*;
@@ -35,7 +36,7 @@ pub use memory_boundary::*;
 pub use migration::*;
 pub use records::*;
 pub use runtime_mode::*;
-pub use target_executor::*;
+pub(crate) use target_executor::*;
 pub use taxonomy::*;
 
 #[cfg(test)]
