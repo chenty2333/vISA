@@ -20,7 +20,7 @@ impl SemanticGraph {
         if injection == 0 {
             return Err("SIMD fault injection id=0 is invalid");
         }
-        if self.simd_fault_injections.iter().any(|record| record.id == injection) {
+        if self.domains.simd.simd_fault_injections.iter().any(|record| record.id == injection) {
             return Err("SIMD fault injection already exists");
         }
         if activation.kind != ContractObjectKind::Activation
@@ -62,7 +62,7 @@ impl SemanticGraph {
                 }
             }
         }
-        let Some(feature) = self.target_feature_sets.iter().find(|record| {
+        let Some(feature) = self.domains.simd.target_feature_sets.iter().find(|record| {
             record.id == target_feature_set.id && record.generation == target_feature_set.generation
         }) else {
             return Err("SIMD fault injection target feature set is missing");
@@ -87,7 +87,7 @@ impl SemanticGraph {
             );
         }
         if let Some(vector_state_ref) = vector_state {
-            let Some(vector_record) = self.vector_states.iter().find(|record| {
+            let Some(vector_record) = self.domains.simd.vector_states.iter().find(|record| {
                 record.id == vector_state_ref.id && record.generation == vector_state_ref.generation
             }) else {
                 return Err("SIMD fault injection vector state generation is missing");
@@ -141,7 +141,8 @@ impl SemanticGraph {
         {
             return false;
         }
-        self.next_simd_fault_injection_id = self.next_simd_fault_injection_id.max(injection + 1);
+        self.domains.simd.next_simd_fault_injection_id =
+            self.domains.simd.next_simd_fault_injection_id.max(injection + 1);
         let event = self.event_log.push(
             "simd-runtime",
             EventKind::SimdFaultInjectionRecorded {
@@ -156,7 +157,7 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.simd_fault_injections.push(SimdFaultInjectionRecord {
+        self.domains.simd.simd_fault_injections.push(SimdFaultInjectionRecord {
             id: injection,
             activation,
             code_object,
@@ -178,15 +179,15 @@ impl SemanticGraph {
     }
 
     pub fn simd_fault_injections(&self) -> &[SimdFaultInjectionRecord] {
-        &self.simd_fault_injections
+        &self.domains.simd.simd_fault_injections
     }
 
     pub fn simd_fault_injection_count(&self) -> usize {
-        self.simd_fault_injections.len()
+        self.domains.simd.simd_fault_injections.len()
     }
 
     pub fn check_simd_fault_injection_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for injection in &self.simd_fault_injections {
+        for injection in &self.domains.simd.simd_fault_injections {
             if injection.id == 0
                 || injection.generation == 0
                 || injection.state != SimdFaultInjectionState::Recorded
@@ -203,7 +204,7 @@ impl SemanticGraph {
                     injection: injection.id,
                 });
             }
-            let Some(feature) = self.target_feature_sets.iter().find(|record| {
+            let Some(feature) = self.domains.simd.target_feature_sets.iter().find(|record| {
                 record.id == injection.target_feature_set.id
                     && record.generation == injection.target_feature_set.generation
             }) else {
@@ -227,7 +228,7 @@ impl SemanticGraph {
                 });
             }
             if let Some(vector_state) = injection.vector_state {
-                let Some(vector_record) = self.vector_states.iter().find(|record| {
+                let Some(vector_record) = self.domains.simd.vector_states.iter().find(|record| {
                     record.id == vector_state.id && record.generation == vector_state.generation
                 }) else {
                     return Err(SemanticInvariantError::SimdFaultInjectionMissingTarget {

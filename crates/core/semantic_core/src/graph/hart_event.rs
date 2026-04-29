@@ -11,7 +11,7 @@ impl SemanticGraph {
         activation_generation: Option<Generation>,
         note: &str,
     ) -> bool {
-        let attribution = self.next_hart_event_attribution_id;
+        let attribution = self.domains.scheduler.next_hart_event_attribution_id;
         self.record_hart_event_attribution_with_id(
             attribution,
             hart,
@@ -40,13 +40,15 @@ impl SemanticGraph {
             || hart_generation == 0
             || event == 0
             || event_kind.is_empty()
-            || self.hart_event_attributions.iter().any(|record| {
+            || self.domains.scheduler.hart_event_attributions.iter().any(|record| {
                 record.id == attribution || (record.hart == hart && record.event == event)
             })
         {
             return false;
         }
         let Some(hart_record) = self
+            .domains
+            .scheduler
             .harts
             .iter()
             .find(|record| record.id == hart && record.generation >= hart_generation)
@@ -65,6 +67,8 @@ impl SemanticGraph {
                 return false;
             };
             let Some(record) = self
+                .domains
+                .scheduler
                 .runtime_activations
                 .iter()
                 .find(|record| record.id == activation && record.generation >= generation)
@@ -83,9 +87,9 @@ impl SemanticGraph {
             (None, None, None, None)
         };
 
-        self.next_hart_event_attribution_id =
-            self.next_hart_event_attribution_id.max(attribution + 1);
-        self.hart_event_attributions.push(HartEventAttributionRecord {
+        self.domains.scheduler.next_hart_event_attribution_id =
+            self.domains.scheduler.next_hart_event_attribution_id.max(attribution + 1);
+        self.domains.scheduler.hart_event_attributions.push(HartEventAttributionRecord {
             id: attribution,
             hart,
             hart_generation,
@@ -107,11 +111,11 @@ impl SemanticGraph {
     }
 
     pub fn hart_event_attributions(&self) -> &[HartEventAttributionRecord] {
-        &self.hart_event_attributions
+        &self.domains.scheduler.hart_event_attributions
     }
 
     pub fn hart_event_attribution_count(&self) -> usize {
-        self.hart_event_attributions.len()
+        self.domains.scheduler.hart_event_attributions.len()
     }
 
     #[cfg(test)]
@@ -120,8 +124,12 @@ impl SemanticGraph {
         attribution: HartEventAttributionId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.hart_event_attributions.iter_mut().find(|record| record.id == attribution)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .hart_event_attributions
+            .iter_mut()
+            .find(|record| record.id == attribution)
         {
             record.hart_generation = generation;
         }
@@ -129,11 +137,11 @@ impl SemanticGraph {
 
     #[cfg(test)]
     pub(crate) fn clear_hart_event_attributions_for_test(&mut self) {
-        self.hart_event_attributions.clear();
+        self.domains.scheduler.hart_event_attributions.clear();
     }
 
     pub fn check_hart_event_attribution_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for attribution in &self.hart_event_attributions {
+        for attribution in &self.domains.scheduler.hart_event_attributions {
             if attribution.id == 0
                 || attribution.hart == 0
                 || attribution.hart_generation == 0
@@ -144,7 +152,9 @@ impl SemanticGraph {
                     attribution: attribution.id,
                 });
             }
-            let Some(hart) = self.harts.iter().find(|record| record.id == attribution.hart) else {
+            let Some(hart) =
+                self.domains.scheduler.harts.iter().find(|record| record.id == attribution.hart)
+            else {
                 return Err(SemanticInvariantError::HartEventAttributionMissingHart {
                     attribution: attribution.id,
                     hart: attribution.hart,
@@ -175,6 +185,8 @@ impl SemanticGraph {
             match (attribution.activation, attribution.activation_generation) {
                 (Some(activation), Some(generation)) => {
                     if !self
+                        .domains
+                        .scheduler
                         .runtime_activations
                         .iter()
                         .any(|record| record.id == activation && record.generation >= generation)

@@ -63,7 +63,13 @@ impl SemanticGraph {
         if framebuffer_write == 0 {
             return Err("framebuffer write id=0 is invalid");
         }
-        if self.framebuffer_writes.iter().any(|record| record.id == framebuffer_write) {
+        if self
+            .domains
+            .display
+            .framebuffer_writes
+            .iter()
+            .any(|record| record.id == framebuffer_write)
+        {
             return Err("framebuffer write already exists");
         }
         if owner_store_generation == 0
@@ -75,21 +81,23 @@ impl SemanticGraph {
         {
             return Err("framebuffer write identity and region values must be nonzero");
         }
-        let Some(store_record) = self
-            .stores
-            .iter()
-            .find(|store| store.id == owner_store && store.generation == owner_store_generation)
+        let Some(store_record) =
+            self.domains.lifecycle.stores.iter().find(|store| {
+                store.id == owner_store && store.generation == owner_store_generation
+            })
         else {
             return Err("framebuffer write owner store generation is missing");
         };
         if store_record.state == StoreState::Dead {
             return Err("framebuffer write owner store is dead");
         }
-        let Some(mapping_record) = self.framebuffer_mappings.iter().find(|mapping| {
-            mapping.id == framebuffer_mapping
-                && mapping.generation == framebuffer_mapping_generation
-                && mapping.state == FramebufferMappingState::Active
-        }) else {
+        let Some(mapping_record) =
+            self.domains.display.framebuffer_mappings.iter().find(|mapping| {
+                mapping.id == framebuffer_mapping
+                    && mapping.generation == framebuffer_mapping_generation
+                    && mapping.state == FramebufferMappingState::Active
+            })
+        else {
             return Err("framebuffer write active mapping generation is missing");
         };
         if mapping_record.owner_store != owner_store
@@ -99,11 +107,13 @@ impl SemanticGraph {
         {
             return Err("framebuffer write mapping binding mismatch");
         }
-        let Some(framebuffer_record) = self.framebuffer_objects.iter().find(|framebuffer| {
-            framebuffer.id == mapping_record.framebuffer
-                && framebuffer.generation == mapping_record.framebuffer_generation
-                && framebuffer.state == FramebufferObjectState::Registered
-        }) else {
+        let Some(framebuffer_record) =
+            self.domains.display.framebuffer_objects.iter().find(|framebuffer| {
+                framebuffer.id == mapping_record.framebuffer
+                    && framebuffer.generation == mapping_record.framebuffer_generation
+                    && framebuffer.state == FramebufferObjectState::Registered
+            })
+        else {
             return Err("framebuffer write framebuffer generation is missing");
         };
         let Some(bytes_per_pixel) = bytes_per_pixel(&framebuffer_record.pixel_format) else {
@@ -211,6 +221,8 @@ impl SemanticGraph {
             return false;
         }
         let mapping_record = self
+            .domains
+            .display
             .framebuffer_mappings
             .iter()
             .find(|mapping| {
@@ -220,6 +232,8 @@ impl SemanticGraph {
             .expect("validated framebuffer write mapping exists")
             .clone();
         let framebuffer_record = self
+            .domains
+            .display
             .framebuffer_objects
             .iter()
             .find(|framebuffer| {
@@ -229,8 +243,8 @@ impl SemanticGraph {
             .expect("validated framebuffer write framebuffer exists")
             .clone();
         let generation = 1;
-        self.next_framebuffer_write_id =
-            self.next_framebuffer_write_id.max(framebuffer_write.saturating_add(1));
+        self.domains.display.next_framebuffer_write_id =
+            self.domains.display.next_framebuffer_write_id.max(framebuffer_write.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::FramebufferWriteRecorded {
@@ -263,7 +277,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.framebuffer_writes.push(FramebufferWriteRecord {
+        self.domains.display.framebuffer_writes.push(FramebufferWriteRecord {
             id: framebuffer_write,
             owner_store,
             owner_store_generation,
@@ -297,16 +311,16 @@ impl SemanticGraph {
     }
 
     pub fn framebuffer_writes(&self) -> &[FramebufferWriteRecord] {
-        &self.framebuffer_writes
+        &self.domains.display.framebuffer_writes
     }
 
     pub fn framebuffer_write_count(&self) -> usize {
-        self.framebuffer_writes.len()
+        self.domains.display.framebuffer_writes.len()
     }
 
     pub fn check_framebuffer_write_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.framebuffer_writes {
-            let Some(store_record) = self.stores.iter().find(|store| {
+        for record in &self.domains.display.framebuffer_writes {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.owner_store && store.generation == record.owner_store_generation
             }) else {
                 return Err(SemanticInvariantError::FramebufferWriteMissingStore {
@@ -314,10 +328,12 @@ impl SemanticGraph {
                     store: record.owner_store,
                 });
             };
-            let Some(mapping_record) = self.framebuffer_mappings.iter().find(|mapping| {
-                mapping.id == record.framebuffer_mapping
-                    && mapping.generation == record.framebuffer_mapping_generation
-            }) else {
+            let Some(mapping_record) =
+                self.domains.display.framebuffer_mappings.iter().find(|mapping| {
+                    mapping.id == record.framebuffer_mapping
+                        && mapping.generation == record.framebuffer_mapping_generation
+                })
+            else {
                 return Err(SemanticInvariantError::FramebufferWriteMissingMapping {
                     framebuffer_write: record.id,
                     framebuffer_mapping: record.framebuffer_mapping,
@@ -447,8 +463,12 @@ impl SemanticGraph {
         framebuffer_write: FramebufferWriteId,
         framebuffer_mapping_generation: Generation,
     ) {
-        if let Some(record) =
-            self.framebuffer_writes.iter_mut().find(|record| record.id == framebuffer_write)
+        if let Some(record) = self
+            .domains
+            .display
+            .framebuffer_writes
+            .iter_mut()
+            .find(|record| record.id == framebuffer_write)
         {
             record.framebuffer_mapping_generation = framebuffer_mapping_generation;
         }

@@ -1,5 +1,7 @@
 use alloc::{format, string::String};
 
+pub use contract_core::EvidenceBoundaryLevel;
+
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +88,7 @@ pub struct BoundaryRecord {
     pub name: String,
     pub kind: BoundaryKind,
     pub status: BoundaryStatus,
+    pub evidence: EvidenceBoundaryLevel,
     pub backend: String,
     pub blocked_by: Option<String>,
     pub generation: Generation,
@@ -95,10 +98,11 @@ impl BoundaryRecord {
     pub fn summary(&self) -> String {
         let blocked_by = self.blocked_by.as_ref().map(String::as_str).unwrap_or("none");
         format!(
-            "boundary {} kind={} status={} backend={} blocked={} generation={}",
+            "boundary {} kind={} status={} evidence={} backend={} blocked={} generation={}",
             self.name,
             self.kind.as_str(),
             self.status.as_str(),
+            self.evidence.as_str(),
             self.backend,
             blocked_by,
             self.generation

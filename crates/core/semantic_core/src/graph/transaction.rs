@@ -7,9 +7,9 @@ impl SemanticGraph {
         store: Option<StoreId>,
         task: Option<TaskId>,
     ) -> TransactionId {
-        let id = self.next_transaction_id;
-        self.next_transaction_id += 1;
-        self.transactions.push(SemanticTransactionRecord {
+        let id = self.domains.lifecycle.next_transaction_id;
+        self.domains.lifecycle.next_transaction_id += 1;
+        self.domains.lifecycle.transactions.push(SemanticTransactionRecord {
             id,
             label: label.to_string(),
             store,
@@ -25,7 +25,7 @@ impl SemanticGraph {
     }
     pub fn commit_transaction(&mut self, id: TransactionId) {
         let Some(transaction) =
-            self.transactions.iter_mut().find(|transaction| transaction.id == id)
+            self.domains.lifecycle.transactions.iter_mut().find(|transaction| transaction.id == id)
         else {
             return;
         };
@@ -41,7 +41,7 @@ impl SemanticGraph {
     }
     pub fn rollback_transaction(&mut self, id: TransactionId, reason: &str) {
         let Some(transaction) =
-            self.transactions.iter_mut().find(|transaction| transaction.id == id)
+            self.domains.lifecycle.transactions.iter_mut().find(|transaction| transaction.id == id)
         else {
             return;
         };
@@ -65,9 +65,9 @@ impl SemanticGraph {
         object: &str,
         operation: &str,
     ) -> PlanId {
-        let id = self.next_plan_id;
-        self.next_plan_id += 1;
-        self.fast_path_plans.push(FastPathPlanRecord {
+        let id = self.domains.lifecycle.next_plan_id;
+        self.domains.lifecycle.next_plan_id += 1;
+        self.domains.lifecycle.fast_path_plans.push(FastPathPlanRecord {
             id,
             subject: subject.to_string(),
             object: object.to_string(),
@@ -79,7 +79,9 @@ impl SemanticGraph {
         id
     }
     pub fn invalidate_fast_path_plan(&mut self, id: PlanId) {
-        let Some(plan) = self.fast_path_plans.iter_mut().find(|plan| plan.id == id) else {
+        let Some(plan) =
+            self.domains.lifecycle.fast_path_plans.iter_mut().find(|plan| plan.id == id)
+        else {
             return;
         };
         if !plan.valid {
@@ -93,24 +95,26 @@ impl SemanticGraph {
         self.event_log.push("failure", EventKind::FailureEffect { effect });
     }
     pub fn transaction_count(&self) -> usize {
-        self.transactions.len()
+        self.domains.lifecycle.transactions.len()
     }
     pub fn fast_path_plan_count(&self) -> usize {
-        self.fast_path_plans.len()
+        self.domains.lifecycle.fast_path_plans.len()
     }
     pub fn active_fast_path_plan_count(&self) -> usize {
-        self.fast_path_plans.iter().filter(|plan| plan.valid).count()
+        self.domains.lifecycle.fast_path_plans.iter().filter(|plan| plan.valid).count()
     }
     pub fn active_transaction_count(&self) -> usize {
-        self.transactions
+        self.domains
+            .lifecycle
+            .transactions
             .iter()
             .filter(|transaction| transaction.state == TransactionState::Begun)
             .count()
     }
     pub fn transactions(&self) -> &[SemanticTransactionRecord] {
-        &self.transactions
+        &self.domains.lifecycle.transactions
     }
     pub fn fast_path_plans(&self) -> &[FastPathPlanRecord] {
-        &self.fast_path_plans
+        &self.domains.lifecycle.fast_path_plans
     }
 }

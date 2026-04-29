@@ -1,5 +1,5 @@
 use super::*;
-pub(crate) fn replay_until(
+pub fn replay_until(
     cursor: u64,
     manifest_path: Option<&Path>,
     path: &Path,

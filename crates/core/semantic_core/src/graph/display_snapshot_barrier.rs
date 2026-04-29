@@ -25,20 +25,21 @@ impl SemanticGraph {
         {
             return Err("display snapshot barrier requires exact refs and reason");
         }
-        if self.display_snapshot_barriers.iter().any(|record| record.id == barrier) {
+        if self.domains.display.display_snapshot_barriers.iter().any(|record| record.id == barrier)
+        {
             return Err("display snapshot barrier already exists");
         }
-        let Some(store_record) = self
-            .stores
-            .iter()
-            .find(|store| store.id == owner_store && store.generation == owner_store_generation)
+        let Some(store_record) =
+            self.domains.lifecycle.stores.iter().find(|store| {
+                store.id == owner_store && store.generation == owner_store_generation
+            })
         else {
             return Err("display snapshot barrier owner store generation is missing");
         };
         if store_record.state == StoreState::Dead {
             return Err("display snapshot barrier owner store is dead");
         }
-        let Some(display_record) = self.display_objects.iter().find(|record| {
+        let Some(display_record) = self.domains.display.display_objects.iter().find(|record| {
             record.id == display
                 && record.generation == display_generation
                 && record.framebuffer == framebuffer
@@ -47,7 +48,7 @@ impl SemanticGraph {
         }) else {
             return Err("display snapshot barrier display generation is missing");
         };
-        if !self.framebuffer_objects.iter().any(|record| {
+        if !self.domains.display.framebuffer_objects.iter().any(|record| {
             record.id == display_record.framebuffer
                 && record.generation == display_record.framebuffer_generation
                 && record.state == FramebufferObjectState::Registered
@@ -56,11 +57,13 @@ impl SemanticGraph {
         }
         match (display_cleanup, display_cleanup_generation) {
             (Some(cleanup), Some(generation)) if cleanup != 0 && generation != 0 => {
-                let Some(cleanup_record) = self.display_cleanups.iter().find(|record| {
-                    record.id == cleanup
-                        && record.generation == generation
-                        && record.state == DisplayCleanupState::Completed
-                }) else {
+                let Some(cleanup_record) =
+                    self.domains.display.display_cleanups.iter().find(|record| {
+                        record.id == cleanup
+                            && record.generation == generation
+                            && record.state == DisplayCleanupState::Completed
+                    })
+                else {
                     return Err("display snapshot barrier cleanup generation is missing");
                 };
                 if cleanup_record.owner_store != owner_store
@@ -134,8 +137,8 @@ impl SemanticGraph {
             framebuffer_generation,
         );
         let generation = 1;
-        self.next_display_snapshot_barrier_id =
-            self.next_display_snapshot_barrier_id.max(barrier.saturating_add(1));
+        self.domains.display.next_display_snapshot_barrier_id =
+            self.domains.display.next_display_snapshot_barrier_id.max(barrier.saturating_add(1));
         let validated_at_event = self.event_log.push(
             "display",
             EventKind::DisplaySnapshotBarrierValidated {
@@ -155,7 +158,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.display_snapshot_barriers.push(DisplaySnapshotBarrierRecord {
+        self.domains.display.display_snapshot_barriers.push(DisplaySnapshotBarrierRecord {
             id: barrier,
             owner_store,
             owner_store_generation,
@@ -180,11 +183,11 @@ impl SemanticGraph {
     }
 
     pub fn display_snapshot_barriers(&self) -> &[DisplaySnapshotBarrierRecord] {
-        &self.display_snapshot_barriers
+        &self.domains.display.display_snapshot_barriers
     }
 
     pub fn display_snapshot_barrier_count(&self) -> usize {
-        self.display_snapshot_barriers.len()
+        self.domains.display.display_snapshot_barriers.len()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -199,6 +202,8 @@ impl SemanticGraph {
     ) -> SnapshotBarrierValidationState {
         SnapshotBarrierValidationState {
             active_framebuffer_window_lease_count: self
+                .domains
+                .display
                 .framebuffer_window_leases
                 .iter()
                 .filter(|record| {
@@ -212,6 +217,8 @@ impl SemanticGraph {
                 })
                 .count() as u32,
             active_framebuffer_mapping_count: self
+                .domains
+                .display
                 .framebuffer_mappings
                 .iter()
                 .filter(|record| {
@@ -225,6 +232,8 @@ impl SemanticGraph {
                 })
                 .count() as u32,
             dirty_framebuffer_region_count: self
+                .domains
+                .display
                 .framebuffer_dirty_regions
                 .iter()
                 .filter(|record| {
@@ -242,7 +251,7 @@ impl SemanticGraph {
     }
 
     pub fn check_display_snapshot_barrier_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for barrier in &self.display_snapshot_barriers {
+        for barrier in &self.domains.display.display_snapshot_barriers {
             if barrier.id == 0
                 || barrier.generation == 0
                 || barrier.owner_store_generation == 0
@@ -259,7 +268,7 @@ impl SemanticGraph {
                     barrier: barrier.id,
                 });
             }
-            if !self.stores.iter().any(|store| {
+            if !self.domains.lifecycle.stores.iter().any(|store| {
                 store.id == barrier.owner_store
                     && store.generation == barrier.owner_store_generation
             }) {
@@ -268,7 +277,7 @@ impl SemanticGraph {
                     store: barrier.owner_store,
                 });
             }
-            if !self.display_objects.iter().any(|display| {
+            if !self.domains.display.display_objects.iter().any(|display| {
                 display.id == barrier.display
                     && display.generation == barrier.display_generation
                     && display.framebuffer == barrier.framebuffer
@@ -279,7 +288,7 @@ impl SemanticGraph {
                     display: barrier.display,
                 });
             }
-            if !self.framebuffer_objects.iter().any(|framebuffer| {
+            if !self.domains.display.framebuffer_objects.iter().any(|framebuffer| {
                 framebuffer.id == barrier.framebuffer
                     && framebuffer.generation == barrier.framebuffer_generation
             }) {
@@ -291,6 +300,8 @@ impl SemanticGraph {
             match (barrier.display_cleanup, barrier.display_cleanup_generation) {
                 (Some(cleanup), Some(generation)) => {
                     let Some(cleanup_record) = self
+                        .domains
+                        .display
                         .display_cleanups
                         .iter()
                         .find(|record| record.id == cleanup && record.generation == generation)
@@ -370,8 +381,12 @@ impl SemanticGraph {
         barrier: DisplaySnapshotBarrierId,
         dirty_count: u32,
     ) {
-        if let Some(record) =
-            self.display_snapshot_barriers.iter_mut().find(|record| record.id == barrier)
+        if let Some(record) = self
+            .domains
+            .display
+            .display_snapshot_barriers
+            .iter_mut()
+            .find(|record| record.id == barrier)
         {
             record.dirty_framebuffer_region_count = dirty_count;
         }

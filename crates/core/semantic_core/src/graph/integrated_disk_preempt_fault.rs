@@ -28,10 +28,10 @@ impl SemanticGraph {
             return Err("integrated disk/preempt fault refs must carry generations");
         }
 
-        let Some(preemption_record) = self
-            .preemptions
-            .iter()
-            .find(|record| record.id == preemption && record.generation == preemption_generation)
+        let Some(preemption_record) =
+            self.domains.scheduler.preemptions.iter().find(|record| {
+                record.id == preemption && record.generation == preemption_generation
+            })
         else {
             return Err("integrated disk/preempt fault missing preemption evidence");
         };
@@ -42,7 +42,7 @@ impl SemanticGraph {
             return Err("integrated disk/preempt fault requires applied preemption evidence");
         }
 
-        let Some(timer) = self.timer_interrupts.iter().find(|record| {
+        let Some(timer) = self.domains.scheduler.timer_interrupts.iter().find(|record| {
             record.id == preemption_record.timer_interrupt
                 && record.generation == preemption_record.timer_interrupt_generation
         }) else {
@@ -170,10 +170,10 @@ impl SemanticGraph {
             return false;
         }
 
-        let Some(preemption_record) = self
-            .preemptions
-            .iter()
-            .find(|record| record.id == preemption && record.generation == preemption_generation)
+        let Some(preemption_record) =
+            self.domains.scheduler.preemptions.iter().find(|record| {
+                record.id == preemption && record.generation == preemption_generation
+            })
         else {
             return false;
         };
@@ -315,7 +315,9 @@ impl SemanticGraph {
                     "preemption",
                     record.preemption,
                     record.preemption_generation,
-                    self.preemptions
+                    self.domains
+                        .scheduler
+                        .preemptions
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),
@@ -324,7 +326,9 @@ impl SemanticGraph {
                     "timer-interrupt",
                     record.timer_interrupt,
                     record.timer_interrupt_generation,
-                    self.timer_interrupts
+                    self.domains
+                        .scheduler
+                        .timer_interrupts
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),

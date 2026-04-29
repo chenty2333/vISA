@@ -24,7 +24,13 @@ impl SemanticGraph {
         if framebuffer_mapping == 0 {
             return Err("framebuffer mapping id=0 is invalid");
         }
-        if self.framebuffer_mappings.iter().any(|record| record.id == framebuffer_mapping) {
+        if self
+            .domains
+            .display
+            .framebuffer_mappings
+            .iter()
+            .any(|record| record.id == framebuffer_mapping)
+        {
             return Err("framebuffer mapping already exists");
         }
         if owner_store_generation == 0
@@ -46,21 +52,23 @@ impl SemanticGraph {
         if access != "write" && access != "read" {
             return Err("framebuffer mapping access is unsupported");
         }
-        let Some(store_record) = self
-            .stores
-            .iter()
-            .find(|store| store.id == owner_store && store.generation == owner_store_generation)
+        let Some(store_record) =
+            self.domains.lifecycle.stores.iter().find(|store| {
+                store.id == owner_store && store.generation == owner_store_generation
+            })
         else {
             return Err("framebuffer mapping owner store generation is missing");
         };
         if store_record.state == StoreState::Dead {
             return Err("framebuffer mapping owner store is dead");
         }
-        let Some(lease_record) = self.framebuffer_window_leases.iter().find(|lease| {
-            lease.id == framebuffer_window_lease
-                && lease.generation == framebuffer_window_lease_generation
-                && lease.state == FramebufferWindowLeaseState::Active
-        }) else {
+        let Some(lease_record) =
+            self.domains.display.framebuffer_window_leases.iter().find(|lease| {
+                lease.id == framebuffer_window_lease
+                    && lease.generation == framebuffer_window_lease_generation
+                    && lease.state == FramebufferWindowLeaseState::Active
+            })
+        else {
             return Err("framebuffer mapping active lease generation is missing");
         };
         if lease_record.owner_store != owner_store
@@ -75,7 +83,7 @@ impl SemanticGraph {
         {
             return Err("framebuffer mapping lease binding mismatch");
         }
-        if self.framebuffer_mappings.iter().any(|record| {
+        if self.domains.display.framebuffer_mappings.iter().any(|record| {
             record.framebuffer_window_lease == framebuffer_window_lease
                 && record.framebuffer_window_lease_generation == framebuffer_window_lease_generation
                 && record.state == FramebufferMappingState::Active
@@ -133,6 +141,8 @@ impl SemanticGraph {
             return false;
         }
         let lease_record = self
+            .domains
+            .display
             .framebuffer_window_leases
             .iter()
             .find(|lease| {
@@ -142,8 +152,11 @@ impl SemanticGraph {
             .expect("validated framebuffer mapping lease exists")
             .clone();
         let generation = 1;
-        self.next_framebuffer_mapping_id =
-            self.next_framebuffer_mapping_id.max(framebuffer_mapping.saturating_add(1));
+        self.domains.display.next_framebuffer_mapping_id = self
+            .domains
+            .display
+            .next_framebuffer_mapping_id
+            .max(framebuffer_mapping.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::FramebufferMappingRecorded {
@@ -173,7 +186,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.framebuffer_mappings.push(FramebufferMappingRecord {
+        self.domains.display.framebuffer_mappings.push(FramebufferMappingRecord {
             id: framebuffer_mapping,
             owner_store,
             owner_store_generation,
@@ -205,23 +218,25 @@ impl SemanticGraph {
     }
 
     pub fn framebuffer_mappings(&self) -> &[FramebufferMappingRecord] {
-        &self.framebuffer_mappings
+        &self.domains.display.framebuffer_mappings
     }
 
     pub fn framebuffer_mapping_count(&self) -> usize {
-        self.framebuffer_mappings.len()
+        self.domains.display.framebuffer_mappings.len()
     }
 
     pub fn active_framebuffer_mapping_count(&self) -> usize {
-        self.framebuffer_mappings
+        self.domains
+            .display
+            .framebuffer_mappings
             .iter()
             .filter(|mapping| mapping.state == FramebufferMappingState::Active)
             .count()
     }
 
     pub fn check_framebuffer_mapping_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.framebuffer_mappings {
-            let Some(store_record) = self.stores.iter().find(|store| {
+        for record in &self.domains.display.framebuffer_mappings {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.owner_store && store.generation == record.owner_store_generation
             }) else {
                 return Err(SemanticInvariantError::FramebufferMappingMissingStore {
@@ -229,10 +244,12 @@ impl SemanticGraph {
                     store: record.owner_store,
                 });
             };
-            let Some(lease_record) = self.framebuffer_window_leases.iter().find(|lease| {
-                lease.id == record.framebuffer_window_lease
-                    && lease.generation == record.framebuffer_window_lease_generation
-            }) else {
+            let Some(lease_record) =
+                self.domains.display.framebuffer_window_leases.iter().find(|lease| {
+                    lease.id == record.framebuffer_window_lease
+                        && lease.generation == record.framebuffer_window_lease_generation
+                })
+            else {
                 return Err(SemanticInvariantError::FramebufferMappingMissingLease {
                     framebuffer_mapping: record.id,
                     framebuffer_window_lease: record.framebuffer_window_lease,
@@ -277,14 +294,16 @@ impl SemanticGraph {
                     framebuffer_mapping: record.id,
                 });
             }
-            if let Some(duplicate) = self.framebuffer_mappings.iter().find(|other| {
-                other.id != record.id
-                    && other.framebuffer_window_lease == record.framebuffer_window_lease
-                    && other.framebuffer_window_lease_generation
-                        == record.framebuffer_window_lease_generation
-                    && other.state == FramebufferMappingState::Active
-                    && record.state == FramebufferMappingState::Active
-            }) {
+            if let Some(duplicate) =
+                self.domains.display.framebuffer_mappings.iter().find(|other| {
+                    other.id != record.id
+                        && other.framebuffer_window_lease == record.framebuffer_window_lease
+                        && other.framebuffer_window_lease_generation
+                            == record.framebuffer_window_lease_generation
+                        && other.state == FramebufferMappingState::Active
+                        && record.state == FramebufferMappingState::Active
+                })
+            {
                 return Err(SemanticInvariantError::FramebufferMappingDuplicateActive {
                     framebuffer_mapping: duplicate.id,
                     framebuffer_window_lease: record.framebuffer_window_lease,
@@ -360,8 +379,12 @@ impl SemanticGraph {
         framebuffer_mapping: FramebufferMappingId,
         framebuffer_window_lease_generation: Generation,
     ) {
-        if let Some(record) =
-            self.framebuffer_mappings.iter_mut().find(|record| record.id == framebuffer_mapping)
+        if let Some(record) = self
+            .domains
+            .display
+            .framebuffer_mappings
+            .iter_mut()
+            .find(|record| record.id == framebuffer_mapping)
         {
             record.framebuffer_window_lease_generation = framebuffer_window_lease_generation;
         }

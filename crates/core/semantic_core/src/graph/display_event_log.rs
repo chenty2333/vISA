@@ -18,7 +18,13 @@ impl SemanticGraph {
         if display_event_log == 0 {
             return Err("display event log id=0 is invalid");
         }
-        if self.display_event_logs.iter().any(|record| record.id == display_event_log) {
+        if self
+            .domains
+            .display
+            .display_event_logs
+            .iter()
+            .any(|record| record.id == display_event_log)
+        {
             return Err("display event log already exists");
         }
         if owner_store_generation == 0
@@ -29,20 +35,22 @@ impl SemanticGraph {
         {
             return Err("display event log requires exact refs and nonempty event window");
         }
-        let Some(store_record) = self
-            .stores
-            .iter()
-            .find(|store| store.id == owner_store && store.generation == owner_store_generation)
+        let Some(store_record) =
+            self.domains.lifecycle.stores.iter().find(|store| {
+                store.id == owner_store && store.generation == owner_store_generation
+            })
         else {
             return Err("display event log owner store generation is missing");
         };
         if store_record.state == StoreState::Dead {
             return Err("display event log owner store is dead");
         }
-        let Some(dirty_record) = self.framebuffer_dirty_regions.iter().find(|dirty| {
-            dirty.id == framebuffer_dirty_region
-                && dirty.generation == framebuffer_dirty_region_generation
-        }) else {
+        let Some(dirty_record) =
+            self.domains.display.framebuffer_dirty_regions.iter().find(|dirty| {
+                dirty.id == framebuffer_dirty_region
+                    && dirty.generation == framebuffer_dirty_region_generation
+            })
+        else {
             return Err("display event log dirty region generation is missing");
         };
         if dirty_record.owner_store != owner_store
@@ -117,6 +125,8 @@ impl SemanticGraph {
             return false;
         }
         let dirty_record = self
+            .domains
+            .display
             .framebuffer_dirty_regions
             .iter()
             .find(|dirty| {
@@ -126,8 +136,8 @@ impl SemanticGraph {
             .expect("validated display event log dirty region exists")
             .clone();
         let generation = 1;
-        self.next_display_event_log_id =
-            self.next_display_event_log_id.max(display_event_log.saturating_add(1));
+        self.domains.display.next_display_event_log_id =
+            self.domains.display.next_display_event_log_id.max(display_event_log.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::DisplayEventLogRecorded {
@@ -151,7 +161,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.display_event_logs.push(DisplayEventLogRecord {
+        self.domains.display.display_event_logs.push(DisplayEventLogRecord {
             id: display_event_log,
             owner_store,
             owner_store_generation,
@@ -177,16 +187,16 @@ impl SemanticGraph {
     }
 
     pub fn display_event_logs(&self) -> &[DisplayEventLogRecord] {
-        &self.display_event_logs
+        &self.domains.display.display_event_logs
     }
 
     pub fn display_event_log_count(&self) -> usize {
-        self.display_event_logs.len()
+        self.domains.display.display_event_logs.len()
     }
 
     pub fn check_display_event_log_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.display_event_logs {
-            let Some(store_record) = self.stores.iter().find(|store| {
+        for record in &self.domains.display.display_event_logs {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.owner_store && store.generation == record.owner_store_generation
             }) else {
                 return Err(SemanticInvariantError::DisplayEventLogMissingStore {
@@ -194,10 +204,12 @@ impl SemanticGraph {
                     store: record.owner_store,
                 });
             };
-            let Some(dirty_record) = self.framebuffer_dirty_regions.iter().find(|dirty| {
-                dirty.id == record.framebuffer_dirty_region
-                    && dirty.generation == record.framebuffer_dirty_region_generation
-            }) else {
+            let Some(dirty_record) =
+                self.domains.display.framebuffer_dirty_regions.iter().find(|dirty| {
+                    dirty.id == record.framebuffer_dirty_region
+                        && dirty.generation == record.framebuffer_dirty_region_generation
+                })
+            else {
                 return Err(SemanticInvariantError::DisplayEventLogMissingDirtyRegion {
                     display_event_log: record.id,
                     framebuffer_dirty_region: record.framebuffer_dirty_region,
@@ -317,8 +329,12 @@ impl SemanticGraph {
         display_event_log: DisplayEventLogId,
         event_count: u64,
     ) {
-        if let Some(record) =
-            self.display_event_logs.iter_mut().find(|record| record.id == display_event_log)
+        if let Some(record) = self
+            .domains
+            .display
+            .display_event_logs
+            .iter_mut()
+            .find(|record| record.id == display_event_log)
         {
             record.event_count = event_count;
         }

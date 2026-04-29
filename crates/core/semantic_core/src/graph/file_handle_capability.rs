@@ -38,10 +38,10 @@ impl SemanticGraph {
         if operation != "read" && operation != "write" {
             return Err("file handle capability operation is unsupported");
         }
-        let Some(store_record) = self
-            .stores
-            .iter()
-            .find(|record| record.id == owner_store && record.generation == owner_store_generation)
+        let Some(store_record) =
+            self.domains.lifecycle.stores.iter().find(|record| {
+                record.id == owner_store && record.generation == owner_store_generation
+            })
         else {
             return Err("file handle capability owner store generation is missing");
         };
@@ -208,7 +208,7 @@ impl SemanticGraph {
 
     pub fn check_file_handle_capability_invariants(&self) -> Result<(), SemanticInvariantError> {
         for record in &self.file_handle_capabilities {
-            let Some(store_record) = self.stores.iter().find(|store| {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.owner_store && store.generation == record.owner_store_generation
             }) else {
                 return Err(SemanticInvariantError::FileHandleCapabilityMissingStore {

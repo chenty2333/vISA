@@ -34,7 +34,7 @@ impl SemanticGraph {
         if benchmark == u64::MAX {
             return Err("framebuffer benchmark id cannot advance generation cursor");
         }
-        if self.framebuffer_benchmarks.iter().any(|record| record.id == benchmark) {
+        if self.domains.display.framebuffer_benchmarks.iter().any(|record| record.id == benchmark) {
             return Err("framebuffer benchmark already exists");
         }
         if scenario.is_empty() {
@@ -77,20 +77,22 @@ impl SemanticGraph {
             return Err("framebuffer benchmark metric overflow");
         }
 
-        let Some(store) = self
-            .stores
-            .iter()
-            .find(|store| store.id == owner_store && store.generation == owner_store_generation)
+        let Some(store) =
+            self.domains.lifecycle.stores.iter().find(|store| {
+                store.id == owner_store && store.generation == owner_store_generation
+            })
         else {
             return Err("framebuffer benchmark owner store generation is missing");
         };
         if store.state == StoreState::Dead {
             return Err("framebuffer benchmark owner store is dead");
         }
-        let Some(capability) = self.display_capabilities.iter().find(|capability| {
-            capability.id == display_capability
-                && capability.generation == display_capability_generation
-        }) else {
+        let Some(capability) =
+            self.domains.display.display_capabilities.iter().find(|capability| {
+                capability.id == display_capability
+                    && capability.generation == display_capability_generation
+            })
+        else {
             return Err("framebuffer benchmark display capability generation is missing");
         };
         if capability.owner_store != owner_store
@@ -105,18 +107,20 @@ impl SemanticGraph {
             return Err("framebuffer benchmark display capability binding mismatch");
         }
 
-        let Some(display) = self.display_objects.iter().find(|display| {
+        let Some(display) = self.domains.display.display_objects.iter().find(|display| {
             display.id == capability.display
                 && display.generation == capability.display_generation
                 && display.state == DisplayObjectState::Registered
         }) else {
             return Err("framebuffer benchmark display generation is missing");
         };
-        let Some(framebuffer) = self.framebuffer_objects.iter().find(|framebuffer| {
-            framebuffer.id == capability.framebuffer
-                && framebuffer.generation == capability.framebuffer_generation
-                && framebuffer.state == FramebufferObjectState::Registered
-        }) else {
+        let Some(framebuffer) =
+            self.domains.display.framebuffer_objects.iter().find(|framebuffer| {
+                framebuffer.id == capability.framebuffer
+                    && framebuffer.generation == capability.framebuffer_generation
+                    && framebuffer.state == FramebufferObjectState::Registered
+            })
+        else {
             return Err("framebuffer benchmark framebuffer generation is missing");
         };
         if display.framebuffer != framebuffer.id
@@ -125,14 +129,14 @@ impl SemanticGraph {
             return Err("framebuffer benchmark display/framebuffer binding mismatch");
         }
 
-        let Some(write) = self.framebuffer_writes.iter().find(|write| {
+        let Some(write) = self.domains.display.framebuffer_writes.iter().find(|write| {
             write.id == framebuffer_write
                 && write.generation == framebuffer_write_generation
                 && write.state == FramebufferWriteState::Applied
         }) else {
             return Err("framebuffer benchmark write generation is missing");
         };
-        let Some(flush) = self.framebuffer_flush_regions.iter().find(|flush| {
+        let Some(flush) = self.domains.display.framebuffer_flush_regions.iter().find(|flush| {
             flush.id == framebuffer_flush_region
                 && flush.generation == framebuffer_flush_region_generation
                 && flush.state == FramebufferFlushRegionState::Applied
@@ -184,7 +188,7 @@ impl SemanticGraph {
             return Err("framebuffer benchmark pixel accounting is not closed");
         }
 
-        let Some(event_log) = self.display_event_logs.iter().find(|event_log| {
+        let Some(event_log) = self.domains.display.display_event_logs.iter().find(|event_log| {
             event_log.id == display_event_log
                 && event_log.generation == display_event_log_generation
                 && event_log.state == DisplayEventLogState::Recorded
@@ -206,7 +210,7 @@ impl SemanticGraph {
             return Err("framebuffer benchmark event-log binding mismatch");
         }
 
-        let Some(barrier) = self.display_snapshot_barriers.iter().find(|barrier| {
+        let Some(barrier) = self.domains.display.display_snapshot_barriers.iter().find(|barrier| {
             barrier.id == display_snapshot_barrier
                 && barrier.generation == display_snapshot_barrier_generation
                 && barrier.state == DisplaySnapshotBarrierState::Validated
@@ -301,6 +305,8 @@ impl SemanticGraph {
             return false;
         };
         let Some(capability) = self
+            .domains
+            .display
             .display_capabilities
             .iter()
             .find(|capability| {
@@ -312,8 +318,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_framebuffer_benchmark_id =
-            self.next_framebuffer_benchmark_id.max(benchmark.saturating_add(1));
+        self.domains.display.next_framebuffer_benchmark_id =
+            self.domains.display.next_framebuffer_benchmark_id.max(benchmark.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::FramebufferBenchmarkRecorded {
@@ -348,7 +354,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.framebuffer_benchmarks.push(FramebufferBenchmarkRecord {
+        self.domains.display.framebuffer_benchmarks.push(FramebufferBenchmarkRecord {
             id: benchmark,
             scenario: scenario.to_string(),
             owner_store,
@@ -387,11 +393,11 @@ impl SemanticGraph {
     }
 
     pub fn framebuffer_benchmarks(&self) -> &[FramebufferBenchmarkRecord] {
-        &self.framebuffer_benchmarks
+        &self.domains.display.framebuffer_benchmarks
     }
 
     pub fn framebuffer_benchmark_count(&self) -> usize {
-        self.framebuffer_benchmarks.len()
+        self.domains.display.framebuffer_benchmarks.len()
     }
 
     pub fn derive_framebuffer_throughput_bytes_per_sec(
@@ -409,7 +415,7 @@ impl SemanticGraph {
     }
 
     pub fn check_framebuffer_benchmark_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for benchmark in &self.framebuffer_benchmarks {
+        for benchmark in &self.domains.display.framebuffer_benchmarks {
             let expected_throughput = Self::derive_framebuffer_throughput_bytes_per_sec(
                 benchmark.sample_bytes,
                 benchmark.measured_nanos,
@@ -500,7 +506,7 @@ impl SemanticGraph {
                     });
                 }
             }
-            let Some(write) = self.framebuffer_writes.iter().find(|write| {
+            let Some(write) = self.domains.display.framebuffer_writes.iter().find(|write| {
                 write.id == benchmark.framebuffer_write
                     && write.generation == benchmark.framebuffer_write_generation
             }) else {
@@ -513,7 +519,7 @@ impl SemanticGraph {
                     ),
                 });
             };
-            let Some(flush) = self.framebuffer_flush_regions.iter().find(|flush| {
+            let Some(flush) = self.domains.display.framebuffer_flush_regions.iter().find(|flush| {
                 flush.id == benchmark.framebuffer_flush_region
                     && flush.generation == benchmark.framebuffer_flush_region_generation
             }) else {
@@ -526,10 +532,12 @@ impl SemanticGraph {
                     ),
                 });
             };
-            let Some(event_log) = self.display_event_logs.iter().find(|event_log| {
-                event_log.id == benchmark.display_event_log
-                    && event_log.generation == benchmark.display_event_log_generation
-            }) else {
+            let Some(event_log) =
+                self.domains.display.display_event_logs.iter().find(|event_log| {
+                    event_log.id == benchmark.display_event_log
+                        && event_log.generation == benchmark.display_event_log_generation
+                })
+            else {
                 return Err(SemanticInvariantError::FramebufferBenchmarkMissingTarget {
                     benchmark: benchmark.id,
                     target: ContractObjectRef::new(
@@ -539,10 +547,12 @@ impl SemanticGraph {
                     ),
                 });
             };
-            let Some(barrier) = self.display_snapshot_barriers.iter().find(|barrier| {
-                barrier.id == benchmark.display_snapshot_barrier
-                    && barrier.generation == benchmark.display_snapshot_barrier_generation
-            }) else {
+            let Some(barrier) =
+                self.domains.display.display_snapshot_barriers.iter().find(|barrier| {
+                    barrier.id == benchmark.display_snapshot_barrier
+                        && barrier.generation == benchmark.display_snapshot_barrier_generation
+                })
+            else {
                 return Err(SemanticInvariantError::FramebufferBenchmarkMissingTarget {
                     benchmark: benchmark.id,
                     target: ContractObjectRef::new(
@@ -651,41 +661,57 @@ impl SemanticGraph {
     fn object_ref_exists(&self, target: ContractObjectRef) -> Option<ContractObjectRef> {
         match target.kind {
             ContractObjectKind::Store => self
+                .domains
+                .lifecycle
                 .stores
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
                 .map(StoreRecord::object_ref),
             ContractObjectKind::DisplayObject => self
+                .domains
+                .display
                 .display_objects
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
                 .map(DisplayObjectRecord::object_ref),
             ContractObjectKind::FramebufferObject => self
+                .domains
+                .display
                 .framebuffer_objects
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
                 .map(FramebufferObjectRecord::object_ref),
             ContractObjectKind::DisplayCapability => self
+                .domains
+                .display
                 .display_capabilities
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
                 .map(DisplayCapabilityRecord::object_ref),
             ContractObjectKind::FramebufferWrite => self
+                .domains
+                .display
                 .framebuffer_writes
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
                 .map(FramebufferWriteRecord::object_ref),
             ContractObjectKind::FramebufferFlushRegion => self
+                .domains
+                .display
                 .framebuffer_flush_regions
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
                 .map(FramebufferFlushRegionRecord::object_ref),
             ContractObjectKind::DisplayEventLog => self
+                .domains
+                .display
                 .display_event_logs
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
                 .map(DisplayEventLogRecord::object_ref),
             ContractObjectKind::DisplaySnapshotBarrier => self
+                .domains
+                .display
                 .display_snapshot_barriers
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
@@ -700,8 +726,12 @@ impl SemanticGraph {
         benchmark: FramebufferBenchmarkId,
         throughput: u64,
     ) {
-        if let Some(record) =
-            self.framebuffer_benchmarks.iter_mut().find(|record| record.id == benchmark)
+        if let Some(record) = self
+            .domains
+            .display
+            .framebuffer_benchmarks
+            .iter_mut()
+            .find(|record| record.id == benchmark)
         {
             record.throughput_bytes_per_sec = throughput;
         }

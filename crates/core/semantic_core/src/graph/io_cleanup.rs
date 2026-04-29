@@ -40,7 +40,7 @@ impl SemanticGraph {
         }) {
             return Ok(());
         }
-        let Some(store) = self.stores.iter().find(|record| {
+        let Some(store) = self.domains.lifecycle.stores.iter().find(|record| {
             record.id == driver_store && record.generation == driver_store_generation
         }) else {
             return Err("io cleanup driver store generation is missing");
@@ -115,7 +115,7 @@ impl SemanticGraph {
         }
 
         let generation = 1;
-        self.next_io_cleanup_id = self.next_io_cleanup_id.max(cleanup + 1);
+        self.domains.io.next_io_cleanup_id = self.domains.io.next_io_cleanup_id.max(cleanup + 1);
         let started_at_event = self.event_log.push(
             "io",
             EventKind::IoCleanupStarted {
@@ -465,7 +465,7 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::IoCleanupInvalid { cleanup: cleanup.id });
             }
-            if !self.stores.iter().any(|store| {
+            if !self.domains.lifecycle.stores.iter().any(|store| {
                 store.id == cleanup.driver_store
                     && store.generation == cleanup.driver_store_generation
                     && store.role == "driver"

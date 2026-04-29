@@ -5,7 +5,7 @@ use alloc::{
     vec::Vec,
 };
 
-use crate::target_executor::RecordMode;
+use crate::{EvidenceBoundaryLevel, target_executor::RecordMode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemoryClass {
@@ -429,6 +429,7 @@ impl BoundaryValidationViolation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BoundaryValidationReport {
     pub validator: BoundaryValidatorKind,
+    pub evidence_boundary: EvidenceBoundaryLevel,
     pub violations: Vec<BoundaryValidationViolation>,
 }
 
@@ -437,7 +438,15 @@ impl BoundaryValidationReport {
         validator: BoundaryValidatorKind,
         violations: Vec<BoundaryValidationViolation>,
     ) -> Self {
-        Self { validator, violations }
+        Self::with_evidence_boundary(validator, EvidenceBoundaryLevel::SemanticModel, violations)
+    }
+
+    pub fn with_evidence_boundary(
+        validator: BoundaryValidatorKind,
+        evidence_boundary: EvidenceBoundaryLevel,
+        violations: Vec<BoundaryValidationViolation>,
+    ) -> Self {
+        Self { validator, evidence_boundary, violations }
     }
 
     pub fn is_ok(&self) -> bool {
@@ -446,8 +455,9 @@ impl BoundaryValidationReport {
 
     pub fn summary(&self) -> String {
         format!(
-            "boundary-validation validator={} ok={} violations={}",
+            "boundary-validation validator={} evidence={} ok={} violations={}",
             self.validator.as_str(),
+            self.evidence_boundary.as_str(),
             self.is_ok(),
             self.violations.len()
         )

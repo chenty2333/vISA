@@ -36,7 +36,8 @@ impl SemanticGraph {
         if !Self::dma_buffer_access_matches_descriptor(access, descriptor_record.access) {
             return Err("dma buffer object access exceeds descriptor access");
         }
-        let Some(resource_record) = self.resources.iter().find(|record| record.id == resource)
+        let Some(resource_record) =
+            self.domains.resource.resources.iter().find(|record| record.id == resource)
         else {
             return Err("dma buffer object resource is missing");
         };
@@ -137,7 +138,7 @@ impl SemanticGraph {
                     descriptor: record.descriptor,
                 });
             };
-            let Some(resource_record) = self.resources.iter().find(|resource| {
+            let Some(resource_record) = self.domains.resource.resources.iter().find(|resource| {
                 resource.id == record.resource && resource.generation == record.resource_generation
             }) else {
                 return Err(SemanticInvariantError::DmaBufferObjectMissingResource {

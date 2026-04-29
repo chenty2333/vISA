@@ -1,4 +1,4 @@
-use semantic_core::{BoundaryKind, BoundaryStatus, SemanticGraph};
+use semantic_core::{BoundaryKind, BoundaryStatus, EvidenceBoundaryLevel, SemanticGraph};
 
 use super::{
     artifacts::ArtifactLoadPlan,
@@ -14,6 +14,7 @@ pub(super) fn publish_boot_boundaries(
         "artifact-loader",
         BoundaryKind::ArtifactLoader,
         BoundaryStatus::ManifestBacked,
+        EvidenceBoundaryLevel::SemanticModel,
         load_plan.artifact_profile,
         Some("target-cwasm-loader"),
     );
@@ -21,6 +22,7 @@ pub(super) fn publish_boot_boundaries(
         "target-cwasm",
         BoundaryKind::RuntimeExecutor,
         BoundaryStatus::RuntimeContract,
+        EvidenceBoundaryLevel::ReferenceAotHarness,
         executor_plan.profile.runtime_executor_abi,
         Some("code-publish-not-linked"),
     );
@@ -28,6 +30,7 @@ pub(super) fn publish_boot_boundaries(
         "hostcall-table",
         BoundaryKind::HostcallTable,
         hostcall_table_status(executor_plan),
+        hostcall_table_evidence(executor_plan),
         executor_plan.profile.runtime_executor_abi,
         Some("hostcall-trampoline-not-linked"),
     );
@@ -35,6 +38,7 @@ pub(super) fn publish_boot_boundaries(
         "dmw",
         BoundaryKind::Dmw,
         BoundaryStatus::Logical,
+        EvidenceBoundaryLevel::SemanticModel,
         "logical-activation-lease",
         Some("real-mmu-window"),
     );
@@ -42,6 +46,7 @@ pub(super) fn publish_boot_boundaries(
         "dma",
         BoundaryKind::Dma,
         BoundaryStatus::SemanticResource,
+        EvidenceBoundaryLevel::SemanticModel,
         "fake-substrate-dma",
         Some("dma-iommu"),
     );
@@ -49,6 +54,7 @@ pub(super) fn publish_boot_boundaries(
         "mmio",
         BoundaryKind::Mmio,
         BoundaryStatus::SemanticResource,
+        EvidenceBoundaryLevel::SemanticModel,
         "fake-substrate-mmio",
         Some("device-mmio-map"),
     );
@@ -56,6 +62,7 @@ pub(super) fn publish_boot_boundaries(
         "irq",
         BoundaryKind::Irq,
         BoundaryStatus::SemanticResource,
+        EvidenceBoundaryLevel::SemanticModel,
         "fake-substrate-irq",
         Some("real-irq-top-half"),
     );
@@ -63,6 +70,7 @@ pub(super) fn publish_boot_boundaries(
         "packet-device",
         BoundaryKind::PacketDevice,
         BoundaryStatus::Toy,
+        EvidenceBoundaryLevel::ReferenceService,
         "toy-packet-queue",
         Some("virtio-net-mmio-dma-irq"),
     );
@@ -70,6 +78,7 @@ pub(super) fn publish_boot_boundaries(
         "network-stack",
         BoundaryKind::NetworkStack,
         BoundaryStatus::Toy,
+        EvidenceBoundaryLevel::ReferenceService,
         "toy-net-core",
         Some("smoltcp-contract"),
     );
@@ -77,6 +86,7 @@ pub(super) fn publish_boot_boundaries(
         "target-executor",
         BoundaryKind::TargetExecutor,
         BoundaryStatus::HostSide,
+        EvidenceBoundaryLevel::ReferenceService,
         "wasmtime-host-validator",
         Some("bare-metal-cwasm-loader"),
     );
@@ -84,6 +94,7 @@ pub(super) fn publish_boot_boundaries(
         "fastpath",
         BoundaryKind::FastPath,
         BoundaryStatus::EventOnly,
+        EvidenceBoundaryLevel::SemanticModel,
         "semantic-event",
         Some("substrate-fastpath-codegen"),
     );
@@ -91,6 +102,7 @@ pub(super) fn publish_boot_boundaries(
         "snapshot-replay",
         BoundaryKind::SnapshotReplay,
         BoundaryStatus::PackageOnly,
+        EvidenceBoundaryLevel::SemanticModel,
         "semantic-package-v1",
         Some("cow-nondeterminism-replay-runner"),
     );
@@ -98,6 +110,7 @@ pub(super) fn publish_boot_boundaries(
         "store-lifecycle",
         BoundaryKind::StoreLifecycle,
         BoundaryStatus::ManagerOwned,
+        EvidenceBoundaryLevel::SemanticModel,
         "StoreManager-v2",
         None,
     );
@@ -105,6 +118,7 @@ pub(super) fn publish_boot_boundaries(
         "authority-plane",
         BoundaryKind::AuthorityPlane,
         BoundaryStatus::LifecycleObject,
+        EvidenceBoundaryLevel::SemanticModel,
         "AuthorityPlane-v1",
         Some("real-mmio-dma-irq-substrate"),
     );
@@ -118,6 +132,7 @@ pub(super) fn publish_code_published_boundary(
         "target-cwasm",
         BoundaryKind::RuntimeExecutor,
         BoundaryStatus::CodePublished,
+        EvidenceBoundaryLevel::ReferenceAotHarness,
         runtime_executor_abi,
         Some("target-code-publish-stub"),
     );
@@ -131,6 +146,7 @@ pub(super) fn publish_hostcalls_linked_boundary(
         "hostcall-table",
         BoundaryKind::HostcallTable,
         BoundaryStatus::HostcallsLinked,
+        EvidenceBoundaryLevel::ReferenceAotHarness,
         runtime_executor_abi,
         Some("hostcall-trampoline-stub"),
     );
@@ -144,6 +160,7 @@ pub(super) fn publish_runnable_blocked_boundary(
         "target-cwasm",
         BoundaryKind::RuntimeExecutor,
         BoundaryStatus::Runnable,
+        EvidenceBoundaryLevel::ReferenceAotHarness,
         runtime_executor_abi,
         Some("target-entry-trampoline-not-linked"),
     );
@@ -158,5 +175,17 @@ fn hostcall_table_status(executor_plan: &ExecutorLoadPlan) -> BoundaryStatus {
         BoundaryStatus::RuntimeContract
     } else {
         BoundaryStatus::NotLinked
+    }
+}
+
+fn hostcall_table_evidence(executor_plan: &ExecutorLoadPlan) -> EvidenceBoundaryLevel {
+    if executor_plan
+        .stores()
+        .iter()
+        .any(|store| store.hostcall_table.state == ExecutorTableState::Bound)
+    {
+        EvidenceBoundaryLevel::ReferenceAotHarness
+    } else {
+        EvidenceBoundaryLevel::SemanticModel
     }
 }

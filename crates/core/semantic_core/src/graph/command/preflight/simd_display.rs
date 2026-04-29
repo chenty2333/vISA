@@ -107,7 +107,7 @@ impl SemanticGraph {
                 context_overhead_nanos,
                 ..
             } => {
-                if self.simd_benchmarks.iter().any(|record| record.id == *benchmark) {
+                if self.domains.simd.simd_benchmarks.iter().any(|record| record.id == *benchmark) {
                     Err(CommandError::precondition("SIMD benchmark already exists"))
                 } else {
                     self.validate_simd_benchmark(
@@ -144,7 +144,12 @@ impl SemanticGraph {
                 budget_nanos,
                 ..
             } => {
-                if self.simd_context_switch_benchmarks.iter().any(|record| record.id == *benchmark)
+                if self
+                    .domains
+                    .simd
+                    .simd_context_switch_benchmarks
+                    .iter()
+                    .any(|record| record.id == *benchmark)
                 {
                     Err(CommandError::precondition("SIMD context switch benchmark already exists"))
                 } else {

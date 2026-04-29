@@ -131,7 +131,7 @@ impl SemanticGraph {
             }) {
                 return Err("network backpressure socket generation is missing or inactive");
             }
-            let Some(store_record) = self.stores.iter().find(|record| {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|record| {
                 record.id == endpoint_record.owner_store
                     && record.generation == endpoint_record.owner_store_generation
             }) else {
@@ -396,7 +396,7 @@ impl SemanticGraph {
                         socket: endpoint_record.socket,
                     });
                 }
-                let Some(store) = self.stores.iter().find(|store| {
+                let Some(store) = self.domains.lifecycle.stores.iter().find(|store| {
                     store.id == endpoint_record.owner_store
                         && store.generation == endpoint_record.owner_store_generation
                 }) else {

@@ -17,6 +17,7 @@ pub(super) fn boundary_status_is_queryable_and_versioned() {
         "target-cwasm",
         BoundaryKind::RuntimeExecutor,
         BoundaryStatus::NotLinked,
+        EvidenceBoundaryLevel::SemanticModel,
         "runtime-only-executor-v1",
         Some("code-publish"),
     );
@@ -24,11 +25,13 @@ pub(super) fn boundary_status_is_queryable_and_versioned() {
     assert_eq!(graph.boundary_count(), 1);
     assert_eq!(graph.boundaries()[0].id, boundary);
     assert_eq!(graph.boundaries()[0].status, BoundaryStatus::NotLinked);
+    assert_eq!(graph.boundaries()[0].evidence, EvidenceBoundaryLevel::SemanticModel);
 
     let same_boundary = graph.publish_boundary(
         "target-cwasm",
         BoundaryKind::RuntimeExecutor,
         BoundaryStatus::RuntimeContract,
+        EvidenceBoundaryLevel::ReferenceAotHarness,
         "runtime-only-executor-v1",
         Some("hostcall-trampoline"),
     );
@@ -36,13 +39,14 @@ pub(super) fn boundary_status_is_queryable_and_versioned() {
     assert_eq!(same_boundary, boundary);
     assert_eq!(graph.boundary_count(), 1);
     assert_eq!(graph.boundaries()[0].generation, 2);
+    assert_eq!(graph.boundaries()[0].evidence, EvidenceBoundaryLevel::ReferenceAotHarness);
     assert_eq!(
         graph.boundaries()[0].summary(),
-        "boundary target-cwasm kind=runtime-executor status=runtime-contract backend=runtime-only-executor-v1 blocked=hostcall-trampoline generation=2"
+        "boundary target-cwasm kind=runtime-executor status=runtime-contract evidence=reference-aot-harness backend=runtime-only-executor-v1 blocked=hostcall-trampoline generation=2"
     );
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
-        "BoundaryPublished boundary=1 name=target-cwasm kind=runtime-executor status=runtime-contract backend=runtime-only-executor-v1 blocked=hostcall-trampoline generation=2"
+        "BoundaryPublished boundary=1 name=target-cwasm kind=runtime-executor status=runtime-contract evidence=reference-aot-harness backend=runtime-only-executor-v1 blocked=hostcall-trampoline generation=2"
     );
 }
 

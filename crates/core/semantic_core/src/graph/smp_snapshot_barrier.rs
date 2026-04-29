@@ -21,13 +21,13 @@ impl SemanticGraph {
         if reason.is_empty() {
             return Err("smp snapshot barrier reason is empty");
         }
-        if self.smp_snapshot_barriers.iter().any(|record| record.id == barrier) {
+        if self.domains.scheduler.smp_snapshot_barriers.iter().any(|record| record.id == barrier) {
             return Err("smp snapshot barrier already exists");
         }
-        let Some(rendezvous_record) = self
-            .stop_the_world_rendezvous
-            .iter()
-            .find(|record| record.id == rendezvous && record.generation == rendezvous_generation)
+        let Some(rendezvous_record) =
+            self.domains.scheduler.stop_the_world_rendezvous.iter().find(|record| {
+                record.id == rendezvous && record.generation == rendezvous_generation
+            })
         else {
             return Err("smp snapshot barrier rendezvous is missing");
         };
@@ -56,7 +56,7 @@ impl SemanticGraph {
             {
                 return Err("smp snapshot barrier participant list is invalid");
             }
-            let Some(hart) = self.harts.iter().find(|record| {
+            let Some(hart) = self.domains.scheduler.harts.iter().find(|record| {
                 record.id == participant.hart && record.generation == participant.hart_generation
             }) else {
                 return Err("smp snapshot barrier participant generation is stale");
@@ -66,6 +66,8 @@ impl SemanticGraph {
             }
         }
         for hart in self
+            .domains
+            .scheduler
             .harts
             .iter()
             .filter(|record| !matches!(record.state, HartState::Offline | HartState::Faulted))
@@ -102,6 +104,8 @@ impl SemanticGraph {
             return false;
         }
         let Some(rendezvous_record) = self
+            .domains
+            .scheduler
             .stop_the_world_rendezvous
             .iter()
             .find(|record| record.id == rendezvous && record.generation == rendezvous_generation)
@@ -114,7 +118,7 @@ impl SemanticGraph {
             .participants
             .iter()
             .filter_map(|participant| {
-                let hart = self.harts.iter().find(|record| {
+                let hart = self.domains.scheduler.harts.iter().find(|record| {
                     record.id == participant.hart
                         && record.generation == participant.hart_generation
                 })?;
@@ -132,7 +136,8 @@ impl SemanticGraph {
             return false;
         }
 
-        self.next_smp_snapshot_barrier_id = self.next_smp_snapshot_barrier_id.max(barrier + 1);
+        self.domains.scheduler.next_smp_snapshot_barrier_id =
+            self.domains.scheduler.next_smp_snapshot_barrier_id.max(barrier + 1);
         let event = self.event_log.push(
             "snapshot",
             EventKind::SmpSnapshotBarrierValidated {
@@ -144,7 +149,7 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.smp_snapshot_barriers.push(SmpSnapshotBarrierRecord {
+        self.domains.scheduler.smp_snapshot_barriers.push(SmpSnapshotBarrierRecord {
             id: barrier,
             rendezvous,
             rendezvous_generation,
@@ -185,11 +190,11 @@ impl SemanticGraph {
     }
 
     pub fn smp_snapshot_barriers(&self) -> &[SmpSnapshotBarrierRecord] {
-        &self.smp_snapshot_barriers
+        &self.domains.scheduler.smp_snapshot_barriers
     }
 
     pub fn smp_snapshot_barrier_count(&self) -> usize {
-        self.smp_snapshot_barriers.len()
+        self.domains.scheduler.smp_snapshot_barriers.len()
     }
 
     #[cfg(test)]
@@ -198,8 +203,12 @@ impl SemanticGraph {
         barrier: SmpSnapshotBarrierId,
         event: EventId,
     ) {
-        if let Some(record) =
-            self.smp_snapshot_barriers.iter_mut().find(|record| record.id == barrier)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .smp_snapshot_barriers
+            .iter_mut()
+            .find(|record| record.id == barrier)
         {
             record.validated_at_event = event;
         }
@@ -207,7 +216,7 @@ impl SemanticGraph {
 
     pub fn check_smp_snapshot_barrier_invariants(&self) -> Result<(), SemanticInvariantError> {
         let mut ids = BTreeSet::new();
-        for barrier in &self.smp_snapshot_barriers {
+        for barrier in &self.domains.scheduler.smp_snapshot_barriers {
             if barrier.id == 0
                 || !ids.insert(barrier.id)
                 || barrier.generation == 0
@@ -223,10 +232,12 @@ impl SemanticGraph {
                     barrier: barrier.id,
                 });
             }
-            let Some(rendezvous) = self.stop_the_world_rendezvous.iter().find(|record| {
-                record.id == barrier.rendezvous
-                    && record.generation == barrier.rendezvous_generation
-            }) else {
+            let Some(rendezvous) =
+                self.domains.scheduler.stop_the_world_rendezvous.iter().find(|record| {
+                    record.id == barrier.rendezvous
+                        && record.generation == barrier.rendezvous_generation
+                })
+            else {
                 return Err(SemanticInvariantError::SmpSnapshotBarrierRendezvousMissing {
                     barrier: barrier.id,
                     rendezvous: barrier.rendezvous,
@@ -296,8 +307,12 @@ impl SemanticGraph {
                         hart: participant.hart,
                     });
                 }
-                let Some(current_hart) =
-                    self.harts.iter().find(|record| record.id == participant.hart)
+                let Some(current_hart) = self
+                    .domains
+                    .scheduler
+                    .harts
+                    .iter()
+                    .find(|record| record.id == participant.hart)
                 else {
                     return Err(SemanticInvariantError::SmpSnapshotBarrierParticipantMismatch {
                         barrier: barrier.id,
@@ -313,7 +328,7 @@ impl SemanticGraph {
                         hart: participant.hart,
                     });
                 }
-                if !self.hart_event_attributions.iter().any(|attribution| {
+                if !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                     attribution.event == barrier.validated_at_event
                         && attribution.hart == participant.hart
                         && attribution.hart_generation == participant.hart_generation

@@ -31,10 +31,18 @@ impl SemanticGraph {
         if reason.is_empty() {
             return Err("smp cleanup quiescence reason is empty");
         }
-        if self.smp_cleanup_quiescence.iter().any(|record| record.id == quiescence) {
+        if self
+            .domains
+            .scheduler
+            .smp_cleanup_quiescence
+            .iter()
+            .any(|record| record.id == quiescence)
+        {
             return Err("smp cleanup quiescence already exists");
         }
         let Some(cleanup_record) = self
+            .domains
+            .scheduler
             .activation_cleanups
             .iter()
             .find(|record| record.id == cleanup && record.generation == cleanup_generation)
@@ -48,10 +56,10 @@ impl SemanticGraph {
         {
             return Err("smp cleanup quiescence cleanup does not match target store generation");
         }
-        let Some(rendezvous_record) = self
-            .stop_the_world_rendezvous
-            .iter()
-            .find(|record| record.id == rendezvous && record.generation == rendezvous_generation)
+        let Some(rendezvous_record) =
+            self.domains.scheduler.stop_the_world_rendezvous.iter().find(|record| {
+                record.id == rendezvous && record.generation == rendezvous_generation
+            })
         else {
             return Err("smp cleanup quiescence rendezvous is missing");
         };
@@ -64,7 +72,9 @@ impl SemanticGraph {
         if cleanup_record.completed_at_event >= rendezvous_record.completed_at_event {
             return Err("smp cleanup quiescence rendezvous must follow cleanup");
         }
-        let Some(store_record) = self.stores.iter().find(|record| record.id == store) else {
+        let Some(store_record) =
+            self.domains.lifecycle.stores.iter().find(|record| record.id == store)
+        else {
             return Err("smp cleanup quiescence store is missing");
         };
         if store_record.generation < result_store_generation {
@@ -97,7 +107,12 @@ impl SemanticGraph {
             return Err("smp cleanup quiescence found live capability for dead store");
         }
         if store_record.generation == result_store_generation
-            && self.resources.iter().any(|record| record.owner_store == Some(store) && record.live)
+            && self
+                .domains
+                .resource
+                .resources
+                .iter()
+                .any(|record| record.owner_store == Some(store) && record.live)
         {
             return Err("smp cleanup quiescence found live resource for dead store");
         }
@@ -109,7 +124,7 @@ impl SemanticGraph {
             {
                 return Err("smp cleanup quiescence participant list is invalid");
             }
-            let Some(hart) = self.harts.iter().find(|record| {
+            let Some(hart) = self.domains.scheduler.harts.iter().find(|record| {
                 record.id == participant.hart && record.generation == participant.hart_generation
             }) else {
                 return Err("smp cleanup quiescence participant generation is stale");
@@ -130,6 +145,8 @@ impl SemanticGraph {
             }
         }
         for hart in self
+            .domains
+            .scheduler
             .harts
             .iter()
             .filter(|record| !matches!(record.state, HartState::Offline | HartState::Faulted))
@@ -174,6 +191,8 @@ impl SemanticGraph {
             return false;
         }
         let Some(cleanup_record) = self
+            .domains
+            .scheduler
             .activation_cleanups
             .iter()
             .find(|record| record.id == cleanup && record.generation == cleanup_generation)
@@ -182,6 +201,8 @@ impl SemanticGraph {
             return false;
         };
         let Some(rendezvous_record) = self
+            .domains
+            .scheduler
             .stop_the_world_rendezvous
             .iter()
             .find(|record| record.id == rendezvous && record.generation == rendezvous_generation)
@@ -191,7 +212,7 @@ impl SemanticGraph {
         };
         let mut participants = Vec::new();
         for participant in &rendezvous_record.participants {
-            let Some(hart) = self.harts.iter().find(|record| {
+            let Some(hart) = self.domains.scheduler.harts.iter().find(|record| {
                 record.id == participant.hart && record.generation == participant.hart_generation
             }) else {
                 return false;
@@ -209,8 +230,8 @@ impl SemanticGraph {
             });
         }
 
-        self.next_smp_cleanup_quiescence_id =
-            self.next_smp_cleanup_quiescence_id.max(quiescence + 1);
+        self.domains.scheduler.next_smp_cleanup_quiescence_id =
+            self.domains.scheduler.next_smp_cleanup_quiescence_id.max(quiescence + 1);
         let event = self.event_log.push(
             "scheduler",
             EventKind::SmpCleanupQuiescenceValidated {
@@ -226,7 +247,7 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.smp_cleanup_quiescence.push(SmpCleanupQuiescenceRecord {
+        self.domains.scheduler.smp_cleanup_quiescence.push(SmpCleanupQuiescenceRecord {
             id: quiescence,
             cleanup,
             cleanup_generation,
@@ -264,11 +285,11 @@ impl SemanticGraph {
     }
 
     pub fn smp_cleanup_quiescence(&self) -> &[SmpCleanupQuiescenceRecord] {
-        &self.smp_cleanup_quiescence
+        &self.domains.scheduler.smp_cleanup_quiescence
     }
 
     pub fn smp_cleanup_quiescence_count(&self) -> usize {
-        self.smp_cleanup_quiescence.len()
+        self.domains.scheduler.smp_cleanup_quiescence.len()
     }
 
     #[cfg(test)]
@@ -277,8 +298,12 @@ impl SemanticGraph {
         quiescence: SmpCleanupQuiescenceId,
         event: EventId,
     ) {
-        if let Some(record) =
-            self.smp_cleanup_quiescence.iter_mut().find(|record| record.id == quiescence)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .smp_cleanup_quiescence
+            .iter_mut()
+            .find(|record| record.id == quiescence)
         {
             record.validated_at_event = event;
         }
@@ -286,7 +311,7 @@ impl SemanticGraph {
 
     pub fn check_smp_cleanup_quiescence_invariants(&self) -> Result<(), SemanticInvariantError> {
         let mut ids = BTreeSet::new();
-        for quiescence in &self.smp_cleanup_quiescence {
+        for quiescence in &self.domains.scheduler.smp_cleanup_quiescence {
             if quiescence.id == 0
                 || !ids.insert(quiescence.id)
                 || quiescence.generation == 0
@@ -308,7 +333,7 @@ impl SemanticGraph {
                     quiescence: quiescence.id,
                 });
             }
-            let Some(cleanup) = self.activation_cleanups.iter().find(|record| {
+            let Some(cleanup) = self.domains.scheduler.activation_cleanups.iter().find(|record| {
                 record.id == quiescence.cleanup
                     && record.generation == quiescence.cleanup_generation
             }) else {
@@ -328,10 +353,12 @@ impl SemanticGraph {
                     quiescence: quiescence.id,
                 });
             }
-            let Some(rendezvous) = self.stop_the_world_rendezvous.iter().find(|record| {
-                record.id == quiescence.rendezvous
-                    && record.generation == quiescence.rendezvous_generation
-            }) else {
+            let Some(rendezvous) =
+                self.domains.scheduler.stop_the_world_rendezvous.iter().find(|record| {
+                    record.id == quiescence.rendezvous
+                        && record.generation == quiescence.rendezvous_generation
+                })
+            else {
                 return Err(SemanticInvariantError::SmpCleanupQuiescenceRendezvousMissing {
                     quiescence: quiescence.id,
                     rendezvous: quiescence.rendezvous,
@@ -348,7 +375,8 @@ impl SemanticGraph {
                     quiescence: quiescence.id,
                 });
             }
-            let Some(store) = self.stores.iter().find(|record| record.id == quiescence.store)
+            let Some(store) =
+                self.domains.lifecycle.stores.iter().find(|record| record.id == quiescence.store)
             else {
                 return Err(SemanticInvariantError::SmpCleanupQuiescenceStoreLeak {
                     quiescence: quiescence.id,
@@ -396,6 +424,8 @@ impl SemanticGraph {
                     });
                 }
                 if self
+                    .domains
+                    .resource
                     .resources
                     .iter()
                     .any(|record| record.owner_store == Some(quiescence.store) && record.live)
@@ -471,8 +501,12 @@ impl SemanticGraph {
                         hart: participant.hart,
                     });
                 }
-                let Some(current_hart) =
-                    self.harts.iter().find(|record| record.id == participant.hart)
+                let Some(current_hart) = self
+                    .domains
+                    .scheduler
+                    .harts
+                    .iter()
+                    .find(|record| record.id == participant.hart)
                 else {
                     return Err(SemanticInvariantError::SmpCleanupQuiescenceParticipantMismatch {
                         quiescence: quiescence.id,
@@ -488,7 +522,7 @@ impl SemanticGraph {
                         hart: participant.hart,
                     });
                 }
-                if !self.hart_event_attributions.iter().any(|attribution| {
+                if !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                     attribution.event == quiescence.validated_at_event
                         && attribution.hart == participant.hart
                         && attribution.hart_generation == participant.hart_generation
@@ -520,7 +554,7 @@ impl SemanticGraph {
         target_store_generation: Generation,
         result_store_generation: Generation,
     ) -> bool {
-        self.runtime_activations.iter().all(|record| {
+        self.domains.scheduler.runtime_activations.iter().all(|record| {
             record.owner_store != Some(store)
                 || match record.owner_store_generation {
                     Some(generation) => {

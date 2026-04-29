@@ -14,6 +14,8 @@ impl SemanticGraph {
         if interrupt == 0
             || timer_epoch == 0
             || self
+                .domains
+                .scheduler
                 .timer_interrupts
                 .iter()
                 .any(|record| record.id == interrupt || record.timer_epoch == timer_epoch)
@@ -21,6 +23,8 @@ impl SemanticGraph {
             return false;
         }
         let Some(hart_record) = self
+            .domains
+            .scheduler
             .harts
             .iter()
             .find(|record| record.id == hart && record.generation == hart_generation)
@@ -31,7 +35,8 @@ impl SemanticGraph {
             return false;
         }
         let hardware_hart = hart_record.hardware_id;
-        if let Some(previous) = self.timer_interrupts.iter().map(|record| record.timer_epoch).max()
+        if let Some(previous) =
+            self.domains.scheduler.timer_interrupts.iter().map(|record| record.timer_epoch).max()
             && timer_epoch <= previous
         {
             return false;
@@ -41,6 +46,8 @@ impl SemanticGraph {
                 return false;
             };
             let Some(record) = self
+                .domains
+                .scheduler
                 .runtime_activations
                 .iter()
                 .find(|record| record.id == activation && record.generation == generation)
@@ -56,7 +63,8 @@ impl SemanticGraph {
             (None, None)
         };
 
-        self.next_timer_interrupt_id = self.next_timer_interrupt_id.max(interrupt + 1);
+        self.domains.scheduler.next_timer_interrupt_id =
+            self.domains.scheduler.next_timer_interrupt_id.max(interrupt + 1);
         let event = self.event_log.push(
             "timer",
             EventKind::TimerInterruptRecorded {
@@ -70,7 +78,7 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.timer_interrupts.push(TimerInterruptRecord {
+        self.domains.scheduler.timer_interrupts.push(TimerInterruptRecord {
             id: interrupt,
             timer_epoch,
             hart,
@@ -98,15 +106,21 @@ impl SemanticGraph {
     }
 
     pub fn timer_interrupts(&self) -> &[TimerInterruptRecord] {
-        &self.timer_interrupts
+        &self.domains.scheduler.timer_interrupts
     }
 
     pub fn timer_interrupt_count(&self) -> usize {
-        self.timer_interrupts.len()
+        self.domains.scheduler.timer_interrupts.len()
     }
 
     pub fn timer_epoch(&self) -> u64 {
-        self.timer_interrupts.iter().map(|record| record.timer_epoch).max().unwrap_or(0)
+        self.domains
+            .scheduler
+            .timer_interrupts
+            .iter()
+            .map(|record| record.timer_epoch)
+            .max()
+            .unwrap_or(0)
     }
 
     #[cfg(test)]
@@ -115,7 +129,8 @@ impl SemanticGraph {
         interrupt: TimerInterruptId,
         timer_epoch: u64,
     ) {
-        if let Some(record) = self.timer_interrupts.iter_mut().find(|record| record.id == interrupt)
+        if let Some(record) =
+            self.domains.scheduler.timer_interrupts.iter_mut().find(|record| record.id == interrupt)
         {
             record.timer_epoch = timer_epoch;
         }
@@ -123,7 +138,7 @@ impl SemanticGraph {
 
     pub fn check_timer_invariants(&self) -> Result<(), SemanticInvariantError> {
         let mut previous_epoch = 0;
-        for interrupt in &self.timer_interrupts {
+        for interrupt in &self.domains.scheduler.timer_interrupts {
             if interrupt.timer_epoch == 0 || interrupt.timer_epoch <= previous_epoch {
                 return Err(SemanticInvariantError::TimerInterruptEpochNonMonotonic {
                     interrupt: interrupt.id,
@@ -132,7 +147,7 @@ impl SemanticGraph {
             }
             previous_epoch = interrupt.timer_epoch;
             match (
-                self.harts.iter().find(|record| record.id == interrupt.hart),
+                self.domains.scheduler.harts.iter().find(|record| record.id == interrupt.hart),
                 interrupt.hart_generation,
             ) {
                 (Some(hart), generation)
@@ -152,7 +167,7 @@ impl SemanticGraph {
                     });
                 }
             }
-            if !self.hart_event_attributions.iter().any(|attribution| {
+            if !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == interrupt.recorded_at_event
                     && attribution.hart == interrupt.hart
                     && attribution.hart_generation == interrupt.hart_generation
@@ -165,12 +180,12 @@ impl SemanticGraph {
             }
             match (interrupt.target_activation, interrupt.target_activation_generation) {
                 (Some(activation), Some(generation)) => {
-                    let Some(record) = self
-                        .runtime_activations
-                        .iter()
-                        .find(|record| record.id == activation && record.generation == generation)
+                    let Some(record) =
+                        self.domains.scheduler.runtime_activations.iter().find(|record| {
+                            record.id == activation && record.generation == generation
+                        })
                     else {
-                        if self.preemptions.iter().any(|preemption| {
+                        if self.domains.scheduler.preemptions.iter().any(|preemption| {
                             preemption.activation == activation
                                 && preemption.activation_generation_before == generation
                                 && preemption.timer_interrupt == interrupt.id

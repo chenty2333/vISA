@@ -46,17 +46,17 @@ impl SemanticGraph {
         {
             return Err("SIMD context switch benchmark requires nonzero shape and metrics");
         }
-        let Some(feature) = self.target_feature_sets.iter().find(|record| {
+        let Some(feature) = self.domains.simd.target_feature_sets.iter().find(|record| {
             record.id == target_feature_set.id && record.generation == target_feature_set.generation
         }) else {
             return Err("SIMD context switch benchmark target feature set is missing");
         };
-        let Some(preemption_record) = self.preemptions.iter().find(|record| {
+        let Some(preemption_record) = self.domains.scheduler.preemptions.iter().find(|record| {
             record.id == preemption.id && record.generation == preemption.generation
         }) else {
             return Err("SIMD context switch benchmark preemption record is missing");
         };
-        let Some(resume_record) = self.activation_resumes.iter().find(|record| {
+        let Some(resume_record) = self.domains.scheduler.activation_resumes.iter().find(|record| {
             record.id == activation_resume.id && record.generation == activation_resume.generation
         }) else {
             return Err("SIMD context switch benchmark activation resume record is missing");
@@ -73,12 +73,12 @@ impl SemanticGraph {
         {
             return Err("SIMD context switch benchmark resume vector refs do not match");
         }
-        let Some(saved_vector) = self.vector_states.iter().find(|record| {
+        let Some(saved_vector) = self.domains.simd.vector_states.iter().find(|record| {
             record.id == saved_vector_state.id && record.generation == saved_vector_state.generation
         }) else {
             return Err("SIMD context switch benchmark saved vector state is missing");
         };
-        let Some(restored_vector) = self.vector_states.iter().find(|record| {
+        let Some(restored_vector) = self.domains.simd.vector_states.iter().find(|record| {
             record.id == restored_vector_state.id
                 && record.generation == restored_vector_state.generation
         }) else {
@@ -136,7 +136,13 @@ impl SemanticGraph {
         budget_nanos: u64,
         note: &str,
     ) -> bool {
-        if self.simd_context_switch_benchmarks.iter().any(|record| record.id == benchmark) {
+        if self
+            .domains
+            .simd
+            .simd_context_switch_benchmarks
+            .iter()
+            .any(|record| record.id == benchmark)
+        {
             return false;
         }
         if self
@@ -160,8 +166,8 @@ impl SemanticGraph {
         {
             return false;
         }
-        self.next_simd_context_switch_benchmark_id =
-            self.next_simd_context_switch_benchmark_id.max(benchmark + 1);
+        self.domains.simd.next_simd_context_switch_benchmark_id =
+            self.domains.simd.next_simd_context_switch_benchmark_id.max(benchmark + 1);
         let event = self.event_log.push(
             "simd-runtime",
             EventKind::SimdContextSwitchBenchmarkRecorded {
@@ -182,7 +188,7 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.simd_context_switch_benchmarks.push(SimdContextSwitchBenchmarkRecord {
+        self.domains.simd.simd_context_switch_benchmarks.push(SimdContextSwitchBenchmarkRecord {
             id: benchmark,
             preemption,
             activation_resume,
@@ -206,17 +212,17 @@ impl SemanticGraph {
     }
 
     pub fn simd_context_switch_benchmarks(&self) -> &[SimdContextSwitchBenchmarkRecord] {
-        &self.simd_context_switch_benchmarks
+        &self.domains.simd.simd_context_switch_benchmarks
     }
 
     pub fn simd_context_switch_benchmark_count(&self) -> usize {
-        self.simd_context_switch_benchmarks.len()
+        self.domains.simd.simd_context_switch_benchmarks.len()
     }
 
     pub fn check_simd_context_switch_benchmark_invariants(
         &self,
     ) -> Result<(), SemanticInvariantError> {
-        for benchmark in &self.simd_context_switch_benchmarks {
+        for benchmark in &self.domains.simd.simd_context_switch_benchmarks {
             if benchmark.id == 0
                 || benchmark.generation == 0
                 || benchmark.state != SimdContextSwitchBenchmarkState::Recorded
@@ -297,8 +303,12 @@ impl SemanticGraph {
         benchmark: SimdContextSwitchBenchmarkId,
         overhead_nanos: u64,
     ) {
-        if let Some(record) =
-            self.simd_context_switch_benchmarks.iter_mut().find(|record| record.id == benchmark)
+        if let Some(record) = self
+            .domains
+            .simd
+            .simd_context_switch_benchmarks
+            .iter_mut()
+            .find(|record| record.id == benchmark)
         {
             record.overhead_nanos = overhead_nanos;
         }

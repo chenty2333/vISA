@@ -19,11 +19,11 @@ impl SemanticGraph {
             || target_hart_generation == 0
             || source_hart == target_hart
             || reason.is_empty()
-            || self.ipi_events.iter().any(|record| record.id == ipi)
+            || self.domains.scheduler.ipi_events.iter().any(|record| record.id == ipi)
         {
             return false;
         }
-        let Some(source) = self.harts.iter().find(|record| {
+        let Some(source) = self.domains.scheduler.harts.iter().find(|record| {
             record.id == source_hart
                 && record.generation == source_hart_generation
                 && !matches!(record.state, HartState::Offline | HartState::Faulted)
@@ -31,7 +31,7 @@ impl SemanticGraph {
             return false;
         };
         let source_hardware_hart = source.hardware_id;
-        let Some(target) = self.harts.iter().find(|record| {
+        let Some(target) = self.domains.scheduler.harts.iter().find(|record| {
             record.id == target_hart
                 && record.generation == target_hart_generation
                 && !matches!(record.state, HartState::Offline | HartState::Faulted)
@@ -39,7 +39,8 @@ impl SemanticGraph {
             return false;
         };
         let target_hardware_hart = target.hardware_id;
-        self.next_ipi_event_id = self.next_ipi_event_id.max(ipi + 1);
+        self.domains.scheduler.next_ipi_event_id =
+            self.domains.scheduler.next_ipi_event_id.max(ipi + 1);
         let generation = 1;
         let event = self.event_log.push(
             "ipi",
@@ -53,7 +54,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.ipi_events.push(IpiEventRecord {
+        self.domains.scheduler.ipi_events.push(IpiEventRecord {
             id: ipi,
             source_hart,
             source_hart_generation,
@@ -90,11 +91,11 @@ impl SemanticGraph {
     }
 
     pub fn ipi_events(&self) -> &[IpiEventRecord] {
-        &self.ipi_events
+        &self.domains.scheduler.ipi_events
     }
 
     pub fn ipi_event_count(&self) -> usize {
-        self.ipi_events.len()
+        self.domains.scheduler.ipi_events.len()
     }
 
     #[cfg(test)]
@@ -103,13 +104,15 @@ impl SemanticGraph {
         ipi: IpiEventId,
         generation: Generation,
     ) {
-        if let Some(record) = self.ipi_events.iter_mut().find(|record| record.id == ipi) {
+        if let Some(record) =
+            self.domains.scheduler.ipi_events.iter_mut().find(|record| record.id == ipi)
+        {
             record.target_hart_generation = generation;
         }
     }
 
     pub fn check_ipi_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for ipi in &self.ipi_events {
+        for ipi in &self.domains.scheduler.ipi_events {
             if ipi.id == 0
                 || ipi.generation == 0
                 || ipi.source_hart == 0
@@ -119,7 +122,9 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::IpiEventInvalid { ipi: ipi.id });
             }
-            let Some(source) = self.harts.iter().find(|record| record.id == ipi.source_hart) else {
+            let Some(source) =
+                self.domains.scheduler.harts.iter().find(|record| record.id == ipi.source_hart)
+            else {
                 return Err(SemanticInvariantError::IpiEventMissingHart {
                     ipi: ipi.id,
                     hart: ipi.source_hart,
@@ -133,7 +138,9 @@ impl SemanticGraph {
                     hart: ipi.source_hart,
                 });
             }
-            let Some(target) = self.harts.iter().find(|record| record.id == ipi.target_hart) else {
+            let Some(target) =
+                self.domains.scheduler.harts.iter().find(|record| record.id == ipi.target_hart)
+            else {
                 return Err(SemanticInvariantError::IpiEventMissingHart {
                     ipi: ipi.id,
                     hart: ipi.target_hart,
@@ -170,12 +177,12 @@ impl SemanticGraph {
             }) {
                 return Err(SemanticInvariantError::IpiEventMissingEvent { ipi: ipi.id });
             }
-            if !self.hart_event_attributions.iter().any(|attribution| {
+            if !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == ipi.recorded_at_event
                     && attribution.hart == ipi.source_hart
                     && attribution.hart_generation == ipi.source_hart_generation
                     && attribution.event_kind == "IpiEventSourceRecorded"
-            }) || !self.hart_event_attributions.iter().any(|attribution| {
+            }) || !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == ipi.recorded_at_event
                     && attribution.hart == ipi.target_hart
                     && attribution.hart_generation == ipi.target_hart_generation

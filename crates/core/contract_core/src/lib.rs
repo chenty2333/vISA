@@ -1,6 +1,11 @@
-use std::{error::Error, fmt};
+#![no_std]
 
-use artifact_manifest::{CapabilityManifest, InterfaceRequirementManifest, ResourceLimitsManifest};
+extern crate alloc;
+#[cfg(test)]
+extern crate std;
+
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
+use core::{error::Error, fmt};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContractError {
@@ -29,6 +34,64 @@ pub const VIEW_SCHEMA_V1: u16 = 1;
 pub const EDGE_SCHEMA_V1: u16 = 1;
 pub const EVENT_SCHEMA_V1: u16 = 1;
 pub const TRACE_SCHEMA_V1: u16 = 1;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EvidenceBoundaryLevel {
+    SemanticModel,
+    ReferenceService,
+    ReferenceAotHarness,
+    PortableArtifactExecution,
+    RealTargetSubstrate,
+}
+
+impl EvidenceBoundaryLevel {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SemanticModel => "semantic-model",
+            Self::ReferenceService => "reference-service",
+            Self::ReferenceAotHarness => "reference-aot-harness",
+            Self::PortableArtifactExecution => "portable-artifact-execution",
+            Self::RealTargetSubstrate => "real-target-substrate",
+        }
+    }
+
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::SemanticModel => 0,
+            Self::ReferenceService => 1,
+            Self::ReferenceAotHarness => 2,
+            Self::PortableArtifactExecution => 3,
+            Self::RealTargetSubstrate => 4,
+        }
+    }
+
+    pub const fn satisfies(self, required: Self) -> bool {
+        self.rank() >= required.rank()
+    }
+
+    pub const fn can_claim(self, claimed: Self) -> bool {
+        self.satisfies(claimed)
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "semantic-model" | "semantic model" => Some(Self::SemanticModel),
+            "reference-service"
+            | "reference service"
+            | "reference-native-service"
+            | "reference/native service"
+            | "reference native service" => Some(Self::ReferenceService),
+            "reference-aot-harness" | "reference AOT harness" | "reference-aot" => {
+                Some(Self::ReferenceAotHarness)
+            }
+            "portable-artifact-execution" | "portable artifact execution" => {
+                Some(Self::PortableArtifactExecution)
+            }
+            "real-target-substrate" | "real target substrate" => Some(Self::RealTargetSubstrate),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SchemaVersion {
@@ -656,144 +719,48 @@ pub const DEFAULT_WASI_PROFILE: &str = "none";
 pub const DEFAULT_HOSTCALL_ABI_VERSION: &str = "vmos-target-hostcall-frame-v1";
 pub const DEFAULT_CAPABILITY_ABI_VERSION: &str = "vmos-capability-handle-v1";
 pub const DEFAULT_SEMANTIC_CONTRACT_SCHEMA_VERSION: &str = "semantic-contract-v0.1";
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ValidatedArtifactPlan {
-    pub artifact_profile: String,
-    pub runtime_mode: String,
-    pub contract_version: String,
-    pub supervisor_world: String,
-    pub target_arch: String,
-    pub compiler_engine: String,
-    pub compiler_execution_mode: String,
-    pub artifact_format: String,
-    pub target_artifact_format: String,
-    pub runtime_executor_abi: String,
-    pub modules: Vec<ValidatedArtifactEntry>,
-}
 
-impl ValidatedArtifactPlan {
-    pub fn module_count(&self) -> usize {
-        self.modules.len()
+#[cfg(test)]
+mod tests {
+    use super::EvidenceBoundaryLevel;
+
+    #[test]
+    fn evidence_boundary_levels_are_ordered_by_claim_strength() {
+        assert!(
+            EvidenceBoundaryLevel::RealTargetSubstrate
+                .satisfies(EvidenceBoundaryLevel::PortableArtifactExecution)
+        );
+        assert!(
+            !EvidenceBoundaryLevel::ReferenceService
+                .can_claim(EvidenceBoundaryLevel::PortableArtifactExecution)
+        );
+        assert!(
+            !EvidenceBoundaryLevel::SemanticModel
+                .can_claim(EvidenceBoundaryLevel::ReferenceService)
+        );
     }
 
-    pub fn capability_count(&self) -> usize {
-        self.modules.iter().map(|entry| entry.capabilities.len()).sum()
+    #[test]
+    fn evidence_boundary_parse_accepts_spec_names() {
+        assert_eq!(
+            EvidenceBoundaryLevel::parse("semantic model"),
+            Some(EvidenceBoundaryLevel::SemanticModel)
+        );
+        assert_eq!(
+            EvidenceBoundaryLevel::parse("reference/native service"),
+            Some(EvidenceBoundaryLevel::ReferenceService)
+        );
+        assert_eq!(
+            EvidenceBoundaryLevel::parse("reference-aot-harness"),
+            Some(EvidenceBoundaryLevel::ReferenceAotHarness)
+        );
+        assert_eq!(
+            EvidenceBoundaryLevel::parse("portable artifact execution"),
+            Some(EvidenceBoundaryLevel::PortableArtifactExecution)
+        );
+        assert_eq!(
+            EvidenceBoundaryLevel::parse("real-target-substrate"),
+            Some(EvidenceBoundaryLevel::RealTargetSubstrate)
+        );
     }
-
-    pub fn expected_export_count(&self) -> usize {
-        self.modules.iter().map(|entry| entry.expected_exports.len()).sum()
-    }
-
-    pub fn entry(&self, package: &str) -> Option<&ValidatedArtifactEntry> {
-        self.modules.iter().find(|entry| entry.package == package)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ValidatedArtifactEntry {
-    pub package: String,
-    pub artifact_name: String,
-    pub role: String,
-    pub fault_policy: String,
-    pub wasm_path: String,
-    pub cwasm_path: String,
-    pub target_artifact_path: String,
-    pub wasm_sha256: String,
-    pub cwasm_sha256: String,
-    pub target_artifact_sha256: String,
-    pub code_payload_format: String,
-    pub expected_exports: Vec<String>,
-    pub capabilities: Vec<CapabilityManifest>,
-    pub abi_fingerprint: String,
-    pub service_dependencies: Vec<String>,
-    pub resource_limits: ResourceLimitsManifest,
-    pub interfaces: InterfaceRequirementManifest,
-    pub signature_scheme: String,
-    pub signer: String,
-    pub manifest_binding_hash: String,
-    pub hash_status: String,
-    pub signature_status: String,
-    pub signature_verified: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SubstrateCompatibilityItem {
-    pub authority: String,
-    pub expected: String,
-    pub actual: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ModuleSubstrateCompatibilityReport {
-    pub package: String,
-    pub substrate_profile_required: String,
-    pub ok: bool,
-    pub profile_ok: bool,
-    pub authority_ok: bool,
-    pub missing_required: Vec<SubstrateCompatibilityItem>,
-    pub degraded_optional: Vec<SubstrateCompatibilityItem>,
-    pub forbidden_requested: Vec<String>,
-    pub forbidden_authorities: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ArtifactSubstrateCompatibilityReport {
-    pub artifact_profile: String,
-    pub module_count: usize,
-    pub ok: bool,
-    pub modules: Vec<ModuleSubstrateCompatibilityReport>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InterfaceHostCapabilitySet {
-    pub wasi_worlds: Vec<String>,
-    pub custom_wit_worlds: Vec<String>,
-    pub component_model_version: String,
-    pub wasi_profile: String,
-    pub hostcall_abi_version: String,
-    pub capability_abi_version: String,
-    pub semantic_contract_version: String,
-}
-
-impl InterfaceHostCapabilitySet {
-    pub fn empty() -> Self {
-        Self {
-            wasi_worlds: Vec::new(),
-            custom_wit_worlds: Vec::new(),
-            component_model_version: DEFAULT_COMPONENT_MODEL_VERSION.to_owned(),
-            wasi_profile: DEFAULT_WASI_PROFILE.to_owned(),
-            hostcall_abi_version: DEFAULT_HOSTCALL_ABI_VERSION.to_owned(),
-            capability_abi_version: DEFAULT_CAPABILITY_ABI_VERSION.to_owned(),
-            semantic_contract_version: DEFAULT_SEMANTIC_CONTRACT_SCHEMA_VERSION.to_owned(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InterfaceVersionMismatch {
-    pub field: String,
-    pub expected: String,
-    pub actual: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ModuleInterfaceCompatibilityReport {
-    pub package: String,
-    pub ok: bool,
-    pub missing_required_wasi_worlds: Vec<String>,
-    pub degraded_optional_wasi_worlds: Vec<String>,
-    pub missing_custom_wit_worlds: Vec<String>,
-    pub version_mismatches: Vec<InterfaceVersionMismatch>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ArtifactInterfaceCompatibilityReport {
-    pub artifact_profile: String,
-    pub module_count: usize,
-    pub ok: bool,
-    pub modules: Vec<ModuleInterfaceCompatibilityReport>,
-}
-
-pub fn contract_hex(value: u64) -> String {
-    format!("{value:016x}")
 }

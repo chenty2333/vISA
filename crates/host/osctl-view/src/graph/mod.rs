@@ -9,7 +9,7 @@ pub(crate) use history::*;
 pub(crate) use live::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GraphEdgeMode {
+pub enum GraphEdgeMode {
     Roots,
     Live,
     History,
@@ -25,11 +25,7 @@ impl GraphEdgeMode {
     }
 }
 
-pub(crate) fn print_graph(
-    path: &Path,
-    mode: GraphEdgeMode,
-    json: bool,
-) -> Result<(), Box<dyn Error>> {
+pub fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
     if json || mode != GraphEdgeMode::Roots {
         let edges = graph_edges_for_package(&package, mode);

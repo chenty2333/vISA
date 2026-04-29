@@ -12,10 +12,12 @@ impl SemanticGraph {
         if hart == 0
             || label.is_empty()
             || self
+                .domains
+                .scheduler
                 .harts
                 .iter()
                 .any(|record| record.id == hart || record.hardware_id == hardware_id)
-            || (boot && self.harts.iter().any(|record| record.boot))
+            || (boot && self.domains.scheduler.harts.iter().any(|record| record.boot))
         {
             return false;
         }
@@ -30,7 +32,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.harts.push(HartRecord {
+        self.domains.scheduler.harts.push(HartRecord {
             id: hart,
             hardware_id,
             label: label.to_string(),
@@ -71,22 +73,24 @@ impl SemanticGraph {
             return false;
         }
         let Some(index) = self
+            .domains
+            .scheduler
             .harts
             .iter()
             .position(|record| record.id == hart && record.generation == hart_generation)
         else {
             return false;
         };
-        let from = self.harts[index].state;
+        let from = self.domains.scheduler.harts[index].state;
         if from == state {
             return false;
         }
-        self.harts[index].state = state;
-        self.harts[index].generation += 1;
+        self.domains.scheduler.harts[index].state = state;
+        self.domains.scheduler.harts[index].generation += 1;
         if !note.is_empty() {
-            self.harts[index].note = note.to_string();
+            self.domains.scheduler.harts[index].note = note.to_string();
         }
-        let generation = self.harts[index].generation;
+        let generation = self.domains.scheduler.harts[index].generation;
         let event = self.event_log.push(
             "scheduler",
             EventKind::HartStateChanged {
@@ -97,9 +101,10 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.harts[index].last_event = Some(event);
-        let current_activation = self.harts[index].current_activation;
-        let current_activation_generation = self.harts[index].current_activation_generation;
+        self.domains.scheduler.harts[index].last_event = Some(event);
+        let current_activation = self.domains.scheduler.harts[index].current_activation;
+        let current_activation_generation =
+            self.domains.scheduler.harts[index].current_activation_generation;
         let _ = self.push_hart_event_attribution(
             hart,
             generation,
@@ -121,32 +126,36 @@ impl SemanticGraph {
         note: &str,
     ) -> bool {
         let Some(hart_index) = self
+            .domains
+            .scheduler
             .harts
             .iter()
             .position(|record| record.id == hart && record.generation == hart_generation)
         else {
             return false;
         };
-        if self.harts[hart_index].state != HartState::Idle
-            || self.harts[hart_index].current_activation.is_some()
+        if self.domains.scheduler.harts[hart_index].state != HartState::Idle
+            || self.domains.scheduler.harts[hart_index].current_activation.is_some()
         {
             return false;
         }
-        if self.harts.iter().any(|record| {
+        if self.domains.scheduler.harts.iter().any(|record| {
             record.id != hart
                 && record.current_activation == Some(activation)
                 && record.current_activation_generation == Some(activation_generation)
         }) {
             return false;
         }
-        let Some(activation_record) = self.runtime_activations.iter().find(|record| {
-            record.id == activation
-                && record.generation == activation_generation
-                && record.state == RuntimeActivationState::Running
-        }) else {
+        let Some(activation_record) =
+            self.domains.scheduler.runtime_activations.iter().find(|record| {
+                record.id == activation
+                    && record.generation == activation_generation
+                    && record.state == RuntimeActivationState::Running
+            })
+        else {
             return false;
         };
-        if !self.tasks.iter().any(|task| {
+        if !self.domains.scheduler.tasks.iter().any(|task| {
             task.id == activation_record.owner_task
                 && task.generation == activation_record.owner_task_generation
         }) {
@@ -156,7 +165,7 @@ impl SemanticGraph {
             let Some(generation) = activation_record.owner_store_generation else {
                 return false;
             };
-            if !self.stores.iter().any(|store_record| {
+            if !self.domains.lifecycle.stores.iter().any(|store_record| {
                 store_record.id == store
                     && store_record.generation == generation
                     && store_record.state != StoreState::Dead
@@ -165,20 +174,22 @@ impl SemanticGraph {
             }
         }
 
-        let from = self.harts[hart_index].state;
-        self.harts[hart_index].state = HartState::Running;
-        self.harts[hart_index].generation += 1;
-        self.harts[hart_index].current_activation = Some(activation);
-        self.harts[hart_index].current_activation_generation = Some(activation_generation);
-        self.harts[hart_index].current_task = Some(activation_record.owner_task);
-        self.harts[hart_index].current_task_generation =
+        let from = self.domains.scheduler.harts[hart_index].state;
+        self.domains.scheduler.harts[hart_index].state = HartState::Running;
+        self.domains.scheduler.harts[hart_index].generation += 1;
+        self.domains.scheduler.harts[hart_index].current_activation = Some(activation);
+        self.domains.scheduler.harts[hart_index].current_activation_generation =
+            Some(activation_generation);
+        self.domains.scheduler.harts[hart_index].current_task = Some(activation_record.owner_task);
+        self.domains.scheduler.harts[hart_index].current_task_generation =
             Some(activation_record.owner_task_generation);
-        self.harts[hart_index].current_store = activation_record.owner_store;
-        self.harts[hart_index].current_store_generation = activation_record.owner_store_generation;
+        self.domains.scheduler.harts[hart_index].current_store = activation_record.owner_store;
+        self.domains.scheduler.harts[hart_index].current_store_generation =
+            activation_record.owner_store_generation;
         if !note.is_empty() {
-            self.harts[hart_index].note = note.to_string();
+            self.domains.scheduler.harts[hart_index].note = note.to_string();
         }
-        let generation = self.harts[hart_index].generation;
+        let generation = self.domains.scheduler.harts[hart_index].generation;
         let event = self.event_log.push(
             "scheduler",
             EventKind::HartCurrentActivationBound {
@@ -189,8 +200,8 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.harts[hart_index].last_event = Some(event);
-        self.harts[hart_index].last_current_event = Some(event);
+        self.domains.scheduler.harts[hart_index].last_event = Some(event);
+        self.domains.scheduler.harts[hart_index].last_current_event = Some(event);
         let _ = self.push_hart_event_attribution(
             hart,
             generation,
@@ -216,29 +227,32 @@ impl SemanticGraph {
             return false;
         }
         let Some(hart_index) = self
+            .domains
+            .scheduler
             .harts
             .iter()
             .position(|record| record.id == hart && record.generation == hart_generation)
         else {
             return false;
         };
-        if self.harts[hart_index].current_activation != Some(activation)
-            || self.harts[hart_index].current_activation_generation != Some(activation_generation)
+        if self.domains.scheduler.harts[hart_index].current_activation != Some(activation)
+            || self.domains.scheduler.harts[hart_index].current_activation_generation
+                != Some(activation_generation)
         {
             return false;
         }
-        self.harts[hart_index].state = HartState::Idle;
-        self.harts[hart_index].generation += 1;
-        self.harts[hart_index].current_activation = None;
-        self.harts[hart_index].current_activation_generation = None;
-        self.harts[hart_index].current_task = None;
-        self.harts[hart_index].current_task_generation = None;
-        self.harts[hart_index].current_store = None;
-        self.harts[hart_index].current_store_generation = None;
+        self.domains.scheduler.harts[hart_index].state = HartState::Idle;
+        self.domains.scheduler.harts[hart_index].generation += 1;
+        self.domains.scheduler.harts[hart_index].current_activation = None;
+        self.domains.scheduler.harts[hart_index].current_activation_generation = None;
+        self.domains.scheduler.harts[hart_index].current_task = None;
+        self.domains.scheduler.harts[hart_index].current_task_generation = None;
+        self.domains.scheduler.harts[hart_index].current_store = None;
+        self.domains.scheduler.harts[hart_index].current_store_generation = None;
         if !note.is_empty() {
-            self.harts[hart_index].note = note.to_string();
+            self.domains.scheduler.harts[hart_index].note = note.to_string();
         }
-        let generation = self.harts[hart_index].generation;
+        let generation = self.domains.scheduler.harts[hart_index].generation;
         let event = self.event_log.push(
             "scheduler",
             EventKind::HartCurrentActivationCleared {
@@ -249,8 +263,8 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.harts[hart_index].last_event = Some(event);
-        self.harts[hart_index].last_current_event = Some(event);
+        self.domains.scheduler.harts[hart_index].last_event = Some(event);
+        self.domains.scheduler.harts[hart_index].last_current_event = Some(event);
         let _ = self.push_hart_event_attribution(
             hart,
             generation,
@@ -264,11 +278,11 @@ impl SemanticGraph {
     }
 
     pub fn harts(&self) -> &[HartRecord] {
-        &self.harts
+        &self.domains.scheduler.harts
     }
 
     pub fn hart_count(&self) -> usize {
-        self.harts.len()
+        self.domains.scheduler.harts.len()
     }
 
     #[cfg(test)]
@@ -277,14 +291,16 @@ impl SemanticGraph {
         hart: HartId,
         generation: Generation,
     ) {
-        if let Some(record) = self.harts.iter_mut().find(|record| record.id == hart) {
+        if let Some(record) =
+            self.domains.scheduler.harts.iter_mut().find(|record| record.id == hart)
+        {
             record.generation = generation;
         }
     }
 
     #[cfg(test)]
     pub(crate) fn duplicate_hart_for_test(&mut self, hart: HartRecord) {
-        self.harts.push(hart);
+        self.domains.scheduler.harts.push(hart);
     }
 
     #[cfg(test)]
@@ -293,14 +309,16 @@ impl SemanticGraph {
         hart: HartId,
         generation: Generation,
     ) {
-        if let Some(record) = self.harts.iter_mut().find(|record| record.id == hart) {
+        if let Some(record) =
+            self.domains.scheduler.harts.iter_mut().find(|record| record.id == hart)
+        {
             record.current_activation_generation = Some(generation);
         }
     }
 
     pub fn check_hart_invariants(&self) -> Result<(), SemanticInvariantError> {
         let mut boot_harts = 0;
-        for (index, hart) in self.harts.iter().enumerate() {
+        for (index, hart) in self.domains.scheduler.harts.iter().enumerate() {
             if hart.id == 0 || hart.generation == 0 || hart.label.is_empty() {
                 return Err(SemanticInvariantError::HartInvalidObjectIdentity { hart: hart.id });
             }
@@ -329,11 +347,13 @@ impl SemanticGraph {
                             activation,
                         });
                     }
-                    let Some(activation_record) = self.runtime_activations.iter().find(|record| {
-                        record.id == activation
-                            && record.generation == activation_generation
-                            && record.state == RuntimeActivationState::Running
-                    }) else {
+                    let Some(activation_record) =
+                        self.domains.scheduler.runtime_activations.iter().find(|record| {
+                            record.id == activation
+                                && record.generation == activation_generation
+                                && record.state == RuntimeActivationState::Running
+                        })
+                    else {
                         return Err(SemanticInvariantError::HartCurrentActivationMissing {
                             hart: hart.id,
                             activation,
@@ -369,16 +389,18 @@ impl SemanticGraph {
                     });
                 }
             }
-            if self.harts[index + 1..].iter().any(|other| other.id == hart.id) {
+            if self.domains.scheduler.harts[index + 1..].iter().any(|other| other.id == hart.id) {
                 return Err(SemanticInvariantError::DuplicateHart { hart: hart.id });
             }
             if let (Some(activation), Some(activation_generation)) =
                 (hart.current_activation, hart.current_activation_generation)
             {
-                if let Some(other) = self.harts[index + 1..].iter().find(|other| {
-                    other.current_activation == Some(activation)
-                        && other.current_activation_generation == Some(activation_generation)
-                }) {
+                if let Some(other) =
+                    self.domains.scheduler.harts[index + 1..].iter().find(|other| {
+                        other.current_activation == Some(activation)
+                            && other.current_activation_generation == Some(activation_generation)
+                    })
+                {
                     return Err(SemanticInvariantError::ActivationCurrentOnMultipleHarts {
                         activation,
                         first_hart: hart.id,
@@ -386,7 +408,10 @@ impl SemanticGraph {
                     });
                 }
             }
-            if self.harts[index + 1..].iter().any(|other| other.hardware_id == hart.hardware_id) {
+            if self.domains.scheduler.harts[index + 1..]
+                .iter()
+                .any(|other| other.hardware_id == hart.hardware_id)
+            {
                 return Err(SemanticInvariantError::DuplicateHardwareHart {
                     hardware_id: hart.hardware_id,
                 });

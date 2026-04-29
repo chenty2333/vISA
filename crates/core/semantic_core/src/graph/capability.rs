@@ -44,7 +44,12 @@ impl SemanticGraph {
     ) -> CapabilityId {
         let owner_store = self.store_id(subject);
         let owner_store_generation = owner_store.and_then(|store_id| {
-            self.stores.iter().find(|store| store.id == store_id).map(|store| store.generation)
+            self.domains
+                .lifecycle
+                .stores
+                .iter()
+                .find(|store| store.id == store_id)
+                .map(|store| store.generation)
         });
         let cap = self
             .domains
@@ -77,7 +82,12 @@ impl SemanticGraph {
     ) -> CapabilityId {
         let owner_store = self.store_id(subject);
         let owner_store_generation = owner_store.and_then(|store_id| {
-            self.stores.iter().find(|store| store.id == store_id).map(|store| store.generation)
+            self.domains
+                .lifecycle
+                .stores
+                .iter()
+                .find(|store| store.id == store_id)
+                .map(|store| store.generation)
         });
         let cap = self
             .domains
@@ -180,7 +190,9 @@ impl SemanticGraph {
         subject: &str,
         object: &str,
     ) -> Option<AuthorityObjectRef> {
-        self.authority_bindings
+        self.domains
+            .resource
+            .authority_bindings
             .iter()
             .rev()
             .find(|authority| {

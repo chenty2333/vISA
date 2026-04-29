@@ -29,7 +29,8 @@ impl SemanticGraph {
             IoValidationReportState::Failed
         };
         let generation = 1;
-        self.next_io_validation_report_id = self.next_io_validation_report_id.max(report + 1);
+        self.domains.io.next_io_validation_report_id =
+            self.domains.io.next_io_validation_report_id.max(report + 1);
         let event_log_cursor = self.event_log.cursor();
         let validated_at_event = self.event_log.push(
             "io",
@@ -549,11 +550,19 @@ impl SemanticGraph {
     }
 
     fn resource_exists(&self, resource: ResourceId, generation: Generation) -> bool {
-        self.resources.iter().any(|record| record.id == resource && record.generation == generation)
+        self.domains
+            .resource
+            .resources
+            .iter()
+            .any(|record| record.id == resource && record.generation == generation)
     }
 
     fn store_exists(&self, store: StoreId, generation: Generation) -> bool {
-        self.stores.iter().any(|record| record.id == store && record.generation == generation)
+        self.domains
+            .lifecycle
+            .stores
+            .iter()
+            .any(|record| record.id == store && record.generation == generation)
     }
 
     fn device_exists(&self, device: DeviceObjectId, generation: Generation) -> bool {
@@ -827,6 +836,8 @@ impl SemanticGraph {
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::TargetFeatureSet => self
+                .domains
+                .simd
                 .target_feature_sets
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),

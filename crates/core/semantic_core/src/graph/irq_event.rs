@@ -38,7 +38,9 @@ impl SemanticGraph {
         }) else {
             return Err("irq event device generation is missing or inactive");
         };
-        let Some(store_record) = self.stores.iter().find(|record| record.id == driver_store) else {
+        let Some(store_record) =
+            self.domains.lifecycle.stores.iter().find(|record| record.id == driver_store)
+        else {
             return Err("irq event driver store is missing");
         };
         if store_record.generation != driver_store_generation {
@@ -163,7 +165,7 @@ impl SemanticGraph {
                     device: record.device,
                 });
             };
-            let Some(store_record) = self.stores.iter().find(|store| {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.driver_store
                     && store.generation == record.driver_store_generation
             }) else {

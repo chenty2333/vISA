@@ -6,20 +6,25 @@ impl SemanticGraph {
         name: &str,
         kind: BoundaryKind,
         status: BoundaryStatus,
+        evidence: EvidenceBoundaryLevel,
         backend: &str,
         blocked_by: Option<&str>,
     ) -> BoundaryId {
-        if let Some(index) = self.boundaries.iter().position(|boundary| boundary.name == name) {
-            self.boundaries[index].kind = kind;
-            self.boundaries[index].status = status;
-            self.boundaries[index].backend = backend.to_string();
-            self.boundaries[index].blocked_by = blocked_by.map(|value| value.to_string());
-            self.boundaries[index].generation += 1;
-            let id = self.boundaries[index].id;
-            let name = self.boundaries[index].name.clone();
-            let backend = self.boundaries[index].backend.clone();
-            let blocked_by = self.boundaries[index].blocked_by.clone();
-            let generation = self.boundaries[index].generation;
+        if let Some(index) =
+            self.domains.runtime.boundaries.iter().position(|boundary| boundary.name == name)
+        {
+            self.domains.runtime.boundaries[index].kind = kind;
+            self.domains.runtime.boundaries[index].status = status;
+            self.domains.runtime.boundaries[index].evidence = evidence;
+            self.domains.runtime.boundaries[index].backend = backend.to_string();
+            self.domains.runtime.boundaries[index].blocked_by =
+                blocked_by.map(|value| value.to_string());
+            self.domains.runtime.boundaries[index].generation += 1;
+            let id = self.domains.runtime.boundaries[index].id;
+            let name = self.domains.runtime.boundaries[index].name.clone();
+            let backend = self.domains.runtime.boundaries[index].backend.clone();
+            let blocked_by = self.domains.runtime.boundaries[index].blocked_by.clone();
+            let generation = self.domains.runtime.boundaries[index].generation;
             self.event_log.push(
                 "boundary",
                 EventKind::BoundaryPublished {
@@ -27,6 +32,7 @@ impl SemanticGraph {
                     name,
                     kind,
                     status,
+                    evidence,
                     backend,
                     blocked_by,
                     generation,
@@ -35,13 +41,14 @@ impl SemanticGraph {
             return id;
         }
 
-        let id = self.next_boundary_id;
-        self.next_boundary_id += 1;
+        let id = self.domains.runtime.next_boundary_id;
+        self.domains.runtime.next_boundary_id += 1;
         let boundary = BoundaryRecord {
             id,
             name: name.to_string(),
             kind,
             status,
+            evidence,
             backend: backend.to_string(),
             blocked_by: blocked_by.map(|value| value.to_string()),
             generation: 1,
@@ -53,12 +60,13 @@ impl SemanticGraph {
                 name: boundary.name.clone(),
                 kind,
                 status,
+                evidence,
                 backend: boundary.backend.clone(),
                 blocked_by: boundary.blocked_by.clone(),
                 generation: boundary.generation,
             },
         );
-        self.boundaries.push(boundary);
+        self.domains.runtime.boundaries.push(boundary);
         id
     }
     #[allow(clippy::too_many_arguments)]
@@ -77,24 +85,35 @@ impl SemanticGraph {
         state: ArtifactVerificationState,
         blocked_by: Option<&str>,
     ) -> ArtifactId {
-        if let Some(index) =
-            self.artifact_verifications.iter().position(|record| record.package == package)
+        if let Some(index) = self
+            .domains
+            .runtime
+            .artifact_verifications
+            .iter()
+            .position(|record| record.package == package)
         {
-            self.artifact_verifications[index].artifact_name = artifact_name.to_string();
-            self.artifact_verifications[index].manifest_binding_hash =
+            self.domains.runtime.artifact_verifications[index].artifact_name =
+                artifact_name.to_string();
+            self.domains.runtime.artifact_verifications[index].manifest_binding_hash =
                 manifest_binding_hash.to_string();
-            self.artifact_verifications[index].artifact_hash = artifact_hash.to_string();
-            self.artifact_verifications[index].hash_status = hash_status.to_string();
-            self.artifact_verifications[index].abi_fingerprint = abi_fingerprint.to_string();
-            self.artifact_verifications[index].signature_profile = signature_profile.to_string();
-            self.artifact_verifications[index].signature_status = signature_status.to_string();
-            self.artifact_verifications[index].signature_verified = signature_verified;
-            self.artifact_verifications[index].signer = signer.to_string();
-            self.artifact_verifications[index].state = state;
-            self.artifact_verifications[index].blocked_by =
+            self.domains.runtime.artifact_verifications[index].artifact_hash =
+                artifact_hash.to_string();
+            self.domains.runtime.artifact_verifications[index].hash_status =
+                hash_status.to_string();
+            self.domains.runtime.artifact_verifications[index].abi_fingerprint =
+                abi_fingerprint.to_string();
+            self.domains.runtime.artifact_verifications[index].signature_profile =
+                signature_profile.to_string();
+            self.domains.runtime.artifact_verifications[index].signature_status =
+                signature_status.to_string();
+            self.domains.runtime.artifact_verifications[index].signature_verified =
+                signature_verified;
+            self.domains.runtime.artifact_verifications[index].signer = signer.to_string();
+            self.domains.runtime.artifact_verifications[index].state = state;
+            self.domains.runtime.artifact_verifications[index].blocked_by =
                 blocked_by.map(|value| value.to_string());
-            self.artifact_verifications[index].generation += 1;
-            let record = &self.artifact_verifications[index];
+            self.domains.runtime.artifact_verifications[index].generation += 1;
+            let record = &self.domains.runtime.artifact_verifications[index];
             self.event_log.push(
                 "artifact",
                 EventKind::ArtifactVerificationRecorded {
@@ -110,8 +129,8 @@ impl SemanticGraph {
             return record.id;
         }
 
-        let id = self.next_artifact_id;
-        self.next_artifact_id += 1;
+        let id = self.domains.runtime.next_artifact_id;
+        self.domains.runtime.next_artifact_id += 1;
         let record = ArtifactVerificationRecord {
             id,
             package: package.to_string(),
@@ -140,7 +159,7 @@ impl SemanticGraph {
                 generation: record.generation,
             },
         );
-        self.artifact_verifications.push(record);
+        self.domains.runtime.artifact_verifications.push(record);
         id
     }
     #[allow(clippy::too_many_arguments)]
@@ -157,19 +176,23 @@ impl SemanticGraph {
         entrypoint_state: EntrypointState,
         blocked_by: Option<&str>,
     ) -> StoreActivationId {
-        if let Some(index) = self.store_activations.iter().position(|record| record.store == store)
+        if let Some(index) =
+            self.domains.runtime.store_activations.iter().position(|record| record.store == store)
         {
-            self.store_activations[index].package = package.to_string();
-            self.store_activations[index].manifest_binding_hash = manifest_binding_hash.to_string();
-            self.store_activations[index].code_hash = code_hash.to_string();
-            self.store_activations[index].code_publish_state = code_publish_state;
-            self.store_activations[index].memory_layout_state = memory_layout_state;
-            self.store_activations[index].hostcall_table_state = hostcall_table_state;
-            self.store_activations[index].trap_surface_state = trap_surface_state;
-            self.store_activations[index].entrypoint_state = entrypoint_state;
-            self.store_activations[index].blocked_by = blocked_by.map(|value| value.to_string());
-            self.store_activations[index].generation += 1;
-            let record = &self.store_activations[index];
+            self.domains.runtime.store_activations[index].package = package.to_string();
+            self.domains.runtime.store_activations[index].manifest_binding_hash =
+                manifest_binding_hash.to_string();
+            self.domains.runtime.store_activations[index].code_hash = code_hash.to_string();
+            self.domains.runtime.store_activations[index].code_publish_state = code_publish_state;
+            self.domains.runtime.store_activations[index].memory_layout_state = memory_layout_state;
+            self.domains.runtime.store_activations[index].hostcall_table_state =
+                hostcall_table_state;
+            self.domains.runtime.store_activations[index].trap_surface_state = trap_surface_state;
+            self.domains.runtime.store_activations[index].entrypoint_state = entrypoint_state;
+            self.domains.runtime.store_activations[index].blocked_by =
+                blocked_by.map(|value| value.to_string());
+            self.domains.runtime.store_activations[index].generation += 1;
+            let record = &self.domains.runtime.store_activations[index];
             self.event_log.push(
                 "activation",
                 EventKind::StoreActivationRecorded {
@@ -188,8 +211,8 @@ impl SemanticGraph {
             return record.id;
         }
 
-        let id = self.next_activation_id;
-        self.next_activation_id += 1;
+        let id = self.domains.runtime.next_activation_id;
+        self.domains.runtime.next_activation_id += 1;
         let record = StoreActivationRecord::new(
             id,
             store,
@@ -218,35 +241,37 @@ impl SemanticGraph {
                 generation: record.generation,
             },
         );
-        self.store_activations.push(record);
+        self.domains.runtime.store_activations.push(record);
         id
     }
     pub fn boundary_count(&self) -> usize {
-        self.boundaries.len()
+        self.domains.runtime.boundaries.len()
     }
     pub fn artifact_verification_count(&self) -> usize {
-        self.artifact_verifications.len()
+        self.domains.runtime.artifact_verifications.len()
     }
     pub fn store_activation_count(&self) -> usize {
-        self.store_activations.len()
+        self.domains.runtime.store_activations.len()
     }
     pub fn boundaries(&self) -> &[BoundaryRecord] {
-        &self.boundaries
+        &self.domains.runtime.boundaries
     }
     pub fn artifact_verifications(&self) -> &[ArtifactVerificationRecord] {
-        &self.artifact_verifications
+        &self.domains.runtime.artifact_verifications
     }
     pub fn artifact_verification_for_package(
         &self,
         package: &str,
     ) -> Option<&ArtifactVerificationRecord> {
-        self.artifact_verifications.iter().find(|record| record.package == package)
+        self.domains.runtime.artifact_verifications.iter().find(|record| record.package == package)
     }
     pub fn store_activations(&self) -> &[StoreActivationRecord] {
-        &self.store_activations
+        &self.domains.runtime.store_activations
     }
     pub fn store_activation_handle(&self, store: StoreId) -> Option<StoreActivationHandle> {
-        self.store_activations
+        self.domains
+            .runtime
+            .store_activations
             .iter()
             .find(|record| record.store == store)
             .map(|record| StoreActivationHandle::new(record.store, record.generation))
@@ -255,7 +280,12 @@ impl SemanticGraph {
         &mut self,
         handle: StoreActivationHandle,
     ) -> Result<(), GenerationCheckError> {
-        let activation = self.store_activations.iter().find(|record| record.store == handle.store);
+        let activation = self
+            .domains
+            .runtime
+            .store_activations
+            .iter()
+            .find(|record| record.store == handle.store);
         let actual = activation.map(|record| record.generation);
         let result = match activation {
             None => Err(GenerationCheckError::Missing),

@@ -22,17 +22,23 @@ impl SemanticGraph {
         if deciding_hart == target_hart {
             return Err("cross-hart scheduler decision requires distinct harts");
         }
-        if self.cross_hart_scheduler_decisions.iter().any(|record| record.id == cross_decision) {
+        if self
+            .domains
+            .scheduler
+            .cross_hart_scheduler_decisions
+            .iter()
+            .any(|record| record.id == cross_decision)
+        {
             return Err("cross-hart scheduler decision already exists");
         }
-        let Some(decision) = self.scheduler_decisions.iter().find(|record| {
+        let Some(decision) = self.domains.scheduler.scheduler_decisions.iter().find(|record| {
             record.id == scheduler_decision
                 && record.generation == scheduler_decision_generation
                 && record.state == SchedulerDecisionState::Recorded
         }) else {
             return Err("cross-hart scheduler decision base decision is missing");
         };
-        let Some(deciding) = self.harts.iter().find(|record| {
+        let Some(deciding) = self.domains.scheduler.harts.iter().find(|record| {
             record.id == deciding_hart && record.generation == deciding_hart_generation
         }) else {
             return Err("cross-hart scheduler decision deciding hart generation is missing");
@@ -40,17 +46,17 @@ impl SemanticGraph {
         if matches!(deciding.state, HartState::Offline | HartState::Faulted | HartState::Parked) {
             return Err("cross-hart scheduler decision deciding hart is inactive");
         }
-        let Some(target) = self
-            .harts
-            .iter()
-            .find(|record| record.id == target_hart && record.generation == target_hart_generation)
+        let Some(target) =
+            self.domains.scheduler.harts.iter().find(|record| {
+                record.id == target_hart && record.generation == target_hart_generation
+            })
         else {
             return Err("cross-hart scheduler decision target hart generation is missing");
         };
         if matches!(target.state, HartState::Offline | HartState::Faulted | HartState::Parked) {
             return Err("cross-hart scheduler decision target hart is inactive");
         }
-        let Some(queue) = self.runnable_queues.iter().find(|record| {
+        let Some(queue) = self.domains.scheduler.runnable_queues.iter().find(|record| {
             record.id == decision.queue
                 && record.generation == decision.queue_generation
                 && record.state == RunnableQueueState::Active
@@ -96,6 +102,8 @@ impl SemanticGraph {
             return false;
         }
         let Some(decision) = self
+            .domains
+            .scheduler
             .scheduler_decisions
             .iter()
             .find(|record| {
@@ -107,7 +115,7 @@ impl SemanticGraph {
         else {
             return false;
         };
-        let Some(queue) = self.runnable_queues.iter().find(|record| {
+        let Some(queue) = self.domains.scheduler.runnable_queues.iter().find(|record| {
             record.id == decision.queue
                 && record.generation == decision.queue_generation
                 && record.state == RunnableQueueState::Active
@@ -118,8 +126,8 @@ impl SemanticGraph {
             return false;
         };
 
-        self.next_cross_hart_scheduler_decision_id =
-            self.next_cross_hart_scheduler_decision_id.max(cross_decision + 1);
+        self.domains.scheduler.next_cross_hart_scheduler_decision_id =
+            self.domains.scheduler.next_cross_hart_scheduler_decision_id.max(cross_decision + 1);
         let event = self.event_log.push(
             "scheduler",
             EventKind::CrossHartSchedulerDecisionRecorded {
@@ -137,25 +145,27 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.cross_hart_scheduler_decisions.push(CrossHartSchedulerDecisionRecord {
-            id: cross_decision,
-            scheduler_decision,
-            scheduler_decision_generation,
-            deciding_hart,
-            deciding_hart_generation,
-            target_hart,
-            target_hart_generation,
-            queue: decision.queue,
-            queue_generation: decision.queue_generation,
-            queue_owner_hart_generation,
-            selected_activation: decision.selected_activation,
-            selected_activation_generation: decision.selected_activation_generation,
-            generation: 1,
-            state: CrossHartSchedulerDecisionState::Recorded,
-            decided_at_event: event,
-            reason: reason.to_string(),
-            note: note.to_string(),
-        });
+        self.domains.scheduler.cross_hart_scheduler_decisions.push(
+            CrossHartSchedulerDecisionRecord {
+                id: cross_decision,
+                scheduler_decision,
+                scheduler_decision_generation,
+                deciding_hart,
+                deciding_hart_generation,
+                target_hart,
+                target_hart_generation,
+                queue: decision.queue,
+                queue_generation: decision.queue_generation,
+                queue_owner_hart_generation,
+                selected_activation: decision.selected_activation,
+                selected_activation_generation: decision.selected_activation_generation,
+                generation: 1,
+                state: CrossHartSchedulerDecisionState::Recorded,
+                decided_at_event: event,
+                reason: reason.to_string(),
+                note: note.to_string(),
+            },
+        );
         let _ = self.push_hart_event_attribution(
             deciding_hart,
             deciding_hart_generation,
@@ -178,11 +188,11 @@ impl SemanticGraph {
     }
 
     pub fn cross_hart_scheduler_decisions(&self) -> &[CrossHartSchedulerDecisionRecord] {
-        &self.cross_hart_scheduler_decisions
+        &self.domains.scheduler.cross_hart_scheduler_decisions
     }
 
     pub fn cross_hart_scheduler_decision_count(&self) -> usize {
-        self.cross_hart_scheduler_decisions.len()
+        self.domains.scheduler.cross_hart_scheduler_decisions.len()
     }
 
     #[cfg(test)]
@@ -192,6 +202,8 @@ impl SemanticGraph {
         event: EventId,
     ) {
         if let Some(record) = self
+            .domains
+            .scheduler
             .cross_hart_scheduler_decisions
             .iter_mut()
             .find(|record| record.id == cross_decision)
@@ -201,7 +213,7 @@ impl SemanticGraph {
     }
 
     pub fn check_cross_hart_scheduler_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for cross in &self.cross_hart_scheduler_decisions {
+        for cross in &self.domains.scheduler.cross_hart_scheduler_decisions {
             if cross.id == 0
                 || cross.generation == 0
                 || cross.scheduler_decision == 0
@@ -220,7 +232,7 @@ impl SemanticGraph {
                     cross_decision: cross.id,
                 });
             }
-            let Some(decision) = self.scheduler_decisions.iter().find(|record| {
+            let Some(decision) = self.domains.scheduler.scheduler_decisions.iter().find(|record| {
                 record.id == cross.scheduler_decision
                     && record.generation == cross.scheduler_decision_generation
                     && record.state != SchedulerDecisionState::Dropped
@@ -240,7 +252,8 @@ impl SemanticGraph {
                     decision: cross.scheduler_decision,
                 });
             }
-            let Some(deciding) = self.harts.iter().find(|record| record.id == cross.deciding_hart)
+            let Some(deciding) =
+                self.domains.scheduler.harts.iter().find(|record| record.id == cross.deciding_hart)
             else {
                 return Err(SemanticInvariantError::CrossHartSchedulerDecisionMissingHart {
                     cross_decision: cross.id,
@@ -255,7 +268,8 @@ impl SemanticGraph {
                     },
                 );
             }
-            let Some(target) = self.harts.iter().find(|record| record.id == cross.target_hart)
+            let Some(target) =
+                self.domains.scheduler.harts.iter().find(|record| record.id == cross.target_hart)
             else {
                 return Err(SemanticInvariantError::CrossHartSchedulerDecisionMissingHart {
                     cross_decision: cross.id,
@@ -270,7 +284,12 @@ impl SemanticGraph {
                     },
                 );
             }
-            let Some(queue) = self.runnable_queues.iter().find(|record| record.id == cross.queue)
+            let Some(queue) = self
+                .domains
+                .scheduler
+                .runnable_queues
+                .iter()
+                .find(|record| record.id == cross.queue)
             else {
                 return Err(SemanticInvariantError::CrossHartSchedulerDecisionQueueOwnerMismatch {
                     cross_decision: cross.id,
@@ -323,12 +342,12 @@ impl SemanticGraph {
                     cross_decision: cross.id,
                 });
             }
-            if !self.hart_event_attributions.iter().any(|attribution| {
+            if !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == cross.decided_at_event
                     && attribution.hart == cross.deciding_hart
                     && attribution.hart_generation == cross.deciding_hart_generation
                     && attribution.event_kind == "CrossHartSchedulerDecisionSourceRecorded"
-            }) || !self.hart_event_attributions.iter().any(|attribution| {
+            }) || !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == cross.decided_at_event
                     && attribution.hart == cross.target_hart
                     && attribution.hart_generation == cross.target_hart_generation

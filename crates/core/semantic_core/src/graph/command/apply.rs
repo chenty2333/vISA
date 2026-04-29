@@ -3107,8 +3107,9 @@ impl SemanticGraph {
                 true
             }
             SemanticCommand::BeginCleanup { cleanup, store, generation, reason } => {
-                self.next_transaction_id = self.next_transaction_id.max(cleanup + 1);
-                self.transactions.push(SemanticTransactionRecord {
+                self.domains.lifecycle.next_transaction_id =
+                    self.domains.lifecycle.next_transaction_id.max(cleanup + 1);
+                self.domains.lifecycle.transactions.push(SemanticTransactionRecord {
                     id: cleanup,
                     label: format!("cleanup:{reason}"),
                     store: Some(store),

@@ -58,7 +58,7 @@ impl SemanticGraph {
         {
             return Err("fs wait owner store does not match file handle capability");
         }
-        if !self.stores.iter().any(|record| {
+        if !self.domains.lifecycle.stores.iter().any(|record| {
             record.id == capability_record.owner_store
                 && record.generation == capability_record.owner_store_generation
                 && record.state != StoreState::Dead
@@ -273,7 +273,7 @@ impl SemanticGraph {
                     wait: record.wait,
                 });
             };
-            let Some(store_record) = self.stores.iter().find(|store| {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.owner_store && store.generation == record.owner_store_generation
             }) else {
                 return Err(SemanticInvariantError::FsWaitMissingStore {

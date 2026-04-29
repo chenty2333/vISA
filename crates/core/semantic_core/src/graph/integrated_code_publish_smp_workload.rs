@@ -56,23 +56,28 @@ impl SemanticGraph {
             return Err("integrated code-publish/SMP workload refs must carry generations");
         }
 
-        let Some(stress) = self.smp_stress_runs.iter().find(|record| {
+        let Some(stress) = self.domains.scheduler.smp_stress_runs.iter().find(|record| {
             record.id == smp_stress_run && record.generation == smp_stress_run_generation
         }) else {
             return Err("integrated code-publish/SMP workload missing stress evidence");
         };
-        let Some(barrier) = self.smp_code_publish_barriers.iter().find(|record| {
-            record.id == smp_code_publish_barrier
-                && record.generation == smp_code_publish_barrier_generation
-        }) else {
+        let Some(barrier) =
+            self.domains.scheduler.smp_code_publish_barriers.iter().find(|record| {
+                record.id == smp_code_publish_barrier
+                    && record.generation == smp_code_publish_barrier_generation
+            })
+        else {
             return Err("integrated code-publish/SMP workload missing code publish barrier");
         };
-        let Some(rendezvous) = self.stop_the_world_rendezvous.iter().find(|record| {
-            record.id == barrier.rendezvous && record.generation == barrier.rendezvous_generation
-        }) else {
+        let Some(rendezvous) =
+            self.domains.scheduler.stop_the_world_rendezvous.iter().find(|record| {
+                record.id == barrier.rendezvous
+                    && record.generation == barrier.rendezvous_generation
+            })
+        else {
             return Err("integrated code-publish/SMP workload missing publish rendezvous");
         };
-        let Some(safe_point) = self.smp_safe_points.iter().find(|record| {
+        let Some(safe_point) = self.domains.scheduler.smp_safe_points.iter().find(|record| {
             record.id == rendezvous.safe_point
                 && record.generation == rendezvous.safe_point_generation
         }) else {
@@ -142,20 +147,25 @@ impl SemanticGraph {
             return false;
         }
 
-        let Some(stress) = self.smp_stress_runs.iter().find(|record| {
+        let Some(stress) = self.domains.scheduler.smp_stress_runs.iter().find(|record| {
             record.id == smp_stress_run && record.generation == smp_stress_run_generation
         }) else {
             return false;
         };
-        let Some(barrier) = self.smp_code_publish_barriers.iter().find(|record| {
-            record.id == smp_code_publish_barrier
-                && record.generation == smp_code_publish_barrier_generation
-        }) else {
+        let Some(barrier) =
+            self.domains.scheduler.smp_code_publish_barriers.iter().find(|record| {
+                record.id == smp_code_publish_barrier
+                    && record.generation == smp_code_publish_barrier_generation
+            })
+        else {
             return false;
         };
-        let Some(rendezvous) = self.stop_the_world_rendezvous.iter().find(|record| {
-            record.id == barrier.rendezvous && record.generation == barrier.rendezvous_generation
-        }) else {
+        let Some(rendezvous) =
+            self.domains.scheduler.stop_the_world_rendezvous.iter().find(|record| {
+                record.id == barrier.rendezvous
+                    && record.generation == barrier.rendezvous_generation
+            })
+        else {
             return false;
         };
 
@@ -279,7 +289,9 @@ impl SemanticGraph {
                     "smp-stress-run",
                     record.smp_stress_run,
                     record.smp_stress_run_generation,
-                    self.smp_stress_runs
+                    self.domains
+                        .scheduler
+                        .smp_stress_runs
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),
@@ -288,7 +300,9 @@ impl SemanticGraph {
                     "smp-code-publish-barrier",
                     record.smp_code_publish_barrier,
                     record.smp_code_publish_barrier_generation,
-                    self.smp_code_publish_barriers
+                    self.domains
+                        .scheduler
+                        .smp_code_publish_barriers
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),
@@ -297,7 +311,9 @@ impl SemanticGraph {
                     "stop-the-world-rendezvous",
                     record.publish_rendezvous,
                     record.publish_rendezvous_generation,
-                    self.stop_the_world_rendezvous
+                    self.domains
+                        .scheduler
+                        .stop_the_world_rendezvous
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),
@@ -306,7 +322,9 @@ impl SemanticGraph {
                     "smp-safe-point",
                     record.publish_safe_point,
                     record.publish_safe_point_generation,
-                    self.smp_safe_points
+                    self.domains
+                        .scheduler
+                        .smp_safe_points
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),

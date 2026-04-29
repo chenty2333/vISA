@@ -23,7 +23,12 @@ impl SemanticGraph {
         if framebuffer_dirty_region == 0 {
             return Err("framebuffer dirty region id=0 is invalid");
         }
-        if self.framebuffer_dirty_regions.iter().any(|record| record.id == framebuffer_dirty_region)
+        if self
+            .domains
+            .display
+            .framebuffer_dirty_regions
+            .iter()
+            .any(|record| record.id == framebuffer_dirty_region)
         {
             return Err("framebuffer dirty region already exists");
         }
@@ -52,17 +57,17 @@ impl SemanticGraph {
                 }
             }
         }
-        let Some(store_record) = self
-            .stores
-            .iter()
-            .find(|store| store.id == owner_store && store.generation == owner_store_generation)
+        let Some(store_record) =
+            self.domains.lifecycle.stores.iter().find(|store| {
+                store.id == owner_store && store.generation == owner_store_generation
+            })
         else {
             return Err("framebuffer dirty region owner store generation is missing");
         };
         if store_record.state == StoreState::Dead {
             return Err("framebuffer dirty region owner store is dead");
         }
-        let Some(write_record) = self.framebuffer_writes.iter().find(|write| {
+        let Some(write_record) = self.domains.display.framebuffer_writes.iter().find(|write| {
             write.id == framebuffer_write
                 && write.generation == framebuffer_write_generation
                 && write.state == FramebufferWriteState::Applied
@@ -82,11 +87,13 @@ impl SemanticGraph {
             return Err("framebuffer dirty region write binding mismatch");
         }
         if let FramebufferDirtyRegionState::Clean = state {
-            let Some(flush_record) = self.framebuffer_flush_regions.iter().find(|flush| {
-                Some(flush.id) == framebuffer_flush_region
-                    && Some(flush.generation) == framebuffer_flush_region_generation
-                    && flush.state == FramebufferFlushRegionState::Applied
-            }) else {
+            let Some(flush_record) =
+                self.domains.display.framebuffer_flush_regions.iter().find(|flush| {
+                    Some(flush.id) == framebuffer_flush_region
+                        && Some(flush.generation) == framebuffer_flush_region_generation
+                        && flush.state == FramebufferFlushRegionState::Applied
+                })
+            else {
                 return Err("framebuffer dirty region flush generation is missing");
             };
             if flush_record.owner_store != owner_store
@@ -114,7 +121,7 @@ impl SemanticGraph {
                 return Err("framebuffer dirty region flush must follow write event");
             }
         }
-        if self.framebuffer_dirty_regions.iter().any(|record| {
+        if self.domains.display.framebuffer_dirty_regions.iter().any(|record| {
             record.framebuffer_write == framebuffer_write
                 && record.framebuffer_write_generation == framebuffer_write_generation
                 && record.state == FramebufferDirtyRegionState::Dirty
@@ -171,6 +178,8 @@ impl SemanticGraph {
             return false;
         }
         let write_record = self
+            .domains
+            .display
             .framebuffer_writes
             .iter()
             .find(|write| {
@@ -179,7 +188,9 @@ impl SemanticGraph {
             .expect("validated framebuffer dirty region write exists")
             .clone();
         let cleaned_at_event = framebuffer_flush_region.and_then(|flush_id| {
-            self.framebuffer_flush_regions
+            self.domains
+                .display
+                .framebuffer_flush_regions
                 .iter()
                 .find(|flush| {
                     flush.id == flush_id
@@ -188,8 +199,11 @@ impl SemanticGraph {
                 .map(|flush| flush.recorded_at_event)
         });
         let generation = 1;
-        self.next_framebuffer_dirty_region_id =
-            self.next_framebuffer_dirty_region_id.max(framebuffer_dirty_region.saturating_add(1));
+        self.domains.display.next_framebuffer_dirty_region_id = self
+            .domains
+            .display
+            .next_framebuffer_dirty_region_id
+            .max(framebuffer_dirty_region.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::FramebufferDirtyRegionTracked {
@@ -218,7 +232,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.framebuffer_dirty_regions.push(FramebufferDirtyRegionRecord {
+        self.domains.display.framebuffer_dirty_regions.push(FramebufferDirtyRegionRecord {
             id: framebuffer_dirty_region,
             owner_store,
             owner_store_generation,
@@ -251,16 +265,16 @@ impl SemanticGraph {
     }
 
     pub fn framebuffer_dirty_regions(&self) -> &[FramebufferDirtyRegionRecord] {
-        &self.framebuffer_dirty_regions
+        &self.domains.display.framebuffer_dirty_regions
     }
 
     pub fn framebuffer_dirty_region_count(&self) -> usize {
-        self.framebuffer_dirty_regions.len()
+        self.domains.display.framebuffer_dirty_regions.len()
     }
 
     pub fn check_framebuffer_dirty_region_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.framebuffer_dirty_regions {
-            let Some(store_record) = self.stores.iter().find(|store| {
+        for record in &self.domains.display.framebuffer_dirty_regions {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.owner_store && store.generation == record.owner_store_generation
             }) else {
                 return Err(SemanticInvariantError::FramebufferDirtyRegionMissingStore {
@@ -268,7 +282,7 @@ impl SemanticGraph {
                     store: record.owner_store,
                 });
             };
-            let Some(write_record) = self.framebuffer_writes.iter().find(|write| {
+            let Some(write_record) = self.domains.display.framebuffer_writes.iter().find(|write| {
                 write.id == record.framebuffer_write
                     && write.generation == record.framebuffer_write_generation
             }) else {
@@ -283,7 +297,9 @@ impl SemanticGraph {
                 record.framebuffer_flush_region_generation,
             ) {
                 (FramebufferDirtyRegionState::Clean, Some(flush), Some(generation)) => Some(
-                    self.framebuffer_flush_regions
+                    self.domains
+                        .display
+                        .framebuffer_flush_regions
                         .iter()
                         .find(|entry| entry.id == flush && entry.generation == generation)
                         .ok_or(SemanticInvariantError::FramebufferDirtyRegionMissingFlush {
@@ -430,6 +446,8 @@ impl SemanticGraph {
         framebuffer_flush_region_generation: Option<Generation>,
     ) {
         if let Some(record) = self
+            .domains
+            .display
             .framebuffer_dirty_regions
             .iter_mut()
             .find(|record| record.id == framebuffer_dirty_region)

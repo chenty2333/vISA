@@ -28,16 +28,18 @@ impl SemanticGraph {
             return Err("stop-the-world rendezvous must stop new activations");
         }
         if self
+            .domains
+            .scheduler
             .stop_the_world_rendezvous
             .iter()
             .any(|record| record.id == rendezvous || record.epoch == epoch)
         {
             return Err("stop-the-world rendezvous already exists");
         }
-        let Some(safe_point_record) = self
-            .smp_safe_points
-            .iter()
-            .find(|record| record.id == safe_point && record.generation == safe_point_generation)
+        let Some(safe_point_record) =
+            self.domains.scheduler.smp_safe_points.iter().find(|record| {
+                record.id == safe_point && record.generation == safe_point_generation
+            })
         else {
             return Err("stop-the-world rendezvous safe point is missing");
         };
@@ -59,7 +61,7 @@ impl SemanticGraph {
             if !participant_harts.insert(participant.hart) {
                 return Err("stop-the-world rendezvous participant list is invalid");
             }
-            let Some(current) = self.harts.iter().find(|hart| {
+            let Some(current) = self.domains.scheduler.harts.iter().find(|hart| {
                 hart.id == participant.hart && hart.generation == participant.hart_generation
             }) else {
                 return Err("stop-the-world rendezvous participant generation is stale");
@@ -72,6 +74,8 @@ impl SemanticGraph {
             }
         }
         for hart in self
+            .domains
+            .scheduler
             .harts
             .iter()
             .filter(|record| !matches!(record.state, HartState::Offline | HartState::Faulted))
@@ -111,6 +115,8 @@ impl SemanticGraph {
         }
 
         let Some(safe_point_record) = self
+            .domains
+            .scheduler
             .smp_safe_points
             .iter()
             .find(|record| record.id == safe_point && record.generation == safe_point_generation)
@@ -129,8 +135,8 @@ impl SemanticGraph {
             })
             .collect::<Vec<_>>();
 
-        self.next_stop_the_world_rendezvous_id =
-            self.next_stop_the_world_rendezvous_id.max(rendezvous + 1);
+        self.domains.scheduler.next_stop_the_world_rendezvous_id =
+            self.domains.scheduler.next_stop_the_world_rendezvous_id.max(rendezvous + 1);
         let event = self.event_log.push(
             "scheduler",
             EventKind::StopTheWorldRendezvousCompleted {
@@ -144,7 +150,7 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.stop_the_world_rendezvous.push(StopTheWorldRendezvousRecord {
+        self.domains.scheduler.stop_the_world_rendezvous.push(StopTheWorldRendezvousRecord {
             id: rendezvous,
             epoch,
             safe_point,
@@ -174,11 +180,11 @@ impl SemanticGraph {
     }
 
     pub fn stop_the_world_rendezvous(&self) -> &[StopTheWorldRendezvousRecord] {
-        &self.stop_the_world_rendezvous
+        &self.domains.scheduler.stop_the_world_rendezvous
     }
 
     pub fn stop_the_world_rendezvous_count(&self) -> usize {
-        self.stop_the_world_rendezvous.len()
+        self.domains.scheduler.stop_the_world_rendezvous.len()
     }
 
     #[cfg(test)]
@@ -187,8 +193,12 @@ impl SemanticGraph {
         rendezvous: StopTheWorldRendezvousId,
         event: EventId,
     ) {
-        if let Some(record) =
-            self.stop_the_world_rendezvous.iter_mut().find(|record| record.id == rendezvous)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .stop_the_world_rendezvous
+            .iter_mut()
+            .find(|record| record.id == rendezvous)
         {
             record.completed_at_event = event;
         }
@@ -196,7 +206,7 @@ impl SemanticGraph {
 
     pub fn check_stop_the_world_invariants(&self) -> Result<(), SemanticInvariantError> {
         let mut epochs = BTreeSet::new();
-        for rendezvous in &self.stop_the_world_rendezvous {
+        for rendezvous in &self.domains.scheduler.stop_the_world_rendezvous {
             if rendezvous.id == 0
                 || rendezvous.epoch == 0
                 || !epochs.insert(rendezvous.epoch)
@@ -209,7 +219,7 @@ impl SemanticGraph {
                     rendezvous: rendezvous.id,
                 });
             }
-            let Some(safe_point) = self.smp_safe_points.iter().find(|record| {
+            let Some(safe_point) = self.domains.scheduler.smp_safe_points.iter().find(|record| {
                 record.id == rendezvous.safe_point
                     && record.generation == rendezvous.safe_point_generation
             }) else {
@@ -279,8 +289,12 @@ impl SemanticGraph {
                         },
                     );
                 }
-                let Some(current_hart) =
-                    self.harts.iter().find(|record| record.id == participant.hart)
+                let Some(current_hart) = self
+                    .domains
+                    .scheduler
+                    .harts
+                    .iter()
+                    .find(|record| record.id == participant.hart)
                 else {
                     return Err(
                         SemanticInvariantError::StopTheWorldRendezvousParticipantMismatch {
@@ -302,7 +316,7 @@ impl SemanticGraph {
                         },
                     );
                 }
-                if !self.hart_event_attributions.iter().any(|attribution| {
+                if !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                     attribution.event == rendezvous.completed_at_event
                         && attribution.hart == participant.hart
                         && attribution.hart_generation == participant.hart_generation

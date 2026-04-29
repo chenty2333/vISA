@@ -1,0 +1,12 @@
+[package]
+name = "osctl-cli"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[[bin]]
+name = "osctl"
+path = "src/main.rs"
+
+[dependencies]
+osctl-view.workspace = true

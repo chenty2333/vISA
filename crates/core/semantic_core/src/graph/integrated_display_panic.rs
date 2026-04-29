@@ -104,7 +104,7 @@ impl SemanticGraph {
             return Err("integrated display panic requires clean panic-ring extraction evidence");
         }
 
-        let Some(frame) = self.display_panic_last_frames.iter().find(|record| {
+        let Some(frame) = self.domains.display.display_panic_last_frames.iter().find(|record| {
             record.id == display_panic_last_frame
                 && record.generation == display_panic_last_frame_generation
         }) else {
@@ -183,7 +183,7 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(frame) = self.display_panic_last_frames.iter().find(|record| {
+        let Some(frame) = self.domains.display.display_panic_last_frames.iter().find(|record| {
             record.id == display_panic_last_frame
                 && record.generation == display_panic_last_frame_generation
         }) else {

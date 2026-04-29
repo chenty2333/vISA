@@ -23,7 +23,7 @@ impl SemanticGraph {
             return Err("integrated SIMD migration refs must carry generations");
         }
 
-        let Some(migration) = self.activation_migrations.iter().find(|record| {
+        let Some(migration) = self.domains.scheduler.activation_migrations.iter().find(|record| {
             record.id == activation_migration
                 && record.generation == activation_migration_generation
         }) else {
@@ -51,12 +51,12 @@ impl SemanticGraph {
             );
         }
 
-        let Some(source_vector) = self.vector_states.iter().find(|record| {
+        let Some(source_vector) = self.domains.simd.vector_states.iter().find(|record| {
             record.id == source_vector_ref.id && record.generation == source_vector_ref.generation
         }) else {
             return Err("integrated SIMD migration missing source vector state");
         };
-        let Some(migrated_vector) = self.vector_states.iter().find(|record| {
+        let Some(migrated_vector) = self.domains.simd.vector_states.iter().find(|record| {
             record.id == migrated_vector_ref.id
                 && record.generation == migrated_vector_ref.generation
         }) else {
@@ -86,7 +86,7 @@ impl SemanticGraph {
             return Err("integrated SIMD migration vector state attribution mismatch");
         }
 
-        let Some(feature) = self.target_feature_sets.iter().find(|record| {
+        let Some(feature) = self.domains.simd.target_feature_sets.iter().find(|record| {
             record.id == migrated_vector.target_feature_set.id
                 && record.generation == migrated_vector.target_feature_set.generation
         }) else {
@@ -101,7 +101,7 @@ impl SemanticGraph {
             return Err("integrated SIMD migration target feature set mismatch");
         }
 
-        if self.vector_states.iter().any(|record| {
+        if self.domains.simd.vector_states.iter().any(|record| {
             record.owner_activation
                 == ContractObjectRef::new(
                     ContractObjectKind::Activation,
@@ -114,7 +114,7 @@ impl SemanticGraph {
                 "integrated SIMD migration leaves live vector state on old activation generation",
             );
         }
-        if !self.activation_contexts.iter().any(|record| {
+        if !self.domains.scheduler.activation_contexts.iter().any(|record| {
             record.id == context
                 && record.generation == context_generation_after
                 && record.activation == migration.activation
@@ -150,7 +150,7 @@ impl SemanticGraph {
             return false;
         }
 
-        let Some(migration) = self.activation_migrations.iter().find(|record| {
+        let Some(migration) = self.domains.scheduler.activation_migrations.iter().find(|record| {
             record.id == activation_migration
                 && record.generation == activation_migration_generation
         }) else {
@@ -168,7 +168,7 @@ impl SemanticGraph {
         let Some(context_generation_after) = migration.context_generation_after else {
             return false;
         };
-        let Some(migrated_vector) = self.vector_states.iter().find(|record| {
+        let Some(migrated_vector) = self.domains.simd.vector_states.iter().find(|record| {
             record.id == migrated_vector_state.id
                 && record.generation == migrated_vector_state.generation
         }) else {

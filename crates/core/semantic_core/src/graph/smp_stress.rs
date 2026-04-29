@@ -12,7 +12,7 @@ impl SemanticGraph {
         if run == 0 {
             return Err("smp stress run id=0 is invalid");
         }
-        if self.smp_stress_runs.iter().any(|record| record.id == run) {
+        if self.domains.scheduler.smp_stress_runs.iter().any(|record| record.id == run) {
             return Err("smp stress run already exists");
         }
         if scenario.is_empty() {
@@ -119,7 +119,8 @@ impl SemanticGraph {
         let safe_point_count = self.smp_safe_point_count() as u32;
         let rendezvous_count = self.stop_the_world_rendezvous_count() as u32;
         let generation = 1;
-        self.next_smp_stress_run_id = self.next_smp_stress_run_id.max(run + 1);
+        self.domains.scheduler.next_smp_stress_run_id =
+            self.domains.scheduler.next_smp_stress_run_id.max(run + 1);
         let recorded_at_event = self.event_log.push(
             "scheduler",
             EventKind::SmpStressRunRecorded {
@@ -133,7 +134,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.smp_stress_runs.push(SmpStressRunRecord {
+        self.domains.scheduler.smp_stress_runs.push(SmpStressRunRecord {
             id: run,
             scenario: scenario.to_string(),
             iterations,
@@ -175,11 +176,11 @@ impl SemanticGraph {
     }
 
     pub fn smp_stress_runs(&self) -> &[SmpStressRunRecord] {
-        &self.smp_stress_runs
+        &self.domains.scheduler.smp_stress_runs
     }
 
     pub fn smp_stress_run_count(&self) -> usize {
-        self.smp_stress_runs.len()
+        self.domains.scheduler.smp_stress_runs.len()
     }
 
     #[cfg(test)]
@@ -188,7 +189,9 @@ impl SemanticGraph {
         run: SmpStressRunId,
         property_failures: u32,
     ) {
-        if let Some(record) = self.smp_stress_runs.iter_mut().find(|record| record.id == run) {
+        if let Some(record) =
+            self.domains.scheduler.smp_stress_runs.iter_mut().find(|record| record.id == run)
+        {
             record.property_failures = property_failures;
         }
     }
@@ -199,13 +202,15 @@ impl SemanticGraph {
         run: SmpStressRunId,
         snapshot_barriers: u32,
     ) {
-        if let Some(record) = self.smp_stress_runs.iter_mut().find(|record| record.id == run) {
+        if let Some(record) =
+            self.domains.scheduler.smp_stress_runs.iter_mut().find(|record| record.id == run)
+        {
             record.observed_snapshot_barrier_count = snapshot_barriers;
         }
     }
 
     pub fn check_smp_stress_run_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.smp_stress_runs {
+        for record in &self.domains.scheduler.smp_stress_runs {
             if record.id == 0
                 || record.generation == 0
                 || record.scenario.is_empty()
@@ -258,56 +263,84 @@ impl SemanticGraph {
                 "smp-safe-point",
                 record.last_safe_point,
                 record.last_safe_point_generation,
-                self.smp_safe_points.iter().map(|item| (item.id, item.generation)),
+                self.domains
+                    .scheduler
+                    .smp_safe_points
+                    .iter()
+                    .map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "stop-the-world-rendezvous",
                 record.last_rendezvous,
                 record.last_rendezvous_generation,
-                self.stop_the_world_rendezvous.iter().map(|item| (item.id, item.generation)),
+                self.domains
+                    .scheduler
+                    .stop_the_world_rendezvous
+                    .iter()
+                    .map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "smp-code-publish-barrier",
                 record.last_code_publish_barrier,
                 record.last_code_publish_barrier_generation,
-                self.smp_code_publish_barriers.iter().map(|item| (item.id, item.generation)),
+                self.domains
+                    .scheduler
+                    .smp_code_publish_barriers
+                    .iter()
+                    .map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "smp-cleanup-quiescence",
                 record.last_cleanup_quiescence,
                 record.last_cleanup_quiescence_generation,
-                self.smp_cleanup_quiescence.iter().map(|item| (item.id, item.generation)),
+                self.domains
+                    .scheduler
+                    .smp_cleanup_quiescence
+                    .iter()
+                    .map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "smp-snapshot-barrier",
                 record.last_snapshot_barrier,
                 record.last_snapshot_barrier_generation,
-                self.smp_snapshot_barriers.iter().map(|item| (item.id, item.generation)),
+                self.domains
+                    .scheduler
+                    .smp_snapshot_barriers
+                    .iter()
+                    .map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "activation-migration",
                 record.last_activation_migration,
                 record.last_activation_migration_generation,
-                self.activation_migrations.iter().map(|item| (item.id, item.generation)),
+                self.domains
+                    .scheduler
+                    .activation_migrations
+                    .iter()
+                    .map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "remote-preempt",
                 record.last_remote_preempt,
                 record.last_remote_preempt_generation,
-                self.remote_preempts.iter().map(|item| (item.id, item.generation)),
+                self.domains
+                    .scheduler
+                    .remote_preempts
+                    .iter()
+                    .map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "remote-park",
                 record.last_remote_park,
                 record.last_remote_park_generation,
-                self.remote_parks.iter().map(|item| (item.id, item.generation)),
+                self.domains.scheduler.remote_parks.iter().map(|item| (item.id, item.generation)),
             )?;
             if record.observed_safe_point_count as usize > self.smp_safe_point_count()
                 || record.observed_rendezvous_count as usize
@@ -330,7 +363,9 @@ impl SemanticGraph {
     }
 
     fn active_hart_count(&self) -> usize {
-        self.harts
+        self.domains
+            .scheduler
+            .harts
             .iter()
             .filter(|record| !matches!(record.state, HartState::Offline | HartState::Faulted))
             .count()
@@ -354,34 +389,54 @@ impl SemanticGraph {
     }
 
     fn latest_smp_safe_point_ref(&self) -> Option<(SmpSafePointId, Generation)> {
-        self.smp_safe_points.last().map(|record| (record.id, record.generation))
+        self.domains.scheduler.smp_safe_points.last().map(|record| (record.id, record.generation))
     }
 
     fn latest_rendezvous_ref(&self) -> Option<(StopTheWorldRendezvousId, Generation)> {
-        self.stop_the_world_rendezvous.last().map(|record| (record.id, record.generation))
+        self.domains
+            .scheduler
+            .stop_the_world_rendezvous
+            .last()
+            .map(|record| (record.id, record.generation))
     }
 
     fn latest_smp_code_publish_barrier_ref(&self) -> Option<(SmpCodePublishBarrierId, Generation)> {
-        self.smp_code_publish_barriers.last().map(|record| (record.id, record.generation))
+        self.domains
+            .scheduler
+            .smp_code_publish_barriers
+            .last()
+            .map(|record| (record.id, record.generation))
     }
 
     fn latest_smp_cleanup_quiescence_ref(&self) -> Option<(SmpCleanupQuiescenceId, Generation)> {
-        self.smp_cleanup_quiescence.last().map(|record| (record.id, record.generation))
+        self.domains
+            .scheduler
+            .smp_cleanup_quiescence
+            .last()
+            .map(|record| (record.id, record.generation))
     }
 
     fn latest_smp_snapshot_barrier_ref(&self) -> Option<(SmpSnapshotBarrierId, Generation)> {
-        self.smp_snapshot_barriers.last().map(|record| (record.id, record.generation))
+        self.domains
+            .scheduler
+            .smp_snapshot_barriers
+            .last()
+            .map(|record| (record.id, record.generation))
     }
 
     fn latest_activation_migration_ref(&self) -> Option<(ActivationMigrationId, Generation)> {
-        self.activation_migrations.last().map(|record| (record.id, record.generation))
+        self.domains
+            .scheduler
+            .activation_migrations
+            .last()
+            .map(|record| (record.id, record.generation))
     }
 
     fn latest_remote_preempt_ref(&self) -> Option<(RemotePreemptId, Generation)> {
-        self.remote_preempts.last().map(|record| (record.id, record.generation))
+        self.domains.scheduler.remote_preempts.last().map(|record| (record.id, record.generation))
     }
 
     fn latest_remote_park_ref(&self) -> Option<(RemoteParkId, Generation)> {
-        self.remote_parks.last().map(|record| (record.id, record.generation))
+        self.domains.scheduler.remote_parks.last().map(|record| (record.id, record.generation))
     }
 }

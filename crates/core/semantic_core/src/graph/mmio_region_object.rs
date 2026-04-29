@@ -35,7 +35,8 @@ impl SemanticGraph {
         }) else {
             return Err("mmio region object device generation is missing or inactive");
         };
-        let Some(resource_record) = self.resources.iter().find(|record| record.id == resource)
+        let Some(resource_record) =
+            self.domains.resource.resources.iter().find(|record| record.id == resource)
         else {
             return Err("mmio region object resource is missing");
         };
@@ -144,7 +145,7 @@ impl SemanticGraph {
                     device: record.device,
                 });
             };
-            let Some(resource_record) = self.resources.iter().find(|resource| {
+            let Some(resource_record) = self.domains.resource.resources.iter().find(|resource| {
                 resource.id == record.resource && resource.generation == record.resource_generation
             }) else {
                 return Err(SemanticInvariantError::MmioRegionObjectMissingResource {

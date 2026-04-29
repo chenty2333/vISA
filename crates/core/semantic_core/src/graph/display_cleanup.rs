@@ -26,7 +26,7 @@ impl SemanticGraph {
         {
             return Err("display cleanup requires exact refs and reason");
         }
-        if self.display_cleanups.iter().any(|record| {
+        if self.domains.display.display_cleanups.iter().any(|record| {
             record.id == cleanup
                 && (record.owner_store != owner_store
                     || record.owner_store_generation != owner_store_generation
@@ -39,7 +39,7 @@ impl SemanticGraph {
         }) {
             return Err("display cleanup id is already used for a different target");
         }
-        if self.display_cleanups.iter().any(|record| {
+        if self.domains.display.display_cleanups.iter().any(|record| {
             record.owner_store == owner_store
                 && record.owner_store_generation == owner_store_generation
                 && record.display_capability == display_capability
@@ -52,21 +52,23 @@ impl SemanticGraph {
         }) {
             return Ok(());
         }
-        let Some(store_record) = self
-            .stores
-            .iter()
-            .find(|store| store.id == owner_store && store.generation == owner_store_generation)
+        let Some(store_record) =
+            self.domains.lifecycle.stores.iter().find(|store| {
+                store.id == owner_store && store.generation == owner_store_generation
+            })
         else {
             return Err("display cleanup owner store generation is missing");
         };
         if store_record.state == StoreState::Dead {
             return Err("display cleanup owner store is dead");
         }
-        let Some(display_capability_record) = self.display_capabilities.iter().find(|record| {
-            record.id == display_capability
-                && record.generation == display_capability_generation
-                && record.state == DisplayCapabilityState::Active
-        }) else {
+        let Some(display_capability_record) =
+            self.domains.display.display_capabilities.iter().find(|record| {
+                record.id == display_capability
+                    && record.generation == display_capability_generation
+                    && record.state == DisplayCapabilityState::Active
+            })
+        else {
             return Err("display cleanup active display capability generation is missing");
         };
         if display_capability_record.owner_store != owner_store
@@ -90,7 +92,7 @@ impl SemanticGraph {
         {
             return Err("display cleanup capability ledger binding mismatch");
         }
-        if !self.display_objects.iter().any(|record| {
+        if !self.domains.display.display_objects.iter().any(|record| {
             record.id == display
                 && record.generation == display_generation
                 && record.framebuffer == framebuffer
@@ -99,7 +101,7 @@ impl SemanticGraph {
         }) {
             return Err("display cleanup display generation is missing");
         }
-        if !self.framebuffer_objects.iter().any(|record| {
+        if !self.domains.display.framebuffer_objects.iter().any(|record| {
             record.id == framebuffer
                 && record.generation == framebuffer_generation
                 && record.state == FramebufferObjectState::Registered
@@ -144,7 +146,7 @@ impl SemanticGraph {
         {
             return false;
         }
-        if self.display_cleanups.iter().any(|record| {
+        if self.domains.display.display_cleanups.iter().any(|record| {
             record.id == cleanup
                 && record.owner_store == owner_store
                 && record.owner_store_generation == owner_store_generation
@@ -160,7 +162,8 @@ impl SemanticGraph {
         }
 
         let generation = 1;
-        self.next_display_cleanup_id = self.next_display_cleanup_id.max(cleanup + 1);
+        self.domains.display.next_display_cleanup_id =
+            self.domains.display.next_display_cleanup_id.max(cleanup + 1);
         let started_at_event = self.event_log.push(
             "display",
             EventKind::DisplayCleanupStarted {
@@ -185,6 +188,8 @@ impl SemanticGraph {
             display_capability_generation,
         );
         let mapping_targets = self
+            .domains
+            .display
             .framebuffer_mappings
             .iter()
             .enumerate()
@@ -203,12 +208,15 @@ impl SemanticGraph {
             .collect::<Vec<_>>();
         let mut unmapped_framebuffer_mappings = Vec::new();
         for (index, object) in mapping_targets {
-            self.framebuffer_mappings[index].state = FramebufferMappingState::Unmapped;
+            self.domains.display.framebuffer_mappings[index].state =
+                FramebufferMappingState::Unmapped;
             unmapped_framebuffer_mappings.push(object);
         }
         let unmap_event = self.event_log.cursor();
 
         let lease_targets = self
+            .domains
+            .display
             .framebuffer_window_leases
             .iter()
             .enumerate()
@@ -227,20 +235,22 @@ impl SemanticGraph {
             .collect::<Vec<_>>();
         let mut released_framebuffer_window_leases = Vec::new();
         for (index, object) in lease_targets {
-            self.framebuffer_window_leases[index].state = FramebufferWindowLeaseState::Released;
+            self.domains.display.framebuffer_window_leases[index].state =
+                FramebufferWindowLeaseState::Released;
             released_framebuffer_window_leases.push(object);
         }
         let release_event = self.event_log.cursor();
 
         let mut revoked_display_capabilities = Vec::new();
         let mut revoked_capabilities = Vec::new();
-        if let Some(index) = self.display_capabilities.iter().position(|record| {
+        if let Some(index) = self.domains.display.display_capabilities.iter().position(|record| {
             record.id == display_capability
                 && record.generation == display_capability_generation
                 && record.state == DisplayCapabilityState::Active
         }) {
-            let capability = self.display_capabilities[index].capability;
-            let capability_generation = self.display_capabilities[index].capability_generation;
+            let capability = self.domains.display.display_capabilities[index].capability;
+            let capability_generation =
+                self.domains.display.display_capabilities[index].capability_generation;
             if self
                 .domains
                 .capability
@@ -255,7 +265,8 @@ impl SemanticGraph {
                     .record(capability)
                     .map(|record| record.generation)
                     .unwrap_or(capability_generation);
-                self.display_capabilities[index].state = DisplayCapabilityState::Revoked;
+                self.domains.display.display_capabilities[index].state =
+                    DisplayCapabilityState::Revoked;
                 revoked_display_capabilities.push(display_capability_ref);
                 revoked_capabilities.push(ContractObjectRef::new(
                     ContractObjectKind::Capability,
@@ -321,7 +332,7 @@ impl SemanticGraph {
             },
         );
 
-        self.display_cleanups.push(DisplayCleanupRecord {
+        self.domains.display.display_cleanups.push(DisplayCleanupRecord {
             id: cleanup,
             owner_store,
             owner_store_generation,
@@ -347,15 +358,15 @@ impl SemanticGraph {
     }
 
     pub fn display_cleanups(&self) -> &[DisplayCleanupRecord] {
-        &self.display_cleanups
+        &self.domains.display.display_cleanups
     }
 
     pub fn display_cleanup_count(&self) -> usize {
-        self.display_cleanups.len()
+        self.domains.display.display_cleanups.len()
     }
 
     pub fn check_display_cleanup_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for cleanup in &self.display_cleanups {
+        for cleanup in &self.domains.display.display_cleanups {
             if cleanup.id == 0
                 || cleanup.generation == 0
                 || cleanup.owner_store_generation == 0
@@ -367,7 +378,7 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::DisplayCleanupInvalid { cleanup: cleanup.id });
             }
-            if !self.stores.iter().any(|store| {
+            if !self.domains.lifecycle.stores.iter().any(|store| {
                 store.id == cleanup.owner_store
                     && store.generation == cleanup.owner_store_generation
             }) {
@@ -376,10 +387,12 @@ impl SemanticGraph {
                     store: cleanup.owner_store,
                 });
             }
-            let Some(display_capability) = self.display_capabilities.iter().find(|record| {
-                record.id == cleanup.display_capability
-                    && record.generation == cleanup.display_capability_generation
-            }) else {
+            let Some(display_capability) =
+                self.domains.display.display_capabilities.iter().find(|record| {
+                    record.id == cleanup.display_capability
+                        && record.generation == cleanup.display_capability_generation
+                })
+            else {
                 return Err(SemanticInvariantError::DisplayCleanupMissingDisplayCapability {
                     cleanup: cleanup.id,
                     display_capability: cleanup.display_capability,
@@ -396,7 +409,7 @@ impl SemanticGraph {
                 return Err(SemanticInvariantError::DisplayCleanupInvalid { cleanup: cleanup.id });
             }
             for mapping in &cleanup.unmapped_framebuffer_mappings {
-                if !self.framebuffer_mappings.iter().any(|record| {
+                if !self.domains.display.framebuffer_mappings.iter().any(|record| {
                     record.id == mapping.id
                         && record.generation == mapping.generation
                         && record.state == FramebufferMappingState::Unmapped
@@ -408,7 +421,7 @@ impl SemanticGraph {
                 }
             }
             for lease in &cleanup.released_framebuffer_window_leases {
-                if !self.framebuffer_window_leases.iter().any(|record| {
+                if !self.domains.display.framebuffer_window_leases.iter().any(|record| {
                     record.id == lease.id
                         && record.generation == lease.generation
                         && record.state == FramebufferWindowLeaseState::Released
@@ -420,7 +433,7 @@ impl SemanticGraph {
                 }
             }
             for display_capability in &cleanup.revoked_display_capabilities {
-                if !self.display_capabilities.iter().any(|record| {
+                if !self.domains.display.display_capabilities.iter().any(|record| {
                     record.id == display_capability.id
                         && record.generation == display_capability.generation
                         && record.state == DisplayCapabilityState::Revoked
@@ -570,7 +583,8 @@ impl SemanticGraph {
         cleanup: DisplayCleanupId,
         mapping_generation: Generation,
     ) {
-        if let Some(record) = self.display_cleanups.iter_mut().find(|record| record.id == cleanup)
+        if let Some(record) =
+            self.domains.display.display_cleanups.iter_mut().find(|record| record.id == cleanup)
             && let Some(mapping) = record.unmapped_framebuffer_mappings.first_mut()
         {
             mapping.generation = mapping_generation;

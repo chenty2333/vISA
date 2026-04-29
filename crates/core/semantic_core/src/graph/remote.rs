@@ -18,33 +18,35 @@ impl SemanticGraph {
         if remote_preempt == 0 {
             return Err("remote preempt id=0 is invalid");
         }
-        if self.remote_preempts.iter().any(|record| record.id == remote_preempt) {
+        if self.domains.scheduler.remote_preempts.iter().any(|record| record.id == remote_preempt) {
             return Err("remote preempt already exists");
         }
         if source_hart == target_hart {
             return Err("remote preempt source and target harts must differ");
         }
         let Some(ipi_record) = self
+            .domains
+            .scheduler
             .ipi_events
             .iter()
             .find(|record| record.id == ipi && record.generation == ipi_generation)
         else {
             return Err("remote preempt ipi generation is missing");
         };
-        let Some(source) = self
-            .harts
-            .iter()
-            .find(|record| record.id == source_hart && record.generation >= source_hart_generation)
+        let Some(source) =
+            self.domains.scheduler.harts.iter().find(|record| {
+                record.id == source_hart && record.generation >= source_hart_generation
+            })
         else {
             return Err("remote preempt source hart generation is missing");
         };
         if matches!(source.state, HartState::Offline | HartState::Faulted) {
             return Err("remote preempt source hart is inactive");
         }
-        let Some(target) = self
-            .harts
-            .iter()
-            .find(|record| record.id == target_hart && record.generation == target_hart_generation)
+        let Some(target) =
+            self.domains.scheduler.harts.iter().find(|record| {
+                record.id == target_hart && record.generation == target_hart_generation
+            })
         else {
             return Err("remote preempt target hart generation is missing");
         };
@@ -63,6 +65,8 @@ impl SemanticGraph {
             return Err("remote preempt ipi source/target mismatch");
         }
         if self
+            .domains
+            .scheduler
             .runnable_queues
             .iter()
             .any(|record| record.entries.iter().any(|entry| entry.activation == activation))
@@ -70,6 +74,8 @@ impl SemanticGraph {
             return Err("remote preempt activation already queued");
         }
         let Some(queue_record) = self
+            .domains
+            .scheduler
             .runnable_queues
             .iter()
             .find(|record| record.id == queue && record.state == RunnableQueueState::Active)
@@ -83,16 +89,18 @@ impl SemanticGraph {
         {
             return Err("remote preempt queue is not owned by target hart");
         }
-        let Some(activation_record) = self.runtime_activations.iter().find(|record| {
-            record.id == activation
-                && record.generation == activation_generation
-                && record.state == RuntimeActivationState::Running
-                && record.runnable_queue.is_none()
-                && record.runnable_queue_generation.is_none()
-        }) else {
+        let Some(activation_record) =
+            self.domains.scheduler.runtime_activations.iter().find(|record| {
+                record.id == activation
+                    && record.generation == activation_generation
+                    && record.state == RuntimeActivationState::Running
+                    && record.runnable_queue.is_none()
+                    && record.runnable_queue_generation.is_none()
+            })
+        else {
             return Err("remote preempt activation generation is not running");
         };
-        if !self.tasks.iter().any(|task| {
+        if !self.domains.scheduler.tasks.iter().any(|task| {
             task.id == activation_record.owner_task
                 && task.generation == activation_record.owner_task_generation
                 && matches!(task.state, TaskState::Runnable | TaskState::Running)
@@ -103,7 +111,7 @@ impl SemanticGraph {
             let Some(generation) = activation_record.owner_store_generation else {
                 return Err("remote preempt owner store generation is required");
             };
-            if !self.stores.iter().any(|store_record| {
+            if !self.domains.lifecycle.stores.iter().any(|store_record| {
                 store_record.id == store
                     && store_record.generation == generation
                     && store_record.state != StoreState::Dead
@@ -147,37 +155,41 @@ impl SemanticGraph {
             return false;
         }
 
-        let Some(target_hart_index) = self.harts.iter().position(|record| {
+        let Some(target_hart_index) = self.domains.scheduler.harts.iter().position(|record| {
             record.id == target_hart && record.generation == target_hart_generation
         }) else {
             return false;
         };
-        let Some(activation_index) = self.runtime_activations.iter().position(|record| {
-            record.id == activation && record.generation == activation_generation
-        }) else {
+        let Some(activation_index) =
+            self.domains.scheduler.runtime_activations.iter().position(|record| {
+                record.id == activation && record.generation == activation_generation
+            })
+        else {
             return false;
         };
-        let Some(queue_index) = self
-            .runnable_queues
-            .iter()
-            .position(|record| record.id == queue && record.state == RunnableQueueState::Active)
+        let Some(queue_index) =
+            self.domains.scheduler.runnable_queues.iter().position(|record| {
+                record.id == queue && record.state == RunnableQueueState::Active
+            })
         else {
             return false;
         };
 
-        self.next_remote_preempt_id = self.next_remote_preempt_id.max(remote_preempt + 1);
-        self.harts[target_hart_index].state = HartState::Idle;
-        self.harts[target_hart_index].generation += 1;
-        self.harts[target_hart_index].current_activation = None;
-        self.harts[target_hart_index].current_activation_generation = None;
-        self.harts[target_hart_index].current_task = None;
-        self.harts[target_hart_index].current_task_generation = None;
-        self.harts[target_hart_index].current_store = None;
-        self.harts[target_hart_index].current_store_generation = None;
+        self.domains.scheduler.next_remote_preempt_id =
+            self.domains.scheduler.next_remote_preempt_id.max(remote_preempt + 1);
+        self.domains.scheduler.harts[target_hart_index].state = HartState::Idle;
+        self.domains.scheduler.harts[target_hart_index].generation += 1;
+        self.domains.scheduler.harts[target_hart_index].current_activation = None;
+        self.domains.scheduler.harts[target_hart_index].current_activation_generation = None;
+        self.domains.scheduler.harts[target_hart_index].current_task = None;
+        self.domains.scheduler.harts[target_hart_index].current_task_generation = None;
+        self.domains.scheduler.harts[target_hart_index].current_store = None;
+        self.domains.scheduler.harts[target_hart_index].current_store_generation = None;
         if !note.is_empty() {
-            self.harts[target_hart_index].note = note.to_string();
+            self.domains.scheduler.harts[target_hart_index].note = note.to_string();
         }
-        let target_hart_generation_after = self.harts[target_hart_index].generation;
+        let target_hart_generation_after =
+            self.domains.scheduler.harts[target_hart_index].generation;
         let clear_event = self.event_log.push(
             "scheduler",
             EventKind::HartCurrentActivationCleared {
@@ -188,8 +200,8 @@ impl SemanticGraph {
                 generation: target_hart_generation_after,
             },
         );
-        self.harts[target_hart_index].last_event = Some(clear_event);
-        self.harts[target_hart_index].last_current_event = Some(clear_event);
+        self.domains.scheduler.harts[target_hart_index].last_event = Some(clear_event);
+        self.domains.scheduler.harts[target_hart_index].last_current_event = Some(clear_event);
         let _ = self.push_hart_event_attribution(
             target_hart,
             target_hart_generation_after,
@@ -200,13 +212,15 @@ impl SemanticGraph {
             note,
         );
 
-        let activation_from = self.runtime_activations[activation_index].state;
-        self.runtime_activations[activation_index].state = RuntimeActivationState::Runnable;
-        self.runtime_activations[activation_index].generation += 1;
-        let activation_generation_after = self.runtime_activations[activation_index].generation;
-        let queue_generation = self.runnable_queues[queue_index].generation;
-        self.runtime_activations[activation_index].runnable_queue = Some(queue);
-        self.runtime_activations[activation_index].runnable_queue_generation =
+        let activation_from = self.domains.scheduler.runtime_activations[activation_index].state;
+        self.domains.scheduler.runtime_activations[activation_index].state =
+            RuntimeActivationState::Runnable;
+        self.domains.scheduler.runtime_activations[activation_index].generation += 1;
+        let activation_generation_after =
+            self.domains.scheduler.runtime_activations[activation_index].generation;
+        let queue_generation = self.domains.scheduler.runnable_queues[queue_index].generation;
+        self.domains.scheduler.runtime_activations[activation_index].runnable_queue = Some(queue);
+        self.domains.scheduler.runtime_activations[activation_index].runnable_queue_generation =
             Some(queue_generation);
 
         let remote_event = self.event_log.push(
@@ -245,14 +259,14 @@ impl SemanticGraph {
                 activation_generation: activation_generation_after,
             },
         );
-        self.runtime_activations[activation_index].last_event =
+        self.domains.scheduler.runtime_activations[activation_index].last_event =
             Some(remote_event.max(state_event).max(queued_event));
-        self.runnable_queues[queue_index].entries.push(RunnableQueueEntry {
+        self.domains.scheduler.runnable_queues[queue_index].entries.push(RunnableQueueEntry {
             activation,
             activation_generation: activation_generation_after,
             enqueued_at: queued_event,
         });
-        self.remote_preempts.push(RemotePreemptRecord {
+        self.domains.scheduler.remote_preempts.push(RemotePreemptRecord {
             id: remote_preempt,
             ipi,
             ipi_generation,
@@ -293,11 +307,11 @@ impl SemanticGraph {
     }
 
     pub fn remote_preempts(&self) -> &[RemotePreemptRecord] {
-        &self.remote_preempts
+        &self.domains.scheduler.remote_preempts
     }
 
     pub fn remote_preempt_count(&self) -> usize {
-        self.remote_preempts.len()
+        self.domains.scheduler.remote_preempts.len()
     }
 
     #[cfg(test)]
@@ -306,8 +320,12 @@ impl SemanticGraph {
         remote_preempt: RemotePreemptId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.remote_preempts.iter_mut().find(|record| record.id == remote_preempt)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .remote_preempts
+            .iter_mut()
+            .find(|record| record.id == remote_preempt)
         {
             record.ipi_generation = generation;
         }
@@ -319,15 +337,19 @@ impl SemanticGraph {
         remote_preempt: RemotePreemptId,
         event: EventId,
     ) {
-        if let Some(record) =
-            self.remote_preempts.iter_mut().find(|record| record.id == remote_preempt)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .remote_preempts
+            .iter_mut()
+            .find(|record| record.id == remote_preempt)
         {
             record.preempted_at_event = event;
         }
     }
 
     pub fn check_remote_preempt_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for remote in &self.remote_preempts {
+        for remote in &self.domains.scheduler.remote_preempts {
             if remote.id == 0
                 || remote.generation == 0
                 || remote.ipi == 0
@@ -342,7 +364,7 @@ impl SemanticGraph {
                     remote_preempt: remote.id,
                 });
             }
-            let Some(ipi) = self.ipi_events.iter().find(|record| {
+            let Some(ipi) = self.domains.scheduler.ipi_events.iter().find(|record| {
                 record.id == remote.ipi && record.generation == remote.ipi_generation
             }) else {
                 return Err(SemanticInvariantError::RemotePreemptMissingIpi {
@@ -361,7 +383,8 @@ impl SemanticGraph {
                     ipi: remote.ipi,
                 });
             }
-            let Some(source) = self.harts.iter().find(|record| record.id == remote.source_hart)
+            let Some(source) =
+                self.domains.scheduler.harts.iter().find(|record| record.id == remote.source_hart)
             else {
                 return Err(SemanticInvariantError::RemotePreemptMissingHart {
                     remote_preempt: remote.id,
@@ -374,7 +397,8 @@ impl SemanticGraph {
                     hart: remote.source_hart,
                 });
             }
-            let Some(target) = self.harts.iter().find(|record| record.id == remote.target_hart)
+            let Some(target) =
+                self.domains.scheduler.harts.iter().find(|record| record.id == remote.target_hart)
             else {
                 return Err(SemanticInvariantError::RemotePreemptMissingHart {
                     remote_preempt: remote.id,
@@ -392,10 +416,10 @@ impl SemanticGraph {
                     hart: remote.target_hart,
                 });
             }
-            let queue = self.runnable_queues.iter().find(|record| {
+            let queue = self.domains.scheduler.runnable_queues.iter().find(|record| {
                 record.id == remote.queue && record.generation == remote.queue_generation
             });
-            let queue_has_advanced = self.runnable_queues.iter().any(|record| {
+            let queue_has_advanced = self.domains.scheduler.runnable_queues.iter().any(|record| {
                 record.id == remote.queue && record.generation > remote.queue_generation
             });
             if queue.is_none() && !queue_has_advanced {
@@ -416,14 +440,15 @@ impl SemanticGraph {
                     });
                 }
             }
-            let activation = self.runtime_activations.iter().find(|record| {
+            let activation = self.domains.scheduler.runtime_activations.iter().find(|record| {
                 record.id == remote.activation
                     && record.generation == remote.activation_generation_after
             });
-            let activation_has_advanced = self.runtime_activations.iter().any(|record| {
-                record.id == remote.activation
-                    && record.generation > remote.activation_generation_after
-            });
+            let activation_has_advanced =
+                self.domains.scheduler.runtime_activations.iter().any(|record| {
+                    record.id == remote.activation
+                        && record.generation > remote.activation_generation_after
+                });
             if activation.is_none() && !activation_has_advanced {
                 return Err(SemanticInvariantError::RemotePreemptMissingActivation {
                     remote_preempt: remote.id,
@@ -482,12 +507,12 @@ impl SemanticGraph {
                     remote_preempt: remote.id,
                 });
             }
-            if !self.hart_event_attributions.iter().any(|attribution| {
+            if !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == remote.preempted_at_event
                     && attribution.hart == remote.source_hart
                     && attribution.hart_generation == remote.source_hart_generation
                     && attribution.event_kind == "RemotePreemptSourceRecorded"
-            }) || !self.hart_event_attributions.iter().any(|attribution| {
+            }) || !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == remote.preempted_at_event
                     && attribution.hart == remote.target_hart
                     && attribution.hart_generation == remote.target_hart_generation_after

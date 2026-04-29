@@ -1,5 +1,5 @@
 use super::*;
-pub(crate) fn print_event_log_tail(path: &Path) -> Result<(), Box<dyn Error>> {
+pub fn print_event_log_tail(path: &Path) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
     println!(
         "event-log tail package={} cursor={} events={}",
@@ -13,7 +13,7 @@ pub(crate) fn print_event_log_tail(path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub(crate) fn print_activation(path: &Path, blocked_only: bool) -> Result<(), Box<dyn Error>> {
+pub fn print_activation(path: &Path, blocked_only: bool) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
     println!(
         "activation package={} cursor={} roots={} blocked_only={}",
@@ -31,7 +31,7 @@ pub(crate) fn print_activation(path: &Path, blocked_only: bool) -> Result<(), Bo
     Ok(())
 }
 
-pub(crate) fn inspect_object(
+pub fn inspect_object(
     kind: &str,
     path: &Path,
     filter: Option<&str>,
@@ -2488,6 +2488,7 @@ pub(crate) fn inspect_package_object_json(
                 .collect::<Result<Vec<_>, _>>()?,
             serde_json::json!({
                 "validator": &package.semantic.snapshot_validation.validator,
+                "evidence_boundary": &package.semantic.snapshot_validation.evidence_boundary,
                 "ok": package.semantic.snapshot_validation.ok,
                 "root_count": package.semantic.roots.snapshot_validation_roots.len()
             }),
@@ -2504,6 +2505,7 @@ pub(crate) fn inspect_package_object_json(
                 .collect::<Result<Vec<_>, _>>()?,
             serde_json::json!({
                 "validator": &package.semantic.replay_validation.validator,
+                "evidence_boundary": &package.semantic.replay_validation.evidence_boundary,
                 "ok": package.semantic.replay_validation.ok,
                 "root_count": package.semantic.roots.replay_validation_roots.len()
             }),
@@ -2730,8 +2732,8 @@ pub(crate) fn print_boundary_validation(
     filter: Option<&str>,
 ) {
     println!(
-        "inspect {label} package={} validator={} ok={} violations={}",
-        package_id, report.validator, report.ok, report.violation_count
+        "inspect {label} package={} validator={} evidence={} ok={} violations={}",
+        package_id, report.validator, report.evidence_boundary, report.ok, report.violation_count
     );
     for violation in &report.violations {
         let line = format!(

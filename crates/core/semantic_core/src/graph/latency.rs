@@ -30,7 +30,13 @@ impl SemanticGraph {
         if sample == 0 {
             return Err("preemption latency sample id=0 is invalid");
         }
-        if self.preemption_latency_samples.iter().any(|record| record.id == sample) {
+        if self
+            .domains
+            .scheduler
+            .preemption_latency_samples
+            .iter()
+            .any(|record| record.id == sample)
+        {
             return Err("preemption latency sample already exists");
         }
         if measured_nanos == 0 {
@@ -100,8 +106,8 @@ impl SemanticGraph {
                 activation_resume_generation,
             )
             .expect("preemption latency chain was validated");
-        self.next_preemption_latency_sample_id =
-            self.next_preemption_latency_sample_id.max(sample + 1);
+        self.domains.scheduler.next_preemption_latency_sample_id =
+            self.domains.scheduler.next_preemption_latency_sample_id.max(sample + 1);
         let generation = 1;
         let recorded_at_event = self.event_log.push(
             "scheduler",
@@ -120,7 +126,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.preemption_latency_samples.push(PreemptionLatencySampleRecord {
+        self.domains.scheduler.preemption_latency_samples.push(PreemptionLatencySampleRecord {
             id: sample,
             timer_interrupt,
             timer_interrupt_generation,
@@ -162,15 +168,15 @@ impl SemanticGraph {
     }
 
     pub fn preemption_latency_samples(&self) -> &[PreemptionLatencySampleRecord] {
-        &self.preemption_latency_samples
+        &self.domains.scheduler.preemption_latency_samples
     }
 
     pub fn preemption_latency_sample_count(&self) -> usize {
-        self.preemption_latency_samples.len()
+        self.domains.scheduler.preemption_latency_samples.len()
     }
 
     pub fn check_preemption_latency_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for sample in &self.preemption_latency_samples {
+        for sample in &self.domains.scheduler.preemption_latency_samples {
             let chain = self.preemption_latency_chain(
                 sample.id,
                 sample.timer_interrupt,
@@ -222,7 +228,7 @@ impl SemanticGraph {
         activation_resume: ActivationResumeId,
         activation_resume_generation: Generation,
     ) -> Result<PreemptionLatencyChain, SemanticInvariantError> {
-        let Some(timer) = self.timer_interrupts.iter().find(|record| {
+        let Some(timer) = self.domains.scheduler.timer_interrupts.iter().find(|record| {
             record.id == timer_interrupt && record.generation == timer_interrupt_generation
         }) else {
             return Err(SemanticInvariantError::PreemptionLatencyMissingTimerInterrupt {
@@ -230,7 +236,7 @@ impl SemanticGraph {
                 interrupt: timer_interrupt,
             });
         };
-        let Some(preempt) = self.preemptions.iter().find(|record| {
+        let Some(preempt) = self.domains.scheduler.preemptions.iter().find(|record| {
             record.id == preemption
                 && record.generation == preemption_generation
                 && record.timer_interrupt == timer_interrupt
@@ -247,7 +253,7 @@ impl SemanticGraph {
         {
             return Err(SemanticInvariantError::PreemptionLatencyTimelineMismatch { sample });
         }
-        let Some(decision) = self.scheduler_decisions.iter().find(|record| {
+        let Some(decision) = self.domains.scheduler.scheduler_decisions.iter().find(|record| {
             record.id == scheduler_decision
                 && record.generation == scheduler_decision_generation
                 && record.queue == preempt.queue
@@ -264,7 +270,7 @@ impl SemanticGraph {
                 decision: scheduler_decision,
             });
         };
-        let Some(resume) = self.activation_resumes.iter().find(|record| {
+        let Some(resume) = self.domains.scheduler.activation_resumes.iter().find(|record| {
             record.id == activation_resume
                 && record.generation == activation_resume_generation
                 && record.scheduler_decision == scheduler_decision
@@ -305,8 +311,12 @@ impl SemanticGraph {
         sample: PreemptionLatencySampleId,
         value: u64,
     ) {
-        if let Some(record) =
-            self.preemption_latency_samples.iter_mut().find(|record| record.id == sample)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .preemption_latency_samples
+            .iter_mut()
+            .find(|record| record.id == sample)
         {
             record.interrupt_to_resume_events = value;
         }

@@ -17,7 +17,7 @@ impl SemanticGraph {
         if self.driver_store_bindings.iter().any(|record| record.id == binding) {
             return Err("driver store binding already exists");
         }
-        let Some(store_record) = self.stores.iter().find(|record| {
+        let Some(store_record) = self.domains.lifecycle.stores.iter().find(|record| {
             record.id == driver_store && record.generation == driver_store_generation
         }) else {
             return Err("driver store binding store generation is missing");
@@ -154,7 +154,7 @@ impl SemanticGraph {
 
     pub fn check_driver_store_binding_invariants(&self) -> Result<(), SemanticInvariantError> {
         for record in &self.driver_store_bindings {
-            let Some(store_record) = self.stores.iter().find(|store| {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.driver_store
                     && store.generation == record.driver_store_generation
             }) else {

@@ -184,7 +184,7 @@ impl SemanticGraph {
         {
             return Err("network benchmark socket references do not match endpoint");
         }
-        let Some(store_record) = self.stores.iter().find(|record| {
+        let Some(store_record) = self.domains.lifecycle.stores.iter().find(|record| {
             record.id == endpoint_record.owner_store
                 && record.generation == endpoint_record.owner_store_generation
         }) else {
@@ -582,7 +582,7 @@ impl SemanticGraph {
                     ),
                 });
             };
-            let Some(store) = self.stores.iter().find(|store| {
+            let Some(store) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.owner_store && store.generation == record.owner_store_generation
             }) else {
                 return Err(SemanticInvariantError::NetworkBenchmarkMissingTarget {

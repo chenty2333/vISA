@@ -16,9 +16,9 @@ impl SemanticGraph {
         owner_store: Option<StoreId>,
         label: &str,
     ) -> ResourceId {
-        let id = self.next_resource_id;
-        self.next_resource_id += 1;
-        self.resources.push(ResourceRecord {
+        let id = self.domains.resource.next_resource_id;
+        self.domains.resource.next_resource_id += 1;
+        self.domains.resource.resources.push(ResourceRecord {
             id,
             label: label.to_string(),
             kind,
@@ -28,7 +28,8 @@ impl SemanticGraph {
             live: true,
         });
         if let Some(owner_task) = owner_task
-            && let Some(task) = self.tasks.iter_mut().find(|task| task.id == owner_task)
+            && let Some(task) =
+                self.domains.scheduler.tasks.iter_mut().find(|task| task.id == owner_task)
         {
             task.resources.push(id);
         }
@@ -37,7 +38,9 @@ impl SemanticGraph {
         id
     }
     pub fn close_resource(&mut self, id: ResourceId) {
-        let Some(resource) = self.resources.iter_mut().find(|resource| resource.id == id) else {
+        let Some(resource) =
+            self.domains.resource.resources.iter_mut().find(|resource| resource.id == id)
+        else {
             return;
         };
         if !resource.live {
@@ -62,6 +65,8 @@ impl SemanticGraph {
         store: StoreId,
     ) -> StoreResourceCleanupReport {
         let resources = self
+            .domains
+            .resource
             .resources
             .iter()
             .filter(|resource| resource.owner_store == Some(store) && resource.live)
@@ -72,14 +77,22 @@ impl SemanticGraph {
         for resource in resources {
             revoked_authorities +=
                 self.revoke_authority_for_resource(resource, "owner store dropped");
-            if self.resources.iter().any(|entry| entry.id == resource && entry.live) {
+            if self
+                .domains
+                .resource
+                .resources
+                .iter()
+                .any(|entry| entry.id == resource && entry.live)
+            {
                 self.mark_resource_dead(resource);
             }
         }
         StoreResourceCleanupReport { store, closed_resources: count, revoked_authorities }
     }
     pub fn resource_handle(&self, id: ResourceId) -> Option<ResourceHandle> {
-        self.resources
+        self.domains
+            .resource
+            .resources
             .iter()
             .find(|resource| resource.id == id)
             .map(|resource| ResourceHandle::new(resource.id, resource.generation))
@@ -88,7 +101,8 @@ impl SemanticGraph {
         &mut self,
         handle: ResourceHandle,
     ) -> Result<(), GenerationCheckError> {
-        let resource = self.resources.iter().find(|resource| resource.id == handle.id);
+        let resource =
+            self.domains.resource.resources.iter().find(|resource| resource.id == handle.id);
         let actual = resource.map(|resource| resource.generation);
         let result = match resource {
             None => Err(GenerationCheckError::Missing),
@@ -144,12 +158,12 @@ impl SemanticGraph {
         self.event_log.push("dmw", EventKind::WindowLeaseDestroyed { lease, generation });
     }
     pub fn resource_count(&self) -> usize {
-        self.resources.len()
+        self.domains.resource.resources.len()
     }
     pub fn resources(&self) -> &[ResourceRecord] {
-        &self.resources
+        &self.domains.resource.resources
     }
     pub fn live_resource_count(&self) -> usize {
-        self.resources.iter().filter(|resource| resource.live).count()
+        self.domains.resource.resources.iter().filter(|resource| resource.live).count()
     }
 }

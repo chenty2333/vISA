@@ -18,7 +18,7 @@ impl SemanticGraph {
         if self.network_tx_capability_gates.iter().any(|record| record.id == tx_gate) {
             return Err("network tx capability gate already exists");
         }
-        let Some(store_record) = self.stores.iter().find(|record| {
+        let Some(store_record) = self.domains.lifecycle.stores.iter().find(|record| {
             record.id == driver_store && record.generation == driver_store_generation
         }) else {
             return Err("network tx capability gate driver store generation is missing");
@@ -309,7 +309,7 @@ impl SemanticGraph {
                     device_capability: record.device_capability,
                 });
             };
-            let Some(store_record) = self.stores.iter().find(|store| {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.driver_store
                     && store.generation == record.driver_store_generation
             }) else {

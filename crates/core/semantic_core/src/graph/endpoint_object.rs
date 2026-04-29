@@ -34,7 +34,7 @@ impl SemanticGraph {
         }) {
             return Err("endpoint object adapter generation is missing or inactive");
         }
-        let Some(store) = self.stores.iter().find(|record| {
+        let Some(store) = self.domains.lifecycle.stores.iter().find(|record| {
             record.id == socket_record.owner_store
                 && record.generation == socket_record.owner_store_generation
         }) else {
@@ -165,7 +165,7 @@ impl SemanticGraph {
                     adapter: record.adapter,
                 });
             };
-            let Some(store) = self.stores.iter().find(|store| {
+            let Some(store) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.owner_store && store.generation == record.owner_store_generation
             }) else {
                 return Err(SemanticInvariantError::EndpointObjectMissingOwnerStore {

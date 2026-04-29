@@ -23,7 +23,8 @@ impl SemanticGraph {
         if reason.is_empty() {
             return Err("activation migration reason is empty");
         }
-        if self.activation_migrations.iter().any(|record| record.id == migration) {
+        if self.domains.scheduler.activation_migrations.iter().any(|record| record.id == migration)
+        {
             return Err("activation migration already exists");
         }
         if source_hart == target_hart {
@@ -32,10 +33,10 @@ impl SemanticGraph {
         if source_queue == target_queue {
             return Err("activation migration requires distinct queues");
         }
-        let Some(source_hart_record) = self
-            .harts
-            .iter()
-            .find(|record| record.id == source_hart && record.generation == source_hart_generation)
+        let Some(source_hart_record) =
+            self.domains.scheduler.harts.iter().find(|record| {
+                record.id == source_hart && record.generation == source_hart_generation
+            })
         else {
             return Err("activation migration source hart generation is missing");
         };
@@ -45,10 +46,10 @@ impl SemanticGraph {
         ) {
             return Err("activation migration source hart is inactive");
         }
-        let Some(target_hart_record) = self
-            .harts
-            .iter()
-            .find(|record| record.id == target_hart && record.generation == target_hart_generation)
+        let Some(target_hart_record) =
+            self.domains.scheduler.harts.iter().find(|record| {
+                record.id == target_hart && record.generation == target_hart_generation
+            })
         else {
             return Err("activation migration target hart generation is missing");
         };
@@ -58,7 +59,7 @@ impl SemanticGraph {
         ) {
             return Err("activation migration target hart is inactive");
         }
-        let Some(source) = self.runnable_queues.iter().find(|record| {
+        let Some(source) = self.domains.scheduler.runnable_queues.iter().find(|record| {
             record.id == source_queue
                 && record.generation == source_queue_generation
                 && record.state == RunnableQueueState::Active
@@ -77,7 +78,7 @@ impl SemanticGraph {
         }) {
             return Err("activation migration source queue entry is missing");
         }
-        let Some(target) = self.runnable_queues.iter().find(|record| {
+        let Some(target) = self.domains.scheduler.runnable_queues.iter().find(|record| {
             record.id == target_queue
                 && record.generation == target_queue_generation
                 && record.state == RunnableQueueState::Active
@@ -94,24 +95,26 @@ impl SemanticGraph {
         if target.entries.iter().any(|entry| entry.activation == activation) {
             return Err("activation migration target queue already contains activation");
         }
-        let Some(activation_record) = self.runtime_activations.iter().find(|record| {
-            record.id == activation
-                && record.generation == activation_generation
-                && record.state == RuntimeActivationState::Runnable
-                && record.runnable_queue == Some(source_queue)
-                && record.runnable_queue_generation == Some(source_queue_generation)
-        }) else {
+        let Some(activation_record) =
+            self.domains.scheduler.runtime_activations.iter().find(|record| {
+                record.id == activation
+                    && record.generation == activation_generation
+                    && record.state == RuntimeActivationState::Runnable
+                    && record.runnable_queue == Some(source_queue)
+                    && record.runnable_queue_generation == Some(source_queue_generation)
+            })
+        else {
             return Err(
                 "activation migration activation generation is not runnable on source queue",
             );
         };
-        if self.harts.iter().any(|hart| {
+        if self.domains.scheduler.harts.iter().any(|hart| {
             hart.current_activation == Some(activation)
                 && hart.current_activation_generation == Some(activation_generation)
         }) {
             return Err("activation migration activation is currently running");
         }
-        if !self.tasks.iter().any(|task| {
+        if !self.domains.scheduler.tasks.iter().any(|task| {
             task.id == activation_record.owner_task
                 && task.generation == activation_record.owner_task_generation
                 && matches!(task.state, TaskState::Runnable | TaskState::Running)
@@ -122,7 +125,7 @@ impl SemanticGraph {
             let Some(generation) = activation_record.owner_store_generation else {
                 return Err("activation migration owner store generation is required");
             };
-            if !self.stores.iter().any(|store_record| {
+            if !self.domains.lifecycle.stores.iter().any(|store_record| {
                 store_record.id == store
                     && store_record.generation == generation
                     && store_record.state != StoreState::Dead
@@ -130,7 +133,7 @@ impl SemanticGraph {
                 return Err("activation migration owner store generation is missing or dead");
             }
         }
-        if let Some(context) = self.activation_contexts.iter().find(|record| {
+        if let Some(context) = self.domains.scheduler.activation_contexts.iter().find(|record| {
             record.activation == activation
                 && record.activation_generation == activation_generation
                 && record.state != ActivationContextState::Dropped
@@ -198,48 +201,52 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(source_index) = self.runnable_queues.iter().position(|record| {
+        let Some(source_index) = self.domains.scheduler.runnable_queues.iter().position(|record| {
             record.id == source_queue && record.generation == source_queue_generation
         }) else {
             return false;
         };
         let Some(source_entry_index) =
-            self.runnable_queues[source_index].entries.iter().position(|entry| {
+            self.domains.scheduler.runnable_queues[source_index].entries.iter().position(|entry| {
                 entry.activation == activation
                     && entry.activation_generation == activation_generation
             })
         else {
             return false;
         };
-        let Some(target_index) = self.runnable_queues.iter().position(|record| {
+        let Some(target_index) = self.domains.scheduler.runnable_queues.iter().position(|record| {
             record.id == target_queue && record.generation == target_queue_generation
         }) else {
             return false;
         };
-        let Some(activation_index) = self.runtime_activations.iter().position(|record| {
-            record.id == activation && record.generation == activation_generation
-        }) else {
+        let Some(activation_index) =
+            self.domains.scheduler.runtime_activations.iter().position(|record| {
+                record.id == activation && record.generation == activation_generation
+            })
+        else {
             return false;
         };
         let Some(source_queue_owner_hart_generation) =
-            self.runnable_queues[source_index].owner_hart_generation
+            self.domains.scheduler.runnable_queues[source_index].owner_hart_generation
         else {
             return false;
         };
         let Some(target_queue_owner_hart_generation) =
-            self.runnable_queues[target_index].owner_hart_generation
+            self.domains.scheduler.runnable_queues[target_index].owner_hart_generation
         else {
             return false;
         };
-        let context_index = self.activation_contexts.iter().position(|record| {
+        let context_index = self.domains.scheduler.activation_contexts.iter().position(|record| {
             record.activation == activation
                 && record.activation_generation == activation_generation
                 && record.state != ActivationContextState::Dropped
         });
         let source_vector_record = context_index.and_then(|index| {
-            let context = &self.activation_contexts[index];
+            let context = &self.domains.scheduler.activation_contexts[index];
             context.vector_state.and_then(|vector_state| {
-                self.vector_states
+                self.domains
+                    .simd
+                    .vector_states
                     .iter()
                     .find(|record| {
                         record.id == vector_state.id
@@ -250,15 +257,18 @@ impl SemanticGraph {
             })
         });
 
-        self.next_activation_migration_id = self.next_activation_migration_id.max(migration + 1);
-        self.runnable_queues[source_index].entries.remove(source_entry_index);
-        let owner_task = self.runtime_activations[activation_index].owner_task;
+        self.domains.scheduler.next_activation_migration_id =
+            self.domains.scheduler.next_activation_migration_id.max(migration + 1);
+        self.domains.scheduler.runnable_queues[source_index].entries.remove(source_entry_index);
+        let owner_task = self.domains.scheduler.runtime_activations[activation_index].owner_task;
         let owner_task_generation =
-            self.runtime_activations[activation_index].owner_task_generation;
-        self.runtime_activations[activation_index].generation += 1;
-        let activation_generation_after = self.runtime_activations[activation_index].generation;
-        self.runtime_activations[activation_index].runnable_queue = Some(target_queue);
-        self.runtime_activations[activation_index].runnable_queue_generation =
+            self.domains.scheduler.runtime_activations[activation_index].owner_task_generation;
+        self.domains.scheduler.runtime_activations[activation_index].generation += 1;
+        let activation_generation_after =
+            self.domains.scheduler.runtime_activations[activation_index].generation;
+        self.domains.scheduler.runtime_activations[activation_index].runnable_queue =
+            Some(target_queue);
+        self.domains.scheduler.runtime_activations[activation_index].runnable_queue_generation =
             Some(target_queue_generation);
 
         let migration_event = self.event_log.push(
@@ -291,9 +301,9 @@ impl SemanticGraph {
                 activation_generation: activation_generation_after,
             },
         );
-        self.runtime_activations[activation_index].last_event =
+        self.domains.scheduler.runtime_activations[activation_index].last_event =
             Some(migration_event.max(dequeued_event).max(queued_event));
-        self.runnable_queues[target_index].entries.push(RunnableQueueEntry {
+        self.domains.scheduler.runnable_queues[target_index].entries.push(RunnableQueueEntry {
             activation,
             activation_generation: activation_generation_after,
             enqueued_at: queued_event,
@@ -306,16 +316,20 @@ impl SemanticGraph {
         let mut vector_status = ActivationVectorState::Absent;
         let mut vector_migrated_at_event = None;
         if let Some(context_index) = context_index {
-            context = Some(self.activation_contexts[context_index].id);
-            context_generation_before = Some(self.activation_contexts[context_index].generation);
-            self.activation_contexts[context_index].generation += 1;
-            self.activation_contexts[context_index].activation_generation =
+            context = Some(self.domains.scheduler.activation_contexts[context_index].id);
+            context_generation_before =
+                Some(self.domains.scheduler.activation_contexts[context_index].generation);
+            self.domains.scheduler.activation_contexts[context_index].generation += 1;
+            self.domains.scheduler.activation_contexts[context_index].activation_generation =
                 activation_generation_after;
-            context_generation_after = Some(self.activation_contexts[context_index].generation);
-            self.activation_contexts[context_index].last_event = Some(migration_event);
+            context_generation_after =
+                Some(self.domains.scheduler.activation_contexts[context_index].generation);
+            self.domains.scheduler.activation_contexts[context_index].last_event =
+                Some(migration_event);
             if let Some(source) = source_vector_record {
-                let migrated_id = self.next_vector_state_id;
-                self.next_vector_state_id = self.next_vector_state_id.max(migrated_id + 1);
+                let migrated_id = self.domains.simd.next_vector_state_id;
+                self.domains.simd.next_vector_state_id =
+                    self.domains.simd.next_vector_state_id.max(migrated_id + 1);
                 let migrated_ref =
                     ContractObjectRef::new(ContractObjectKind::VectorState, migrated_id, 1);
                 let owner_activation = ContractObjectRef::new(
@@ -339,7 +353,7 @@ impl SemanticGraph {
                         generation: 1,
                     },
                 );
-                self.vector_states.push(VectorStateRecord {
+                self.domains.simd.vector_states.push(VectorStateRecord {
                     id: migrated_id,
                     owner_activation,
                     owner_store: source.owner_store,
@@ -363,34 +377,39 @@ impl SemanticGraph {
                     EventKind::VectorStateMigratedAcrossHart {
                         migration,
                         migration_generation: 1,
-                        context: self.activation_contexts[context_index].id,
-                        context_generation: self.activation_contexts[context_index].generation,
+                        context: self.domains.scheduler.activation_contexts[context_index].id,
+                        context_generation: self.domains.scheduler.activation_contexts
+                            [context_index]
+                            .generation,
                         source_vector_state: source.object_ref(),
                         migrated_vector_state: migrated_ref,
                         generation: 1,
                     },
                 );
-                if let Some(record) = self
-                    .vector_states
-                    .iter_mut()
-                    .find(|record| record.id == source.id && record.generation == source.generation)
+                if let Some(record) =
+                    self.domains.simd.vector_states.iter_mut().find(|record| {
+                        record.id == source.id && record.generation == source.generation
+                    })
                 {
                     record.state = VectorStateState::Dropped;
                     record.recorded_at_event = event;
                 }
-                self.activation_contexts[context_index].vector_state = Some(migrated_ref);
-                self.activation_contexts[context_index].vector_status =
+                self.domains.scheduler.activation_contexts[context_index].vector_state =
+                    Some(migrated_ref);
+                self.domains.scheduler.activation_contexts[context_index].vector_status =
                     ActivationVectorState::Clean;
-                self.activation_contexts[context_index].vector_state_event = Some(event);
-                self.activation_contexts[context_index].last_event = Some(event);
-                self.runtime_activations[activation_index].last_event = Some(event);
+                self.domains.scheduler.activation_contexts[context_index].vector_state_event =
+                    Some(event);
+                self.domains.scheduler.activation_contexts[context_index].last_event = Some(event);
+                self.domains.scheduler.runtime_activations[activation_index].last_event =
+                    Some(event);
                 source_vector_state = Some(source.object_ref());
                 migrated_vector_state = Some(migrated_ref);
                 vector_status = ActivationVectorState::Clean;
                 vector_migrated_at_event = Some(event);
             }
         }
-        self.activation_migrations.push(ActivationMigrationRecord {
+        self.domains.scheduler.activation_migrations.push(ActivationMigrationRecord {
             id: migration,
             activation,
             activation_generation_before: activation_generation,
@@ -442,11 +461,11 @@ impl SemanticGraph {
     }
 
     pub fn activation_migrations(&self) -> &[ActivationMigrationRecord] {
-        &self.activation_migrations
+        &self.domains.scheduler.activation_migrations
     }
 
     pub fn activation_migration_count(&self) -> usize {
-        self.activation_migrations.len()
+        self.domains.scheduler.activation_migrations.len()
     }
 
     #[cfg(test)]
@@ -455,15 +474,19 @@ impl SemanticGraph {
         migration: ActivationMigrationId,
         event: EventId,
     ) {
-        if let Some(record) =
-            self.activation_migrations.iter_mut().find(|record| record.id == migration)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .activation_migrations
+            .iter_mut()
+            .find(|record| record.id == migration)
         {
             record.migrated_at_event = event;
         }
     }
 
     pub fn check_activation_migration_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for migration in &self.activation_migrations {
+        for migration in &self.domains.scheduler.activation_migrations {
             if migration.id == 0
                 || migration.generation == 0
                 || migration.state != ActivationMigrationState::Applied
@@ -507,8 +530,12 @@ impl SemanticGraph {
                 migration.target_hart,
                 migration.target_queue_owner_hart_generation,
             )?;
-            let Some(activation) =
-                self.runtime_activations.iter().find(|record| record.id == migration.activation)
+            let Some(activation) = self
+                .domains
+                .scheduler
+                .runtime_activations
+                .iter()
+                .find(|record| record.id == migration.activation)
             else {
                 return Err(SemanticInvariantError::ActivationMigrationMissingActivation {
                     migration: migration.id,
@@ -532,8 +559,12 @@ impl SemanticGraph {
                     activation: migration.activation,
                 });
             }
-            let Some(target_queue) =
-                self.runnable_queues.iter().find(|record| record.id == migration.target_queue)
+            let Some(target_queue) = self
+                .domains
+                .scheduler
+                .runnable_queues
+                .iter()
+                .find(|record| record.id == migration.target_queue)
             else {
                 return Err(SemanticInvariantError::ActivationMigrationMissingQueue {
                     migration: migration.id,
@@ -614,9 +645,11 @@ impl SemanticGraph {
                             migration: migration.id,
                         });
                     }
-                    let Some(context_record) = self.activation_contexts.iter().find(|record| {
-                        record.id == context && record.generation >= context_generation
-                    }) else {
+                    let Some(context_record) =
+                        self.domains.scheduler.activation_contexts.iter().find(|record| {
+                            record.id == context && record.generation >= context_generation
+                        })
+                    else {
                         return Err(SemanticInvariantError::ActivationMigrationInvalid {
                             migration: migration.id,
                         });
@@ -639,9 +672,11 @@ impl SemanticGraph {
                             migration: migration.id,
                         });
                     }
-                    let Some(source_record) = self.vector_states.iter().find(|record| {
-                        record.id == source.id && record.generation == source.generation
-                    }) else {
+                    let Some(source_record) =
+                        self.domains.simd.vector_states.iter().find(|record| {
+                            record.id == source.id && record.generation == source.generation
+                        })
+                    else {
                         return Err(SemanticInvariantError::ActivationMigrationInvalid {
                             migration: migration.id,
                         });
@@ -651,9 +686,11 @@ impl SemanticGraph {
                             migration: migration.id,
                         });
                     }
-                    let Some(migrated_record) = self.vector_states.iter().find(|record| {
-                        record.id == migrated.id && record.generation == migrated.generation
-                    }) else {
+                    let Some(migrated_record) =
+                        self.domains.simd.vector_states.iter().find(|record| {
+                            record.id == migrated.id && record.generation == migrated.generation
+                        })
+                    else {
                         return Err(SemanticInvariantError::ActivationMigrationInvalid {
                             migration: migration.id,
                         });
@@ -733,7 +770,7 @@ impl SemanticGraph {
                     activation: migration.activation,
                 });
             }
-            if !self.hart_event_attributions.iter().any(|attribution| {
+            if !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == migration.migrated_at_event
                     && attribution.hart == migration.source_hart
                     && attribution.hart_generation == migration.source_hart_generation
@@ -741,7 +778,7 @@ impl SemanticGraph {
                     && attribution.activation == Some(migration.activation)
                     && attribution.activation_generation
                         == Some(migration.activation_generation_before)
-            }) || !self.hart_event_attributions.iter().any(|attribution| {
+            }) || !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == migration.migrated_at_event
                     && attribution.hart == migration.target_hart
                     && attribution.hart_generation == migration.target_hart_generation
@@ -767,7 +804,8 @@ impl SemanticGraph {
         hart: HartId,
         generation: Generation,
     ) -> Result<(), SemanticInvariantError> {
-        let Some(record) = self.harts.iter().find(|record| record.id == hart) else {
+        let Some(record) = self.domains.scheduler.harts.iter().find(|record| record.id == hart)
+        else {
             return Err(SemanticInvariantError::ActivationMigrationMissingHart { migration, hart });
         };
         if record.generation < generation {
@@ -787,7 +825,9 @@ impl SemanticGraph {
         owner_hart: HartId,
         owner_hart_generation: Generation,
     ) -> Result<(), SemanticInvariantError> {
-        let Some(record) = self.runnable_queues.iter().find(|record| record.id == queue) else {
+        let Some(record) =
+            self.domains.scheduler.runnable_queues.iter().find(|record| record.id == queue)
+        else {
             return Err(SemanticInvariantError::ActivationMigrationMissingQueue {
                 migration,
                 queue,

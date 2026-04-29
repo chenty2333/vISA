@@ -13,10 +13,10 @@ use artifact_manifest::{
 };
 use contract_core::{
     CODE_PAYLOAD_FORMAT_CWASM, RUNTIME_MODE_RESEARCH, TARGET_ARTIFACT_FORMAT_V1,
-    ValidatedArtifactEntry, WASMTIME_COMPILATION_STRATEGY, WASMTIME_CRATE_VERSION,
+    WASMTIME_COMPILATION_STRATEGY, WASMTIME_CRATE_VERSION,
 };
 use contract_validate::{
-    build_validated_artifact_plan, canonical_wasmtime_config_fingerprint,
+    ValidatedArtifactEntry, build_validated_artifact_plan, canonical_wasmtime_config_fingerprint,
     expected_supervisor_contract, manifest_binding_hash, module_abi_fingerprint,
 };
 use service_core::net_contract::{

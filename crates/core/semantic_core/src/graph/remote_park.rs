@@ -15,33 +15,35 @@ impl SemanticGraph {
         if remote_park == 0 {
             return Err("remote park id=0 is invalid");
         }
-        if self.remote_parks.iter().any(|record| record.id == remote_park) {
+        if self.domains.scheduler.remote_parks.iter().any(|record| record.id == remote_park) {
             return Err("remote park already exists");
         }
         if source_hart == target_hart {
             return Err("remote park source and target harts must differ");
         }
         let Some(ipi_record) = self
+            .domains
+            .scheduler
             .ipi_events
             .iter()
             .find(|record| record.id == ipi && record.generation == ipi_generation)
         else {
             return Err("remote park ipi generation is missing");
         };
-        let Some(source) = self
-            .harts
-            .iter()
-            .find(|record| record.id == source_hart && record.generation == source_hart_generation)
+        let Some(source) =
+            self.domains.scheduler.harts.iter().find(|record| {
+                record.id == source_hart && record.generation == source_hart_generation
+            })
         else {
             return Err("remote park source hart generation is missing");
         };
         if matches!(source.state, HartState::Offline | HartState::Faulted | HartState::Parked) {
             return Err("remote park source hart is inactive");
         }
-        let Some(target) = self
-            .harts
-            .iter()
-            .find(|record| record.id == target_hart && record.generation == target_hart_generation)
+        let Some(target) =
+            self.domains.scheduler.harts.iter().find(|record| {
+                record.id == target_hart && record.generation == target_hart_generation
+            })
         else {
             return Err("remote park target hart generation is missing");
         };
@@ -90,25 +92,26 @@ impl SemanticGraph {
             return false;
         }
 
-        let Some(target_index) = self.harts.iter().position(|record| {
+        let Some(target_index) = self.domains.scheduler.harts.iter().position(|record| {
             record.id == target_hart && record.generation == target_hart_generation
         }) else {
             return false;
         };
 
-        self.next_remote_park_id = self.next_remote_park_id.max(remote_park + 1);
-        self.harts[target_index].state = HartState::Parked;
-        self.harts[target_index].generation += 1;
-        self.harts[target_index].current_activation = None;
-        self.harts[target_index].current_activation_generation = None;
-        self.harts[target_index].current_task = None;
-        self.harts[target_index].current_task_generation = None;
-        self.harts[target_index].current_store = None;
-        self.harts[target_index].current_store_generation = None;
+        self.domains.scheduler.next_remote_park_id =
+            self.domains.scheduler.next_remote_park_id.max(remote_park + 1);
+        self.domains.scheduler.harts[target_index].state = HartState::Parked;
+        self.domains.scheduler.harts[target_index].generation += 1;
+        self.domains.scheduler.harts[target_index].current_activation = None;
+        self.domains.scheduler.harts[target_index].current_activation_generation = None;
+        self.domains.scheduler.harts[target_index].current_task = None;
+        self.domains.scheduler.harts[target_index].current_task_generation = None;
+        self.domains.scheduler.harts[target_index].current_store = None;
+        self.domains.scheduler.harts[target_index].current_store_generation = None;
         if !note.is_empty() {
-            self.harts[target_index].note = note.to_string();
+            self.domains.scheduler.harts[target_index].note = note.to_string();
         }
-        let target_hart_generation_after = self.harts[target_index].generation;
+        let target_hart_generation_after = self.domains.scheduler.harts[target_index].generation;
         let remote_event = self.event_log.push(
             "scheduler",
             EventKind::RemoteHartParked {
@@ -124,9 +127,9 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.harts[target_index].last_event = Some(remote_event);
-        self.harts[target_index].last_current_event = Some(remote_event);
-        self.remote_parks.push(RemoteParkRecord {
+        self.domains.scheduler.harts[target_index].last_event = Some(remote_event);
+        self.domains.scheduler.harts[target_index].last_current_event = Some(remote_event);
+        self.domains.scheduler.remote_parks.push(RemoteParkRecord {
             id: remote_park,
             ipi,
             ipi_generation,
@@ -163,11 +166,11 @@ impl SemanticGraph {
     }
 
     pub fn remote_parks(&self) -> &[RemoteParkRecord] {
-        &self.remote_parks
+        &self.domains.scheduler.remote_parks
     }
 
     pub fn remote_park_count(&self) -> usize {
-        self.remote_parks.len()
+        self.domains.scheduler.remote_parks.len()
     }
 
     #[cfg(test)]
@@ -176,7 +179,9 @@ impl SemanticGraph {
         remote_park: RemoteParkId,
         generation: Generation,
     ) {
-        if let Some(record) = self.remote_parks.iter_mut().find(|record| record.id == remote_park) {
+        if let Some(record) =
+            self.domains.scheduler.remote_parks.iter_mut().find(|record| record.id == remote_park)
+        {
             record.ipi_generation = generation;
         }
     }
@@ -187,13 +192,15 @@ impl SemanticGraph {
         remote_park: RemoteParkId,
         event: EventId,
     ) {
-        if let Some(record) = self.remote_parks.iter_mut().find(|record| record.id == remote_park) {
+        if let Some(record) =
+            self.domains.scheduler.remote_parks.iter_mut().find(|record| record.id == remote_park)
+        {
             record.parked_at_event = event;
         }
     }
 
     pub fn check_remote_park_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for remote in &self.remote_parks {
+        for remote in &self.domains.scheduler.remote_parks {
             if remote.id == 0
                 || remote.generation == 0
                 || remote.ipi == 0
@@ -204,7 +211,7 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::RemoteParkInvalid { remote_park: remote.id });
             }
-            let Some(ipi) = self.ipi_events.iter().find(|record| {
+            let Some(ipi) = self.domains.scheduler.ipi_events.iter().find(|record| {
                 record.id == remote.ipi && record.generation == remote.ipi_generation
             }) else {
                 return Err(SemanticInvariantError::RemoteParkMissingIpi {
@@ -223,7 +230,8 @@ impl SemanticGraph {
                     ipi: remote.ipi,
                 });
             }
-            let Some(source) = self.harts.iter().find(|record| record.id == remote.source_hart)
+            let Some(source) =
+                self.domains.scheduler.harts.iter().find(|record| record.id == remote.source_hart)
             else {
                 return Err(SemanticInvariantError::RemoteParkMissingHart {
                     remote_park: remote.id,
@@ -236,7 +244,8 @@ impl SemanticGraph {
                     hart: remote.source_hart,
                 });
             }
-            let Some(target) = self.harts.iter().find(|record| record.id == remote.target_hart)
+            let Some(target) =
+                self.domains.scheduler.harts.iter().find(|record| record.id == remote.target_hart)
             else {
                 return Err(SemanticInvariantError::RemoteParkMissingHart {
                     remote_park: remote.id,
@@ -285,12 +294,12 @@ impl SemanticGraph {
                     remote_park: remote.id,
                 });
             }
-            if !self.hart_event_attributions.iter().any(|attribution| {
+            if !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == remote.parked_at_event
                     && attribution.hart == remote.source_hart
                     && attribution.hart_generation == remote.source_hart_generation
                     && attribution.event_kind == "RemoteParkSourceRecorded"
-            }) || !self.hart_event_attributions.iter().any(|attribution| {
+            }) || !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == remote.parked_at_event
                     && attribution.hart == remote.target_hart
                     && attribution.hart_generation == remote.target_hart_generation_after

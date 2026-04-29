@@ -16,25 +16,35 @@ impl SemanticGraph {
             } => {
                 if *resume == 0 {
                     Err(CommandError::precondition("activation resume id=0 is invalid"))
-                } else if self.activation_resumes.iter().any(|record| record.id == *resume) {
+                } else if self
+                    .domains
+                    .scheduler
+                    .activation_resumes
+                    .iter()
+                    .any(|record| record.id == *resume)
+                {
                     Err(CommandError::precondition("activation resume already exists"))
                 } else {
-                    let Some(decision) = self.scheduler_decisions.iter().find(|record| {
-                        record.id == *scheduler_decision
-                            && record.generation == *scheduler_decision_generation
-                            && record.state == SchedulerDecisionState::Recorded
-                            && record.selected_activation == *activation
-                            && record.selected_activation_generation == *activation_generation
-                    }) else {
+                    let Some(decision) =
+                        self.domains.scheduler.scheduler_decisions.iter().find(|record| {
+                            record.id == *scheduler_decision
+                                && record.generation == *scheduler_decision_generation
+                                && record.state == SchedulerDecisionState::Recorded
+                                && record.selected_activation == *activation
+                                && record.selected_activation_generation == *activation_generation
+                        })
+                    else {
                         return Err(CommandError::precondition(
                             "resume scheduler decision generation is missing or consumed",
                         ));
                     };
-                    let Some(queue) = self.runnable_queues.iter().find(|record| {
-                        record.id == decision.queue
-                            && record.generation == decision.queue_generation
-                            && record.state == RunnableQueueState::Active
-                    }) else {
+                    let Some(queue) =
+                        self.domains.scheduler.runnable_queues.iter().find(|record| {
+                            record.id == decision.queue
+                                && record.generation == decision.queue_generation
+                                && record.state == RunnableQueueState::Active
+                        })
+                    else {
                         return Err(CommandError::precondition(
                             "resume queue generation is missing or inactive",
                         ));
@@ -45,18 +55,21 @@ impl SemanticGraph {
                     }) {
                         return Err(CommandError::precondition("resume activation is not queued"));
                     }
-                    let Some(record) = self.runtime_activations.iter().find(|record| {
-                        record.id == *activation
-                            && record.generation == *activation_generation
-                            && record.state == RuntimeActivationState::Runnable
-                            && record.runnable_queue == Some(decision.queue)
-                            && record.runnable_queue_generation == Some(decision.queue_generation)
-                    }) else {
+                    let Some(record) =
+                        self.domains.scheduler.runtime_activations.iter().find(|record| {
+                            record.id == *activation
+                                && record.generation == *activation_generation
+                                && record.state == RuntimeActivationState::Runnable
+                                && record.runnable_queue == Some(decision.queue)
+                                && record.runnable_queue_generation
+                                    == Some(decision.queue_generation)
+                        })
+                    else {
                         return Err(CommandError::precondition(
                             "resume activation generation is not runnable",
                         ));
                     };
-                    if !self.tasks.iter().any(|task| {
+                    if !self.domains.scheduler.tasks.iter().any(|task| {
                         task.id == record.owner_task
                             && task.generation == record.owner_task_generation
                             && matches!(task.state, TaskState::Runnable | TaskState::Running)
@@ -71,7 +84,7 @@ impl SemanticGraph {
                                 "resume owner store generation is required",
                             ));
                         };
-                        if !self.stores.iter().any(|store_record| {
+                        if !self.domains.lifecycle.stores.iter().any(|store_record| {
                             store_record.id == store
                                 && store_record.generation == generation
                                 && store_record.state != StoreState::Dead
@@ -88,11 +101,13 @@ impl SemanticGraph {
                             "resume code object reference is invalid",
                         ));
                     }
-                    if let Some(context) = self.activation_contexts.iter().find(|context| {
-                        context.activation == *activation
-                            && context.activation_generation == *activation_generation
-                            && context.state != ActivationContextState::Dropped
-                    }) {
+                    if let Some(context) =
+                        self.domains.scheduler.activation_contexts.iter().find(|context| {
+                            context.activation == *activation
+                                && context.activation_generation == *activation_generation
+                                && context.state != ActivationContextState::Dropped
+                        })
+                    {
                         if context.state != ActivationContextState::Saved {
                             return Err(CommandError::precondition(
                                 "resume activation context is not saved",
@@ -104,16 +119,19 @@ impl SemanticGraph {
                         ) {
                             (Some(saved), Some(saved_generation)) => {
                                 let Some(saved_record) =
-                                    self.saved_contexts.iter().find(|saved_record| {
-                                        saved_record.id == saved
-                                            && saved_record.generation == saved_generation
-                                            && saved_record.context == context.id
-                                            && saved_record.context_generation == context.generation
-                                            && saved_record.activation == *activation
-                                            && saved_record.activation_generation
-                                                == *activation_generation
-                                            && saved_record.state == SavedContextState::Captured
-                                    })
+                                    self.domains.scheduler.saved_contexts.iter().find(
+                                        |saved_record| {
+                                            saved_record.id == saved
+                                                && saved_record.generation == saved_generation
+                                                && saved_record.context == context.id
+                                                && saved_record.context_generation
+                                                    == context.generation
+                                                && saved_record.activation == *activation
+                                                && saved_record.activation_generation
+                                                    == *activation_generation
+                                                && saved_record.state == SavedContextState::Captured
+                                        },
+                                    )
                                 else {
                                     return Err(CommandError::precondition(
                                         "resume saved context generation is missing",
@@ -183,23 +201,31 @@ impl SemanticGraph {
                     Err(CommandError::precondition("wait id=0 is invalid"))
                 } else if blockers.is_empty() && deadline.is_none() {
                     Err(CommandError::precondition("activation wait requires blocker or deadline"))
-                } else if self.activation_waits.iter().any(|record| record.id == *activation_wait) {
+                } else if self
+                    .domains
+                    .scheduler
+                    .activation_waits
+                    .iter()
+                    .any(|record| record.id == *activation_wait)
+                {
                     Err(CommandError::precondition("activation wait already exists"))
                 } else if self.domains.wait.waits.iter().any(|record| record.id == *wait) {
                     Err(CommandError::precondition("wait already exists"))
                 } else {
-                    let Some(record) = self.runtime_activations.iter().find(|record| {
-                        record.id == *activation
-                            && record.generation == *activation_generation
-                            && record.state == RuntimeActivationState::Running
-                            && record.runnable_queue.is_none()
-                            && record.runnable_queue_generation.is_none()
-                    }) else {
+                    let Some(record) =
+                        self.domains.scheduler.runtime_activations.iter().find(|record| {
+                            record.id == *activation
+                                && record.generation == *activation_generation
+                                && record.state == RuntimeActivationState::Running
+                                && record.runnable_queue.is_none()
+                                && record.runnable_queue_generation.is_none()
+                        })
+                    else {
                         return Err(CommandError::precondition(
                             "activation wait target generation is not running",
                         ));
                     };
-                    if !self.tasks.iter().any(|task| {
+                    if !self.domains.scheduler.tasks.iter().any(|task| {
                         task.id == record.owner_task
                             && task.generation == record.owner_task_generation
                             && matches!(task.state, TaskState::Runnable | TaskState::Running)
@@ -214,7 +240,7 @@ impl SemanticGraph {
                                 "activation wait owner store generation is required",
                             ));
                         };
-                        if !self.stores.iter().any(|store_record| {
+                        if !self.domains.lifecycle.stores.iter().any(|store_record| {
                             store_record.id == store
                                 && store_record.generation == generation
                                 && store_record.state != StoreState::Dead
@@ -233,7 +259,7 @@ impl SemanticGraph {
                 wait_generation,
                 ..
             } => {
-                let Some(record) = self.activation_waits.iter().find(|record| {
+                let Some(record) = self.domains.scheduler.activation_waits.iter().find(|record| {
                     record.id == *activation_wait
                         && record.generation == *activation_wait_generation
                         && record.wait_generation == *wait_generation
@@ -272,10 +298,16 @@ impl SemanticGraph {
                 if reason.is_empty() {
                     return Err(CommandError::precondition("activation cleanup reason is empty"));
                 }
-                if self.activation_cleanups.iter().any(|record| record.id == *cleanup) {
+                if self
+                    .domains
+                    .scheduler
+                    .activation_cleanups
+                    .iter()
+                    .any(|record| record.id == *cleanup)
+                {
                     return Err(CommandError::precondition("activation cleanup already exists"));
                 }
-                if !self.stores.iter().any(|record| {
+                if !self.domains.lifecycle.stores.iter().any(|record| {
                     record.id == *store
                         && record.generation == *store_generation
                         && record.state != StoreState::Dead
@@ -284,7 +316,7 @@ impl SemanticGraph {
                         "cleanup target store generation is missing or dead",
                     ));
                 }
-                if !self.runtime_activations.iter().any(|record| {
+                if !self.domains.scheduler.runtime_activations.iter().any(|record| {
                     record.id == *activation
                         && record.generation == *activation_generation
                         && record.owner_store == Some(*store)
@@ -330,6 +362,8 @@ impl SemanticGraph {
             } => {
                 if let Some(generation) = owner_store_generation {
                     if self
+                        .domains
+                        .lifecycle
                         .stores
                         .iter()
                         .any(|record| record.id == *store && record.generation == *generation)
@@ -372,13 +406,13 @@ impl SemanticGraph {
                     Err(CommandError::precondition("create-wait requires blocker or deadline"))
                 } else {
                     if let Some(task) = owner_task
-                        && !self.tasks.iter().any(|record| record.id == *task)
+                        && !self.domains.scheduler.tasks.iter().any(|record| record.id == *task)
                     {
                         return Err(CommandError::precondition("owner task is missing"));
                     }
                     if let Some(store) = owner_store {
                         if let Some(generation) = owner_store_generation {
-                            if self.stores.iter().any(|record| {
+                            if self.domains.lifecycle.stores.iter().any(|record| {
                                 record.id == *store && record.generation == *generation
                             }) {
                                 Ok(())
@@ -408,9 +442,11 @@ impl SemanticGraph {
                 }
             }
             SemanticCommand::BeginCleanup { cleanup, store, generation, .. } => {
-                if self.transactions.iter().any(|record| record.id == *cleanup) {
+                if self.domains.lifecycle.transactions.iter().any(|record| record.id == *cleanup) {
                     Err(CommandError::precondition("cleanup transaction id already exists"))
                 } else if self
+                    .domains
+                    .lifecycle
                     .stores
                     .iter()
                     .any(|record| record.id == *store && record.generation == *generation)
@@ -423,6 +459,8 @@ impl SemanticGraph {
             SemanticCommand::ApplyCleanupStep { cleanup, .. }
             | SemanticCommand::CommitCleanup { cleanup } => {
                 if self
+                    .domains
+                    .lifecycle
                     .transactions
                     .iter()
                     .any(|record| record.id == *cleanup && record.state == TransactionState::Begun)

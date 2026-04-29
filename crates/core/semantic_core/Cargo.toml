@@ -5,4 +5,5 @@ publish = false
 edition = "2024"
 
 [dependencies]
+contract_core.workspace = true
 target_abi = { workspace = true, default-features = false }

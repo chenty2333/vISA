@@ -2,13 +2,13 @@ use super::*;
 
 impl SemanticGraph {
     pub fn ensure_task(&mut self, id: TaskId, frontend: FrontendKind, label: &str) {
-        if let Some(task) = self.tasks.iter_mut().find(|task| task.id == id) {
+        if let Some(task) = self.domains.scheduler.tasks.iter_mut().find(|task| task.id == id) {
             task.frontend = frontend;
             task.label = label.to_string();
             return;
         }
 
-        self.tasks.push(TaskRecord {
+        self.domains.scheduler.tasks.push(TaskRecord {
             id,
             label: label.to_string(),
             frontend,
@@ -21,7 +21,7 @@ impl SemanticGraph {
         self.event_log.push("semantic", EventKind::TaskCreated { task: id, frontend });
     }
     pub fn set_task_state(&mut self, id: TaskId, state: TaskState) {
-        let Some(task) = self.tasks.iter_mut().find(|task| task.id == id) else {
+        let Some(task) = self.domains.scheduler.tasks.iter_mut().find(|task| task.id == id) else {
             return;
         };
         let from = task.state;
@@ -36,10 +36,10 @@ impl SemanticGraph {
         self.event_log.push("scheduler", EventKind::TaskStateChanged { task: id, from, to: state });
     }
     pub fn task_count(&self) -> usize {
-        self.tasks.len()
+        self.domains.scheduler.tasks.len()
     }
 
     pub fn tasks(&self) -> &[TaskRecord] {
-        &self.tasks
+        &self.domains.scheduler.tasks
     }
 }

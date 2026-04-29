@@ -28,13 +28,13 @@ impl SemanticGraph {
             return Err("integrated display/scheduler load refs must carry generations");
         }
 
-        let Some(benchmark) = self.framebuffer_benchmarks.iter().find(|record| {
+        let Some(benchmark) = self.domains.display.framebuffer_benchmarks.iter().find(|record| {
             record.id == framebuffer_benchmark
                 && record.generation == framebuffer_benchmark_generation
         }) else {
             return Err("integrated display/scheduler load missing framebuffer benchmark evidence");
         };
-        let Some(decision) = self.scheduler_decisions.iter().find(|record| {
+        let Some(decision) = self.domains.scheduler.scheduler_decisions.iter().find(|record| {
             record.id == scheduler_decision && record.generation == scheduler_decision_generation
         }) else {
             return Err("integrated display/scheduler load missing scheduler decision evidence");
@@ -107,13 +107,13 @@ impl SemanticGraph {
             return false;
         }
 
-        let Some(benchmark) = self.framebuffer_benchmarks.iter().find(|record| {
+        let Some(benchmark) = self.domains.display.framebuffer_benchmarks.iter().find(|record| {
             record.id == framebuffer_benchmark
                 && record.generation == framebuffer_benchmark_generation
         }) else {
             return false;
         };
-        let Some(decision) = self.scheduler_decisions.iter().find(|record| {
+        let Some(decision) = self.domains.scheduler.scheduler_decisions.iter().find(|record| {
             record.id == scheduler_decision && record.generation == scheduler_decision_generation
         }) else {
             return false;
@@ -237,7 +237,9 @@ impl SemanticGraph {
                     "framebuffer-benchmark",
                     record.framebuffer_benchmark,
                     record.framebuffer_benchmark_generation,
-                    self.framebuffer_benchmarks
+                    self.domains
+                        .display
+                        .framebuffer_benchmarks
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),
@@ -246,7 +248,9 @@ impl SemanticGraph {
                     "scheduler-decision",
                     record.scheduler_decision,
                     record.scheduler_decision_generation,
-                    self.scheduler_decisions
+                    self.domains
+                        .scheduler
+                        .scheduler_decisions
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),

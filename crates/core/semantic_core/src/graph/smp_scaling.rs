@@ -15,16 +15,17 @@ impl SemanticGraph {
         if benchmark == 0 {
             return Err("smp scaling benchmark id=0 is invalid");
         }
-        if self.smp_scaling_benchmarks.iter().any(|record| record.id == benchmark) {
+        if self.domains.scheduler.smp_scaling_benchmarks.iter().any(|record| record.id == benchmark)
+        {
             return Err("smp scaling benchmark already exists");
         }
         if scenario.is_empty() {
             return Err("smp scaling benchmark scenario is empty");
         }
-        let Some(stress) = self
-            .smp_stress_runs
-            .iter()
-            .find(|record| record.id == stress_run && record.generation == stress_run_generation)
+        let Some(stress) =
+            self.domains.scheduler.smp_stress_runs.iter().find(|record| {
+                record.id == stress_run && record.generation == stress_run_generation
+            })
         else {
             return Err("smp scaling benchmark missing stress run evidence");
         };
@@ -95,10 +96,10 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(stress) = self
-            .smp_stress_runs
-            .iter()
-            .find(|record| record.id == stress_run && record.generation == stress_run_generation)
+        let Some(stress) =
+            self.domains.scheduler.smp_stress_runs.iter().find(|record| {
+                record.id == stress_run && record.generation == stress_run_generation
+            })
         else {
             return false;
         };
@@ -114,7 +115,8 @@ impl SemanticGraph {
         let efficiency_milli = speedup_milli / hart_count as u64;
         let event_log_cursor = self.event_log.cursor();
         let generation = 1;
-        self.next_smp_scaling_benchmark_id = self.next_smp_scaling_benchmark_id.max(benchmark + 1);
+        self.domains.scheduler.next_smp_scaling_benchmark_id =
+            self.domains.scheduler.next_smp_scaling_benchmark_id.max(benchmark + 1);
         let recorded_at_event = self.event_log.push(
             "scheduler",
             EventKind::SmpScalingBenchmarkRecorded {
@@ -130,7 +132,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.smp_scaling_benchmarks.push(SmpScalingBenchmarkRecord {
+        self.domains.scheduler.smp_scaling_benchmarks.push(SmpScalingBenchmarkRecord {
             id: benchmark,
             scenario: scenario.to_string(),
             stress_run,
@@ -155,16 +157,16 @@ impl SemanticGraph {
     }
 
     pub fn smp_scaling_benchmarks(&self) -> &[SmpScalingBenchmarkRecord] {
-        &self.smp_scaling_benchmarks
+        &self.domains.scheduler.smp_scaling_benchmarks
     }
 
     pub fn smp_scaling_benchmark_count(&self) -> usize {
-        self.smp_scaling_benchmarks.len()
+        self.domains.scheduler.smp_scaling_benchmarks.len()
     }
 
     pub fn check_smp_scaling_benchmark_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.smp_scaling_benchmarks {
-            let Some(stress) = self.smp_stress_runs.iter().find(|stress| {
+        for record in &self.domains.scheduler.smp_scaling_benchmarks {
+            let Some(stress) = self.domains.scheduler.smp_stress_runs.iter().find(|stress| {
                 stress.id == record.stress_run && stress.generation == record.stress_run_generation
             }) else {
                 return Err(SemanticInvariantError::SmpScalingBenchmarkMissingStressRun {
@@ -254,8 +256,12 @@ impl SemanticGraph {
         benchmark: SmpScalingBenchmarkId,
         speedup_milli: u64,
     ) {
-        if let Some(record) =
-            self.smp_scaling_benchmarks.iter_mut().find(|record| record.id == benchmark)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .smp_scaling_benchmarks
+            .iter_mut()
+            .find(|record| record.id == benchmark)
         {
             record.speedup_milli = speedup_milli;
         }

@@ -40,7 +40,7 @@ impl SemanticGraph {
         if device_record.class != "block-device" {
             return Err("block device object device class is not block-device");
         }
-        if !self.resources.iter().any(|resource| {
+        if !self.domains.resource.resources.iter().any(|resource| {
             resource.id == device_record.resource
                 && resource.generation == device_record.resource_generation
                 && resource.kind == ResourceKind::BlockDevice
@@ -143,7 +143,7 @@ impl SemanticGraph {
                 || record.state != BlockDeviceObjectState::Registered
                 || device_record.state != DeviceObjectState::Registered
                 || device_record.class != "block-device"
-                || !self.resources.iter().any(|resource| {
+                || !self.domains.resource.resources.iter().any(|resource| {
                     resource.id == device_record.resource
                         && resource.generation == device_record.resource_generation
                         && resource.kind == ResourceKind::BlockDevice

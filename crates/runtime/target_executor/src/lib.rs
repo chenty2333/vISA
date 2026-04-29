@@ -67,9 +67,9 @@ use artifact_manifest::{
     TrapRecordManifest, VectorStateManifest, VirtioBlkBackendObjectManifest,
     VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
-use contract_core::{ValidatedArtifactEntry, ValidatedArtifactPlan};
 use contract_validate::{
-    build_validated_artifact_plan, validate_migration_against_manifest, validate_replay_quiescent,
+    ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
+    validate_migration_against_manifest, validate_replay_quiescent,
 };
 use evidence_scenarios::*;
 use fs_adapter::{
@@ -86,10 +86,10 @@ use semantic_core::{
     BufferCacheObjectState, CapabilityClass, CapabilityLedger, CapabilityRecord, CodePublishState,
     CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot, ContractViolation,
     CowState, DescriptorObjectAccess, DirectoryEntryKind, DirectoryObjectState,
-    DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord, Ext4AdapterObjectState,
-    ExternalObjectDeclaration, FatAdapterObjectState, FileObjectState, FrontendKind, HartState,
-    HostcallLinkState, IpiEventKind, IrqLinePolarity, IrqLineTrigger, MemoryClassPolicy,
-    MemoryLayoutState, MmioRegionObjectAccess, NetworkBackpressureAction,
+    DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord, EvidenceBoundaryLevel,
+    Ext4AdapterObjectState, ExternalObjectDeclaration, FatAdapterObjectState, FileObjectState,
+    FrontendKind, HartState, HostcallLinkState, IpiEventKind, IrqLinePolarity, IrqLineTrigger,
+    MemoryClassPolicy, MemoryLayoutState, MmioRegionObjectAccess, NetworkBackpressureAction,
     NetworkBackpressureReason, NetworkFaultInjectionEffect, NetworkFaultInjectionKind,
     PackageReplayValidator, PacketBufferDirection, PacketBufferObjectState, PacketQueueRole,
     PageBacking, PageObjectState, QueueObjectRole, ReplayPackageValidationState, ResourceKind,
@@ -375,6 +375,7 @@ fn publish_host_boundary_status(semantic: &mut SemanticGraph, manifest: &Artifac
         "artifact-loader",
         BoundaryKind::ArtifactLoader,
         BoundaryStatus::ManifestBacked,
+        EvidenceBoundaryLevel::SemanticModel,
         &manifest.artifact_profile,
         None,
     );
@@ -382,6 +383,7 @@ fn publish_host_boundary_status(semantic: &mut SemanticGraph, manifest: &Artifac
         "target-cwasm",
         BoundaryKind::RuntimeExecutor,
         BoundaryStatus::HostSide,
+        EvidenceBoundaryLevel::ReferenceService,
         &manifest.compiler.runtime_executor_abi,
         Some("bare-metal-cwasm-loader"),
     );
@@ -389,6 +391,7 @@ fn publish_host_boundary_status(semantic: &mut SemanticGraph, manifest: &Artifac
         "hostcall-table",
         BoundaryKind::HostcallTable,
         BoundaryStatus::HostSide,
+        EvidenceBoundaryLevel::ReferenceService,
         &manifest.compiler.runtime_executor_abi,
         Some("target-hostcall-trampoline"),
     );
@@ -396,6 +399,7 @@ fn publish_host_boundary_status(semantic: &mut SemanticGraph, manifest: &Artifac
         "target-executor",
         BoundaryKind::TargetExecutor,
         BoundaryStatus::HostSide,
+        EvidenceBoundaryLevel::ReferenceService,
         "wasmtime-host-validator",
         Some("target-runtime-only-executor"),
     );
@@ -403,6 +407,7 @@ fn publish_host_boundary_status(semantic: &mut SemanticGraph, manifest: &Artifac
         "store-lifecycle",
         BoundaryKind::StoreLifecycle,
         BoundaryStatus::LifecycleObject,
+        EvidenceBoundaryLevel::SemanticModel,
         "target_executor-host-validation",
         Some("target-store-memory-stack-code-object"),
     );
@@ -410,6 +415,7 @@ fn publish_host_boundary_status(semantic: &mut SemanticGraph, manifest: &Artifac
         "snapshot-replay",
         BoundaryKind::SnapshotReplay,
         BoundaryStatus::PackageOnly,
+        EvidenceBoundaryLevel::SemanticModel,
         "semantic-package-v1",
         Some("target-replay-runner"),
     );

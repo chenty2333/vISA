@@ -283,7 +283,7 @@ impl SemanticGraph {
                     adapter: record.adapter,
                 });
             };
-            let Some(store) = self.stores.iter().find(|store| {
+            let Some(store) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.owner_store && store.generation == record.owner_store_generation
             }) else {
                 return Err(SemanticInvariantError::SocketOperationMissingOwnerStore {

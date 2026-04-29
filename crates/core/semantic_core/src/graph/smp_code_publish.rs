@@ -24,7 +24,13 @@ impl SemanticGraph {
         if reason.is_empty() {
             return Err("smp code publish barrier reason is empty");
         }
-        if self.smp_code_publish_barriers.iter().any(|record| record.id == barrier) {
+        if self
+            .domains
+            .scheduler
+            .smp_code_publish_barriers
+            .iter()
+            .any(|record| record.id == barrier)
+        {
             return Err("smp code publish barrier already exists");
         }
         if code_publish_epoch_after != code_publish_epoch_before + 1 {
@@ -36,10 +42,10 @@ impl SemanticGraph {
         if code_publish_executed {
             return Err("smp code publish barrier must not execute code publish");
         }
-        let Some(rendezvous_record) = self
-            .stop_the_world_rendezvous
-            .iter()
-            .find(|record| record.id == rendezvous && record.generation == rendezvous_generation)
+        let Some(rendezvous_record) =
+            self.domains.scheduler.stop_the_world_rendezvous.iter().find(|record| {
+                record.id == rendezvous && record.generation == rendezvous_generation
+            })
         else {
             return Err("smp code publish barrier rendezvous is missing");
         };
@@ -58,7 +64,7 @@ impl SemanticGraph {
             {
                 return Err("smp code publish barrier participant list is invalid");
             }
-            let Some(current) = self.harts.iter().find(|hart| {
+            let Some(current) = self.domains.scheduler.harts.iter().find(|hart| {
                 hart.id == participant.hart && hart.generation == participant.hart_generation
             }) else {
                 return Err("smp code publish barrier participant generation is stale");
@@ -99,6 +105,8 @@ impl SemanticGraph {
             return false;
         }
         let Some(rendezvous_record) = self
+            .domains
+            .scheduler
             .stop_the_world_rendezvous
             .iter()
             .find(|record| record.id == rendezvous && record.generation == rendezvous_generation)
@@ -120,8 +128,8 @@ impl SemanticGraph {
             })
             .collect::<Vec<_>>();
 
-        self.next_smp_code_publish_barrier_id =
-            self.next_smp_code_publish_barrier_id.max(barrier + 1);
+        self.domains.scheduler.next_smp_code_publish_barrier_id =
+            self.domains.scheduler.next_smp_code_publish_barrier_id.max(barrier + 1);
         let event = self.event_log.push(
             "scheduler",
             EventKind::SmpCodePublishBarrierValidated {
@@ -134,7 +142,7 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.smp_code_publish_barriers.push(SmpCodePublishBarrierRecord {
+        self.domains.scheduler.smp_code_publish_barriers.push(SmpCodePublishBarrierRecord {
             id: barrier,
             rendezvous,
             rendezvous_generation,
@@ -165,11 +173,11 @@ impl SemanticGraph {
     }
 
     pub fn smp_code_publish_barriers(&self) -> &[SmpCodePublishBarrierRecord] {
-        &self.smp_code_publish_barriers
+        &self.domains.scheduler.smp_code_publish_barriers
     }
 
     pub fn smp_code_publish_barrier_count(&self) -> usize {
-        self.smp_code_publish_barriers.len()
+        self.domains.scheduler.smp_code_publish_barriers.len()
     }
 
     #[cfg(test)]
@@ -178,8 +186,12 @@ impl SemanticGraph {
         barrier: SmpCodePublishBarrierId,
         event: EventId,
     ) {
-        if let Some(record) =
-            self.smp_code_publish_barriers.iter_mut().find(|record| record.id == barrier)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .smp_code_publish_barriers
+            .iter_mut()
+            .find(|record| record.id == barrier)
         {
             record.validated_at_event = event;
         }
@@ -187,7 +199,7 @@ impl SemanticGraph {
 
     pub fn check_smp_code_publish_barrier_invariants(&self) -> Result<(), SemanticInvariantError> {
         let mut ids = BTreeSet::new();
-        for barrier in &self.smp_code_publish_barriers {
+        for barrier in &self.domains.scheduler.smp_code_publish_barriers {
             if barrier.id == 0
                 || !ids.insert(barrier.id)
                 || barrier.generation == 0
@@ -204,10 +216,12 @@ impl SemanticGraph {
                     barrier: barrier.id,
                 });
             }
-            let Some(rendezvous) = self.stop_the_world_rendezvous.iter().find(|record| {
-                record.id == barrier.rendezvous
-                    && record.generation == barrier.rendezvous_generation
-            }) else {
+            let Some(rendezvous) =
+                self.domains.scheduler.stop_the_world_rendezvous.iter().find(|record| {
+                    record.id == barrier.rendezvous
+                        && record.generation == barrier.rendezvous_generation
+                })
+            else {
                 return Err(SemanticInvariantError::SmpCodePublishBarrierRendezvousMissing {
                     barrier: barrier.id,
                     rendezvous: barrier.rendezvous,
@@ -284,8 +298,12 @@ impl SemanticGraph {
                         hart: participant.hart,
                     });
                 }
-                let Some(current_hart) =
-                    self.harts.iter().find(|record| record.id == participant.hart)
+                let Some(current_hart) = self
+                    .domains
+                    .scheduler
+                    .harts
+                    .iter()
+                    .find(|record| record.id == participant.hart)
                 else {
                     return Err(SemanticInvariantError::SmpCodePublishBarrierParticipantMismatch {
                         barrier: barrier.id,
@@ -301,7 +319,7 @@ impl SemanticGraph {
                         hart: participant.hart,
                     });
                 }
-                if !self.hart_event_attributions.iter().any(|attribution| {
+                if !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                     attribution.event == barrier.validated_at_event
                         && attribution.hart == participant.hart
                         && attribution.hart_generation == participant.hart_generation

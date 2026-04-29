@@ -1,4 +1,11 @@
-use super::*;
+use std::{env, error::Error, path::Path};
+
+use osctl_view::{
+    GraphEdgeMode, check_interface_compatibility, check_path, check_substrate_compatibility,
+    handle_view_command, inspect_object, print_activation, print_caps, print_event_log_tail,
+    print_graph, print_interface_events, print_modes, print_plan, print_state,
+    print_substrate_events, print_summary, replay_until, validate_contract,
+};
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);

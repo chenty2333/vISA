@@ -43,10 +43,10 @@ impl SemanticGraph {
             return Err("integrated smp/preemption/cleanup refs must carry generations");
         }
 
-        let Some(stress) = self
-            .smp_stress_runs
-            .iter()
-            .find(|record| record.id == stress_run && record.generation == stress_run_generation)
+        let Some(stress) =
+            self.domains.scheduler.smp_stress_runs.iter().find(|record| {
+                record.id == stress_run && record.generation == stress_run_generation
+            })
         else {
             return Err("integrated smp/preemption/cleanup missing stress run evidence");
         };
@@ -60,7 +60,7 @@ impl SemanticGraph {
             return Err("integrated smp/preemption/cleanup requires clean SMP stress evidence");
         }
 
-        let Some(timer) = self.timer_interrupts.iter().find(|record| {
+        let Some(timer) = self.domains.scheduler.timer_interrupts.iter().find(|record| {
             record.id == timer_interrupt && record.generation == timer_interrupt_generation
         }) else {
             return Err("integrated smp/preemption/cleanup missing timer interrupt evidence");
@@ -72,10 +72,10 @@ impl SemanticGraph {
             return Err("integrated smp/preemption/cleanup requires delivered timer target");
         }
 
-        let Some(preempt) = self
-            .preemptions
-            .iter()
-            .find(|record| record.id == preemption && record.generation == preemption_generation)
+        let Some(preempt) =
+            self.domains.scheduler.preemptions.iter().find(|record| {
+                record.id == preemption && record.generation == preemption_generation
+            })
         else {
             return Err("integrated smp/preemption/cleanup missing preemption evidence");
         };
@@ -88,7 +88,7 @@ impl SemanticGraph {
             return Err("integrated smp/preemption/cleanup timer/preemption link mismatch");
         }
 
-        let Some(saved) = self.saved_contexts.iter().find(|record| {
+        let Some(saved) = self.domains.scheduler.saved_contexts.iter().find(|record| {
             record.id == saved_context && record.generation == saved_context_generation
         }) else {
             return Err("integrated smp/preemption/cleanup missing saved context evidence");
@@ -102,7 +102,7 @@ impl SemanticGraph {
             return Err("integrated smp/preemption/cleanup saved context link mismatch");
         }
 
-        let Some(remote) = self.remote_preempts.iter().find(|record| {
+        let Some(remote) = self.domains.scheduler.remote_preempts.iter().find(|record| {
             record.id == remote_preempt && record.generation == remote_preempt_generation
         }) else {
             return Err("integrated smp/preemption/cleanup missing remote preempt evidence");
@@ -115,7 +115,7 @@ impl SemanticGraph {
             return Err("integrated smp/preemption/cleanup remote preempt mismatch");
         }
 
-        let Some(cleanup) = self.activation_cleanups.iter().find(|record| {
+        let Some(cleanup) = self.domains.scheduler.activation_cleanups.iter().find(|record| {
             record.id == activation_cleanup && record.generation == activation_cleanup_generation
         }) else {
             return Err("integrated smp/preemption/cleanup missing activation cleanup evidence");
@@ -129,10 +129,12 @@ impl SemanticGraph {
             );
         }
 
-        let Some(quiescence) = self.smp_cleanup_quiescence.iter().find(|record| {
-            record.id == smp_cleanup_quiescence
-                && record.generation == smp_cleanup_quiescence_generation
-        }) else {
+        let Some(quiescence) =
+            self.domains.scheduler.smp_cleanup_quiescence.iter().find(|record| {
+                record.id == smp_cleanup_quiescence
+                    && record.generation == smp_cleanup_quiescence_generation
+            })
+        else {
             return Err("integrated smp/preemption/cleanup missing cleanup quiescence evidence");
         };
         if quiescence.state != SmpCleanupQuiescenceState::Validated
@@ -154,7 +156,7 @@ impl SemanticGraph {
             return Err("integrated smp/preemption/cleanup quiescence mismatch");
         }
 
-        if self.activation_resumes.iter().any(|resume| {
+        if self.domains.scheduler.activation_resumes.iter().any(|resume| {
             resume.activation == cleanup.activation
                 && resume.activation_generation_after >= cleanup.activation_generation_after
                 && resume.resumed_at_event > cleanup.completed_at_event
@@ -211,14 +213,14 @@ impl SemanticGraph {
             return false;
         }
 
-        let Some(stress) = self
-            .smp_stress_runs
-            .iter()
-            .find(|record| record.id == stress_run && record.generation == stress_run_generation)
+        let Some(stress) =
+            self.domains.scheduler.smp_stress_runs.iter().find(|record| {
+                record.id == stress_run && record.generation == stress_run_generation
+            })
         else {
             return false;
         };
-        let Some(cleanup) = self.activation_cleanups.iter().find(|record| {
+        let Some(cleanup) = self.domains.scheduler.activation_cleanups.iter().find(|record| {
             record.id == activation_cleanup && record.generation == activation_cleanup_generation
         }) else {
             return false;
@@ -325,49 +327,69 @@ impl SemanticGraph {
                 "smp-stress-run",
                 record.stress_run,
                 record.stress_run_generation,
-                self.smp_stress_runs.iter().map(|item| (item.id, item.generation)),
+                self.domains
+                    .scheduler
+                    .smp_stress_runs
+                    .iter()
+                    .map(|item| (item.id, item.generation)),
             )?;
             self.check_integrated_evidence_ref(
                 record.id,
                 "preemption",
                 record.preemption,
                 record.preemption_generation,
-                self.preemptions.iter().map(|item| (item.id, item.generation)),
+                self.domains.scheduler.preemptions.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_integrated_evidence_ref(
                 record.id,
                 "timer-interrupt",
                 record.timer_interrupt,
                 record.timer_interrupt_generation,
-                self.timer_interrupts.iter().map(|item| (item.id, item.generation)),
+                self.domains
+                    .scheduler
+                    .timer_interrupts
+                    .iter()
+                    .map(|item| (item.id, item.generation)),
             )?;
             self.check_integrated_evidence_ref(
                 record.id,
                 "saved-context",
                 record.saved_context,
                 record.saved_context_generation,
-                self.saved_contexts.iter().map(|item| (item.id, item.generation)),
+                self.domains.scheduler.saved_contexts.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_integrated_evidence_ref(
                 record.id,
                 "remote-preempt",
                 record.remote_preempt,
                 record.remote_preempt_generation,
-                self.remote_preempts.iter().map(|item| (item.id, item.generation)),
+                self.domains
+                    .scheduler
+                    .remote_preempts
+                    .iter()
+                    .map(|item| (item.id, item.generation)),
             )?;
             self.check_integrated_evidence_ref(
                 record.id,
                 "activation-cleanup",
                 record.activation_cleanup,
                 record.activation_cleanup_generation,
-                self.activation_cleanups.iter().map(|item| (item.id, item.generation)),
+                self.domains
+                    .scheduler
+                    .activation_cleanups
+                    .iter()
+                    .map(|item| (item.id, item.generation)),
             )?;
             self.check_integrated_evidence_ref(
                 record.id,
                 "smp-cleanup-quiescence",
                 record.smp_cleanup_quiescence,
                 record.smp_cleanup_quiescence_generation,
-                self.smp_cleanup_quiescence.iter().map(|item| (item.id, item.generation)),
+                self.domains
+                    .scheduler
+                    .smp_cleanup_quiescence
+                    .iter()
+                    .map(|item| (item.id, item.generation)),
             )?;
             if self
                 .validate_integrated_smp_preemption_cleanup(

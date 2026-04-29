@@ -39,7 +39,7 @@ impl SemanticGraph {
         {
             return Err("io wait token does not reference the requested io blocker");
         }
-        let Some(store_record) = self.stores.iter().find(|record| {
+        let Some(store_record) = self.domains.lifecycle.stores.iter().find(|record| {
             record.id == driver_store && record.generation == driver_store_generation
         }) else {
             return Err("io wait driver store generation is missing");
@@ -118,7 +118,7 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_io_wait_id = self.next_io_wait_id.max(io_wait + 1);
+        self.domains.io.next_io_wait_id = self.domains.io.next_io_wait_id.max(io_wait + 1);
         let created_at_event = self.event_log.push(
             "io",
             EventKind::IoWaitCreated {
@@ -292,7 +292,7 @@ impl SemanticGraph {
                     wait: record.wait,
                 });
             };
-            let Some(store_record) = self.stores.iter().find(|store| {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.driver_store
                     && store.generation == record.driver_store_generation
             }) else {

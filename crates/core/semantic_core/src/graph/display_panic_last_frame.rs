@@ -82,7 +82,13 @@ impl SemanticGraph {
         if panic_last_frame == 0 {
             return Err("display panic last-frame id=0 is invalid");
         }
-        if self.display_panic_last_frames.iter().any(|record| record.id == panic_last_frame) {
+        if self
+            .domains
+            .display
+            .display_panic_last_frames
+            .iter()
+            .any(|record| record.id == panic_last_frame)
+        {
             return Err("display panic last-frame already exists");
         }
         if owner_store_generation == 0
@@ -104,17 +110,17 @@ impl SemanticGraph {
         if raw_framebuffer_bytes_exported {
             return Err("display panic last-frame cannot export raw framebuffer bytes");
         }
-        let Some(store_record) = self
-            .stores
-            .iter()
-            .find(|store| store.id == owner_store && store.generation == owner_store_generation)
+        let Some(store_record) =
+            self.domains.lifecycle.stores.iter().find(|store| {
+                store.id == owner_store && store.generation == owner_store_generation
+            })
         else {
             return Err("display panic last-frame owner store generation is missing");
         };
         if store_record.state == StoreState::Dead {
             return Err("display panic last-frame owner store is dead");
         }
-        let Some(barrier) = self.display_snapshot_barriers.iter().find(|barrier| {
+        let Some(barrier) = self.domains.display.display_snapshot_barriers.iter().find(|barrier| {
             barrier.id == display_snapshot_barrier
                 && barrier.generation == display_snapshot_barrier_generation
                 && barrier.owner_store == owner_store
@@ -123,23 +129,27 @@ impl SemanticGraph {
         }) else {
             return Err("display panic last-frame snapshot barrier generation is missing");
         };
-        let Some(display_record) = self.display_objects.iter().find(|display_record| {
-            display_record.id == barrier.display
-                && display_record.generation == barrier.display_generation
-                && display_record.framebuffer == barrier.framebuffer
-                && display_record.framebuffer_generation == barrier.framebuffer_generation
-                && display_record.state == DisplayObjectState::Registered
-        }) else {
+        let Some(display_record) =
+            self.domains.display.display_objects.iter().find(|display_record| {
+                display_record.id == barrier.display
+                    && display_record.generation == barrier.display_generation
+                    && display_record.framebuffer == barrier.framebuffer
+                    && display_record.framebuffer_generation == barrier.framebuffer_generation
+                    && display_record.state == DisplayObjectState::Registered
+            })
+        else {
             return Err("display panic last-frame display generation is missing");
         };
-        let Some(framebuffer_record) = self.framebuffer_objects.iter().find(|framebuffer| {
-            framebuffer.id == barrier.framebuffer
-                && framebuffer.generation == barrier.framebuffer_generation
-                && framebuffer.state == FramebufferObjectState::Registered
-        }) else {
+        let Some(framebuffer_record) =
+            self.domains.display.framebuffer_objects.iter().find(|framebuffer| {
+                framebuffer.id == barrier.framebuffer
+                    && framebuffer.generation == barrier.framebuffer_generation
+                    && framebuffer.state == FramebufferObjectState::Registered
+            })
+        else {
             return Err("display panic last-frame framebuffer generation is missing");
         };
-        let Some(event_log) = self.display_event_logs.iter().find(|event_log| {
+        let Some(event_log) = self.domains.display.display_event_logs.iter().find(|event_log| {
             event_log.id == display_event_log
                 && event_log.generation == display_event_log_generation
                 && event_log.owner_store == owner_store
@@ -155,7 +165,7 @@ impl SemanticGraph {
         if event_log.flush_count == 0 {
             return Err("display panic last-frame requires a flushed frame");
         }
-        let Some(write) = self.framebuffer_writes.iter().find(|write| {
+        let Some(write) = self.domains.display.framebuffer_writes.iter().find(|write| {
             write.id == framebuffer_write
                 && write.generation == framebuffer_write_generation
                 && write.owner_store == owner_store
@@ -169,7 +179,7 @@ impl SemanticGraph {
         }) else {
             return Err("display panic last-frame write generation is missing");
         };
-        let Some(flush) = self.framebuffer_flush_regions.iter().find(|flush| {
+        let Some(flush) = self.domains.display.framebuffer_flush_regions.iter().find(|flush| {
             flush.id == framebuffer_flush_region
                 && flush.generation == framebuffer_flush_region_generation
                 && flush.owner_store == owner_store
@@ -274,6 +284,8 @@ impl SemanticGraph {
             return false;
         }
         let barrier = self
+            .domains
+            .display
             .display_snapshot_barriers
             .iter()
             .find(|barrier| {
@@ -283,6 +295,8 @@ impl SemanticGraph {
             .expect("validated display panic last-frame barrier exists")
             .clone();
         let flush = self
+            .domains
+            .display
             .framebuffer_flush_regions
             .iter()
             .find(|flush| {
@@ -294,8 +308,11 @@ impl SemanticGraph {
         let generation = 1;
         let panic_cpu = 0;
         let panic_reason_code = 1;
-        self.next_display_panic_last_frame_id =
-            self.next_display_panic_last_frame_id.max(panic_last_frame.saturating_add(1));
+        self.domains.display.next_display_panic_last_frame_id = self
+            .domains
+            .display
+            .next_display_panic_last_frame_id
+            .max(panic_last_frame.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::DisplayPanicLastFrameRecorded {
@@ -324,7 +341,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.display_panic_last_frames.push(DisplayPanicLastFrameRecord {
+        self.domains.display.display_panic_last_frames.push(DisplayPanicLastFrameRecord {
             id: panic_last_frame,
             owner_store,
             owner_store_generation,
@@ -364,15 +381,15 @@ impl SemanticGraph {
     }
 
     pub fn display_panic_last_frames(&self) -> &[DisplayPanicLastFrameRecord] {
-        &self.display_panic_last_frames
+        &self.domains.display.display_panic_last_frames
     }
 
     pub fn display_panic_last_frame_count(&self) -> usize {
-        self.display_panic_last_frames.len()
+        self.domains.display.display_panic_last_frames.len()
     }
 
     pub fn check_display_panic_last_frame_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.display_panic_last_frames {
+        for record in &self.domains.display.display_panic_last_frames {
             if record.id == 0
                 || record.generation == 0
                 || record.owner_store_generation == 0
@@ -395,7 +412,7 @@ impl SemanticGraph {
                     panic_last_frame: record.id,
                 });
             }
-            let Some(store_record) = self.stores.iter().find(|store| {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.owner_store && store.generation == record.owner_store_generation
             }) else {
                 return Err(SemanticInvariantError::DisplayPanicLastFrameMissingStore {
@@ -408,7 +425,7 @@ impl SemanticGraph {
                     panic_last_frame: record.id,
                 });
             }
-            if !self.display_objects.iter().any(|display| {
+            if !self.domains.display.display_objects.iter().any(|display| {
                 display.id == record.display
                     && display.generation == record.display_generation
                     && display.framebuffer == record.framebuffer
@@ -419,7 +436,7 @@ impl SemanticGraph {
                     display: record.display,
                 });
             }
-            if !self.framebuffer_objects.iter().any(|framebuffer| {
+            if !self.domains.display.framebuffer_objects.iter().any(|framebuffer| {
                 framebuffer.id == record.framebuffer
                     && framebuffer.generation == record.framebuffer_generation
             }) {
@@ -428,25 +445,29 @@ impl SemanticGraph {
                     framebuffer: record.framebuffer,
                 });
             }
-            let Some(barrier) = self.display_snapshot_barriers.iter().find(|barrier| {
-                barrier.id == record.display_snapshot_barrier
-                    && barrier.generation == record.display_snapshot_barrier_generation
-            }) else {
+            let Some(barrier) =
+                self.domains.display.display_snapshot_barriers.iter().find(|barrier| {
+                    barrier.id == record.display_snapshot_barrier
+                        && barrier.generation == record.display_snapshot_barrier_generation
+                })
+            else {
                 return Err(SemanticInvariantError::DisplayPanicLastFrameMissingBarrier {
                     panic_last_frame: record.id,
                     barrier: record.display_snapshot_barrier,
                 });
             };
-            let Some(event_log) = self.display_event_logs.iter().find(|event_log| {
-                event_log.id == record.display_event_log
-                    && event_log.generation == record.display_event_log_generation
-            }) else {
+            let Some(event_log) =
+                self.domains.display.display_event_logs.iter().find(|event_log| {
+                    event_log.id == record.display_event_log
+                        && event_log.generation == record.display_event_log_generation
+                })
+            else {
                 return Err(SemanticInvariantError::DisplayPanicLastFrameMissingEventLog {
                     panic_last_frame: record.id,
                     display_event_log: record.display_event_log,
                 });
             };
-            let Some(write) = self.framebuffer_writes.iter().find(|write| {
+            let Some(write) = self.domains.display.framebuffer_writes.iter().find(|write| {
                 write.id == record.framebuffer_write
                     && write.generation == record.framebuffer_write_generation
             }) else {
@@ -455,7 +476,7 @@ impl SemanticGraph {
                     framebuffer_write: record.framebuffer_write,
                 });
             };
-            let Some(flush) = self.framebuffer_flush_regions.iter().find(|flush| {
+            let Some(flush) = self.domains.display.framebuffer_flush_regions.iter().find(|flush| {
                 flush.id == record.framebuffer_flush_region
                     && flush.generation == record.framebuffer_flush_region_generation
             }) else {
@@ -599,8 +620,12 @@ impl SemanticGraph {
         panic_last_frame: DisplayPanicLastFrameId,
         summary_digest: u64,
     ) {
-        if let Some(record) =
-            self.display_panic_last_frames.iter_mut().find(|record| record.id == panic_last_frame)
+        if let Some(record) = self
+            .domains
+            .display
+            .display_panic_last_frames
+            .iter_mut()
+            .find(|record| record.id == panic_last_frame)
         {
             record.summary_digest = summary_digest;
         }

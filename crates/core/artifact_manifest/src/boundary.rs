@@ -11,6 +11,8 @@ pub struct BoundaryValidationViolationManifest {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct BoundaryValidationReportManifest {
     pub validator: String,
+    #[serde(default)]
+    pub evidence_boundary: String,
     pub ok: bool,
     pub violation_count: usize,
     pub violations: Vec<BoundaryValidationViolationManifest>,

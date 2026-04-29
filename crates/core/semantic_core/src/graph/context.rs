@@ -6,8 +6,8 @@ impl SemanticGraph {
         activation: ActivationId,
         activation_generation: Generation,
     ) -> ActivationContextId {
-        let context = self.next_activation_context_id;
-        self.next_activation_context_id += 1;
+        let context = self.domains.scheduler.next_activation_context_id;
+        self.domains.scheduler.next_activation_context_id += 1;
         self.create_activation_context_with_id(context, activation, activation_generation);
         context
     }
@@ -18,13 +18,15 @@ impl SemanticGraph {
         activation: ActivationId,
         activation_generation: Generation,
     ) -> bool {
-        if context == 0 || self.activation_contexts.iter().any(|record| record.id == context) {
+        if context == 0
+            || self.domains.scheduler.activation_contexts.iter().any(|record| record.id == context)
+        {
             return false;
         }
-        let Some(activation_record) = self
-            .runtime_activations
-            .iter()
-            .find(|record| record.id == activation && record.generation == activation_generation)
+        let Some(activation_record) =
+            self.domains.scheduler.runtime_activations.iter().find(|record| {
+                record.id == activation && record.generation == activation_generation
+            })
         else {
             return false;
         };
@@ -34,12 +36,12 @@ impl SemanticGraph {
         ) {
             return false;
         }
-        if self.activation_contexts.iter().any(|record| {
+        if self.domains.scheduler.activation_contexts.iter().any(|record| {
             record.activation == activation && record.state != ActivationContextState::Dropped
         }) {
             return false;
         }
-        if !self.tasks.iter().any(|task| {
+        if !self.domains.scheduler.tasks.iter().any(|task| {
             task.id == activation_record.owner_task
                 && task.generation == activation_record.owner_task_generation
         }) {
@@ -49,7 +51,7 @@ impl SemanticGraph {
             let Some(generation) = activation_record.owner_store_generation else {
                 return false;
             };
-            if !self.stores.iter().any(|record| {
+            if !self.domains.lifecycle.stores.iter().any(|record| {
                 record.id == store
                     && record.generation == generation
                     && record.state != StoreState::Dead
@@ -58,7 +60,8 @@ impl SemanticGraph {
             }
         }
 
-        self.next_activation_context_id = self.next_activation_context_id.max(context + 1);
+        self.domains.scheduler.next_activation_context_id =
+            self.domains.scheduler.next_activation_context_id.max(context + 1);
         let event = self.event_log.push(
             "scheduler",
             EventKind::ActivationContextCreated {
@@ -68,7 +71,7 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.activation_contexts.push(ActivationContextRecord {
+        self.domains.scheduler.activation_contexts.push(ActivationContextRecord {
             id: context,
             activation,
             activation_generation,
@@ -99,29 +102,36 @@ impl SemanticGraph {
         flags: u64,
         note: &str,
     ) -> bool {
-        if saved_context == 0 || self.saved_contexts.iter().any(|record| record.id == saved_context)
+        if saved_context == 0
+            || self.domains.scheduler.saved_contexts.iter().any(|record| record.id == saved_context)
         {
             return false;
         }
         let Some(context_index) = self
+            .domains
+            .scheduler
             .activation_contexts
             .iter()
             .position(|record| record.id == context && record.generation == context_generation)
         else {
             return false;
         };
-        if self.activation_contexts[context_index].state == ActivationContextState::Dropped {
+        if self.domains.scheduler.activation_contexts[context_index].state
+            == ActivationContextState::Dropped
+        {
             return false;
         }
-        if self.activation_contexts[context_index].current_saved_context.is_some() {
+        if self.domains.scheduler.activation_contexts[context_index].current_saved_context.is_some()
+        {
             return false;
         }
-        let activation = self.activation_contexts[context_index].activation;
-        let activation_generation = self.activation_contexts[context_index].activation_generation;
-        let Some(activation_record) = self
-            .runtime_activations
-            .iter()
-            .find(|record| record.id == activation && record.generation == activation_generation)
+        let activation = self.domains.scheduler.activation_contexts[context_index].activation;
+        let activation_generation =
+            self.domains.scheduler.activation_contexts[context_index].activation_generation;
+        let Some(activation_record) =
+            self.domains.scheduler.runtime_activations.iter().find(|record| {
+                record.id == activation && record.generation == activation_generation
+            })
         else {
             return false;
         };
@@ -132,12 +142,17 @@ impl SemanticGraph {
             return false;
         }
 
-        self.next_saved_context_id = self.next_saved_context_id.max(saved_context + 1);
-        self.activation_contexts[context_index].generation += 1;
-        self.activation_contexts[context_index].state = ActivationContextState::Saved;
-        self.activation_contexts[context_index].current_saved_context = Some(saved_context);
-        self.activation_contexts[context_index].current_saved_context_generation = Some(1);
-        let updated_context_generation = self.activation_contexts[context_index].generation;
+        self.domains.scheduler.next_saved_context_id =
+            self.domains.scheduler.next_saved_context_id.max(saved_context + 1);
+        self.domains.scheduler.activation_contexts[context_index].generation += 1;
+        self.domains.scheduler.activation_contexts[context_index].state =
+            ActivationContextState::Saved;
+        self.domains.scheduler.activation_contexts[context_index].current_saved_context =
+            Some(saved_context);
+        self.domains.scheduler.activation_contexts[context_index]
+            .current_saved_context_generation = Some(1);
+        let updated_context_generation =
+            self.domains.scheduler.activation_contexts[context_index].generation;
         let event = self.event_log.push(
             "scheduler",
             EventKind::SavedContextCaptured {
@@ -150,15 +165,16 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.activation_contexts[context_index].last_event = Some(event);
-        self.saved_contexts.push(SavedContextRecord {
+        self.domains.scheduler.activation_contexts[context_index].last_event = Some(event);
+        self.domains.scheduler.saved_contexts.push(SavedContextRecord {
             id: saved_context,
             context,
             context_generation: updated_context_generation,
             activation,
             activation_generation,
-            owner_task: self.activation_contexts[context_index].owner_task,
-            owner_task_generation: self.activation_contexts[context_index].owner_task_generation,
+            owner_task: self.domains.scheduler.activation_contexts[context_index].owner_task,
+            owner_task_generation: self.domains.scheduler.activation_contexts[context_index]
+                .owner_task_generation,
             source_preemption: None,
             source_preemption_generation: None,
             generation: 1,
@@ -192,12 +208,12 @@ impl SemanticGraph {
             || saved_context == 0
             || pc == 0
             || sp == 0
-            || self.activation_contexts.iter().any(|record| record.id == context)
-            || self.saved_contexts.iter().any(|record| record.id == saved_context)
+            || self.domains.scheduler.activation_contexts.iter().any(|record| record.id == context)
+            || self.domains.scheduler.saved_contexts.iter().any(|record| record.id == saved_context)
         {
             return false;
         }
-        let Some(preemption_record) = self.preemptions.iter().find(|record| {
+        let Some(preemption_record) = self.domains.scheduler.preemptions.iter().find(|record| {
             record.id == preemption
                 && record.generation == preemption_generation
                 && record.state == PreemptionState::Applied
@@ -206,10 +222,10 @@ impl SemanticGraph {
         };
         let activation = preemption_record.activation;
         let activation_generation = preemption_record.activation_generation_after;
-        let Some(activation_record) = self
-            .runtime_activations
-            .iter()
-            .find(|record| record.id == activation && record.generation == activation_generation)
+        let Some(activation_record) =
+            self.domains.scheduler.runtime_activations.iter().find(|record| {
+                record.id == activation && record.generation == activation_generation
+            })
         else {
             return false;
         };
@@ -219,12 +235,12 @@ impl SemanticGraph {
         ) {
             return false;
         }
-        if self.activation_contexts.iter().any(|record| {
+        if self.domains.scheduler.activation_contexts.iter().any(|record| {
             record.activation == activation && record.state != ActivationContextState::Dropped
         }) {
             return false;
         }
-        if !self.tasks.iter().any(|task| {
+        if !self.domains.scheduler.tasks.iter().any(|task| {
             task.id == activation_record.owner_task
                 && task.generation == activation_record.owner_task_generation
         }) {
@@ -234,7 +250,7 @@ impl SemanticGraph {
             let Some(generation) = activation_record.owner_store_generation else {
                 return false;
             };
-            if !self.stores.iter().any(|record| {
+            if !self.domains.lifecycle.stores.iter().any(|record| {
                 record.id == store
                     && record.generation == generation
                     && record.state != StoreState::Dead
@@ -248,7 +264,8 @@ impl SemanticGraph {
         let owner_store = activation_record.owner_store;
         let owner_store_generation = activation_record.owner_store_generation;
 
-        self.next_activation_context_id = self.next_activation_context_id.max(context + 1);
+        self.domains.scheduler.next_activation_context_id =
+            self.domains.scheduler.next_activation_context_id.max(context + 1);
         let created_event = self.event_log.push(
             "scheduler",
             EventKind::ActivationContextCreated {
@@ -258,7 +275,7 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.activation_contexts.push(ActivationContextRecord {
+        self.domains.scheduler.activation_contexts.push(ActivationContextRecord {
             id: context,
             activation,
             activation_generation,
@@ -276,13 +293,18 @@ impl SemanticGraph {
             last_event: Some(created_event),
         });
 
-        let context_index = self.activation_contexts.len() - 1;
-        self.next_saved_context_id = self.next_saved_context_id.max(saved_context + 1);
-        self.activation_contexts[context_index].generation += 1;
-        self.activation_contexts[context_index].state = ActivationContextState::Saved;
-        self.activation_contexts[context_index].current_saved_context = Some(saved_context);
-        self.activation_contexts[context_index].current_saved_context_generation = Some(1);
-        let updated_context_generation = self.activation_contexts[context_index].generation;
+        let context_index = self.domains.scheduler.activation_contexts.len() - 1;
+        self.domains.scheduler.next_saved_context_id =
+            self.domains.scheduler.next_saved_context_id.max(saved_context + 1);
+        self.domains.scheduler.activation_contexts[context_index].generation += 1;
+        self.domains.scheduler.activation_contexts[context_index].state =
+            ActivationContextState::Saved;
+        self.domains.scheduler.activation_contexts[context_index].current_saved_context =
+            Some(saved_context);
+        self.domains.scheduler.activation_contexts[context_index]
+            .current_saved_context_generation = Some(1);
+        let updated_context_generation =
+            self.domains.scheduler.activation_contexts[context_index].generation;
         let saved_event = self.event_log.push(
             "scheduler",
             EventKind::SavedContextCaptured {
@@ -295,8 +317,8 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.activation_contexts[context_index].last_event = Some(saved_event);
-        self.saved_contexts.push(SavedContextRecord {
+        self.domains.scheduler.activation_contexts[context_index].last_event = Some(saved_event);
+        self.domains.scheduler.saved_contexts.push(SavedContextRecord {
             id: saved_context,
             context,
             context_generation: updated_context_generation,
@@ -332,11 +354,13 @@ impl SemanticGraph {
         preemption_generation: Generation,
         vector_state: ContractObjectRef,
     ) -> Result<(), &'static str> {
-        let Some(context_record) = self.activation_contexts.iter().find(|record| {
-            record.id == context
-                && record.generation == context_generation
-                && record.state == ActivationContextState::Saved
-        }) else {
+        let Some(context_record) =
+            self.domains.scheduler.activation_contexts.iter().find(|record| {
+                record.id == context
+                    && record.generation == context_generation
+                    && record.state == ActivationContextState::Saved
+            })
+        else {
             return Err("saved activation context generation is missing");
         };
         if context_record.current_saved_context != Some(saved_context)
@@ -350,7 +374,7 @@ impl SemanticGraph {
             return Err("preempt vector save requires dirty activation vector state");
         }
 
-        let Some(saved_record) = self.saved_contexts.iter().find(|record| {
+        let Some(saved_record) = self.domains.scheduler.saved_contexts.iter().find(|record| {
             record.id == saved_context
                 && record.generation == saved_context_generation
                 && record.state == SavedContextState::Captured
@@ -376,7 +400,7 @@ impl SemanticGraph {
             return Err("saved context preemption generation mismatch");
         }
 
-        let Some(preemption_record) = self.preemptions.iter().find(|record| {
+        let Some(preemption_record) = self.domains.scheduler.preemptions.iter().find(|record| {
             record.id == preemption
                 && record.generation == preemption_generation
                 && record.state == PreemptionState::Applied
@@ -424,14 +448,16 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(context_index) = self.activation_contexts.iter().position(|record| {
-            record.id == context
-                && record.generation == context_generation
-                && record.state == ActivationContextState::Saved
-        }) else {
+        let Some(context_index) =
+            self.domains.scheduler.activation_contexts.iter().position(|record| {
+                record.id == context
+                    && record.generation == context_generation
+                    && record.state == ActivationContextState::Saved
+            })
+        else {
             return false;
         };
-        let Some(saved_index) = self.saved_contexts.iter().position(|record| {
+        let Some(saved_index) = self.domains.scheduler.saved_contexts.iter().position(|record| {
             record.id == saved_context
                 && record.generation == saved_context_generation
                 && record.state == SavedContextState::Captured
@@ -439,11 +465,14 @@ impl SemanticGraph {
             return false;
         };
 
-        let context_generation_before = self.activation_contexts[context_index].generation;
-        self.activation_contexts[context_index].generation += 1;
-        let context_generation_after = self.activation_contexts[context_index].generation;
-        self.saved_contexts[saved_index].generation += 1;
-        let saved_context_generation_after = self.saved_contexts[saved_index].generation;
+        let context_generation_before =
+            self.domains.scheduler.activation_contexts[context_index].generation;
+        self.domains.scheduler.activation_contexts[context_index].generation += 1;
+        let context_generation_after =
+            self.domains.scheduler.activation_contexts[context_index].generation;
+        self.domains.scheduler.saved_contexts[saved_index].generation += 1;
+        let saved_context_generation_after =
+            self.domains.scheduler.saved_contexts[saved_index].generation;
         let event = self.event_log.push(
             "scheduler",
             EventKind::DirtyVectorStateSavedOnPreempt {
@@ -459,15 +488,18 @@ impl SemanticGraph {
             },
         );
 
-        self.activation_contexts[context_index].vector_status = ActivationVectorState::Clean;
-        self.activation_contexts[context_index].vector_state_event = Some(event);
-        self.activation_contexts[context_index].last_event = Some(event);
-        self.activation_contexts[context_index].current_saved_context_generation =
-            Some(saved_context_generation_after);
-        self.saved_contexts[saved_index].context_generation = context_generation_after;
-        self.saved_contexts[saved_index].vector_state = Some(vector_state);
-        self.saved_contexts[saved_index].vector_status = ActivationVectorState::Clean;
-        self.saved_contexts[saved_index].vector_saved_at_event = Some(event);
+        self.domains.scheduler.activation_contexts[context_index].vector_status =
+            ActivationVectorState::Clean;
+        self.domains.scheduler.activation_contexts[context_index].vector_state_event = Some(event);
+        self.domains.scheduler.activation_contexts[context_index].last_event = Some(event);
+        self.domains.scheduler.activation_contexts[context_index]
+            .current_saved_context_generation = Some(saved_context_generation_after);
+        self.domains.scheduler.saved_contexts[saved_index].context_generation =
+            context_generation_after;
+        self.domains.scheduler.saved_contexts[saved_index].vector_state = Some(vector_state);
+        self.domains.scheduler.saved_contexts[saved_index].vector_status =
+            ActivationVectorState::Clean;
+        self.domains.scheduler.saved_contexts[saved_index].vector_saved_at_event = Some(event);
         true
     }
 
@@ -478,11 +510,13 @@ impl SemanticGraph {
         vector_state: Option<ContractObjectRef>,
         vector_status: ActivationVectorState,
     ) -> Result<(), &'static str> {
-        let Some(context_record) = self.activation_contexts.iter().find(|record| {
-            record.id == context
-                && record.generation == context_generation
-                && record.state != ActivationContextState::Dropped
-        }) else {
+        let Some(context_record) =
+            self.domains.scheduler.activation_contexts.iter().find(|record| {
+                record.id == context
+                    && record.generation == context_generation
+                    && record.state != ActivationContextState::Dropped
+            })
+        else {
             return Err("activation context generation is missing or dropped");
         };
 
@@ -499,7 +533,7 @@ impl SemanticGraph {
                         "activation context vector state must be an exact vector-state ref",
                     );
                 }
-                let Some(vector_record) = self.vector_states.iter().find(|record| {
+                let Some(vector_record) = self.domains.simd.vector_states.iter().find(|record| {
                     record.id == vector_ref.id && record.generation == vector_ref.generation
                 }) else {
                     return Err("activation context vector state is missing");
@@ -530,10 +564,12 @@ impl SemanticGraph {
                         return Err("activation context vector state owner store mismatch");
                     }
                 }
-                if let Some(activation) = self.runtime_activations.iter().find(|activation| {
-                    activation.id == context_record.activation
-                        && activation.generation == context_record.activation_generation
-                }) {
+                if let Some(activation) =
+                    self.domains.scheduler.runtime_activations.iter().find(|activation| {
+                        activation.id == context_record.activation
+                            && activation.generation == context_record.activation_generation
+                    })
+                {
                     if let Some(code_object) = activation.code_object
                         && vector_record.code_object != code_object
                     {
@@ -565,18 +601,22 @@ impl SemanticGraph {
             return false;
         }
         let Some(index) = self
+            .domains
+            .scheduler
             .activation_contexts
             .iter()
             .position(|record| record.id == context && record.generation == context_generation)
         else {
             return false;
         };
-        let context_generation_before = self.activation_contexts[index].generation;
-        self.activation_contexts[index].generation += 1;
-        let context_generation_after = self.activation_contexts[index].generation;
-        let current_saved_context = self.activation_contexts[index].current_saved_context;
+        let context_generation_before =
+            self.domains.scheduler.activation_contexts[index].generation;
+        self.domains.scheduler.activation_contexts[index].generation += 1;
+        let context_generation_after = self.domains.scheduler.activation_contexts[index].generation;
+        let current_saved_context =
+            self.domains.scheduler.activation_contexts[index].current_saved_context;
         let current_saved_context_generation =
-            self.activation_contexts[index].current_saved_context_generation;
+            self.domains.scheduler.activation_contexts[index].current_saved_context_generation;
         let event = self.event_log.push(
             "scheduler",
             EventKind::ActivationContextVectorStateUpdated {
@@ -588,13 +628,13 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.activation_contexts[index].vector_state = vector_state;
-        self.activation_contexts[index].vector_status = vector_status;
-        self.activation_contexts[index].vector_state_event = Some(event);
-        self.activation_contexts[index].last_event = Some(event);
+        self.domains.scheduler.activation_contexts[index].vector_state = vector_state;
+        self.domains.scheduler.activation_contexts[index].vector_status = vector_status;
+        self.domains.scheduler.activation_contexts[index].vector_state_event = Some(event);
+        self.domains.scheduler.activation_contexts[index].last_event = Some(event);
         if let (Some(saved_context), Some(saved_context_generation)) =
             (current_saved_context, current_saved_context_generation)
-            && let Some(saved) = self.saved_contexts.iter_mut().find(|record| {
+            && let Some(saved) = self.domains.scheduler.saved_contexts.iter_mut().find(|record| {
                 record.id == saved_context && record.generation == saved_context_generation
             })
         {
@@ -609,11 +649,13 @@ impl SemanticGraph {
         context_generation: Generation,
         vector_state: ContractObjectRef,
     ) -> Result<(), &'static str> {
-        let Some(context_record) = self.activation_contexts.iter().find(|record| {
-            record.id == context
-                && record.generation == context_generation
-                && record.state != ActivationContextState::Dropped
-        }) else {
+        let Some(context_record) =
+            self.domains.scheduler.activation_contexts.iter().find(|record| {
+                record.id == context
+                    && record.generation == context_generation
+                    && record.state != ActivationContextState::Dropped
+            })
+        else {
             return Err("activation context generation is missing or dropped");
         };
         if context_record.vector_status != ActivationVectorState::Absent
@@ -643,15 +685,18 @@ impl SemanticGraph {
             return false;
         }
         let Some(index) = self
+            .domains
+            .scheduler
             .activation_contexts
             .iter()
             .position(|record| record.id == context && record.generation == context_generation)
         else {
             return false;
         };
-        let context_generation_before = self.activation_contexts[index].generation;
-        self.activation_contexts[index].generation += 1;
-        let context_generation_after = self.activation_contexts[index].generation;
+        let context_generation_before =
+            self.domains.scheduler.activation_contexts[index].generation;
+        self.domains.scheduler.activation_contexts[index].generation += 1;
+        let context_generation_after = self.domains.scheduler.activation_contexts[index].generation;
         let event = self.event_log.push(
             "scheduler",
             EventKind::LazyVectorStateEnabled {
@@ -662,27 +707,28 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.activation_contexts[index].vector_state = Some(vector_state);
-        self.activation_contexts[index].vector_status = ActivationVectorState::Dirty;
-        self.activation_contexts[index].vector_state_event = Some(event);
-        self.activation_contexts[index].last_event = Some(event);
+        self.domains.scheduler.activation_contexts[index].vector_state = Some(vector_state);
+        self.domains.scheduler.activation_contexts[index].vector_status =
+            ActivationVectorState::Dirty;
+        self.domains.scheduler.activation_contexts[index].vector_state_event = Some(event);
+        self.domains.scheduler.activation_contexts[index].last_event = Some(event);
         true
     }
 
     pub fn activation_contexts(&self) -> &[ActivationContextRecord] {
-        &self.activation_contexts
+        &self.domains.scheduler.activation_contexts
     }
 
     pub fn saved_contexts(&self) -> &[SavedContextRecord] {
-        &self.saved_contexts
+        &self.domains.scheduler.saved_contexts
     }
 
     pub fn activation_context_count(&self) -> usize {
-        self.activation_contexts.len()
+        self.domains.scheduler.activation_contexts.len()
     }
 
     pub fn saved_context_count(&self) -> usize {
-        self.saved_contexts.len()
+        self.domains.scheduler.saved_contexts.len()
     }
 
     #[cfg(test)]
@@ -690,8 +736,12 @@ impl SemanticGraph {
         &mut self,
         context: ActivationContextId,
     ) {
-        if let Some(record) =
-            self.activation_contexts.iter_mut().find(|record| record.id == context)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .activation_contexts
+            .iter_mut()
+            .find(|record| record.id == context)
         {
             record.current_saved_context_generation = None;
         }
@@ -702,8 +752,12 @@ impl SemanticGraph {
         &mut self,
         saved_context: SavedContextId,
     ) {
-        if let Some(record) =
-            self.saved_contexts.iter_mut().find(|record| record.id == saved_context)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .saved_contexts
+            .iter_mut()
+            .find(|record| record.id == saved_context)
         {
             record.source_preemption_generation = None;
         }
@@ -715,8 +769,12 @@ impl SemanticGraph {
         context: ActivationContextId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.activation_contexts.iter_mut().find(|record| record.id == context)
+        if let Some(record) = self
+            .domains
+            .scheduler
+            .activation_contexts
+            .iter_mut()
+            .find(|record| record.id == context)
             && let Some(vector_state) = record.vector_state.as_mut()
         {
             vector_state.generation = generation;
@@ -724,13 +782,15 @@ impl SemanticGraph {
     }
 
     pub fn check_context_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for context in &self.activation_contexts {
-            let Some(activation) = self.runtime_activations.iter().find(|activation| {
-                activation.id == context.activation
-                    && (activation.generation == context.activation_generation
-                        || (context.state == ActivationContextState::Dropped
-                            && activation.generation >= context.activation_generation))
-            }) else {
+        for context in &self.domains.scheduler.activation_contexts {
+            let Some(activation) =
+                self.domains.scheduler.runtime_activations.iter().find(|activation| {
+                    activation.id == context.activation
+                        && (activation.generation == context.activation_generation
+                            || (context.state == ActivationContextState::Dropped
+                                && activation.generation >= context.activation_generation))
+                })
+            else {
                 return Err(SemanticInvariantError::ActivationContextMissingActivation {
                     context: context.id,
                     activation: context.activation,
@@ -750,7 +810,7 @@ impl SemanticGraph {
                     context: context.id,
                 });
             }
-            if !self.tasks.iter().any(|task| {
+            if !self.domains.scheduler.tasks.iter().any(|task| {
                 task.id == context.owner_task && task.generation == context.owner_task_generation
             }) {
                 return Err(SemanticInvariantError::ActivationContextMissingTask {
@@ -765,7 +825,7 @@ impl SemanticGraph {
                         store,
                     });
                 };
-                if !self.stores.iter().any(|record| {
+                if !self.domains.lifecycle.stores.iter().any(|record| {
                     record.id == store
                         && record.generation == generation
                         && record.state != StoreState::Dead
@@ -784,6 +844,8 @@ impl SemanticGraph {
                     });
                 };
                 let Some(saved_record) = self
+                    .domains
+                    .scheduler
                     .saved_contexts
                     .iter()
                     .find(|record| record.id == saved && record.generation == saved_generation)
@@ -825,9 +887,12 @@ impl SemanticGraph {
                             context: context.id,
                         });
                     }
-                    let Some(vector_record) = self.vector_states.iter().find(|record| {
-                        record.id == vector_state.id && record.generation == vector_state.generation
-                    }) else {
+                    let Some(vector_record) =
+                        self.domains.simd.vector_states.iter().find(|record| {
+                            record.id == vector_state.id
+                                && record.generation == vector_state.generation
+                        })
+                    else {
                         return Err(SemanticInvariantError::ActivationContextVectorStateMissing {
                             context: context.id,
                         });
@@ -950,8 +1015,10 @@ impl SemanticGraph {
             }
         }
 
-        for activation in &self.runtime_activations {
+        for activation in &self.domains.scheduler.runtime_activations {
             let live_contexts = self
+                .domains
+                .scheduler
                 .activation_contexts
                 .iter()
                 .filter(|context| {
@@ -967,7 +1034,7 @@ impl SemanticGraph {
             }
         }
 
-        for saved in &self.saved_contexts {
+        for saved in &self.domains.scheduler.saved_contexts {
             if saved.pc == 0 || saved.sp == 0 {
                 return Err(SemanticInvariantError::SavedContextMachineFrameMissing {
                     saved_context: saved.id,
@@ -980,11 +1047,11 @@ impl SemanticGraph {
                     | SavedContextState::Dropped
             );
             let context_exists = if historical_saved {
-                self.activation_contexts.iter().any(|context| {
+                self.domains.scheduler.activation_contexts.iter().any(|context| {
                     context.id == saved.context && context.generation >= saved.context_generation
                 })
             } else {
-                self.activation_contexts.iter().any(|context| {
+                self.domains.scheduler.activation_contexts.iter().any(|context| {
                     context.id == saved.context && context.generation == saved.context_generation
                 })
             };
@@ -995,12 +1062,12 @@ impl SemanticGraph {
                 });
             }
             let activation_exists = if historical_saved {
-                self.runtime_activations.iter().any(|activation| {
+                self.domains.scheduler.runtime_activations.iter().any(|activation| {
                     activation.id == saved.activation
                         && activation.generation >= saved.activation_generation
                 })
             } else {
-                self.runtime_activations.iter().any(|activation| {
+                self.domains.scheduler.runtime_activations.iter().any(|activation| {
                     activation.id == saved.activation
                         && activation.generation == saved.activation_generation
                 })
@@ -1012,11 +1079,11 @@ impl SemanticGraph {
                 });
             }
             let saved_task_exists = if historical_saved {
-                self.tasks.iter().any(|task| {
+                self.domains.scheduler.tasks.iter().any(|task| {
                     task.id == saved.owner_task && task.generation >= saved.owner_task_generation
                 })
             } else {
-                self.tasks.iter().any(|task| {
+                self.domains.scheduler.tasks.iter().any(|task| {
                     task.id == saved.owner_task && task.generation == saved.owner_task_generation
                 })
             };
@@ -1028,10 +1095,10 @@ impl SemanticGraph {
             }
             match (saved.source_preemption, saved.source_preemption_generation) {
                 (Some(preemption), Some(generation)) => {
-                    let Some(preemption_record) = self
-                        .preemptions
-                        .iter()
-                        .find(|record| record.id == preemption && record.generation == generation)
+                    let Some(preemption_record) =
+                        self.domains.scheduler.preemptions.iter().find(|record| {
+                            record.id == preemption && record.generation == generation
+                        })
                     else {
                         return Err(SemanticInvariantError::SavedContextMissingPreemption {
                             saved_context: saved.id,
@@ -1071,9 +1138,12 @@ impl SemanticGraph {
                             saved_context: saved.id,
                         });
                     }
-                    let Some(vector_record) = self.vector_states.iter().find(|record| {
-                        record.id == vector_state.id && record.generation == vector_state.generation
-                    }) else {
+                    let Some(vector_record) =
+                        self.domains.simd.vector_states.iter().find(|record| {
+                            record.id == vector_state.id
+                                && record.generation == vector_state.generation
+                        })
+                    else {
                         return Err(SemanticInvariantError::SavedContextVectorStateInvalid {
                             saved_context: saved.id,
                         });

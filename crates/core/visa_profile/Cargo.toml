@@ -1,0 +1,10 @@
+[package]
+name = "visa_profile"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]

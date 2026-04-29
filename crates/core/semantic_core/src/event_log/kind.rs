@@ -1972,6 +1972,7 @@ pub enum EventKind {
         name: String,
         kind: BoundaryKind,
         status: BoundaryStatus,
+        evidence: EvidenceBoundaryLevel,
         backend: String,
         blocked_by: Option<String>,
         generation: Generation,

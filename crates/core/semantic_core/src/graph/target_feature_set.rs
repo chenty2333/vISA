@@ -23,7 +23,7 @@ impl SemanticGraph {
         if feature_set == u64::MAX {
             return Err("target feature set id cannot advance generation cursor");
         }
-        if self.target_feature_sets.iter().any(|record| record.id == feature_set) {
+        if self.domains.simd.target_feature_sets.iter().any(|record| record.id == feature_set) {
             return Err("target feature set already exists");
         }
         if name.is_empty()
@@ -97,8 +97,8 @@ impl SemanticGraph {
         }
 
         let generation = 1;
-        self.next_target_feature_set_id =
-            self.next_target_feature_set_id.max(feature_set.saturating_add(1));
+        self.domains.simd.next_target_feature_set_id =
+            self.domains.simd.next_target_feature_set_id.max(feature_set.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "target",
             EventKind::TargetFeatureSetDiscovered {
@@ -114,7 +114,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.target_feature_sets.push(TargetFeatureSetRecord {
+        self.domains.simd.target_feature_sets.push(TargetFeatureSetRecord {
             id: feature_set,
             name: name.to_string(),
             discovery_source: discovery_source.to_string(),
@@ -136,15 +136,15 @@ impl SemanticGraph {
     }
 
     pub fn target_feature_sets(&self) -> &[TargetFeatureSetRecord] {
-        &self.target_feature_sets
+        &self.domains.simd.target_feature_sets
     }
 
     pub fn target_feature_set_count(&self) -> usize {
-        self.target_feature_sets.len()
+        self.domains.simd.target_feature_sets.len()
     }
 
     pub fn check_target_feature_set_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.target_feature_sets {
+        for record in &self.domains.simd.target_feature_sets {
             if record.id == 0
                 || record.generation == 0
                 || record.name.is_empty()
@@ -222,7 +222,7 @@ impl SemanticGraph {
         vector_register_bits: u16,
     ) {
         if let Some(record) =
-            self.target_feature_sets.iter_mut().find(|record| record.id == feature_set)
+            self.domains.simd.target_feature_sets.iter_mut().find(|record| record.id == feature_set)
         {
             record.vector_register_bits = vector_register_bits;
         }

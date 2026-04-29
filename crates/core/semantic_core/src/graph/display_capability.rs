@@ -17,7 +17,13 @@ impl SemanticGraph {
         if display_capability == 0 {
             return Err("display capability id=0 is invalid");
         }
-        if self.display_capabilities.iter().any(|record| record.id == display_capability) {
+        if self
+            .domains
+            .display
+            .display_capabilities
+            .iter()
+            .any(|record| record.id == display_capability)
+        {
             return Err("display capability already exists");
         }
         if owner_store_generation == 0
@@ -33,24 +39,24 @@ impl SemanticGraph {
         }) {
             return Err("display capability operation is unsupported");
         }
-        let Some(store_record) = self
-            .stores
-            .iter()
-            .find(|store| store.id == owner_store && store.generation == owner_store_generation)
+        let Some(store_record) =
+            self.domains.lifecycle.stores.iter().find(|store| {
+                store.id == owner_store && store.generation == owner_store_generation
+            })
         else {
             return Err("display capability owner store generation is missing");
         };
         if store_record.state == StoreState::Dead {
             return Err("display capability owner store is dead");
         }
-        let Some(display_record) = self.display_objects.iter().find(|record| {
+        let Some(display_record) = self.domains.display.display_objects.iter().find(|record| {
             record.id == display
                 && record.generation == display_generation
                 && record.state == DisplayObjectState::Registered
         }) else {
             return Err("display capability display generation is missing");
         };
-        if !self.framebuffer_objects.iter().any(|framebuffer| {
+        if !self.domains.display.framebuffer_objects.iter().any(|framebuffer| {
             framebuffer.id == display_record.framebuffer
                 && framebuffer.generation == display_record.framebuffer_generation
                 && framebuffer.state == FramebufferObjectState::Registered
@@ -83,7 +89,7 @@ impl SemanticGraph {
         {
             return Err("display capability attribution mismatch");
         }
-        if self.display_capabilities.iter().any(|record| {
+        if self.domains.display.display_capabilities.iter().any(|record| {
             record.owner_store == owner_store
                 && record.owner_store_generation == owner_store_generation
                 && record.display == display
@@ -129,6 +135,8 @@ impl SemanticGraph {
             return false;
         }
         let Some(display_record) = self
+            .domains
+            .display
             .display_objects
             .iter()
             .find(|record| record.id == display && record.generation == display_generation)
@@ -136,8 +144,11 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_display_capability_id =
-            self.next_display_capability_id.max(display_capability.saturating_add(1));
+        self.domains.display.next_display_capability_id = self
+            .domains
+            .display
+            .next_display_capability_id
+            .max(display_capability.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::DisplayCapabilityRecorded {
@@ -158,7 +169,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.display_capabilities.push(DisplayCapabilityRecord {
+        self.domains.display.display_capabilities.push(DisplayCapabilityRecord {
             id: display_capability,
             owner_store,
             owner_store_generation,
@@ -181,16 +192,16 @@ impl SemanticGraph {
     }
 
     pub fn display_capabilities(&self) -> &[DisplayCapabilityRecord] {
-        &self.display_capabilities
+        &self.domains.display.display_capabilities
     }
 
     pub fn display_capability_count(&self) -> usize {
-        self.display_capabilities.len()
+        self.domains.display.display_capabilities.len()
     }
 
     pub fn check_display_capability_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.display_capabilities {
-            let Some(store_record) = self.stores.iter().find(|store| {
+        for record in &self.domains.display.display_capabilities {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.owner_store && store.generation == record.owner_store_generation
             }) else {
                 return Err(SemanticInvariantError::DisplayCapabilityMissingStore {
@@ -198,18 +209,22 @@ impl SemanticGraph {
                     store: record.owner_store,
                 });
             };
-            let Some(display_record) = self.display_objects.iter().find(|display| {
-                display.id == record.display && display.generation == record.display_generation
-            }) else {
+            let Some(display_record) =
+                self.domains.display.display_objects.iter().find(|display| {
+                    display.id == record.display && display.generation == record.display_generation
+                })
+            else {
                 return Err(SemanticInvariantError::DisplayCapabilityMissingDisplay {
                     display_capability: record.id,
                     display: record.display,
                 });
             };
-            let Some(framebuffer_record) = self.framebuffer_objects.iter().find(|framebuffer| {
-                framebuffer.id == record.framebuffer
-                    && framebuffer.generation == record.framebuffer_generation
-            }) else {
+            let Some(framebuffer_record) =
+                self.domains.display.framebuffer_objects.iter().find(|framebuffer| {
+                    framebuffer.id == record.framebuffer
+                        && framebuffer.generation == record.framebuffer_generation
+                })
+            else {
                 return Err(SemanticInvariantError::DisplayCapabilityMissingFramebuffer {
                     display_capability: record.id,
                     framebuffer: record.framebuffer,
@@ -263,14 +278,16 @@ impl SemanticGraph {
                     display_capability: record.id,
                 });
             }
-            if let Some(duplicate) = self.display_capabilities.iter().find(|other| {
-                other.id != record.id
-                    && other.owner_store == record.owner_store
-                    && other.owner_store_generation == record.owner_store_generation
-                    && other.display == record.display
-                    && other.display_generation == record.display_generation
-                    && other.state == DisplayCapabilityState::Active
-            }) {
+            if let Some(duplicate) =
+                self.domains.display.display_capabilities.iter().find(|other| {
+                    other.id != record.id
+                        && other.owner_store == record.owner_store
+                        && other.owner_store_generation == record.owner_store_generation
+                        && other.display == record.display
+                        && other.display_generation == record.display_generation
+                        && other.state == DisplayCapabilityState::Active
+                })
+            {
                 return Err(SemanticInvariantError::DisplayCapabilityDuplicateGrant {
                     display_capability: duplicate.id,
                     display: record.display,
@@ -327,8 +344,12 @@ impl SemanticGraph {
         display_capability: DisplayCapabilityId,
         capability_generation: Generation,
     ) {
-        if let Some(record) =
-            self.display_capabilities.iter_mut().find(|record| record.id == display_capability)
+        if let Some(record) = self
+            .domains
+            .display
+            .display_capabilities
+            .iter_mut()
+            .find(|record| record.id == display_capability)
         {
             record.capability_generation = capability_generation;
         }

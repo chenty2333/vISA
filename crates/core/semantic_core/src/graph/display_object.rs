@@ -16,7 +16,7 @@ impl SemanticGraph {
         if display == 0 {
             return Err("display object id=0 is invalid");
         }
-        if self.display_objects.iter().any(|record| record.id == display) {
+        if self.domains.display.display_objects.iter().any(|record| record.id == display) {
             return Err("display object already exists");
         }
         if name.is_empty() || mode_name.is_empty() {
@@ -25,10 +25,10 @@ impl SemanticGraph {
         if width == 0 || height == 0 || refresh_millihz == 0 {
             return Err("display object mode must be nonzero");
         }
-        let Some(framebuffer_record) = self
-            .framebuffer_objects
-            .iter()
-            .find(|record| record.id == framebuffer && record.generation == framebuffer_generation)
+        let Some(framebuffer_record) =
+            self.domains.display.framebuffer_objects.iter().find(|record| {
+                record.id == framebuffer && record.generation == framebuffer_generation
+            })
         else {
             return Err("display object framebuffer generation is missing");
         };
@@ -73,7 +73,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_display_object_id = self.next_display_object_id.max(display.saturating_add(1));
+        self.domains.display.next_display_object_id =
+            self.domains.display.next_display_object_id.max(display.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::DisplayObjectRecorded {
@@ -87,7 +88,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.display_objects.push(DisplayObjectRecord {
+        self.domains.display.display_objects.push(DisplayObjectRecord {
             id: display,
             name: name.to_string(),
             framebuffer,
@@ -105,19 +106,21 @@ impl SemanticGraph {
     }
 
     pub fn display_objects(&self) -> &[DisplayObjectRecord] {
-        &self.display_objects
+        &self.domains.display.display_objects
     }
 
     pub fn display_object_count(&self) -> usize {
-        self.display_objects.len()
+        self.domains.display.display_objects.len()
     }
 
     pub fn check_display_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.display_objects {
-            let Some(framebuffer_record) = self.framebuffer_objects.iter().find(|framebuffer| {
-                framebuffer.id == record.framebuffer
-                    && framebuffer.generation == record.framebuffer_generation
-            }) else {
+        for record in &self.domains.display.display_objects {
+            let Some(framebuffer_record) =
+                self.domains.display.framebuffer_objects.iter().find(|framebuffer| {
+                    framebuffer.id == record.framebuffer
+                        && framebuffer.generation == record.framebuffer_generation
+                })
+            else {
                 return Err(SemanticInvariantError::DisplayObjectMissingFramebuffer {
                     display: record.id,
                     framebuffer: record.framebuffer,
@@ -174,7 +177,9 @@ impl SemanticGraph {
         display: DisplayObjectId,
         framebuffer_generation: Generation,
     ) {
-        if let Some(record) = self.display_objects.iter_mut().find(|record| record.id == display) {
+        if let Some(record) =
+            self.domains.display.display_objects.iter_mut().find(|record| record.id == display)
+        {
             record.framebuffer_generation = framebuffer_generation;
         }
     }

@@ -49,7 +49,7 @@ impl SemanticGraph {
             return Err("integrated smp/network fault requires completed network cleanup effects");
         }
 
-        let Some(stress) = self.smp_stress_runs.iter().find(|record| {
+        let Some(stress) = self.domains.scheduler.smp_stress_runs.iter().find(|record| {
             record.id == smp_stress_run && record.generation == smp_stress_run_generation
         }) else {
             return Err("integrated smp/network fault missing SMP stress evidence");
@@ -64,7 +64,7 @@ impl SemanticGraph {
             return Err("integrated smp/network fault requires clean SMP stress evidence");
         }
 
-        let Some(remote) = self.remote_preempts.iter().find(|record| {
+        let Some(remote) = self.domains.scheduler.remote_preempts.iter().find(|record| {
             record.id == remote_preempt && record.generation == remote_preempt_generation
         }) else {
             return Err("integrated smp/network fault missing remote preempt evidence");
@@ -77,10 +77,12 @@ impl SemanticGraph {
             return Err("integrated smp/network fault remote preempt mismatch");
         }
 
-        let Some(quiescence) = self.smp_cleanup_quiescence.iter().find(|record| {
-            record.id == smp_cleanup_quiescence
-                && record.generation == smp_cleanup_quiescence_generation
-        }) else {
+        let Some(quiescence) =
+            self.domains.scheduler.smp_cleanup_quiescence.iter().find(|record| {
+                record.id == smp_cleanup_quiescence
+                    && record.generation == smp_cleanup_quiescence_generation
+            })
+        else {
             return Err("integrated smp/network fault missing SMP quiescence evidence");
         };
         if quiescence.state != SmpCleanupQuiescenceState::Validated
@@ -158,7 +160,7 @@ impl SemanticGraph {
         }) else {
             return false;
         };
-        let Some(stress) = self.smp_stress_runs.iter().find(|record| {
+        let Some(stress) = self.domains.scheduler.smp_stress_runs.iter().find(|record| {
             record.id == smp_stress_run && record.generation == smp_stress_run_generation
         }) else {
             return false;
@@ -286,7 +288,9 @@ impl SemanticGraph {
                     "smp-stress-run",
                     record.smp_stress_run,
                     record.smp_stress_run_generation,
-                    self.smp_stress_runs
+                    self.domains
+                        .scheduler
+                        .smp_stress_runs
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),
@@ -295,7 +299,9 @@ impl SemanticGraph {
                     "remote-preempt",
                     record.remote_preempt,
                     record.remote_preempt_generation,
-                    self.remote_preempts
+                    self.domains
+                        .scheduler
+                        .remote_preempts
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),
@@ -304,7 +310,9 @@ impl SemanticGraph {
                     "smp-cleanup-quiescence",
                     record.smp_cleanup_quiescence,
                     record.smp_cleanup_quiescence_generation,
-                    self.smp_cleanup_quiescence
+                    self.domains
+                        .scheduler
+                        .smp_cleanup_quiescence
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),

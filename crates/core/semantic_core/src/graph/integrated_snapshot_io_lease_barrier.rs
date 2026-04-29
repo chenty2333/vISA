@@ -31,10 +31,12 @@ impl SemanticGraph {
             return Err("integrated snapshot/io lease barrier refs must carry generations");
         }
 
-        let Some(smp_barrier) = self.smp_snapshot_barriers.iter().find(|record| {
-            record.id == smp_snapshot_barrier
-                && record.generation == smp_snapshot_barrier_generation
-        }) else {
+        let Some(smp_barrier) =
+            self.domains.scheduler.smp_snapshot_barriers.iter().find(|record| {
+                record.id == smp_snapshot_barrier
+                    && record.generation == smp_snapshot_barrier_generation
+            })
+        else {
             return Err(
                 "integrated snapshot/io lease barrier missing smp snapshot barrier evidence",
             );
@@ -46,10 +48,12 @@ impl SemanticGraph {
         else {
             return Err("integrated snapshot/io lease barrier missing io cleanup evidence");
         };
-        let Some(display_barrier) = self.display_snapshot_barriers.iter().find(|record| {
-            record.id == display_snapshot_barrier
-                && record.generation == display_snapshot_barrier_generation
-        }) else {
+        let Some(display_barrier) =
+            self.domains.display.display_snapshot_barriers.iter().find(|record| {
+                record.id == display_snapshot_barrier
+                    && record.generation == display_snapshot_barrier_generation
+            })
+        else {
             return Err(
                 "integrated snapshot/io lease barrier missing display snapshot barrier evidence",
             );
@@ -89,7 +93,7 @@ impl SemanticGraph {
         let Some(display_cleanup) =
             (match (display_barrier.display_cleanup, display_barrier.display_cleanup_generation) {
                 (Some(cleanup_id), Some(generation)) => {
-                    self.display_cleanups.iter().find(|record| {
+                    self.domains.display.display_cleanups.iter().find(|record| {
                         record.id == cleanup_id
                             && record.generation == generation
                             && record.state == DisplayCleanupState::Completed
@@ -145,10 +149,12 @@ impl SemanticGraph {
             return false;
         }
 
-        let Some(smp_barrier) = self.smp_snapshot_barriers.iter().find(|record| {
-            record.id == smp_snapshot_barrier
-                && record.generation == smp_snapshot_barrier_generation
-        }) else {
+        let Some(smp_barrier) =
+            self.domains.scheduler.smp_snapshot_barriers.iter().find(|record| {
+                record.id == smp_snapshot_barrier
+                    && record.generation == smp_snapshot_barrier_generation
+            })
+        else {
             return false;
         };
         let Some(cleanup) =
@@ -158,15 +164,19 @@ impl SemanticGraph {
         else {
             return false;
         };
-        let Some(display_barrier) = self.display_snapshot_barriers.iter().find(|record| {
-            record.id == display_snapshot_barrier
-                && record.generation == display_snapshot_barrier_generation
-        }) else {
+        let Some(display_barrier) =
+            self.domains.display.display_snapshot_barriers.iter().find(|record| {
+                record.id == display_snapshot_barrier
+                    && record.generation == display_snapshot_barrier_generation
+            })
+        else {
             return false;
         };
         let Some(display_cleanup) =
             (match (display_barrier.display_cleanup, display_barrier.display_cleanup_generation) {
                 (Some(cleanup_id), Some(generation)) => self
+                    .domains
+                    .display
                     .display_cleanups
                     .iter()
                     .find(|record| record.id == cleanup_id && record.generation == generation),
@@ -301,7 +311,9 @@ impl SemanticGraph {
                     "smp-snapshot-barrier",
                     record.smp_snapshot_barrier,
                     record.smp_snapshot_barrier_generation,
-                    self.smp_snapshot_barriers
+                    self.domains
+                        .scheduler
+                        .smp_snapshot_barriers
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),
@@ -321,7 +333,9 @@ impl SemanticGraph {
                     "display-snapshot-barrier",
                     record.display_snapshot_barrier,
                     record.display_snapshot_barrier_generation,
-                    self.display_snapshot_barriers
+                    self.domains
+                        .display
+                        .display_snapshot_barriers
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),

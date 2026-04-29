@@ -43,7 +43,7 @@ impl SemanticGraph {
         if device_record.class != "packet-device" {
             return Err("packet device object device class is not packet-device");
         }
-        if !self.resources.iter().any(|resource| {
+        if !self.domains.resource.resources.iter().any(|resource| {
             resource.id == device_record.resource
                 && resource.generation == device_record.resource_generation
                 && resource.kind == ResourceKind::PacketDevice
@@ -152,7 +152,7 @@ impl SemanticGraph {
                 || record.state != PacketDeviceObjectState::Registered
                 || device_record.state != DeviceObjectState::Registered
                 || device_record.class != "packet-device"
-                || !self.resources.iter().any(|resource| {
+                || !self.domains.resource.resources.iter().any(|resource| {
                     resource.id == device_record.resource
                         && resource.generation == device_record.resource_generation
                         && resource.kind == ResourceKind::PacketDevice

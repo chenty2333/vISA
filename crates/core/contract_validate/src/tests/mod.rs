@@ -1,21 +1,22 @@
 use artifact_manifest::{
-    ArtifactBundleManifest, CapabilityManifest, CommandResultManifest, CompilerManifest,
-    ExternManifest, GuestStateManifest, InterfaceEventManifest, InterfaceRequirementManifest,
-    MigrationHostManifest, MigrationPackageManifest, MigrationTargetManifest,
-    ModuleArtifactManifest, RequiredArtifactProfileManifest, ResourceLimitsManifest,
-    RuntimeActivationRecordManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SignatureManifest, SubstrateAuthorityRequirementManifest, SubstrateBoundaryManifest,
-    SubstrateEventManifest, TargetManifest,
+    ArtifactBundleManifest, BoundaryValidationReportManifest, CapabilityManifest,
+    CommandResultManifest, CompilerManifest, ExternManifest, GuestStateManifest,
+    InterfaceEventManifest, InterfaceRequirementManifest, MigrationHostManifest,
+    MigrationPackageManifest, MigrationTargetManifest, ModuleArtifactManifest,
+    RequiredArtifactProfileManifest, ResourceLimitsManifest, RuntimeActivationRecordManifest,
+    SemanticRootSetManifest, SemanticSnapshotManifest, SignatureManifest,
+    SubstrateAuthorityRequirementManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
+    TargetManifest,
 };
 use contract_core::*;
 use service_core::net_contract::NETWORK_CONTRACT_VERSION;
-use substrate_api::SubstrateCapabilitySet;
 use supervisor_catalog::{
     ARTIFACT_SIGNATURE_PROFILE, DMW_LAYOUT, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
     RUNTIME_ONLY_EXECUTOR_ABI, SUPERVISOR_ABI_VERSION, SUPERVISOR_ARTIFACT_FORMAT,
     SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_EXECUTION_MODE, SUPERVISOR_WASM_MODULES,
     WASM_FEATURE_PROFILE, WasmModuleSpec, module_dependencies, module_interface_spec,
 };
+use visa_profile::SubstrateCapabilitySet;
 
 use super::*;
 
@@ -507,6 +508,42 @@ fn minimal_migration_package() -> MigrationPackageManifest {
         },
         not_migrated: Vec::new(),
     }
+}
+
+#[test]
+fn migration_package_rejects_unknown_snapshot_evidence_boundary() {
+    let mut package = minimal_migration_package();
+    package.semantic.snapshot_validation = BoundaryValidationReportManifest {
+        validator: "snapshot-barrier".to_owned(),
+        evidence_boundary: "host-side".to_owned(),
+        ok: true,
+        violation_count: 0,
+        violations: Vec::new(),
+    };
+    package.semantic.roots.snapshot_validation_roots = vec![
+        "boundary-validation validator=snapshot-barrier evidence=host-side ok=true violations=0"
+            .to_owned(),
+    ];
+
+    let err = validate_migration_package(&package).expect_err("unknown boundary must fail");
+    assert_eq!(err.to_string(), "snapshot validation evidence boundary is missing or unknown");
+}
+
+#[test]
+fn migration_package_rejects_snapshot_evidence_root_mismatch() {
+    let mut package = minimal_migration_package();
+    package.semantic.snapshot_validation = BoundaryValidationReportManifest {
+        validator: "snapshot-barrier".to_owned(),
+        evidence_boundary: EvidenceBoundaryLevel::SemanticModel.as_str().to_owned(),
+        ok: true,
+        violation_count: 0,
+        violations: Vec::new(),
+    };
+    package.semantic.roots.snapshot_validation_roots =
+        vec!["boundary-validation validator=snapshot-barrier ok=true violations=0".to_owned()];
+
+    let err = validate_migration_package(&package).expect_err("root mismatch must fail");
+    assert_eq!(err.to_string(), "snapshot validation root evidence boundary mismatch");
 }
 
 mod compatibility;

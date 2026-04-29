@@ -1,6 +1,6 @@
 #![recursion_limit = "256"]
 
-use std::{env, error::Error, fs, path::Path};
+use std::{error::Error, fs, path::Path};
 
 use artifact_manifest::{
     ActivationCleanupManifest, ActivationContextManifest, ActivationMigrationManifest,
@@ -48,38 +48,36 @@ use artifact_manifest::{
     TimerInterruptManifest, TrapRecordManifest, VectorStateManifest,
     VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
-use contract_core::{
-    ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
-    InterfaceHostCapabilitySet, VIEW_SCHEMA_V1, ValidatedArtifactEntry, ValidatedArtifactPlan,
-};
+use contract_core::VIEW_SCHEMA_V1;
 use contract_validate::{
+    ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
+    InterfaceHostCapabilitySet, ValidatedArtifactEntry, ValidatedArtifactPlan,
     build_validated_artifact_plan, check_artifact_manifest_interface_compatibility,
     check_artifact_manifest_substrate_compatibility, host_validation_interface_capabilities,
     validate_migration_against_manifest, validate_migration_package, validate_replay_quiescent,
 };
 use semantic_core::{CapabilityClass, RuntimeMode};
-use substrate_api::{SubstrateCapabilitySet, SubstrateProfile};
+use visa_profile::{SubstrateCapabilitySet, SubstrateProfile};
 
-mod cli;
 mod graph;
 mod inspect;
 mod replay;
 mod views;
 
-pub use cli::run;
-use graph::{
-    GraphEdgeMode, object_ref_json, object_ref_manifest_json, optional_object_ref_json,
-    osctl_kind_from_contract_kind, print_graph,
-};
+pub use graph::{GraphEdgeMode, print_graph};
 #[cfg(test)]
 use graph::{graph_edges_for_package, history_graph_edges, live_graph_edges};
-use inspect::{inspect_object, print_activation, print_event_log_tail};
-use replay::replay_until;
+use graph::{
+    object_ref_json, object_ref_manifest_json, optional_object_ref_json,
+    osctl_kind_from_contract_kind,
+};
+pub use inspect::{inspect_object, print_activation, print_event_log_tail};
+pub use replay::replay_until;
 use views::*;
 
 const OSCTL_JSON_SCHEMA_VERSION: &str = "vmos-osctl-json-v1";
 
-fn print_summary(path: &Path) -> Result<(), Box<dyn Error>> {
+pub fn print_summary(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         print_migration_summary(&package);
@@ -90,7 +88,7 @@ fn print_summary(path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn check_path(path: &Path) -> Result<(), Box<dyn Error>> {
+pub fn check_path(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         validate_migration_package(&package)?;
@@ -113,7 +111,7 @@ fn check_path(path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn handle_view_command(kind: &str, args: Vec<String>) -> Result<(), Box<dyn Error>> {
+pub fn handle_view_command(kind: &str, args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let Some(subcommand) = args.first() else {
         return Err(format!("{kind} requires show/list").into());
     };
@@ -148,7 +146,7 @@ fn handle_view_command(kind: &str, args: Vec<String>) -> Result<(), Box<dyn Erro
     Ok(())
 }
 
-fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
+pub fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
     let structural_error =
         validate_migration_package(&package).err().map(|error| error.to_string());
@@ -263,7 +261,7 @@ fn contract_validation_view_v1(
     })
 }
 
-fn print_plan(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
+pub fn print_plan(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&fs::read(path)?)?;
     let plan_result = build_validated_artifact_plan(&manifest);
     if json {
@@ -279,7 +277,7 @@ fn print_plan(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn check_substrate_compatibility(
+pub fn check_substrate_compatibility(
     path: &Path,
     profile: &str,
     json: bool,
@@ -391,7 +389,7 @@ fn substrate_capabilities_json(capabilities: SubstrateCapabilitySet) -> serde_js
     })
 }
 
-fn check_interface_compatibility(
+pub fn check_interface_compatibility(
     path: &Path,
     profile: &str,
     json: bool,
@@ -489,7 +487,7 @@ fn print_interface_compatibility_json(
     Ok(())
 }
 
-fn print_interface_events(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
+pub fn print_interface_events(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
     if json {
         let value = serde_json::json!({
@@ -553,7 +551,7 @@ fn interface_event_view_v1(event: &InterfaceEventManifest) -> serde_json::Value 
     })
 }
 
-fn print_substrate_events(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
+pub fn print_substrate_events(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
     if json {
         let value = serde_json::json!({
@@ -639,7 +637,7 @@ fn command_result_view_v1(result: &CommandResultManifest) -> serde_json::Value {
     })
 }
 
-fn print_modes() -> Result<(), Box<dyn Error>> {
+pub fn print_modes() -> Result<(), Box<dyn Error>> {
     for mode in RuntimeMode::all() {
         println!(
             "mode {} event_log={} dmw={} fastpath={} deterministic={} capability_audit={} debug_metadata={} nondeterminism={}",
@@ -656,7 +654,7 @@ fn print_modes() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn print_caps(path: &Path, subject: Option<&str>) -> Result<(), Box<dyn Error>> {
+pub fn print_caps(path: &Path, subject: Option<&str>) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(
@@ -715,7 +713,7 @@ fn print_caps(path: &Path, subject: Option<&str>) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
+pub fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;
     if let Ok(package) = serde_json::from_slice::<MigrationPackageManifest>(&bytes) {
         println!(

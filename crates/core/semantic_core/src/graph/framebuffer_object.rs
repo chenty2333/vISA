@@ -17,7 +17,7 @@ impl SemanticGraph {
         if framebuffer == 0 {
             return Err("framebuffer object id=0 is invalid");
         }
-        if self.framebuffer_objects.iter().any(|record| record.id == framebuffer) {
+        if self.domains.display.framebuffer_objects.iter().any(|record| record.id == framebuffer) {
             return Err("framebuffer object already exists");
         }
         if name.is_empty() {
@@ -43,6 +43,8 @@ impl SemanticGraph {
             return Err("framebuffer object byte length is smaller than stride*height");
         }
         let Some(resource_record) = self
+            .domains
+            .resource
             .resources
             .iter()
             .find(|record| record.id == resource && record.generation == resource_generation)
@@ -89,8 +91,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_framebuffer_object_id =
-            self.next_framebuffer_object_id.max(framebuffer.saturating_add(1));
+        self.domains.display.next_framebuffer_object_id =
+            self.domains.display.next_framebuffer_object_id.max(framebuffer.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::FramebufferObjectRecorded {
@@ -105,7 +107,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.framebuffer_objects.push(FramebufferObjectRecord {
+        self.domains.display.framebuffer_objects.push(FramebufferObjectRecord {
             id: framebuffer,
             name: name.to_string(),
             resource,
@@ -124,16 +126,16 @@ impl SemanticGraph {
     }
 
     pub fn framebuffer_objects(&self) -> &[FramebufferObjectRecord] {
-        &self.framebuffer_objects
+        &self.domains.display.framebuffer_objects
     }
 
     pub fn framebuffer_object_count(&self) -> usize {
-        self.framebuffer_objects.len()
+        self.domains.display.framebuffer_objects.len()
     }
 
     pub fn check_framebuffer_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.framebuffer_objects {
-            let Some(resource_record) = self.resources.iter().find(|resource| {
+        for record in &self.domains.display.framebuffer_objects {
+            let Some(resource_record) = self.domains.resource.resources.iter().find(|resource| {
                 resource.id == record.resource && resource.generation == record.resource_generation
             }) else {
                 return Err(SemanticInvariantError::FramebufferObjectMissingResource {
@@ -197,8 +199,12 @@ impl SemanticGraph {
         framebuffer: FramebufferObjectId,
         resource_generation: Generation,
     ) {
-        if let Some(record) =
-            self.framebuffer_objects.iter_mut().find(|record| record.id == framebuffer)
+        if let Some(record) = self
+            .domains
+            .display
+            .framebuffer_objects
+            .iter_mut()
+            .find(|record| record.id == framebuffer)
         {
             record.resource_generation = resource_generation;
         }

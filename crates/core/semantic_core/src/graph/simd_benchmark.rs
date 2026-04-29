@@ -43,7 +43,7 @@ impl SemanticGraph {
         {
             return Err("SIMD benchmark requires nonzero ABI, vector shape, workload, and metrics");
         }
-        let Some(feature) = self.target_feature_sets.iter().find(|record| {
+        let Some(feature) = self.domains.simd.target_feature_sets.iter().find(|record| {
             record.id == target_feature_set.id && record.generation == target_feature_set.generation
         }) else {
             return Err("SIMD benchmark target feature set is missing");
@@ -83,7 +83,7 @@ impl SemanticGraph {
         context_overhead_nanos: u64,
         note: &str,
     ) -> bool {
-        if self.simd_benchmarks.iter().any(|record| record.id == benchmark) {
+        if self.domains.simd.simd_benchmarks.iter().any(|record| record.id == benchmark) {
             return false;
         }
         if self
@@ -105,7 +105,8 @@ impl SemanticGraph {
         {
             return false;
         }
-        self.next_simd_benchmark_id = self.next_simd_benchmark_id.max(benchmark + 1);
+        self.domains.simd.next_simd_benchmark_id =
+            self.domains.simd.next_simd_benchmark_id.max(benchmark + 1);
         let event = self.event_log.push(
             "simd-runtime",
             EventKind::SimdBenchmarkRecorded {
@@ -124,7 +125,7 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.simd_benchmarks.push(SimdBenchmarkRecord {
+        self.domains.simd.simd_benchmarks.push(SimdBenchmarkRecord {
             id: benchmark,
             target_feature_set,
             scalar_code_object,
@@ -146,15 +147,15 @@ impl SemanticGraph {
     }
 
     pub fn simd_benchmarks(&self) -> &[SimdBenchmarkRecord] {
-        &self.simd_benchmarks
+        &self.domains.simd.simd_benchmarks
     }
 
     pub fn simd_benchmark_count(&self) -> usize {
-        self.simd_benchmarks.len()
+        self.domains.simd.simd_benchmarks.len()
     }
 
     pub fn check_simd_benchmark_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for benchmark in &self.simd_benchmarks {
+        for benchmark in &self.domains.simd.simd_benchmarks {
             if benchmark.id == 0
                 || benchmark.generation == 0
                 || benchmark.state != SimdBenchmarkState::Recorded
@@ -227,7 +228,8 @@ impl SemanticGraph {
         benchmark: SimdBenchmarkId,
         speedup_milli: u64,
     ) {
-        if let Some(record) = self.simd_benchmarks.iter_mut().find(|record| record.id == benchmark)
+        if let Some(record) =
+            self.domains.simd.simd_benchmarks.iter_mut().find(|record| record.id == benchmark)
         {
             record.speedup_milli = speedup_milli;
         }

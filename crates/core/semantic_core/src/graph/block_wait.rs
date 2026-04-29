@@ -40,6 +40,8 @@ impl SemanticGraph {
                 return Err("block wait owner store generation is missing");
             };
             let Some(store_record) = self
+                .domains
+                .lifecycle
                 .stores
                 .iter()
                 .find(|record| record.id == store && record.generation == generation)

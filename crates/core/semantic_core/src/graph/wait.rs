@@ -36,11 +36,18 @@ impl SemanticGraph {
         saved_context: Option<String>,
     ) {
         let owner_task_generation = if let Some(owner_task) = owner_task {
-            if let Some(task) = self.tasks.iter_mut().find(|task| task.id == owner_task) {
+            if let Some(task) =
+                self.domains.scheduler.tasks.iter_mut().find(|task| task.id == owner_task)
+            {
                 task.pending_wait = Some(wait);
             }
             self.set_task_state(owner_task, TaskState::Pending);
-            self.tasks.iter().find(|task| task.id == owner_task).map(|task| task.generation)
+            self.domains
+                .scheduler
+                .tasks
+                .iter()
+                .find(|task| task.id == owner_task)
+                .map(|task| task.generation)
         } else {
             None
         };
@@ -221,38 +228,45 @@ impl SemanticGraph {
         if activation_wait == 0
             || wait == 0
             || blockers.is_empty() && deadline.is_none()
-            || self.activation_waits.iter().any(|record| record.id == activation_wait)
+            || self
+                .domains
+                .scheduler
+                .activation_waits
+                .iter()
+                .any(|record| record.id == activation_wait)
             || self.domains.wait.waits.iter().any(|record| record.id == wait)
         {
             return false;
         }
-        let Some(activation_index) = self.runtime_activations.iter().position(|record| {
-            record.id == activation
-                && record.generation == activation_generation
-                && record.state == RuntimeActivationState::Running
-                && record.runnable_queue.is_none()
-                && record.runnable_queue_generation.is_none()
-        }) else {
+        let Some(activation_index) =
+            self.domains.scheduler.runtime_activations.iter().position(|record| {
+                record.id == activation
+                    && record.generation == activation_generation
+                    && record.state == RuntimeActivationState::Running
+                    && record.runnable_queue.is_none()
+                    && record.runnable_queue_generation.is_none()
+            })
+        else {
             return false;
         };
-        let owner_task = self.runtime_activations[activation_index].owner_task;
+        let owner_task = self.domains.scheduler.runtime_activations[activation_index].owner_task;
         let owner_task_generation =
-            self.runtime_activations[activation_index].owner_task_generation;
-        if !self.tasks.iter().any(|task| {
+            self.domains.scheduler.runtime_activations[activation_index].owner_task_generation;
+        if !self.domains.scheduler.tasks.iter().any(|task| {
             task.id == owner_task
                 && task.generation == owner_task_generation
                 && matches!(task.state, TaskState::Runnable | TaskState::Running)
         }) {
             return false;
         }
-        let owner_store = self.runtime_activations[activation_index].owner_store;
+        let owner_store = self.domains.scheduler.runtime_activations[activation_index].owner_store;
         let owner_store_generation =
-            self.runtime_activations[activation_index].owner_store_generation;
+            self.domains.scheduler.runtime_activations[activation_index].owner_store_generation;
         if let Some(store) = owner_store {
             let Some(generation) = owner_store_generation else {
                 return false;
             };
-            if !self.stores.iter().any(|record| {
+            if !self.domains.lifecycle.stores.iter().any(|record| {
                 record.id == store
                     && record.generation == generation
                     && record.state != StoreState::Dead
@@ -261,7 +275,8 @@ impl SemanticGraph {
             }
         }
 
-        self.next_activation_wait_id = self.next_activation_wait_id.max(activation_wait + 1);
+        self.domains.scheduler.next_activation_wait_id =
+            self.domains.scheduler.next_activation_wait_id.max(activation_wait + 1);
         self.record_wait_created_with_details(
             wait,
             Some(owner_task),
@@ -283,13 +298,15 @@ impl SemanticGraph {
             return false;
         };
 
-        let from = self.runtime_activations[activation_index].state;
-        self.runtime_activations[activation_index].state = RuntimeActivationState::Pending;
-        self.runtime_activations[activation_index].generation += 1;
-        self.runtime_activations[activation_index].owner_task_generation =
+        let from = self.domains.scheduler.runtime_activations[activation_index].state;
+        self.domains.scheduler.runtime_activations[activation_index].state =
+            RuntimeActivationState::Pending;
+        self.domains.scheduler.runtime_activations[activation_index].generation += 1;
+        self.domains.scheduler.runtime_activations[activation_index].owner_task_generation =
             wait_owner_task_generation;
-        let activation_generation_after = self.runtime_activations[activation_index].generation;
-        for context in &mut self.activation_contexts {
+        let activation_generation_after =
+            self.domains.scheduler.runtime_activations[activation_index].generation;
+        for context in &mut self.domains.scheduler.activation_contexts {
             if context.activation == activation && context.state == ActivationContextState::Current
             {
                 context.generation += 1;
@@ -318,9 +335,9 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.runtime_activations[activation_index].last_event =
+        self.domains.scheduler.runtime_activations[activation_index].last_event =
             Some(state_event.max(blocked_event));
-        self.activation_waits.push(ActivationWaitRecord {
+        self.domains.scheduler.activation_waits.push(ActivationWaitRecord {
             id: activation_wait,
             activation,
             activation_generation_before: activation_generation,
@@ -351,18 +368,20 @@ impl SemanticGraph {
         reason: WaitCancelReason,
         note: &str,
     ) -> bool {
-        let Some(activation_wait_index) = self.activation_waits.iter().position(|record| {
-            record.id == activation_wait
-                && record.generation == activation_wait_generation
-                && record.wait_generation == wait_generation
-                && record.state == ActivationWaitState::Pending
-        }) else {
+        let Some(activation_wait_index) =
+            self.domains.scheduler.activation_waits.iter().position(|record| {
+                record.id == activation_wait
+                    && record.generation == activation_wait_generation
+                    && record.wait_generation == wait_generation
+                    && record.state == ActivationWaitState::Pending
+            })
+        else {
             return false;
         };
-        let activation = self.activation_waits[activation_wait_index].activation;
-        let wait = self.activation_waits[activation_wait_index].wait;
-        let activation_generation =
-            self.activation_waits[activation_wait_index].activation_generation_after_block;
+        let activation = self.domains.scheduler.activation_waits[activation_wait_index].activation;
+        let wait = self.domains.scheduler.activation_waits[activation_wait_index].wait;
+        let activation_generation = self.domains.scheduler.activation_waits[activation_wait_index]
+            .activation_generation_after_block;
         if !self.domains.wait.waits.iter().any(|record| {
             record.id == wait
                 && record.generation == wait_generation
@@ -370,29 +389,39 @@ impl SemanticGraph {
         }) {
             return false;
         }
-        let Some(activation_index) = self.runtime_activations.iter().position(|record| {
-            record.id == activation
-                && record.generation == activation_generation
-                && record.state == RuntimeActivationState::Pending
-                && record.runnable_queue.is_none()
-                && record.runnable_queue_generation.is_none()
-        }) else {
+        let Some(activation_index) =
+            self.domains.scheduler.runtime_activations.iter().position(|record| {
+                record.id == activation
+                    && record.generation == activation_generation
+                    && record.state == RuntimeActivationState::Pending
+                    && record.runnable_queue.is_none()
+                    && record.runnable_queue_generation.is_none()
+            })
+        else {
             return false;
         };
 
         self.record_wait_cancelled_with_reason(wait, errno, reason);
-        let owner_task = self.activation_waits[activation_wait_index].owner_task;
-        let Some(owner_task_generation) =
-            self.tasks.iter().find(|task| task.id == owner_task).map(|task| task.generation)
+        let owner_task = self.domains.scheduler.activation_waits[activation_wait_index].owner_task;
+        let Some(owner_task_generation) = self
+            .domains
+            .scheduler
+            .tasks
+            .iter()
+            .find(|task| task.id == owner_task)
+            .map(|task| task.generation)
         else {
             return false;
         };
-        let from = self.runtime_activations[activation_index].state;
-        self.runtime_activations[activation_index].state = RuntimeActivationState::Blocked;
-        self.runtime_activations[activation_index].generation += 1;
-        self.runtime_activations[activation_index].owner_task_generation = owner_task_generation;
-        let activation_generation_after = self.runtime_activations[activation_index].generation;
-        for context in &mut self.activation_contexts {
+        let from = self.domains.scheduler.runtime_activations[activation_index].state;
+        self.domains.scheduler.runtime_activations[activation_index].state =
+            RuntimeActivationState::Blocked;
+        self.domains.scheduler.runtime_activations[activation_index].generation += 1;
+        self.domains.scheduler.runtime_activations[activation_index].owner_task_generation =
+            owner_task_generation;
+        let activation_generation_after =
+            self.domains.scheduler.runtime_activations[activation_index].generation;
+        for context in &mut self.domains.scheduler.activation_contexts {
             if context.activation == activation && context.state == ActivationContextState::Current
             {
                 context.generation += 1;
@@ -422,14 +451,16 @@ impl SemanticGraph {
                 generation: activation_wait_generation,
             },
         );
-        self.runtime_activations[activation_index].last_event =
+        self.domains.scheduler.runtime_activations[activation_index].last_event =
             Some(state_event.max(cancelled_event));
-        self.activation_waits[activation_wait_index].state = ActivationWaitState::Cancelled;
-        self.activation_waits[activation_wait_index].activation_generation_after_cancel =
-            Some(activation_generation_after);
-        self.activation_waits[activation_wait_index].completed_at_event = Some(cancelled_event);
-        self.activation_waits[activation_wait_index].cancel_reason = Some(reason);
-        self.activation_waits[activation_wait_index].note = note.to_string();
+        self.domains.scheduler.activation_waits[activation_wait_index].state =
+            ActivationWaitState::Cancelled;
+        self.domains.scheduler.activation_waits[activation_wait_index]
+            .activation_generation_after_cancel = Some(activation_generation_after);
+        self.domains.scheduler.activation_waits[activation_wait_index].completed_at_event =
+            Some(cancelled_event);
+        self.domains.scheduler.activation_waits[activation_wait_index].cancel_reason = Some(reason);
+        self.domains.scheduler.activation_waits[activation_wait_index].note = note.to_string();
         true
     }
 
@@ -437,12 +468,18 @@ impl SemanticGraph {
         let Some(owner_task) = owner_task else {
             return;
         };
-        let should_clear =
-            self.tasks.iter().any(|task| task.id == owner_task && task.pending_wait == Some(wait));
+        let should_clear = self
+            .domains
+            .scheduler
+            .tasks
+            .iter()
+            .any(|task| task.id == owner_task && task.pending_wait == Some(wait));
         if !should_clear {
             return;
         }
-        if let Some(task) = self.tasks.iter_mut().find(|task| task.id == owner_task) {
+        if let Some(task) =
+            self.domains.scheduler.tasks.iter_mut().find(|task| task.id == owner_task)
+        {
             task.pending_wait = None;
         }
         self.set_task_state(owner_task, TaskState::Runnable);
@@ -462,7 +499,7 @@ impl SemanticGraph {
     }
 
     pub fn activation_waits(&self) -> &[ActivationWaitRecord] {
-        &self.activation_waits
+        &self.domains.scheduler.activation_waits
     }
 
     pub fn validate_wait_handle(&mut self, handle: WaitHandle) -> Result<(), GenerationCheckError> {
@@ -512,7 +549,7 @@ impl SemanticGraph {
     }
 
     pub fn activation_wait_count(&self) -> usize {
-        self.activation_waits.len()
+        self.domains.scheduler.activation_waits.len()
     }
 
     pub fn check_wait_invariants(&self) -> Result<(), SemanticInvariantError> {
@@ -534,7 +571,7 @@ impl SemanticGraph {
                             task: owner_task,
                         });
                     };
-                    let Some(task) = self.tasks.iter().find(|task| {
+                    let Some(task) = self.domains.scheduler.tasks.iter().find(|task| {
                         task.id == owner_task && task.generation == owner_task_generation
                     }) else {
                         return Err(SemanticInvariantError::WaitReferencesMissingTask {
@@ -556,7 +593,7 @@ impl SemanticGraph {
                             store: owner_store,
                         });
                     };
-                    if !self.stores.iter().any(|store| {
+                    if !self.domains.lifecycle.stores.iter().any(|store| {
                         store.id == owner_store
                             && store.generation == owner_store_generation
                             && store.state != StoreState::Dead
@@ -570,7 +607,7 @@ impl SemanticGraph {
             }
         }
 
-        for activation_wait in &self.activation_waits {
+        for activation_wait in &self.domains.scheduler.activation_waits {
             if activation_wait.state == ActivationWaitState::Dropped {
                 continue;
             }
@@ -583,7 +620,12 @@ impl SemanticGraph {
                     wait: activation_wait.wait,
                 });
             };
-            let Some(task) = self.tasks.iter().find(|task| task.id == activation_wait.owner_task)
+            let Some(task) = self
+                .domains
+                .scheduler
+                .tasks
+                .iter()
+                .find(|task| task.id == activation_wait.owner_task)
             else {
                 return Err(SemanticInvariantError::ActivationWaitMissingTask {
                     activation_wait: activation_wait.id,
@@ -597,6 +639,8 @@ impl SemanticGraph {
                 });
             }
             let Some(activation) = self
+                .domains
+                .scheduler
                 .runtime_activations
                 .iter()
                 .find(|activation| activation.id == activation_wait.activation)

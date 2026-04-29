@@ -1,3 +1,8 @@
+use visa_profile::{
+    CodePublishSupport, DmaSupport, DmwSupport, SnapshotSupport, VisaCapabilitySet,
+    VisaProfileLevel,
+};
+
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetArchV1 {
@@ -85,6 +90,54 @@ impl TargetSubstrateProfileV1 {
             host_to_target_osctl: false,
         }
     }
+
+    pub const fn to_visa_capabilities(self) -> VisaCapabilitySet {
+        VisaCapabilitySet {
+            console: self.log_sink,
+            timer: self.timer_authority,
+            event_queue: self.event_queue,
+            guest_memory: self.memory_protection,
+            artifact_loading: self.code_publish.supported,
+            dmw: match self.dmw {
+                DmwProfileV1::None => DmwSupport::None,
+                DmwProfileV1::Logical => DmwSupport::Logical,
+                DmwProfileV1::RealMmuWindow { .. } => DmwSupport::RealMmuWindow,
+            },
+            mmio: self.mmio_authority,
+            irq: self.irq_authority,
+            dma: match self.dma {
+                DmaProfileV1::None => DmaSupport::None,
+                DmaProfileV1::BounceBuffer => DmaSupport::BounceBuffer,
+                DmaProfileV1::Mediated => DmaSupport::Mediated,
+                DmaProfileV1::IommuStrict => DmaSupport::IommuStrict,
+            },
+            snapshot: SnapshotSupport::None,
+            code_publish: if !self.code_publish.supported {
+                CodePublishSupport::None
+            } else if self.code_publish.wx {
+                CodePublishSupport::NativeWx
+            } else {
+                CodePublishSupport::RuntimeOnly
+            },
+        }
+    }
+
+    pub const fn enforced_visa_profile(self) -> Option<VisaProfileLevel> {
+        let capabilities = self.to_visa_capabilities();
+        if capabilities.supports_profile(VisaProfileLevel::SnapshotReplayCapable) {
+            Some(VisaProfileLevel::SnapshotReplayCapable)
+        } else if capabilities.supports_profile(VisaProfileLevel::DeviceCapable) {
+            Some(VisaProfileLevel::DeviceCapable)
+        } else if capabilities.supports_profile(VisaProfileLevel::GuestFrontend) {
+            Some(VisaProfileLevel::GuestFrontend)
+        } else if capabilities.supports_profile(VisaProfileLevel::MinimalBareMetal) {
+            Some(VisaProfileLevel::MinimalBareMetal)
+        } else if capabilities.supports_profile(VisaProfileLevel::SemanticHarness) {
+            Some(VisaProfileLevel::SemanticHarness)
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for TargetSubstrateProfileV1 {
@@ -113,5 +166,15 @@ mod tests {
         assert_eq!(profile.panic_ring_bytes, 64 * 1024);
         assert!(profile.osctl_jsonl);
         assert!(!profile.host_to_target_osctl);
+    }
+
+    #[test]
+    fn default_profile_maps_to_visa_capabilities() {
+        let profile = TargetSubstrateProfileV1::default_research();
+        let capabilities = profile.to_visa_capabilities();
+
+        assert!(capabilities.supports_profile(VisaProfileLevel::GuestFrontend));
+        assert!(!capabilities.supports_profile(VisaProfileLevel::DeviceCapable));
+        assert_eq!(profile.enforced_visa_profile(), Some(VisaProfileLevel::GuestFrontend));
     }
 }

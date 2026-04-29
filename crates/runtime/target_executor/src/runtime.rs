@@ -1,10 +1,10 @@
 use std::{error::Error, fs, path::PathBuf};
 
 use contract_core::{
-    CODE_PAYLOAD_FORMAT_CWASM, TARGET_ARTIFACT_FORMAT_V1, ValidatedArtifactEntry,
-    WASMTIME_COMPILATION_STRATEGY, WASMTIME_CRATE_VERSION,
+    CODE_PAYLOAD_FORMAT_CWASM, TARGET_ARTIFACT_FORMAT_V1, WASMTIME_COMPILATION_STRATEGY,
+    WASMTIME_CRATE_VERSION,
 };
-use contract_validate::canonical_wasmtime_config_fingerprint;
+use contract_validate::{ValidatedArtifactEntry, canonical_wasmtime_config_fingerprint};
 use service_core::net_contract::{
     NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
     VIRTIO_NET0_TX_QUEUE_DEPTH,

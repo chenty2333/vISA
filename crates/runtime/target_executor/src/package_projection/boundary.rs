@@ -4,6 +4,7 @@ pub(crate) fn boundary_validation_report_manifest(
 ) -> BoundaryValidationReportManifest {
     BoundaryValidationReportManifest {
         validator: report.validator.as_str().to_owned(),
+        evidence_boundary: report.evidence_boundary.as_str().to_owned(),
         ok: report.is_ok(),
         violation_count: report.violations.len(),
         violations: report.violations.iter().map(boundary_validation_violation_manifest).collect(),
@@ -24,8 +25,8 @@ pub(crate) fn boundary_validation_violation_manifest(
 pub(crate) fn validation_roots(report: &BoundaryValidationReportManifest) -> Vec<String> {
     let mut roots = Vec::new();
     roots.push(format!(
-        "boundary-validation validator={} ok={} violations={}",
-        report.validator, report.ok, report.violation_count
+        "boundary-validation validator={} evidence={} ok={} violations={}",
+        report.validator, report.evidence_boundary, report.ok, report.violation_count
     ));
     roots.extend(report.violations.iter().map(|violation| {
         format!(

@@ -189,7 +189,7 @@ impl SemanticGraph {
             }) {
                 return Err("network fault injection socket generation is missing or inactive");
             }
-            let Some(store_record) = self.stores.iter().find(|record| {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|record| {
                 record.id == endpoint_record.owner_store
                     && record.generation == endpoint_record.owner_store_generation
             }) else {

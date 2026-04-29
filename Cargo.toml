@@ -7,9 +7,11 @@ members = [
     "crates/core/contract_validate",
     "crates/core/semantic_core",
     "crates/core/target_abi",
+    "crates/core/visa_profile",
     "crates/host/aotc",
     "crates/host/kernel",
-    "crates/host/osctl",
+    "crates/host/osctl-cli",
+    "crates/host/osctl-view",
     "crates/host/runner",
     "crates/runtime/service_core",
     "crates/runtime/supervisor_catalog",
@@ -50,6 +52,7 @@ semantic_core = { path = "crates/core/semantic_core" }
 service_core = { path = "crates/runtime/service_core" }
 fs_adapter = { path = "crates/services/fs_adapter" }
 net_stack_adapter = { path = "crates/services/net_stack_adapter" }
+osctl-view = { path = "crates/host/osctl-view" }
 smoltcp = { version = "0.13.0", default-features = false, features = ["alloc", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
 substrate_api = { path = "crates/backend/substrate_api" }
 substrate_virtio = { path = "crates/backend/substrate_virtio" }
@@ -59,6 +62,7 @@ spin = "0.9.8"
 supervisor_catalog = { path = "crates/runtime/supervisor_catalog" }
 target_abi = { path = "crates/core/target_abi", default-features = false }
 uart_16550 = "0.3.2"
+visa_profile = { path = "crates/core/visa_profile" }
 vmos_abi = { path = "crates/abi/abi" }
 wasmtime = { version = "43.0.0", default-features = false }
 x86_64 = { version = "0.15.4", default-features = false, features = ["abi_x86_interrupt", "instructions"] }

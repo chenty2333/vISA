@@ -49,7 +49,7 @@ impl SemanticGraph {
         }) {
             return Ok(());
         }
-        let Some(store) = self.stores.iter().find(|record| {
+        let Some(store) = self.domains.lifecycle.stores.iter().find(|record| {
             record.id == driver_store && record.generation == driver_store_generation
         }) else {
             return Err("io fault injection driver store generation is missing");
@@ -159,7 +159,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_io_fault_injection_id = self.next_io_fault_injection_id.max(fault + 1);
+        self.domains.io.next_io_fault_injection_id =
+            self.domains.io.next_io_fault_injection_id.max(fault + 1);
         let injected_at_event = self.event_log.push(
             "io",
             EventKind::IoFaultInjected {
@@ -297,7 +298,7 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::IoFaultInjectionInvalid { fault: fault.id });
             }
-            if !self.stores.iter().any(|store| {
+            if !self.domains.lifecycle.stores.iter().any(|store| {
                 store.id == fault.driver_store
                     && store.generation == fault.driver_store_generation
                     && store.role == "driver"

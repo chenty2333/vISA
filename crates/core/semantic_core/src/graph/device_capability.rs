@@ -20,10 +20,10 @@ impl SemanticGraph {
         if operation.is_empty() {
             return Err("device capability operation is empty");
         }
-        let Some(store_record) = self
-            .stores
-            .iter()
-            .find(|store| store.id == driver_store && store.generation == driver_store_generation)
+        let Some(store_record) =
+            self.domains.lifecycle.stores.iter().find(|store| {
+                store.id == driver_store && store.generation == driver_store_generation
+            })
         else {
             return Err("device capability driver store generation is missing");
         };
@@ -137,7 +137,7 @@ impl SemanticGraph {
 
     pub fn check_device_capability_invariants(&self) -> Result<(), SemanticInvariantError> {
         for record in &self.device_capabilities {
-            let Some(store_record) = self.stores.iter().find(|store| {
+            let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.driver_store
                     && store.generation == record.driver_store_generation
             }) else {

@@ -21,10 +21,10 @@ impl SemanticGraph {
         if participants.len() < 2 {
             return Err("smp safe point requires at least two harts");
         }
-        if self.smp_safe_points.iter().any(|record| record.id == safe_point) {
+        if self.domains.scheduler.smp_safe_points.iter().any(|record| record.id == safe_point) {
             return Err("smp safe point already exists");
         }
-        let Some(coordinator) = self.harts.iter().find(|record| {
+        let Some(coordinator) = self.domains.scheduler.harts.iter().find(|record| {
             record.id == coordinator_hart && record.generation == coordinator_hart_generation
         }) else {
             return Err("smp safe point coordinator hart generation is missing");
@@ -39,6 +39,8 @@ impl SemanticGraph {
                 return Err("smp safe point participant list is invalid");
             }
             let Some(record) = self
+                .domains
+                .scheduler
                 .harts
                 .iter()
                 .find(|record| record.id == *hart && record.generation == *generation)
@@ -55,6 +57,8 @@ impl SemanticGraph {
             return Err("smp safe point coordinator must be a participant");
         }
         for hart in self
+            .domains
+            .scheduler
             .harts
             .iter()
             .filter(|record| !matches!(record.state, HartState::Offline | HartState::Faulted))
@@ -93,6 +97,8 @@ impl SemanticGraph {
         let mut participant_records = Vec::new();
         for (hart, generation) in &participants {
             let Some(record) = self
+                .domains
+                .scheduler
                 .harts
                 .iter()
                 .find(|record| record.id == *hart && record.generation == *generation)
@@ -109,7 +115,8 @@ impl SemanticGraph {
             });
         }
 
-        self.next_smp_safe_point_id = self.next_smp_safe_point_id.max(safe_point + 1);
+        self.domains.scheduler.next_smp_safe_point_id =
+            self.domains.scheduler.next_smp_safe_point_id.max(safe_point + 1);
         let event = self.event_log.push(
             "scheduler",
             EventKind::SmpSafePointRecorded {
@@ -120,7 +127,7 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.smp_safe_points.push(SmpSafePointRecord {
+        self.domains.scheduler.smp_safe_points.push(SmpSafePointRecord {
             id: safe_point,
             coordinator_hart,
             coordinator_hart_generation,
@@ -160,11 +167,11 @@ impl SemanticGraph {
     }
 
     pub fn smp_safe_points(&self) -> &[SmpSafePointRecord] {
-        &self.smp_safe_points
+        &self.domains.scheduler.smp_safe_points
     }
 
     pub fn smp_safe_point_count(&self) -> usize {
-        self.smp_safe_points.len()
+        self.domains.scheduler.smp_safe_points.len()
     }
 
     #[cfg(test)]
@@ -173,14 +180,15 @@ impl SemanticGraph {
         safe_point: SmpSafePointId,
         event: EventId,
     ) {
-        if let Some(record) = self.smp_safe_points.iter_mut().find(|record| record.id == safe_point)
+        if let Some(record) =
+            self.domains.scheduler.smp_safe_points.iter_mut().find(|record| record.id == safe_point)
         {
             record.recorded_at_event = event;
         }
     }
 
     pub fn check_smp_safe_point_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for safe_point in &self.smp_safe_points {
+        for safe_point in &self.domains.scheduler.smp_safe_points {
             if safe_point.id == 0
                 || safe_point.generation == 0
                 || safe_point.state != SmpSafePointState::Recorded
@@ -219,7 +227,12 @@ impl SemanticGraph {
                         hart: participant.hart,
                     });
                 }
-                let Some(hart) = self.harts.iter().find(|record| record.id == participant.hart)
+                let Some(hart) = self
+                    .domains
+                    .scheduler
+                    .harts
+                    .iter()
+                    .find(|record| record.id == participant.hart)
                 else {
                     return Err(SemanticInvariantError::SmpSafePointMissingHart {
                         safe_point: safe_point.id,
@@ -239,8 +252,12 @@ impl SemanticGraph {
                     });
                 }
             }
-            let Some(coordinator) =
-                self.harts.iter().find(|record| record.id == safe_point.coordinator_hart)
+            let Some(coordinator) = self
+                .domains
+                .scheduler
+                .harts
+                .iter()
+                .find(|record| record.id == safe_point.coordinator_hart)
             else {
                 return Err(SemanticInvariantError::SmpSafePointMissingHart {
                     safe_point: safe_point.id,
@@ -275,7 +292,7 @@ impl SemanticGraph {
                     safe_point: safe_point.id,
                 });
             }
-            if !self.hart_event_attributions.iter().any(|attribution| {
+            if !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == safe_point.recorded_at_event
                     && attribution.hart == safe_point.coordinator_hart
                     && attribution.hart_generation == safe_point.coordinator_hart_generation
@@ -294,7 +311,7 @@ impl SemanticGraph {
                 } else {
                     "SmpSafePointParticipantRecorded"
                 };
-                if !self.hart_event_attributions.iter().any(|attribution| {
+                if !self.domains.scheduler.hart_event_attributions.iter().any(|attribution| {
                     attribution.event == safe_point.recorded_at_event
                         && attribution.hart == participant.hart
                         && attribution.hart_generation == participant.hart_generation

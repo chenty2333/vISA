@@ -25,7 +25,8 @@ impl SemanticGraph {
         if backend.is_empty() {
             return Err("device object backend is empty");
         }
-        let Some(resource_record) = self.resources.iter().find(|record| record.id == resource)
+        let Some(resource_record) =
+            self.domains.resource.resources.iter().find(|record| record.id == resource)
         else {
             return Err("device object resource is missing");
         };
@@ -104,7 +105,7 @@ impl SemanticGraph {
 
     pub fn check_device_object_invariants(&self) -> Result<(), SemanticInvariantError> {
         for record in &self.device_objects {
-            let Some(resource_record) = self.resources.iter().find(|resource| {
+            let Some(resource_record) = self.domains.resource.resources.iter().find(|resource| {
                 resource.id == record.resource && resource.generation == record.resource_generation
             }) else {
                 return Err(SemanticInvariantError::DeviceObjectMissingResource {

@@ -2418,15 +2418,17 @@ impl EventKind {
                 name,
                 kind,
                 status,
+                evidence,
                 backend,
                 blocked_by,
                 generation,
             } => {
                 let blocked_by = blocked_by.as_deref().unwrap_or("none");
                 format!(
-                    "BoundaryPublished boundary={boundary} name={name} kind={} status={} backend={backend} blocked={blocked_by} generation={generation}",
+                    "BoundaryPublished boundary={boundary} name={name} kind={} status={} evidence={} backend={backend} blocked={blocked_by} generation={generation}",
                     kind.as_str(),
-                    status.as_str()
+                    status.as_str(),
+                    evidence.as_str()
                 )
             }
             Self::ArtifactVerificationRecorded {

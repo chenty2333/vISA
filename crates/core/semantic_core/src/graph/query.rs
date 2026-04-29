@@ -14,9 +14,9 @@ impl SemanticGraph {
         &self.command_results
     }
     pub fn check_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for task in &self.tasks {
+        for task in &self.domains.scheduler.tasks {
             for resource in &task.resources {
-                if !self.resources.iter().any(|entry| entry.id == *resource) {
+                if !self.domains.resource.resources.iter().any(|entry| entry.id == *resource) {
                     return Err(SemanticInvariantError::TaskReferencesMissingResource {
                         task: task.id,
                         resource: *resource,
@@ -25,9 +25,9 @@ impl SemanticGraph {
             }
         }
 
-        for resource in &self.resources {
+        for resource in &self.domains.resource.resources {
             if let Some(task) = resource.owner_task
-                && !self.tasks.iter().any(|entry| entry.id == task)
+                && !self.domains.scheduler.tasks.iter().any(|entry| entry.id == task)
             {
                 return Err(SemanticInvariantError::ResourceReferencesMissingTask {
                     resource: resource.id,
@@ -35,7 +35,7 @@ impl SemanticGraph {
                 });
             }
             if let Some(store) = resource.owner_store
-                && !self.stores.iter().any(|entry| entry.id == store)
+                && !self.domains.lifecycle.stores.iter().any(|entry| entry.id == store)
             {
                 return Err(SemanticInvariantError::ResourceReferencesMissingStore {
                     resource: resource.id,
@@ -44,8 +44,14 @@ impl SemanticGraph {
             }
         }
 
-        for store in &self.stores {
-            if !self.fault_domains.iter().any(|entry| entry.id == store.fault_domain) {
+        for store in &self.domains.lifecycle.stores {
+            if !self
+                .domains
+                .lifecycle
+                .fault_domains
+                .iter()
+                .any(|entry| entry.id == store.fault_domain)
+            {
                 return Err(SemanticInvariantError::StoreReferencesMissingFaultDomain {
                     store: store.id,
                     fault_domain: store.fault_domain,
@@ -57,7 +63,7 @@ impl SemanticGraph {
                         store: store.id,
                     });
                 };
-                if !self.resources.iter().any(|entry| {
+                if !self.domains.resource.resources.iter().any(|entry| {
                     entry.id == resource && entry.owner_store == Some(store.id) && entry.live
                 }) {
                     return Err(SemanticInvariantError::StoreReferencesDeadResource {
@@ -175,11 +181,12 @@ impl SemanticGraph {
         self.check_cleanup_invariants()?;
         self.check_preemption_latency_invariants()?;
 
-        for authority in &self.authority_bindings {
+        for authority in &self.domains.resource.authority_bindings {
             if authority.state != AuthorityState::Bound {
                 continue;
             }
-            let Some(resource) = self.resources.iter().find(|entry| entry.id == authority.resource)
+            let Some(resource) =
+                self.domains.resource.resources.iter().find(|entry| entry.id == authority.resource)
             else {
                 return Err(SemanticInvariantError::AuthorityReferencesMissingResource {
                     authority: authority.id,
