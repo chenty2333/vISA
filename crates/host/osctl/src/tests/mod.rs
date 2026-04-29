@@ -12,6 +12,8 @@ use semantic_core::{
 
 use super::*;
 
+mod replay_fixtures;
+
 #[test]
 fn store_view_v1_exposes_stable_identity_state_and_references() {
     let view = store_view_v1(&StoreRecordManifest {
@@ -7262,18 +7264,13 @@ fn interface_profile_selection_is_stable_for_json_checks() {
 
 #[test]
 fn replay_fixtures_replay_to_expected_final_views() {
-    let wait =
-        parse_replay_fixture(include_str!("../../fixtures/replay/wait_pending_resume_v1.json"));
+    let wait = parse_replay_fixture(replay_fixtures::WAIT_PENDING_RESUME);
     replay_wait_fixture(&wait);
 
-    let capability = parse_replay_fixture(include_str!(
-        "../../fixtures/replay/capability_revoke_generation_v1.json"
-    ));
+    let capability = parse_replay_fixture(replay_fixtures::CAPABILITY_REVOKE_GENERATION);
     replay_capability_fixture(&capability);
 
-    let cleanup = parse_replay_fixture(include_str!(
-        "../../fixtures/replay/driver_fault_cleanup_generation_safe_v1.json"
-    ));
+    let cleanup = parse_replay_fixture(replay_fixtures::DRIVER_FAULT_CLEANUP_GENERATION_SAFE);
     replay_cleanup_fixture(&cleanup);
 }
 
