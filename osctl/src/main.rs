@@ -53,7 +53,7 @@ use artifact_manifest::{
 };
 use contract_core::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
-    InterfaceHostCapabilitySet, VIEW_SCHEMA_V1, ValidatedArtifactPlan,
+    InterfaceHostCapabilitySet, VIEW_SCHEMA_V1, ValidatedArtifactEntry, ValidatedArtifactPlan,
     build_validated_artifact_plan, check_artifact_manifest_interface_compatibility,
     check_artifact_manifest_substrate_compatibility, validate_migration_against_manifest,
     validate_migration_package, validate_replay_quiescent,
@@ -199,31 +199,6 @@ fn run() -> Result<(), Box<dyn Error>> {
                 _ => Err(
                     "interface syntax is: osctl interface check [--json] [--profile <name>] <manifest.json> | osctl interface events [--json] <migration.json>"
                         .into(),
-                ),
-            }
-        }
-        "experiment" => {
-            let Some(subcommand) = args.next() else {
-                return Err("experiment requires a subcommand".into());
-            };
-            match subcommand.as_str() {
-                "report" => {
-                    let mut json = false;
-                    let mut path = None;
-                    for arg in args {
-                        if arg == "--json" {
-                            json = true;
-                        } else if path.is_none() {
-                            path = Some(arg);
-                        } else {
-                            return Err("experiment report received too many arguments".into());
-                        }
-                    }
-                    let path = path.ok_or("experiment report requires a report JSON path")?;
-                    print_experiment_report(Path::new(&path), json)
-                }
-                _ => Err(
-                    "experiment syntax is: osctl experiment report [--json] <report.json>".into(),
                 ),
             }
         }
@@ -655,7 +630,6 @@ fn print_usage() {
     eprintln!("  osctl substrate events [--json] <migration.json>");
     eprintln!("  osctl interface check [--json] [--profile <name>] <manifest.json>");
     eprintln!("  osctl interface events [--json] <migration.json>");
-    eprintln!("  osctl experiment report [--json] <report.json>");
     eprintln!("  osctl modes");
     eprintln!("  osctl caps [--subject <subject>] <manifest-or-migration.json>");
     eprintln!(
@@ -709,92 +683,6 @@ fn check_path(path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn print_experiment_report(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
-    let report: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
-    let schema = json_field_str(&report, "schema")?;
-    if schema != "vmos-experiment-report" {
-        return Err(format!(
-            "experiment report schema must be vmos-experiment-report, got {schema}"
-        )
-        .into());
-    }
-    let name = json_field_str(&report, "name")?;
-    let checkpoint = json_field_str(&report, "checkpoint")?;
-    let commands = json_field_array(&report, "commands")?;
-    let events = json_field_array(&report, "events")?;
-    let metrics = json_field_object(&report, "metrics")?;
-    let validation = json_field_object(&report, "validation")?;
-    let contract_ok = validation
-        .get("contract_ok")
-        .and_then(serde_json::Value::as_bool)
-        .ok_or("experiment report validation.contract_ok must be a boolean")?;
-    let golden_replay_ok = validation
-        .get("golden_replay_ok")
-        .and_then(serde_json::Value::as_bool)
-        .ok_or("experiment report validation.golden_replay_ok must be a boolean")?;
-    let metric_keys: Vec<_> = metrics.keys().cloned().collect();
-    let ok = contract_ok && golden_replay_ok;
-
-    if json {
-        let value = serde_json::json!({
-            "schema_version": OSCTL_JSON_SCHEMA_VERSION,
-            "schema": "osctl-experiment-report-view-v1",
-            "report_schema": schema,
-            "path": path.display().to_string(),
-            "name": name,
-            "checkpoint": checkpoint,
-            "command_count": commands.len(),
-            "event_count": events.len(),
-            "metrics": metric_keys,
-            "validation": {
-                "ok": ok,
-                "contract_ok": contract_ok,
-                "golden_replay_ok": golden_replay_ok
-            }
-        });
-        println!("{}", serde_json::to_string_pretty(&value)?);
-        return Ok(());
-    }
-
-    println!("experiment report: {name}");
-    println!("  checkpoint: {checkpoint}");
-    println!("  commands: {}", commands.len());
-    println!("  events: {}", events.len());
-    println!("  metrics: {}", metric_keys.join(", "));
-    println!("  validation: {}", if ok { "ok" } else { "failed" });
-    Ok(())
-}
-
-fn json_field_str<'a>(
-    value: &'a serde_json::Value,
-    field: &str,
-) -> Result<&'a str, Box<dyn Error>> {
-    value
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| format!("json field `{field}` must be a string").into())
-}
-
-fn json_field_array<'a>(
-    value: &'a serde_json::Value,
-    field: &str,
-) -> Result<&'a Vec<serde_json::Value>, Box<dyn Error>> {
-    value
-        .get(field)
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| format!("json field `{field}` must be an array").into())
-}
-
-fn json_field_object<'a>(
-    value: &'a serde_json::Value,
-    field: &str,
-) -> Result<&'a serde_json::Map<String, serde_json::Value>, Box<dyn Error>> {
-    value
-        .get(field)
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| format!("json field `{field}` must be an object").into())
-}
-
 fn handle_view_command(kind: &str, args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let Some(subcommand) = args.first() else {
         return Err(format!("{kind} requires show/list").into());
@@ -829,25 +717,222 @@ fn handle_view_command(kind: &str, args: Vec<String>) -> Result<(), Box<dyn Erro
         return inspect_object(kind, Path::new(&path), filter, false);
     }
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
-    let views = stable_views_for_kind(kind, &package)?;
+    let value = stable_view_collection_v1(kind, subcommand, &package, id.as_deref())?;
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn stable_view_collection_v1(
+    kind: &str,
+    subcommand: &str,
+    package: &MigrationPackageManifest,
+    id: Option<&str>,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    if subcommand != "show" && subcommand != "list" {
+        return Err(format!(
+            "{kind} syntax is: osctl {kind} show|list [--json] <migration.json> [id]"
+        )
+        .into());
+    }
+    let views = stable_views_for_kind(kind, package)?;
     let views = if subcommand == "show" {
         let id = id.ok_or_else(|| format!("{kind} show requires an id"))?;
-        let selected = select_view_by_id(views, &id)?;
+        let selected = select_view_by_id(views, id)?;
         vec![selected]
     } else {
         views
     };
     let count = views.len();
-    let value = serde_json::json!({
+    Ok(serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
+        "schema_version": OSCTL_JSON_SCHEMA_VERSION,
         "kind": canonical_view_kind(kind),
         "command": format!("{}.{}", canonical_view_kind(kind), subcommand),
-        "package": package.package_id,
+        "package": &package.package_id,
         "count": count,
         "items": views,
-    });
-    println!("{}", serde_json::to_string_pretty(&value)?);
-    Ok(())
+    }))
+}
+
+fn artifact_plan_module_view_v1(module: &ValidatedArtifactEntry) -> serde_json::Value {
+    serde_json::json!({
+        "package_root": &module.package,
+        "artifact_manifest": {
+            "artifact_name": &module.artifact_name,
+            "role": &module.role,
+            "fault_policy": &module.fault_policy,
+            "wasm_path": &module.wasm_path,
+            "cwasm_path": &module.cwasm_path,
+            "target_artifact_path": &module.target_artifact_path,
+            "target_artifact_sha256": &module.target_artifact_sha256,
+            "code_payload_format": &module.code_payload_format,
+            "cwasm_sha256": &module.cwasm_sha256,
+            "abi_fingerprint": &module.abi_fingerprint,
+            "manifest_binding_hash": &module.manifest_binding_hash,
+        },
+        "capability_manifest": &module.capabilities,
+        "target_profile": {
+            "hash_status": &module.hash_status,
+            "signature_scheme": &module.signature_scheme,
+            "signature_status": &module.signature_status,
+            "signature_verified": module.signature_verified,
+            "signer": &module.signer,
+        },
+        "resource_limits": {
+            "max_memory_pages": module.resource_limits.max_memory_pages,
+            "max_table_elements": module.resource_limits.max_table_elements,
+            "max_hostcalls_per_activation": module.resource_limits.max_hostcalls_per_activation
+        },
+        "expected_exports": &module.expected_exports,
+        "service_dependencies": &module.service_dependencies,
+    })
+}
+
+fn artifact_manifest_module_rejection_view_v1(
+    module: &artifact_manifest::ModuleArtifactManifest,
+) -> serde_json::Value {
+    serde_json::json!({
+        "package_root": &module.package,
+        "artifact_manifest": {
+            "artifact_name": &module.artifact_name,
+            "role": &module.role,
+            "fault_policy": &module.fault_policy,
+            "wasm_path": &module.wasm_path,
+            "cwasm_path": &module.cwasm_path,
+            "target_artifact_path": &module.target_artifact_path,
+            "target_artifact_sha256": &module.target_artifact_sha256,
+            "code_payload_format": &module.code_payload_format,
+            "cwasm_sha256": &module.cwasm_sha256,
+            "abi_fingerprint": &module.abi_fingerprint,
+            "manifest_binding_hash": &module.signature.manifest_binding_hash,
+        },
+        "capability_manifest": &module.capabilities,
+        "target_profile": {
+            "hash_status": "rejected",
+            "signature_scheme": &module.signature.scheme,
+            "signature_status": "rejected",
+            "signature_verified": false,
+            "signer": &module.signature.signer,
+        },
+    })
+}
+
+fn artifact_plan_view_v1(
+    manifest: &ArtifactBundleManifest,
+    plan: Option<&ValidatedArtifactPlan>,
+    last_error: Option<&str>,
+) -> serde_json::Value {
+    let mode = plan
+        .and_then(|plan| RuntimeMode::parse(&plan.runtime_mode))
+        .unwrap_or(RuntimeMode::Research);
+    let package_roots = manifest
+        .modules
+        .iter()
+        .map(|module| module.package.clone())
+        .collect::<Vec<_>>();
+    let modules = plan
+        .map(|plan| {
+            plan.modules
+                .iter()
+                .map(artifact_plan_module_view_v1)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| {
+            manifest
+                .modules
+                .iter()
+                .map(artifact_manifest_module_rejection_view_v1)
+                .collect::<Vec<_>>()
+        });
+    let module_count = plan.map_or(manifest.modules.len(), ValidatedArtifactPlan::module_count);
+    let capability_count = plan.map_or_else(
+        || {
+            manifest
+                .modules
+                .iter()
+                .map(|module| module.capabilities.len())
+                .sum()
+        },
+        ValidatedArtifactPlan::capability_count,
+    );
+    let expected_export_count = plan.map_or_else(
+        || {
+            manifest
+                .modules
+                .iter()
+                .map(|module| module.expected_exports.len())
+                .sum()
+        },
+        ValidatedArtifactPlan::expected_export_count,
+    );
+
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+        "kind": "artifact-plan",
+        "state": if last_error.is_some() { "rejected" } else { "accepted" },
+        "accepted": last_error.is_none(),
+        "artifact_profile": plan
+            .map(|plan| plan.artifact_profile.as_str())
+            .unwrap_or(manifest.artifact_profile.as_str()),
+        "runtime_mode": plan
+            .map(|plan| plan.runtime_mode.as_str())
+            .unwrap_or(manifest.runtime_mode.as_str()),
+        "mode_policy": {
+            "event_log": mode.event_log_policy(),
+            "dmw": mode.dmw_policy(),
+            "fastpath_enabled": mode.fast_path_enabled(),
+            "deterministic_boundary": mode.deterministic_boundary(),
+            "capability_audit": mode.capability_audit_policy(),
+            "debug_metadata": mode.debug_metadata_policy(),
+            "nondeterminism": mode.nondeterminism_policy()
+        },
+        "contract_version": plan
+            .map(|plan| plan.contract_version.as_str())
+            .unwrap_or(manifest.contract.contract_version.as_str()),
+        "supervisor_world": plan
+            .map(|plan| plan.supervisor_world.as_str())
+            .unwrap_or(manifest.contract.supervisor_world.as_str()),
+        "target_arch": plan
+            .map(|plan| plan.target_arch.as_str())
+            .unwrap_or(manifest.target.arch.as_str()),
+        "target_profile": {
+            "artifact_profile": &manifest.artifact_profile,
+            "arch": &manifest.target.arch,
+            "machine_abi_version": &manifest.target.machine_abi_version,
+            "supervisor_abi_version": &manifest.target.supervisor_abi_version,
+            "wasm_feature_profile": &manifest.target.wasm_feature_profile,
+            "memory64": manifest.target.memory64,
+            "multi_memory": manifest.target.multi_memory,
+            "dmw_layout": &manifest.target.dmw_layout,
+            "linux_abi_profile": &manifest.target.linux_abi_profile,
+            "artifact_signature_profile": &manifest.target.artifact_signature_profile,
+            "network_contract_version": &manifest.target.network_contract_version,
+        },
+        "compiler": {
+            "engine": plan
+                .map(|plan| plan.compiler_engine.as_str())
+                .unwrap_or(manifest.compiler.engine.as_str()),
+            "execution_mode": plan
+                .map(|plan| plan.compiler_execution_mode.as_str())
+                .unwrap_or(manifest.compiler.execution_mode.as_str()),
+            "artifact_format": plan
+                .map(|plan| plan.artifact_format.as_str())
+                .unwrap_or(manifest.compiler.artifact_format.as_str()),
+            "target_artifact_format": plan
+                .map(|plan| plan.target_artifact_format.as_str())
+                .unwrap_or(manifest.compiler.target_artifact_format.as_str()),
+            "runtime_executor_abi": plan
+                .map(|plan| plan.runtime_executor_abi.as_str())
+                .unwrap_or(manifest.compiler.runtime_executor_abi.as_str())
+        },
+        "package_roots": package_roots,
+        "module_count": module_count,
+        "capability_count": capability_count,
+        "expected_export_count": expected_export_count,
+        "modules": modules,
+        "last_error": last_error
+    })
 }
 
 fn canonical_view_kind(kind: &str) -> &'static str {
@@ -2804,7 +2889,7 @@ fn integrated_osctl_trace_replay_view_v1(
             "historical_edge_count": record.historical_edge_count,
             "replayed_root_count": record.replayed_root_count,
             "integrated_scenario_count": record.integrated_scenario_count,
-            "golden_trace_count": record.golden_trace_count,
+            "replay_fixture_count": record.replay_fixture_count,
             "contract_validation_ok": record.contract_validation_ok,
             "replay_validation_ok": record.replay_validation_ok,
             "graph_history_ok": record.graph_history_ok,
@@ -7902,7 +7987,7 @@ fn artifact_view_v1(artifact: &TargetArtifactImageManifest) -> serde_json::Value
         "kind": "artifact",
         "id": artifact.id,
         "generation": 1,
-        "state": "verified",
+        "state": "accepted",
         "owner": {
             "package": artifact.package,
             "role": artifact.role,
@@ -7911,9 +7996,17 @@ fn artifact_view_v1(artifact: &TargetArtifactImageManifest) -> serde_json::Value
         "references": {
             "artifact_name": artifact.artifact_name,
             "artifact_hash": artifact.artifact_hash,
+            "hash_status": artifact.hash_status,
             "manifest_binding_hash": artifact.manifest_binding_hash,
             "abi_fingerprint": artifact.abi_fingerprint,
             "code_hash": artifact.code_hash,
+        },
+        "verification": {
+            "hash_status": artifact.hash_status,
+            "signature_scheme": artifact.signature_scheme,
+            "signature_status": artifact.signature_status,
+            "signature_verified": artifact.signature_verified,
+            "signer": artifact.signer,
         },
         "exports": artifact.exports,
         "imports": artifact.imports,
@@ -8053,6 +8146,13 @@ fn trap_view_v1(trap: &TrapRecordManifest) -> serde_json::Value {
         "wasm_offset": trap.wasm_offset,
         "debug_symbol": trap.debug_symbol,
         "classification_status": trap.classification_status,
+        "attribution_status": trap.attribution_status,
+        "attribution": {
+            "status": trap.attribution_status,
+            "target_pc": trap.target_pc,
+            "code_offset": trap.offset,
+            "trap_kind": trap.trap_kind,
+        },
         "simd_attribution": trap.simd_attribution.as_ref().map(|attribution| serde_json::json!({
             "classification": attribution.classification,
             "required_abi": attribution.required_abi,
@@ -8114,9 +8214,17 @@ fn hostcall_trace_view_v1(hostcall: &HostcallTraceManifest) -> serde_json::Value
             "name": hostcall.name,
             "category": hostcall.category,
             "subject": hostcall.subject,
+            "subject_source": hostcall.subject_source,
             "object": hostcall.object,
             "operation": hostcall.operation,
             "record_mode": hostcall.record_mode,
+        },
+        "gate": {
+            "subject_source": hostcall.subject_source,
+            "status": hostcall.gate_status,
+            "allowed": hostcall.allowed,
+            "denial_reason": hostcall.denial_reason,
+            "capability_handle_count": hostcall.cap_args.len(),
         },
         "args": hostcall.args,
         "cap_args": hostcall.cap_args,
@@ -8131,7 +8239,7 @@ fn hostcall_trace_view_v1(hostcall: &HostcallTraceManifest) -> serde_json::Value
         "last_error": if hostcall.allowed {
             serde_json::Value::Null
         } else {
-            serde_json::json!("hostcall-denied")
+            serde_json::json!(hostcall.denial_reason.as_deref().unwrap_or(&hostcall.result))
         },
     })
 }
@@ -8258,6 +8366,10 @@ fn cleanup_view_v1(cleanup: &CleanupTransactionManifest) -> serde_json::Value {
         "reason": cleanup.reason,
         "steps": cleanup.steps,
         "effects": cleanup.effects,
+        "idempotence": {
+            "state_digest": cleanup.state_digest,
+            "state_digest_present": !cleanup.state_digest.is_empty(),
+        },
         "last_transition": {
             "released_dmw_leases": cleanup.released_dmw_leases,
             "cancelled_waits": cleanup.cancelled_waits,
@@ -9093,90 +9205,19 @@ fn stable_views_for_kind(
 
 fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
-    let structural_error = validate_migration_package(&package).err();
-    let ok = structural_error.is_none()
-        && package.semantic.contract_violation_count == 0
-        && package.semantic.snapshot_validation.ok
-        && package.semantic.replay_validation.ok;
-    let last_error = structural_error
-        .as_ref()
-        .map(|error| error.to_string())
-        .or_else(|| (!ok).then(|| "contract-validation-failed".to_owned()));
+    let structural_error = validate_migration_package(&package)
+        .err()
+        .map(|error| error.to_string());
+    let value = contract_validation_view_v1(&package, structural_error.as_deref());
+    let ok = value
+        .get("ok")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let last_error = value
+        .get("last_error")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
     if json {
-        let state = if ok { "ok" } else { "failed" };
-        let mut violations = package
-            .semantic
-            .contract_violations
-            .iter()
-            .map(|violation| {
-                serde_json::json!({
-                    "code": violation.kind,
-                    "severity": "error",
-                    "subject": {
-                        "kind": violation.from.kind,
-                        "id": violation.from.id,
-                        "generation": violation.from.generation,
-                    },
-                    "relation": violation.edge,
-                    "message": violation.detail,
-                    "to": violation.to,
-                })
-            })
-            .collect::<Vec<_>>();
-        if let Some(error) = &structural_error {
-            violations.push(serde_json::json!({
-                "code": "package-structure",
-                "severity": "error",
-                "subject": {
-                    "kind": "migration-package",
-                    "id": &package.package_id,
-                    "generation": 1,
-                },
-                "relation": "structure",
-                "message": error.to_string(),
-                "to": serde_json::Value::Null,
-            }));
-        }
-        let value = serde_json::json!({
-            "schema": VIEW_SCHEMA_V1,
-            "schema_version": OSCTL_JSON_SCHEMA_VERSION,
-            "kind": "contract-validation",
-            "id": 1,
-            "generation": 1,
-            "state": state,
-            "command": "contract.validate",
-            "package": &package.package_id,
-            "ok": ok,
-            "references": {
-                "package": &package.package_id,
-                "snapshot_validator": &package.semantic.snapshot_validation.validator,
-                "replay_validator": &package.semantic.replay_validation.validator,
-            },
-            "violations": &violations,
-            "contract": {
-                "ok": structural_error.is_none() && package.semantic.contract_violation_count == 0,
-                "violation_count": violations.len(),
-                "violations": &violations
-            },
-            "structure_validation": {
-                "ok": structural_error.is_none(),
-                "violation_count": usize::from(structural_error.is_some()),
-                "violations": structural_error
-                    .as_ref()
-                    .map(|error| vec![serde_json::json!({
-                        "code": "package-structure",
-                        "message": error.to_string()
-                    })])
-                    .unwrap_or_default()
-            },
-            "snapshot_validation": &package.semantic.snapshot_validation,
-            "replay_validation": &package.semantic.replay_validation,
-            "last_transition": {
-                "snapshot_ok": package.semantic.snapshot_validation.ok,
-                "replay_ok": package.semantic.replay_validation.ok,
-            },
-            "last_error": last_error
-        });
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         println!(
@@ -9200,59 +9241,104 @@ fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     }
 }
 
+fn contract_validation_view_v1(
+    package: &MigrationPackageManifest,
+    structural_error: Option<&str>,
+) -> serde_json::Value {
+    let ok = structural_error.is_none()
+        && package.semantic.contract_violation_count == 0
+        && package.semantic.snapshot_validation.ok
+        && package.semantic.replay_validation.ok;
+    let state = if ok { "ok" } else { "failed" };
+    let last_error = structural_error
+        .map(str::to_owned)
+        .or_else(|| (!ok).then(|| "contract-validation-failed".to_owned()));
+    let mut violations = package
+        .semantic
+        .contract_violations
+        .iter()
+        .map(|violation| {
+            serde_json::json!({
+                "code": violation.kind,
+                "severity": "error",
+                "subject": {
+                    "kind": violation.from.kind,
+                    "id": violation.from.id,
+                    "generation": violation.from.generation,
+                },
+                "relation": violation.edge,
+                "message": violation.detail,
+                "to": violation.to,
+            })
+        })
+        .collect::<Vec<_>>();
+    if let Some(error) = structural_error {
+        violations.push(serde_json::json!({
+            "code": "package-structure",
+            "severity": "error",
+            "subject": {
+                "kind": "migration-package",
+                "id": &package.package_id,
+                "generation": 1,
+            },
+            "relation": "structure",
+            "message": error,
+            "to": serde_json::Value::Null,
+        }));
+    }
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+        "kind": "contract-validation",
+        "id": 1,
+        "generation": 1,
+        "state": state,
+        "command": "contract.validate",
+        "package": &package.package_id,
+        "ok": ok,
+        "references": {
+            "package": &package.package_id,
+            "snapshot_validator": &package.semantic.snapshot_validation.validator,
+            "replay_validator": &package.semantic.replay_validation.validator,
+        },
+        "violations": &violations,
+        "contract": {
+            "ok": structural_error.is_none() && package.semantic.contract_violation_count == 0,
+            "violation_count": violations.len(),
+            "violations": &violations
+        },
+        "structure_validation": {
+            "ok": structural_error.is_none(),
+            "violation_count": usize::from(structural_error.is_some()),
+            "violations": structural_error
+                .map(|error| vec![serde_json::json!({
+                    "code": "package-structure",
+                    "message": error
+                })])
+                .unwrap_or_default()
+        },
+        "snapshot_validation": &package.semantic.snapshot_validation,
+        "replay_validation": &package.semantic.replay_validation,
+        "last_transition": {
+            "snapshot_ok": package.semantic.snapshot_validation.ok,
+            "replay_ok": package.semantic.replay_validation.ok,
+        },
+        "last_error": last_error
+    })
+}
+
 fn print_plan(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&fs::read(path)?)?;
-    let plan = build_validated_artifact_plan(&manifest)?;
+    let plan_result = build_validated_artifact_plan(&manifest);
     if json {
-        let mode = RuntimeMode::parse(&plan.runtime_mode).unwrap_or(RuntimeMode::Research);
-        let value = serde_json::json!({
-            "artifact_profile": &plan.artifact_profile,
-            "runtime_mode": &plan.runtime_mode,
-            "mode_policy": {
-                "event_log": mode.event_log_policy(),
-                "dmw": mode.dmw_policy(),
-                "fastpath_enabled": mode.fast_path_enabled(),
-                "deterministic_boundary": mode.deterministic_boundary(),
-                "capability_audit": mode.capability_audit_policy(),
-                "debug_metadata": mode.debug_metadata_policy(),
-                "nondeterminism": mode.nondeterminism_policy()
-            },
-            "contract_version": &plan.contract_version,
-            "target_arch": &plan.target_arch,
-            "compiler": {
-                "engine": &plan.compiler_engine,
-                "execution_mode": &plan.compiler_execution_mode,
-                "artifact_format": &plan.artifact_format,
-                "target_artifact_format": &plan.target_artifact_format,
-                "runtime_executor_abi": &plan.runtime_executor_abi
-            },
-            "module_count": plan.module_count(),
-            "capability_count": plan.capability_count(),
-            "expected_export_count": plan.expected_export_count(),
-            "modules": plan.modules.iter().map(|module| serde_json::json!({
-                "package": &module.package,
-                "artifact_name": &module.artifact_name,
-                "role": &module.role,
-                "fault_policy": &module.fault_policy,
-                "target_artifact_path": &module.target_artifact_path,
-                "target_artifact_sha256": &module.target_artifact_sha256,
-                "code_payload_format": &module.code_payload_format,
-                "cwasm_path": &module.cwasm_path,
-                "cwasm_sha256": &module.cwasm_sha256,
-                "abi_fingerprint": &module.abi_fingerprint,
-                "manifest_binding_hash": &module.manifest_binding_hash,
-                "capabilities": module.capabilities.len(),
-                "dependencies": module.service_dependencies.len(),
-                "resource_limits": {
-                    "max_memory_pages": module.resource_limits.max_memory_pages,
-                    "max_table_elements": module.resource_limits.max_table_elements,
-                    "max_hostcalls_per_activation": module.resource_limits.max_hostcalls_per_activation
-                }
-            })).collect::<Vec<_>>()
-        });
+        let value = match &plan_result {
+            Ok(plan) => artifact_plan_view_v1(&manifest, Some(plan), None),
+            Err(error) => artifact_plan_view_v1(&manifest, None, Some(&error.to_string())),
+        };
         println!("{}", serde_json::to_string_pretty(&value)?);
-        return Ok(());
+        return plan_result.map(|_| ()).map_err(|error| error.into());
     }
+    let plan = plan_result?;
     print_plan_text(&plan);
     Ok(())
 }
@@ -18042,7 +18128,7 @@ fn inspect_package_object(
             );
             for record in &package.semantic.integrated_osctl_trace_replays {
                 let line = format!(
-                    "integrated-osctl-trace-replay id={} scenario={} replay_event_cursor={} integrated_scenarios={} replayed_roots={} stable_views={} historical_edges={} golden_traces={} contract_ok={} replay_ok={} graph_history_ok={} roots_match_counts={} state={} generation={}",
+                    "integrated-osctl-trace-replay id={} scenario={} replay_event_cursor={} integrated_scenarios={} replayed_roots={} stable_views={} historical_edges={} replay_fixtures={} contract_ok={} replay_ok={} graph_history_ok={} roots_match_counts={} state={} generation={}",
                     record.id,
                     record.scenario,
                     record.replay_event_cursor,
@@ -18050,7 +18136,7 @@ fn inspect_package_object(
                     record.replayed_root_count,
                     record.stable_view_count,
                     record.historical_edge_count,
-                    record.golden_trace_count,
+                    record.replay_fixture_count,
                     record.contract_validation_ok,
                     record.replay_validation_ok,
                     record.graph_history_ok,
@@ -18239,8 +18325,8 @@ fn inspect_package_object_json(
                 .semantic
                 .cleanup_transactions
                 .iter()
-                .map(serde_json::to_value)
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(cleanup_view_v1)
+                .collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.cleanup_roots.len() }),
         ),
         "file-handle-capability" | "file-handle" => (
@@ -18913,6 +18999,11 @@ fn inspect_manifest_object_json(
                         "cwasm_sha256": &module.cwasm_sha256,
                         "abi_fingerprint": &module.abi_fingerprint,
                         "manifest_binding_hash": &module.manifest_binding_hash,
+                        "hash_status": &module.hash_status,
+                        "signature_scheme": &module.signature_scheme,
+                        "signature_status": &module.signature_status,
+                        "signature_verified": module.signature_verified,
+                        "signer": &module.signer,
                         "capability_count": module.capabilities.len(),
                         "dependency_count": module.service_dependencies.len(),
                         "resource_limits": {
@@ -20592,7 +20683,7 @@ mod tests {
     use super::*;
     use artifact_manifest::{
         AuthorityObjectRefManifest, CleanupEffectManifest, CleanupStepManifest,
-        ContractObjectRefManifest,
+        ContractObjectRefManifest, ContractViolationManifest,
     };
     use semantic_core::target_executor::{CleanupStep, ContractObjectKind, ContractObjectRef};
     use semantic_core::{
@@ -20684,6 +20775,463 @@ mod tests {
         assert_eq!(view["references"]["blockers"][0]["kind"], "capability");
         assert_eq!(view["cancel_reason"], "capability-revoked");
         assert_eq!(view["restart_policy"], "restart-if-allowed");
+    }
+
+    #[test]
+    fn wait_view_v1_exposes_linux_wait_service_convergence_state() {
+        let epoll = wait_view_v1(&WaitRecordManifest {
+            id: 30_001,
+            owner_task: None,
+            owner_task_generation: None,
+            owner_store: Some(5),
+            owner_store_generation: Some(2),
+            kind: "epoll".to_owned(),
+            generation: 1,
+            state: "pending".to_owned(),
+            blockers: vec![ContractObjectRefManifest {
+                kind: "capability".to_owned(),
+                id: 3,
+                generation: 1,
+            }],
+            deadline: Some(250),
+            cancel_reason: None,
+            restart_policy: "restart-with-adjusted-timeout".to_owned(),
+            saved_context: Some("linux-wait-service:epoll_wait:pending".to_owned()),
+        });
+        assert_eq!(epoll["kind"], "wait");
+        assert_eq!(epoll["kind_name"], "epoll");
+        assert_eq!(epoll["state"], "pending");
+        assert_eq!(epoll["owner"]["store"], 5);
+        assert_eq!(epoll["owner"]["store_generation"], 2);
+        assert_eq!(epoll["references"]["blockers"][0]["kind"], "capability");
+        assert_eq!(epoll["restart_policy"], "restart-with-adjusted-timeout");
+        assert_eq!(
+            epoll["saved_context"],
+            "linux-wait-service:epoll_wait:pending"
+        );
+
+        let futex = wait_view_v1(&WaitRecordManifest {
+            id: 30_007,
+            owner_task: None,
+            owner_task_generation: None,
+            owner_store: Some(6),
+            owner_store_generation: Some(2),
+            kind: "futex".to_owned(),
+            generation: 1,
+            state: "cancelled".to_owned(),
+            blockers: vec![ContractObjectRefManifest {
+                kind: "capability".to_owned(),
+                id: 4,
+                generation: 1,
+            }],
+            deadline: Some(1_250),
+            cancel_reason: Some("timeout".to_owned()),
+            restart_policy: "internal-only".to_owned(),
+            saved_context: Some("linux-wait-service:futex_wait:timeout-cancel".to_owned()),
+        });
+        assert_eq!(futex["kind_name"], "futex");
+        assert_eq!(futex["state"], "cancelled");
+        assert_eq!(futex["cancel_reason"], "timeout");
+        assert_eq!(futex["last_error"], "timeout");
+        assert_eq!(
+            futex["saved_context"],
+            "linux-wait-service:futex_wait:timeout-cancel"
+        );
+    }
+
+    fn b4_core_view_package() -> MigrationPackageManifest {
+        let target_store = ContractObjectRefManifest {
+            kind: "store".to_owned(),
+            id: 1,
+            generation: 2,
+        };
+        let mut package = minimal_graph_package();
+        package.package_id = "b4-core-view-boundary".to_owned();
+        package.semantic.store_records.push(StoreRecordManifest {
+            id: 1,
+            package: "driver_virtio_net".to_owned(),
+            artifact: "driver.cwasm".to_owned(),
+            role: "driver".to_owned(),
+            fault_policy: "restartable".to_owned(),
+            fault_domain: 1,
+            resource: Some(9),
+            state: "running".to_owned(),
+            generation: 2,
+            restart_count: 1,
+        });
+        package
+            .semantic
+            .capability_records
+            .push(CapabilityRecordManifest {
+                id: 4,
+                subject: "driver_virtio_net".to_owned(),
+                object: "packet-device.net0".to_owned(),
+                object_ref: Some(AuthorityObjectRefManifest {
+                    scope: "internal".to_owned(),
+                    class: "packet-device".to_owned(),
+                    object: ContractObjectRefManifest {
+                        kind: "resource".to_owned(),
+                        id: 99,
+                        generation: 1,
+                    },
+                }),
+                rights: vec!["rx".to_owned()],
+                lifetime: "store".to_owned(),
+                class: "packet-device".to_owned(),
+                owner_store: Some(1),
+                owner_store_generation: Some(2),
+                owner_task: None,
+                source: "manifest".to_owned(),
+                generation: 1,
+                parent: None,
+                manifest_decl: true,
+                debug_object_label: "packet-device.net0".to_owned(),
+                revoked: false,
+            });
+        package.semantic.wait_records.push(WaitRecordManifest {
+            id: 8,
+            owner_task: None,
+            owner_task_generation: None,
+            owner_store: Some(1),
+            owner_store_generation: Some(2),
+            kind: "device-irq".to_owned(),
+            generation: 1,
+            state: "pending".to_owned(),
+            blockers: vec![ContractObjectRefManifest {
+                kind: "capability".to_owned(),
+                id: 4,
+                generation: 1,
+            }],
+            deadline: None,
+            cancel_reason: None,
+            restart_policy: "restart-if-allowed".to_owned(),
+            saved_context: None,
+        });
+        package
+            .semantic
+            .cleanup_transactions
+            .push(CleanupTransactionManifest {
+                id: 5,
+                store: 1,
+                store_generation: 2,
+                target_store_generation: 2,
+                result_store_generation: Some(2),
+                activation: None,
+                activation_generation: None,
+                code_object: None,
+                code_generation: None,
+                generation: 1,
+                started_at: 10,
+                finished_at: Some(11),
+                state: "completed".to_owned(),
+                reason: "fault".to_owned(),
+                released_dmw_leases: 1,
+                cancelled_waits: 1,
+                revoked_capabilities: vec![4],
+                revoked_capability_refs: vec![ContractObjectRefManifest {
+                    kind: "capability".to_owned(),
+                    id: 4,
+                    generation: 2,
+                }],
+                dropped_resources: 1,
+                unbound_code_object: true,
+                state_digest: "store:1@2:dead|code:none|activations=[]|leases=[]|caps=[]"
+                    .to_owned(),
+                effect: "errno".to_owned(),
+                steps: vec![CleanupStepManifest {
+                    step: "mark-store-state".to_owned(),
+                    state: "done".to_owned(),
+                    detail: "store marked dead".to_owned(),
+                    target: Some(target_store.clone()),
+                    observed_generation: Some(2),
+                    error: None,
+                    idempotency_key: "mark-store-state".to_owned(),
+                    event_seq: 11,
+                }],
+                effects: vec![CleanupEffectManifest {
+                    kind: "mark-store-dead".to_owned(),
+                    target: target_store,
+                    expected_generation: 2,
+                    status: "applied".to_owned(),
+                    event_seq: 11,
+                }],
+            });
+        package
+            .semantic
+            .command_results
+            .push(CommandResultManifest {
+                id: 12,
+                issuer: "b4-test".to_owned(),
+                command: "validate-contract-graph".to_owned(),
+                status: "applied".to_owned(),
+                events: vec![10, 11],
+                effects: Vec::new(),
+                violations: Vec::new(),
+            });
+        package
+    }
+
+    #[test]
+    fn stable_view_collection_v1_covers_core_object_families() {
+        let package = b4_core_view_package();
+        for (kind, expected_item_kind) in [
+            ("store", "store"),
+            ("capability", "capability"),
+            ("wait", "wait"),
+            ("cleanup", "cleanup"),
+            ("command", "command"),
+        ] {
+            let view = stable_view_collection_v1(kind, "list", &package, None)
+                .expect("core view collection");
+            assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+            assert_eq!(view["schema_version"], OSCTL_JSON_SCHEMA_VERSION);
+            assert_eq!(view["kind"], expected_item_kind);
+            assert_eq!(view["command"], format!("{expected_item_kind}.list"));
+            assert_eq!(view["package"], "b4-core-view-boundary");
+            assert_eq!(view["count"], 1);
+            assert_eq!(view["items"][0]["schema"], VIEW_SCHEMA_V1);
+            assert_eq!(view["items"][0]["kind"], expected_item_kind);
+            assert!(view["items"][0]["references"].is_object());
+        }
+
+        let selected = stable_view_collection_v1("capability", "show", &package, Some("4"))
+            .expect("show selected capability");
+        assert_eq!(selected["command"], "capability.show");
+        assert_eq!(selected["count"], 1);
+        assert_eq!(selected["items"][0]["id"], 4);
+
+        let missing = stable_view_collection_v1("capability", "show", &package, Some("404"))
+            .expect_err("missing show id must be a JSON-path error before rendering");
+        assert!(missing.to_string().contains("object id 404 not found"));
+    }
+
+    #[test]
+    fn contract_validation_view_v1_exposes_contract_and_structure_errors_as_json() {
+        let mut package = minimal_graph_package();
+        package.package_id = "b4-contract-error".to_owned();
+        package.semantic.contract_violation_count = 1;
+        package
+            .semantic
+            .contract_violations
+            .push(ContractViolationManifest {
+                kind: "dangling-edge".to_owned(),
+                edge: "store->missing-task".to_owned(),
+                from: ContractObjectRefManifest {
+                    kind: "store".to_owned(),
+                    id: 1,
+                    generation: 1,
+                },
+                to: Some(ContractObjectRefManifest {
+                    kind: "task".to_owned(),
+                    id: 9,
+                    generation: 1,
+                }),
+                detail: "edge references missing target".to_owned(),
+            });
+
+        let contract_error = contract_validation_view_v1(&package, None);
+        assert_eq!(contract_error["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(contract_error["schema_version"], OSCTL_JSON_SCHEMA_VERSION);
+        assert_eq!(contract_error["kind"], "contract-validation");
+        assert_eq!(contract_error["ok"], false);
+        assert_eq!(contract_error["state"], "failed");
+        assert_eq!(contract_error["contract"]["violation_count"], 1);
+        assert_eq!(contract_error["violations"][0]["code"], "dangling-edge");
+        assert_eq!(contract_error["violations"][0]["subject"]["generation"], 1);
+        assert_eq!(contract_error["last_error"], "contract-validation-failed");
+
+        let structure_error = contract_validation_view_v1(&package, Some("missing roots"));
+        assert_eq!(structure_error["ok"], false);
+        assert_eq!(
+            structure_error["structure_validation"]["violations"][0]["code"],
+            "package-structure"
+        );
+        assert_eq!(
+            structure_error["violations"][1]["code"],
+            "package-structure"
+        );
+        assert_eq!(structure_error["last_error"], "missing roots");
+    }
+
+    fn c1_manifest_stub() -> ArtifactBundleManifest {
+        ArtifactBundleManifest {
+            schema_version: 1,
+            artifact_profile: "host-validation".to_owned(),
+            runtime_mode: "research".to_owned(),
+            contract: artifact_manifest::SupervisorContractManifest {
+                contract_version: "vmos-supervisor-contract-v2".to_owned(),
+                supervisor_world: "semantic:supervisor".to_owned(),
+                catalog_fingerprint: "catalog".to_owned(),
+                package_set_fingerprint: "packages".to_owned(),
+                module_count: 1,
+                required_packages: vec!["console_service".to_owned()],
+            },
+            target: artifact_manifest::TargetManifest {
+                arch: "x86_64".to_owned(),
+                machine_abi_version: "vmos-machine-abi-v0".to_owned(),
+                supervisor_abi_version: "vmos-supervisor-abi-v0".to_owned(),
+                wasm_feature_profile: "wasm32-core-mvp-single-memory".to_owned(),
+                memory64: false,
+                multi_memory: false,
+                dmw_layout: "logical-activation-leases-v0".to_owned(),
+                linux_abi_profile: "linux-x86_64-demo-socket-v0".to_owned(),
+                artifact_signature_profile: "prototype-self-signed-sha256".to_owned(),
+                network_contract_version: "vmos-network-contract-v2".to_owned(),
+            },
+            compiler: artifact_manifest::CompilerManifest {
+                engine: "wasmtime".to_owned(),
+                engine_version: "43.0.1".to_owned(),
+                execution_mode: "precompiled-core-module".to_owned(),
+                artifact_format: "target-artifact-image-v1".to_owned(),
+                target_artifact_format: "target-artifact-image-v1".to_owned(),
+                runtime_executor_abi: "vmos-runtime-only-executor-v0".to_owned(),
+            },
+            modules: vec![artifact_manifest::ModuleArtifactManifest {
+                package: "console_service".to_owned(),
+                artifact_name: "driver_console".to_owned(),
+                role: "driver".to_owned(),
+                fault_policy: "restartable".to_owned(),
+                wasm_path: "target/test/console_service.wasm".to_owned(),
+                cwasm_path: "target/test/console_service.cwasm".to_owned(),
+                target_artifact_path: "target/test/console_service.tart".to_owned(),
+                wasm_sha256: "wasm-hash".to_owned(),
+                cwasm_sha256: "code-hash".to_owned(),
+                target_artifact_sha256: "artifact-hash".to_owned(),
+                code_payload_format: "cwasm".to_owned(),
+                expected_exports: vec!["memory".to_owned()],
+                exports: Vec::new(),
+                imports: Vec::new(),
+                capabilities: vec![artifact_manifest::CapabilityManifest {
+                    name: "console.write".to_owned(),
+                    rights: vec!["write".to_owned()],
+                    lifetime: "activation".to_owned(),
+                }],
+                abi_fingerprint: "abi".to_owned(),
+                service_dependencies: Vec::new(),
+                resource_limits: artifact_manifest::ResourceLimitsManifest {
+                    max_memory_pages: 16,
+                    max_table_elements: 0,
+                    max_hostcalls_per_activation: 64,
+                },
+                interfaces: artifact_manifest::InterfaceRequirementManifest::default(),
+                signature: artifact_manifest::SignatureManifest {
+                    scheme: "prototype-self-signed-sha256".to_owned(),
+                    artifact_hash: "artifact-hash".to_owned(),
+                    manifest_binding_hash: "binding".to_owned(),
+                    signer: "vmos-aotc-dev".to_owned(),
+                    public_key_hint: "prototype-dev-key".to_owned(),
+                    signature: "unsigned-prototype-signature".to_owned(),
+                },
+            }],
+        }
+    }
+
+    fn c1_plan_stub() -> ValidatedArtifactPlan {
+        ValidatedArtifactPlan {
+            artifact_profile: "host-validation".to_owned(),
+            runtime_mode: "research".to_owned(),
+            contract_version: "vmos-supervisor-contract-v2".to_owned(),
+            supervisor_world: "semantic:supervisor".to_owned(),
+            target_arch: "x86_64".to_owned(),
+            compiler_engine: "wasmtime".to_owned(),
+            compiler_execution_mode: "precompiled-core-module".to_owned(),
+            artifact_format: "target-artifact-image-v1".to_owned(),
+            target_artifact_format: "target-artifact-image-v1".to_owned(),
+            runtime_executor_abi: "vmos-runtime-only-executor-v0".to_owned(),
+            modules: vec![ValidatedArtifactEntry {
+                package: "console_service".to_owned(),
+                artifact_name: "driver_console".to_owned(),
+                role: "driver".to_owned(),
+                fault_policy: "restartable".to_owned(),
+                wasm_path: "target/test/console_service.wasm".to_owned(),
+                cwasm_path: "target/test/console_service.cwasm".to_owned(),
+                target_artifact_path: "target/test/console_service.tart".to_owned(),
+                wasm_sha256: "wasm-hash".to_owned(),
+                cwasm_sha256: "code-hash".to_owned(),
+                target_artifact_sha256: "artifact-hash".to_owned(),
+                code_payload_format: "cwasm".to_owned(),
+                expected_exports: vec!["memory".to_owned()],
+                capabilities: vec![artifact_manifest::CapabilityManifest {
+                    name: "console.write".to_owned(),
+                    rights: vec!["write".to_owned()],
+                    lifetime: "activation".to_owned(),
+                }],
+                abi_fingerprint: "abi".to_owned(),
+                service_dependencies: Vec::new(),
+                resource_limits: artifact_manifest::ResourceLimitsManifest {
+                    max_memory_pages: 16,
+                    max_table_elements: 0,
+                    max_hostcalls_per_activation: 64,
+                },
+                interfaces: artifact_manifest::InterfaceRequirementManifest::default(),
+                signature_scheme: "prototype-self-signed-sha256".to_owned(),
+                signer: "vmos-aotc-dev".to_owned(),
+                manifest_binding_hash: "binding".to_owned(),
+                hash_status: contract_core::ARTIFACT_HASH_STATUS_MANIFEST_BOUND.to_owned(),
+                signature_status: contract_core::ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED
+                    .to_owned(),
+                signature_verified: contract_core::ARTIFACT_SIGNATURE_VERIFIED_DEFAULT,
+            }],
+        }
+    }
+
+    #[test]
+    fn artifact_plan_view_v1_exposes_acceptance_and_rejection_policy_status() {
+        let manifest = c1_manifest_stub();
+        let plan = c1_plan_stub();
+        let accepted = artifact_plan_view_v1(&manifest, Some(&plan), None);
+
+        assert_eq!(accepted["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(accepted["schema_version"], OSCTL_JSON_SCHEMA_VERSION);
+        assert_eq!(accepted["kind"], "artifact-plan");
+        assert_eq!(accepted["accepted"], true);
+        assert_eq!(accepted["state"], "accepted");
+        assert_eq!(accepted["package_roots"][0], "console_service");
+        assert_eq!(
+            accepted["target_profile"]["artifact_profile"],
+            "host-validation"
+        );
+        assert_eq!(
+            accepted["modules"][0]["artifact_manifest"]["target_artifact_sha256"],
+            "artifact-hash"
+        );
+        assert_eq!(
+            accepted["modules"][0]["capability_manifest"][0]["name"],
+            "console.write"
+        );
+        assert_eq!(
+            accepted["modules"][0]["target_profile"]["hash_status"],
+            contract_core::ARTIFACT_HASH_STATUS_MANIFEST_BOUND
+        );
+        assert_eq!(
+            accepted["modules"][0]["target_profile"]["signature_status"],
+            contract_core::ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED
+        );
+        assert_eq!(
+            accepted["modules"][0]["target_profile"]["signature_verified"],
+            false
+        );
+        assert_eq!(accepted["last_error"], serde_json::Value::Null);
+
+        let rejected = artifact_plan_view_v1(
+            &manifest,
+            None,
+            Some("console_service target hash mismatch"),
+        );
+        assert_eq!(rejected["accepted"], false);
+        assert_eq!(rejected["state"], "rejected");
+        assert_eq!(
+            rejected["modules"][0]["target_profile"]["hash_status"],
+            "rejected"
+        );
+        assert_eq!(
+            rejected["modules"][0]["target_profile"]["signature_status"],
+            "rejected"
+        );
+        assert_eq!(
+            rejected["last_error"],
+            "console_service target hash mismatch"
+        );
     }
 
     #[test]
@@ -24432,7 +24980,7 @@ mod tests {
             historical_edge_count: 9,
             replayed_root_count: 9,
             integrated_scenario_count: 9,
-            golden_trace_count: 9,
+            replay_fixture_count: 9,
             contract_validation_ok: true,
             replay_validation_ok: true,
             graph_history_ok: true,
@@ -24469,7 +25017,7 @@ mod tests {
         assert_eq!(view["replay"]["event_cursor"], 579);
         assert_eq!(view["replay"]["stable_view_count"], 9);
         assert_eq!(view["replay"]["historical_edge_count"], 9);
-        assert_eq!(view["replay"]["golden_trace_count"], 9);
+        assert_eq!(view["replay"]["replay_fixture_count"], 9);
         assert_eq!(view["replay"]["contract_validation_ok"], true);
         assert_eq!(view["replay"]["replay_validation_ok"], true);
         assert_eq!(view["replay"]["graph_history_ok"], true);
@@ -26523,6 +27071,7 @@ mod tests {
             }],
             dropped_resources: 1,
             unbound_code_object: true,
+            state_digest: "store:1@2:dead|code:none|activations=[]|leases=[]|caps=[]".to_owned(),
             effect: "errno".to_owned(),
             steps: vec![CleanupStepManifest {
                 step: "mark-store-state".to_owned(),
@@ -26548,6 +27097,7 @@ mod tests {
         assert_eq!(view["references"]["target_store"]["generation"], 1);
         assert_eq!(view["references"]["result_store"]["generation"], 2);
         assert_eq!(view["references"]["revoked_capabilities"][0]["id"], 4);
+        assert_eq!(view["idempotence"]["state_digest_present"], true);
     }
 
     #[test]
@@ -26560,18 +27110,29 @@ mod tests {
             kind: "target-artifact-image-v1".to_owned(),
             target_profile: "host-validation".to_owned(),
             artifact_hash: "artifact".to_owned(),
+            hash_status: "manifest-bound".to_owned(),
             abi_fingerprint: "abi".to_owned(),
             manifest_binding_hash: "binding".to_owned(),
             code_hash: "code".to_owned(),
+            signature_scheme: "prototype-self-signed-sha256".to_owned(),
+            signature_status: "profile-bound-unverified".to_owned(),
+            signature_verified: false,
+            signer: "test-signer".to_owned(),
             exports: vec!["memory".to_owned()],
             payload_len: 4096,
             ..TargetArtifactImageManifest::default()
         });
         assert_eq!(artifact["schema"], VIEW_SCHEMA_V1);
         assert_eq!(artifact["kind"], "artifact");
-        assert_eq!(artifact["state"], "verified");
+        assert_eq!(artifact["state"], "accepted");
         assert_eq!(artifact["references"]["artifact_hash"], "artifact");
+        assert_eq!(artifact["references"]["hash_status"], "manifest-bound");
         assert_eq!(artifact["references"]["manifest_binding_hash"], "binding");
+        assert_eq!(
+            artifact["verification"]["signature_status"],
+            "profile-bound-unverified"
+        );
+        assert_eq!(artifact["verification"]["signature_verified"], false);
         assert_eq!(artifact["last_transition"]["payload_len"], 4096);
 
         let code = code_object_view_v1(&CodeObjectManifest {
@@ -26648,6 +27209,7 @@ mod tests {
             artifact: Some(5),
             artifact_generation: Some(1),
             trap_kind: Some("simd-unsupported".to_owned()),
+            attribution_status: "trap-map-attributed".to_owned(),
             simd_attribution: Some(artifact_manifest::SimdTrapAttributionManifest {
                 classification: "unsupported-target-profile".to_owned(),
                 required_abi: "riscv-v".to_owned(),
@@ -26678,6 +27240,7 @@ mod tests {
             1
         );
         assert_eq!(trap["last_error"], "denied");
+        assert_eq!(trap["attribution"]["status"], "trap-map-attributed");
 
         let hostcall = hostcall_trace_view_v1(&HostcallTraceManifest {
             id: 12,
@@ -26697,17 +27260,27 @@ mod tests {
             caller_offset: 16,
             name: "mmio.read32".to_owned(),
             category: "mmio".to_owned(),
+            subject: "driver_virtio_net".to_owned(),
+            subject_source: "active-store-activation-code-object".to_owned(),
             object: "mmio.bar0".to_owned(),
             operation: "read32".to_owned(),
             allowed: false,
-            result: "trap".to_owned(),
+            gate_status: "denied".to_owned(),
+            result: "cap-arg-generation".to_owned(),
+            denial_reason: Some("cap-arg-generation".to_owned()),
             ..HostcallTraceManifest::default()
         });
         assert_eq!(hostcall["kind"], "hostcall");
         assert_eq!(hostcall["owner"]["activation_generation"], 6);
         assert_eq!(hostcall["references"]["artifact"]["generation"], 7);
         assert_eq!(hostcall["call"]["caller_offset"], 16);
-        assert_eq!(hostcall["last_error"], "hostcall-denied");
+        assert_eq!(
+            hostcall["call"]["subject_source"],
+            "active-store-activation-code-object"
+        );
+        assert_eq!(hostcall["gate"]["status"], "denied");
+        assert_eq!(hostcall["gate"]["denial_reason"], "cap-arg-generation");
+        assert_eq!(hostcall["last_error"], "cap-arg-generation");
     }
 
     #[test]
@@ -26930,6 +27503,8 @@ mod tests {
                 }],
                 dropped_resources: 0,
                 unbound_code_object: true,
+                state_digest: "store:1@3:dead|code:3@4:retired|activations=[]|leases=[]|caps=[]"
+                    .to_owned(),
                 effect: "restart".to_owned(),
                 steps: Vec::new(),
                 effects: Vec::new(),
@@ -28205,61 +28780,33 @@ mod tests {
     }
 
     #[test]
-    fn golden_traces_replay_to_expected_final_views() {
-        let wait = parse_golden(include_str!(
-            "../../semantic_core/golden_traces/golden_wait_pending_resume_v1.json"
+    fn replay_fixtures_replay_to_expected_final_views() {
+        let wait = parse_replay_fixture(include_str!(
+            "../../semantic_core/fixtures/replay/wait_pending_resume_v1.json"
         ));
-        replay_wait_golden(&wait);
+        replay_wait_fixture(&wait);
 
-        let capability = parse_golden(include_str!(
-            "../../semantic_core/golden_traces/golden_capability_revoke_generation_v1.json"
+        let capability = parse_replay_fixture(include_str!(
+            "../../semantic_core/fixtures/replay/capability_revoke_generation_v1.json"
         ));
-        replay_capability_golden(&capability);
+        replay_capability_fixture(&capability);
 
-        let cleanup = parse_golden(include_str!(
-            "../../semantic_core/golden_traces/golden_driver_fault_cleanup_generation_safe_v1.json"
+        let cleanup = parse_replay_fixture(include_str!(
+            "../../semantic_core/fixtures/replay/driver_fault_cleanup_generation_safe_v1.json"
         ));
-        replay_cleanup_golden(&cleanup);
+        replay_cleanup_fixture(&cleanup);
     }
 
-    #[test]
-    fn target_runtime_cwasm_golden_traces_parse() {
-        for source in [
-            include_str!(
-                "../../tests/golden/target-runtime/cwasm_payload_loaded_as_target_artifact.trace.json"
-            ),
-            include_str!(
-                "../../tests/golden/target-runtime/cwasm_host_validation_export_smoke.trace.json"
-            ),
-            include_str!(
-                "../../tests/golden/target-runtime/cwasm_host_validation_trap_visible.trace.json"
-            ),
-        ] {
-            let value: serde_json::Value =
-                serde_json::from_str(source).expect("target-runtime golden trace JSON");
-            assert_eq!(value["schema"], "vmos-golden-trace");
-            assert!(
-                value["contract_refs"]
-                    .as_array()
-                    .expect("contract_refs")
-                    .len()
-                    > 0
-            );
-            assert!(value["events"].as_array().expect("events").len() > 0);
-            assert!(value["validation"]["ok"].as_bool().expect("validation ok"));
-        }
-    }
-
-    fn parse_golden(source: &str) -> serde_json::Value {
-        let value: serde_json::Value = serde_json::from_str(source).expect("golden trace JSON");
-        assert_eq!(value["schema"], "vmos-golden-trace-v1");
+    fn parse_replay_fixture(source: &str) -> serde_json::Value {
+        let value: serde_json::Value = serde_json::from_str(source).expect("replay fixture JSON");
+        assert_eq!(value["schema"], "vmos-replay-fixture-v1");
         assert!(value["commands"].as_array().expect("commands").len() > 0);
         assert!(value["events"].as_array().expect("events").len() > 0);
         assert!(value["validation"]["ok"].as_bool().expect("validation ok"));
         value
     }
 
-    fn replay_wait_golden(value: &serde_json::Value) {
+    fn replay_wait_fixture(value: &serde_json::Value) {
         let mut graph = SemanticGraph::new();
         graph.ensure_task(7, FrontendKind::LinuxElf, "guest");
         graph.register_store("bootstrap_a", "bootstrap_a.cwasm", "service", "restartable");
@@ -28299,7 +28846,7 @@ mod tests {
                     graph.record_wait_consumed(command["wait"].as_u64().expect("wait"));
                     continue;
                 }
-                other => panic!("unsupported wait golden command {other}"),
+                other => panic!("unsupported wait replay fixture command {other}"),
             };
         }
         let wait = graph
@@ -28316,7 +28863,7 @@ mod tests {
         assert_eq!(validate_contract_graph(&snapshot), Vec::new());
     }
 
-    fn replay_capability_golden(value: &serde_json::Value) {
+    fn replay_capability_fixture(value: &serde_json::Value) {
         let mut graph = SemanticGraph::new();
         let store =
             graph.register_store("driver_virtio_net", "driver.cwasm", "driver", "restartable");
@@ -28337,7 +28884,7 @@ mod tests {
                                 .as_u64()
                                 .or(Some(1)),
                             owner_task: None,
-                            source: "golden-replay".to_owned(),
+                            source: "replay-fixture".to_owned(),
                             manifest_decl: true,
                         })
                         .expect("grant capability");
@@ -28382,7 +28929,7 @@ mod tests {
                         })
                         .expect("cancel wait");
                 }
-                other => panic!("unsupported capability golden command {other}"),
+                other => panic!("unsupported capability replay fixture command {other}"),
             }
         }
 
@@ -28406,7 +28953,7 @@ mod tests {
             waits: graph.wait_records().to_vec(),
             external_objects: vec![ExternalObjectDeclaration::new(
                 object,
-                "golden-replay",
+                "replay-fixture",
                 CapabilityClass::PacketDevice.as_str(),
                 "packet-device.net0",
             )],
@@ -28416,7 +28963,7 @@ mod tests {
         assert_eq!(value["expected_violation_codes"][0], "revoked");
     }
 
-    fn replay_cleanup_golden(value: &serde_json::Value) {
+    fn replay_cleanup_fixture(value: &serde_json::Value) {
         let mut graph = SemanticGraph::new();
         let store =
             graph.register_store("driver_virtio_net", "driver.cwasm", "driver", "restartable");
@@ -28481,7 +29028,7 @@ mod tests {
                         assert_eq!(applied_step_status.as_deref(), Some(status));
                     }
                 }
-                other => panic!("unsupported cleanup golden command {other}"),
+                other => panic!("unsupported cleanup replay fixture command {other}"),
             }
         }
 
@@ -28523,7 +29070,7 @@ mod tests {
                     );
                 }
                 "FaultCleanupStarted" | "FaultCleanupSkipped" => {}
-                other => panic!("unsupported cleanup golden event {other}"),
+                other => panic!("unsupported cleanup replay fixture event {other}"),
             }
         }
         let digest = cleanup_replay_digest(&graph, store);
@@ -28541,7 +29088,7 @@ mod tests {
             "wait-token" | "wait" => ContractObjectKind::WaitToken,
             "cleanup" | "cleanup-transaction" => ContractObjectKind::CleanupTransaction,
             "resource" => ContractObjectKind::Resource,
-            other => panic!("unsupported golden object kind {other}"),
+            other => panic!("unsupported replay fixture object kind {other}"),
         };
         ContractObjectRef::new(
             kind,

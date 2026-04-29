@@ -553,6 +553,10 @@ mod tests {
             signature_scheme: "unsigned-research".to_owned(),
             signer: "test".to_owned(),
             manifest_binding_hash: "binding".to_owned(),
+            hash_status: contract_core::ARTIFACT_HASH_STATUS_MANIFEST_BOUND.to_owned(),
+            signature_status: contract_core::ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED
+                .to_owned(),
+            signature_verified: contract_core::ARTIFACT_SIGNATURE_VERIFIED_DEFAULT,
         }
     }
 

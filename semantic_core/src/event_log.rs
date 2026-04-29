@@ -498,7 +498,7 @@ pub enum EventKind {
         replayed_root_count: u32,
         stable_view_count: u32,
         historical_edge_count: u32,
-        golden_trace_count: u32,
+        replay_fixture_count: u32,
         contract_validation_ok: bool,
         replay_validation_ok: bool,
         graph_history_ok: bool,
@@ -2868,7 +2868,7 @@ impl EventKind {
                 replayed_root_count,
                 stable_view_count,
                 historical_edge_count,
-                golden_trace_count,
+                replay_fixture_count,
                 contract_validation_ok,
                 replay_validation_ok,
                 graph_history_ok,
@@ -2876,7 +2876,7 @@ impl EventKind {
                 invariant_checks,
                 generation,
             } => format!(
-                "IntegratedOsctlTraceReplayRecorded integrated={integrated} scenario={scenario} replay_event_cursor={replay_event_cursor} integrated_scenarios={integrated_scenario_count} replayed_roots={replayed_root_count} stable_views={stable_view_count} historical_edges={historical_edge_count} golden_traces={golden_trace_count} contract_validation_ok={contract_validation_ok} replay_validation_ok={replay_validation_ok} graph_history_ok={graph_history_ok} roots_match_counts={roots_match_counts} invariant_checks={invariant_checks} generation={generation}"
+                "IntegratedOsctlTraceReplayRecorded integrated={integrated} scenario={scenario} replay_event_cursor={replay_event_cursor} integrated_scenarios={integrated_scenario_count} replayed_roots={replayed_root_count} stable_views={stable_view_count} historical_edges={historical_edge_count} replay_fixtures={replay_fixture_count} contract_validation_ok={contract_validation_ok} replay_validation_ok={replay_validation_ok} graph_history_ok={graph_history_ok} roots_match_counts={roots_match_counts} invariant_checks={invariant_checks} generation={generation}"
             ),
             Self::DeviceObjectRecorded {
                 device,

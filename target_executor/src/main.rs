@@ -196,8 +196,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                     &entry.artifact_name,
                     &entry.manifest_binding_hash,
                     &entry.target_artifact_sha256,
+                    &entry.hash_status,
                     &entry.abi_fingerprint,
                     &entry.signature_scheme,
+                    &entry.signature_status,
+                    entry.signature_verified,
                     &entry.signer,
                     ArtifactVerificationState::Rejected,
                     Some(&reason),
@@ -228,6 +231,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n12_evidence(&mut semantic)?;
     record_network_runtime_n13_evidence(&mut semantic)?;
     record_network_runtime_n14_evidence(&mut semantic)?;
+    record_linux_wait_service_d1_evidence(&mut semantic)?;
     record_network_runtime_n15_evidence(&mut semantic)?;
     record_network_runtime_n17_evidence(&mut semantic)?;
     record_network_runtime_n18_evidence(&mut semantic)?;
@@ -344,8 +348,11 @@ fn register_store_semantics(semantic: &mut SemanticGraph, entry: &ValidatedArtif
         &entry.artifact_name,
         &entry.manifest_binding_hash,
         &entry.target_artifact_sha256,
+        &entry.hash_status,
         &entry.abi_fingerprint,
         &entry.signature_scheme,
+        &entry.signature_status,
+        entry.signature_verified,
         &entry.signer,
         ArtifactVerificationState::HostValidated,
         Some("target-runtime-only-loader"),
@@ -1407,6 +1414,194 @@ fn record_network_runtime_n14_evidence(semantic: &mut SemanticGraph) -> Result<(
         .into());
     }
 
+    Ok(())
+}
+
+fn record_linux_wait_service_d1_evidence(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let epoll_store = semantic_store_id(semantic, "epoll_service")?;
+    let epoll_store_generation = semantic
+        .store_handle(epoll_store)
+        .map(|handle| handle.generation)
+        .ok_or("epoll_service store handle is missing for d1 evidence")?;
+    let futex_store = semantic_store_id(semantic, "futex_service")?;
+    let futex_store_generation = semantic
+        .store_handle(futex_store)
+        .map(|handle| handle.generation)
+        .ok_or("futex_service store handle is missing for d1 evidence")?;
+    semantic_capability_ref(semantic, "epoll_service", "epoll.instance", "create")?;
+    semantic_capability_ref(semantic, "epoll_service", "epoll.instance", "ctl")?;
+    semantic_capability_ref(semantic, "epoll_service", "epoll.instance", "wait")?;
+    semantic_capability_ref(semantic, "futex_service", "futex.waitset", "wait")?;
+    let epoll_service_ref = semantic_store_resource_ref(semantic, epoll_store)?;
+    let futex_service_ref = semantic_store_resource_ref(semantic, futex_store)?;
+
+    let commands = vec![
+        CommandEnvelope::new(
+            270,
+            "target-executor-d1",
+            SemanticCommand::CreateWait {
+                wait: 30_001,
+                owner_task: None,
+                owner_store: Some(epoll_store),
+                owner_store_generation: Some(epoll_store_generation),
+                kind: SemanticWaitKind::Epoll,
+                generation: 1,
+                blockers: vec![epoll_service_ref],
+                deadline: Some(250),
+                restart_policy: RestartPolicy::RestartWithAdjustedTimeout,
+                saved_context: Some("linux-wait-service:epoll_wait:pending".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            271,
+            "target-executor-d1",
+            SemanticCommand::CreateWait {
+                wait: 30_002,
+                owner_task: None,
+                owner_store: Some(epoll_store),
+                owner_store_generation: Some(epoll_store_generation),
+                kind: SemanticWaitKind::Epoll,
+                generation: 1,
+                blockers: vec![epoll_service_ref],
+                deadline: None,
+                restart_policy: RestartPolicy::RestartIfAllowed,
+                saved_context: Some("linux-wait-service:epoll_wait:resume-ready".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            272,
+            "target-executor-d1",
+            SemanticCommand::ResolveWait {
+                wait: 30_002,
+                reason: "epoll-ready".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            273,
+            "target-executor-d1",
+            SemanticCommand::CreateWait {
+                wait: 30_003,
+                owner_task: None,
+                owner_store: Some(epoll_store),
+                owner_store_generation: Some(epoll_store_generation),
+                kind: SemanticWaitKind::Epoll,
+                generation: 1,
+                blockers: vec![epoll_service_ref],
+                deadline: Some(500),
+                restart_policy: RestartPolicy::RestartIfAllowed,
+                saved_context: Some("linux-wait-service:epoll_wait:cancel-signal".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            274,
+            "target-executor-d1",
+            SemanticCommand::CancelWait {
+                wait: 30_003,
+                errno: 4,
+                reason: WaitCancelReason::Signal,
+            },
+        ),
+        CommandEnvelope::new(
+            275,
+            "target-executor-d1",
+            SemanticCommand::CreateWait {
+                wait: 30_004,
+                owner_task: None,
+                owner_store: Some(epoll_store),
+                owner_store_generation: Some(epoll_store_generation),
+                kind: SemanticWaitKind::Epoll,
+                generation: 1,
+                blockers: vec![epoll_service_ref],
+                deadline: Some(750),
+                restart_policy: RestartPolicy::RestartIfAllowed,
+                saved_context: Some("linux-wait-service:epoll_wait:restart-driver".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            276,
+            "target-executor-d1",
+            SemanticCommand::CreateWait {
+                wait: 30_005,
+                owner_task: None,
+                owner_store: Some(futex_store),
+                owner_store_generation: Some(futex_store_generation),
+                kind: SemanticWaitKind::Futex,
+                generation: 1,
+                blockers: vec![futex_service_ref],
+                deadline: Some(1_000),
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: Some("linux-wait-service:futex_wait:pending".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            277,
+            "target-executor-d1",
+            SemanticCommand::CreateWait {
+                wait: 30_006,
+                owner_task: None,
+                owner_store: Some(futex_store),
+                owner_store_generation: Some(futex_store_generation),
+                kind: SemanticWaitKind::Futex,
+                generation: 1,
+                blockers: vec![futex_service_ref],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: Some("linux-wait-service:futex_wait:wake-resume".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            278,
+            "target-executor-d1",
+            SemanticCommand::ResolveWait {
+                wait: 30_006,
+                reason: "futex-wake".to_owned(),
+            },
+        ),
+        CommandEnvelope::new(
+            279,
+            "target-executor-d1",
+            SemanticCommand::CreateWait {
+                wait: 30_007,
+                owner_task: None,
+                owner_store: Some(futex_store),
+                owner_store_generation: Some(futex_store_generation),
+                kind: SemanticWaitKind::Futex,
+                generation: 1,
+                blockers: vec![futex_service_ref],
+                deadline: Some(1_250),
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: Some("linux-wait-service:futex_wait:timeout-cancel".to_owned()),
+            },
+        ),
+        CommandEnvelope::new(
+            280,
+            "target-executor-d1",
+            SemanticCommand::CancelWait {
+                wait: 30_007,
+                errno: 110,
+                reason: WaitCancelReason::Timeout,
+            },
+        ),
+    ];
+
+    for command in commands {
+        let result = semantic.apply_envelope(command);
+        if result.status != CommandStatus::Applied {
+            return Err(format!(
+                "linux wait service d1 evidence command {} ({}) failed: status={} violations={:?}",
+                result.command_id,
+                result.command,
+                result.status.as_str(),
+                result.violations
+            )
+            .into());
+        }
+    }
+
+    semantic.record_wait_consumed(30_002);
+    semantic.record_wait_restarted(30_004, "driver-restart");
     Ok(())
 }
 
@@ -11154,7 +11349,7 @@ fn run_integrated_osctl_trace_replay_harness(
             historical_edge_count: 9,
             replayed_root_count: 9,
             integrated_scenario_count: 9,
-            golden_trace_count: 9,
+            replay_fixture_count: 9,
             invariant_checks: 9,
             note: "x9 records full osctl trace replay closure across integrated scenarios"
                 .to_owned(),
@@ -11509,17 +11704,57 @@ fn run_activation_harness(
             wire_frame.frame_size = HostcallFrame::FRAME_SIZE + 8;
             let _ = executor.invoke_hostcall(code, wire_frame, ledger);
 
-            if let Some(mut cap_arg) = capability_handle_arg_for(ledger, &code.package, spec) {
-                let bad_cap_arg = executor
+            let unsupported = executor
+                .start_activation(
+                    &store.store,
+                    code,
+                    ActivationEntry::Symbol("unsupported_hostcall".to_owned()),
+                )
+                .map_err(|error| error.message())?;
+            let frame = HostcallFrame::new_bound(
+                unsupported,
+                &store.store,
+                code,
+                9_999,
+                "hostcall.unsupported",
+                "decode",
+                1,
+            );
+            let _ = executor.invoke_hostcall(code, frame.to_wire_frame(), ledger);
+
+            if let Some(cap_arg) = capability_handle_arg_for(ledger, &code.package, spec) {
+                let stale_cap_arg_activation = executor
+                    .start_activation(
+                        &store.store,
+                        code,
+                        ActivationEntry::Symbol("stale_capability_handle".to_owned()),
+                    )
+                    .map_err(|error| error.message())?;
+                let mut stale_cap_arg = cap_arg.clone();
+                stale_cap_arg.handle_generation += 1;
+                let frame = HostcallFrame::new_bound(
+                    stale_cap_arg_activation,
+                    &store.store,
+                    code,
+                    spec.number,
+                    &spec.object,
+                    &spec.operation,
+                    generation,
+                )
+                .with_cap_args(vec![stale_cap_arg]);
+                let _ = executor.invoke_hostcall(code, frame.to_wire_frame(), ledger);
+
+                let bad_cap_arg_activation = executor
                     .start_activation(
                         &store.store,
                         code,
                         ActivationEntry::Symbol("bad_capability_handle".to_owned()),
                     )
                     .map_err(|error| error.message())?;
+                let mut cap_arg = cap_arg;
                 cap_arg.rights_mask = 0;
                 let frame = HostcallFrame::new_bound(
-                    bad_cap_arg,
+                    bad_cap_arg_activation,
                     &store.store,
                     code,
                     spec.number,
@@ -11620,6 +11855,11 @@ fn target_artifact_image(
             entry.resource_limits.max_hostcalls_per_activation,
         ),
     );
+    image.hash_status = entry.hash_status.clone();
+    image.signature_scheme = entry.signature_scheme.clone();
+    image.signature_status = entry.signature_status.clone();
+    image.signature_verified = entry.signature_verified;
+    image.signer = entry.signer.clone();
     image.exports = entry.expected_exports.clone();
     image.payload_len = entry.cwasm_sha256.len();
     image
@@ -11825,6 +12065,13 @@ fn expected_target_artifacts(plan: &ValidatedArtifactPlan) -> Vec<ExpectedTarget
                 &entry.manifest_binding_hash,
                 &entry.cwasm_sha256,
             )
+            .with_policy_status(
+                &entry.hash_status,
+                &entry.signature_scheme,
+                &entry.signature_status,
+                entry.signature_verified,
+                &entry.signer,
+            )
         })
         .collect()
 }
@@ -11883,6 +12130,52 @@ fn semantic_store_id(semantic: &SemanticGraph, package: &str) -> Result<u64, Box
         .find(|store| store.package == package)
         .map(|store| store.id)
         .ok_or_else(|| format!("semantic graph missing store {package}").into())
+}
+
+fn semantic_capability_ref(
+    semantic: &SemanticGraph,
+    subject: &str,
+    object: &str,
+    operation: &str,
+) -> Result<ContractObjectRef, Box<dyn Error>> {
+    semantic
+        .capabilities()
+        .records()
+        .iter()
+        .find(|record| {
+            record.subject == subject
+                && record.object == object
+                && !record.revoked
+                && record
+                    .operations
+                    .as_slice()
+                    .iter()
+                    .any(|right| right == operation)
+        })
+        .map(|record| {
+            ContractObjectRef::new(ContractObjectKind::Capability, record.id, record.generation)
+        })
+        .ok_or_else(|| {
+            format!("semantic graph missing capability {subject}:{object}:{operation}").into()
+        })
+}
+
+fn semantic_store_resource_ref(
+    semantic: &SemanticGraph,
+    store: u64,
+) -> Result<ContractObjectRef, Box<dyn Error>> {
+    let resource = semantic
+        .store_resource(store)
+        .ok_or_else(|| format!("semantic graph missing resource for store {store}"))?;
+    let generation = semantic
+        .resource_handle(resource)
+        .map(|handle| handle.generation)
+        .ok_or_else(|| format!("semantic graph missing resource handle for store {store}"))?;
+    Ok(ContractObjectRef::new(
+        ContractObjectKind::Resource,
+        resource,
+        generation,
+    ))
 }
 
 fn prepare_migration_package(
@@ -15615,14 +15908,19 @@ fn semantic_roots(
             .iter()
             .map(|artifact| {
                 format!(
-                    "target-artifact id={} package={} artifact={} profile={} artifact_hash={} abi={} code_hash={}",
+                    "target-artifact id={} package={} artifact={} profile={} artifact_hash={} hash_status={} abi={} code_hash={} signature={} signature_status={} signature_verified={} signer={}",
                     artifact.id,
                     artifact.package,
                     artifact.artifact_name,
                     artifact.target_profile,
                     artifact.artifact_hash,
+                    artifact.hash_status,
                     artifact.abi_fingerprint,
-                    artifact.code_hash
+                    artifact.code_hash,
+                    artifact.signature_scheme,
+                    artifact.signature_status,
+                    artifact.signature_verified,
+                    artifact.signer
                 )
             })
             .collect(),
@@ -15886,9 +16184,14 @@ fn target_artifact_manifest(image: &TargetArtifactImage) -> TargetArtifactImageM
         kind: image.kind.as_str().to_owned(),
         target_profile: image.target_profile.clone(),
         artifact_hash: image.artifact_hash.clone(),
+        hash_status: image.hash_status.clone(),
         abi_fingerprint: image.abi_fingerprint.clone(),
         manifest_binding_hash: image.manifest_binding_hash.clone(),
         code_hash: image.code_hash.clone(),
+        signature_scheme: image.signature_scheme.clone(),
+        signature_status: image.signature_status.clone(),
+        signature_verified: image.signature_verified,
+        signer: image.signer.clone(),
         exports: image.exports.clone(),
         imports: image.imports.clone(),
         hostcalls: image.hostcalls.iter().map(hostcall_manifest).collect(),
@@ -16896,7 +17199,7 @@ fn integrated_osctl_trace_replay_manifest(
         historical_edge_count: record.historical_edge_count,
         replayed_root_count: record.replayed_root_count,
         integrated_scenario_count: record.integrated_scenario_count,
-        golden_trace_count: record.golden_trace_count,
+        replay_fixture_count: record.replay_fixture_count,
         contract_validation_ok: record.contract_validation_ok,
         replay_validation_ok: record.replay_validation_ok,
         graph_history_ok: record.graph_history_ok,
@@ -19233,6 +19536,7 @@ fn trap_record_manifest(
         wasm_offset: trap.wasm_offset,
         debug_symbol: trap.debug_symbol,
         classification_status: trap.classification_status.clone(),
+        attribution_status: trap.attribution_status.clone(),
         simd_attribution: trap.simd_attribution.as_ref().map(|attribution| {
             SimdTrapAttributionManifest {
                 classification: attribution.classification.as_str().to_owned(),
@@ -19274,13 +19578,16 @@ fn hostcall_trace_manifest(trace: &HostcallTraceRecord) -> HostcallTraceManifest
         name: trace.name.clone(),
         category: trace.category.as_str().to_owned(),
         subject: trace.subject.clone(),
+        subject_source: trace.subject_source.clone(),
         object: trace.object.clone(),
         operation: trace.operation.clone(),
         args: trace.args,
         cap_args: trace.cap_args.iter().map(cap_arg_manifest).collect(),
         record_mode: trace.record_mode.as_str().to_owned(),
         allowed: trace.allowed,
+        gate_status: trace.gate_status.clone(),
         result: trace.result.clone(),
+        denial_reason: trace.denial_reason.clone(),
         ret_tag: trace.ret_tag.as_str().to_owned(),
         ret0: trace.ret0,
         ret1: trace.ret1,
@@ -19544,6 +19851,7 @@ fn cleanup_transaction_manifest(
             .collect(),
         dropped_resources: cleanup.dropped_resources,
         unbound_code_object: cleanup.unbound_code_object,
+        state_digest: cleanup.state_digest.clone(),
         effect: cleanup.effect.summary(),
         steps: cleanup
             .steps

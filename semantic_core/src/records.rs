@@ -1105,7 +1105,7 @@ pub struct IntegratedOsctlTraceReplayRecord {
     pub historical_edge_count: u32,
     pub replayed_root_count: u32,
     pub integrated_scenario_count: u32,
-    pub golden_trace_count: u32,
+    pub replay_fixture_count: u32,
     pub contract_validation_ok: bool,
     pub replay_validation_ok: bool,
     pub graph_history_ok: bool,

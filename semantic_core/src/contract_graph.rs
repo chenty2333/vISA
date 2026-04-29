@@ -4380,7 +4380,7 @@ impl ContractGraphValidator {
                 && record.stable_view_count >= record.integrated_scenario_count
                 && record.historical_edge_count >= record.integrated_scenario_count
                 && record.replayed_root_count >= record.integrated_scenario_count
-                && record.golden_trace_count >= record.integrated_scenario_count;
+                && record.replay_fixture_count >= record.integrated_scenario_count;
             let graph_history_ok =
                 source_events.iter().all(Option::is_some) && record.historical_edge_count >= 9;
             let max_source_event = source_events
@@ -4404,7 +4404,7 @@ impl ContractGraphValidator {
                 || record.stable_view_count < 9
                 || record.historical_edge_count < 9
                 || record.replayed_root_count < 9
-                || record.golden_trace_count < 9
+                || record.replay_fixture_count < 9
                 || record.contract_validation_ok != contract_validation_ok
                 || record.replay_validation_ok != replay_validation_ok
                 || record.graph_history_ok != graph_history_ok
@@ -4857,6 +4857,39 @@ impl ContractGraphValidator {
     ) {
         for capability in &snapshot.capabilities {
             let from = capability.object_ref();
+            if capability.handle_slot == 0
+                || capability.handle_generation != capability.generation as u32
+                || capability.handle_tag == 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::GenerationMismatch,
+                    "capability->handle",
+                    from,
+                    Some(from),
+                    "capability handle slot/generation/tag does not match current capability generation",
+                ));
+            }
+            if capability.source.trim().is_empty() {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "capability->provenance",
+                    from,
+                    None,
+                    "capability provenance source is empty",
+                ));
+            }
+            if !capability.revoked
+                && capability.class.requires_manifest_declaration()
+                && !capability.manifest_decl
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "capability->provenance",
+                    from,
+                    None,
+                    "active capability class requires manifest declaration provenance",
+                ));
+            }
             if let Some(store_id) = capability.owner_store {
                 Self::check_generation_edge(
                     snapshot,

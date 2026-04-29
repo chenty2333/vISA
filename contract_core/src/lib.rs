@@ -12,6 +12,10 @@ use substrate_api::{
     AuthorityMismatch, AuthorityRequirementSet, SubstrateAuthorityRequirements,
     SubstrateCapabilitySet, SubstrateCompatibilityReport, SubstrateProfile,
 };
+pub use supervisor_catalog::{
+    ARTIFACT_HASH_STATUS_MANIFEST_BOUND, ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED,
+    ARTIFACT_SIGNATURE_VERIFIED_DEFAULT,
+};
 use supervisor_catalog::{
     ARTIFACT_SIGNATURE_PROFILE, CAPABILITY_ABI_VERSION, COMPONENT_MODEL_VERSION, CapabilitySpec,
     DMW_LAYOUT, HOSTCALL_ABI_VERSION, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
@@ -778,7 +782,6 @@ pub const WASMTIME_COMPILATION_STRATEGY: &str = "cranelift";
 pub const DEFAULT_MAX_MEMORY_PAGES: u32 = 16;
 pub const DEFAULT_MAX_TABLE_ELEMENTS: u32 = 0;
 pub const DEFAULT_MAX_HOSTCALLS_PER_ACTIVATION: u32 = 64;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedArtifactPlan {
     pub artifact_profile: String,
@@ -840,6 +843,9 @@ pub struct ValidatedArtifactEntry {
     pub signature_scheme: String,
     pub signer: String,
     pub manifest_binding_hash: String,
+    pub hash_status: String,
+    pub signature_status: String,
+    pub signature_verified: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1041,6 +1047,9 @@ pub fn build_validated_artifact_plan(
                 signature_scheme: entry.signature.scheme.clone(),
                 signer: entry.signature.signer.clone(),
                 manifest_binding_hash: entry.signature.manifest_binding_hash.clone(),
+                hash_status: ARTIFACT_HASH_STATUS_MANIFEST_BOUND.to_owned(),
+                signature_status: ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED.to_owned(),
+                signature_verified: ARTIFACT_SIGNATURE_VERIFIED_DEFAULT,
             })
         })
         .collect::<ContractResult<Vec<_>>>()?;
@@ -1823,6 +1832,7 @@ pub fn validate_migration_against_manifest(
     manifest: &ArtifactBundleManifest,
 ) -> ContractResult<()> {
     validate_artifact_manifest(manifest)?;
+    let plan = build_validated_artifact_plan(manifest)?;
     validate_migration_package(package)?;
     let required = &package.required_artifact_profile;
     if required.target_arch != "target-native" && required.target_arch != manifest.target.arch {
@@ -1873,6 +1883,43 @@ pub fn validate_migration_against_manifest(
         return Err(ContractError::new(
             "package target artifact count does not match manifest",
         ));
+    }
+    for module in &plan.modules {
+        let Some(artifact) = package.semantic.target_artifacts.iter().find(|artifact| {
+            artifact.package == module.package && artifact.artifact_name == module.artifact_name
+        }) else {
+            return Err(ContractError::new(format!(
+                "{} target artifact evidence missing",
+                module.package
+            )));
+        };
+        if artifact.target_profile != plan.artifact_profile {
+            return Err(ContractError::new(format!(
+                "{} target profile evidence mismatch",
+                module.package
+            )));
+        }
+        if artifact.artifact_hash != module.target_artifact_sha256
+            || artifact.code_hash != module.cwasm_sha256
+            || artifact.abi_fingerprint != module.abi_fingerprint
+            || artifact.manifest_binding_hash != module.manifest_binding_hash
+        {
+            return Err(ContractError::new(format!(
+                "{} artifact hash evidence mismatch",
+                module.package
+            )));
+        }
+        if artifact.hash_status != module.hash_status
+            || artifact.signature_scheme != module.signature_scheme
+            || artifact.signature_status != module.signature_status
+            || artifact.signature_verified != module.signature_verified
+            || artifact.signer != module.signer
+        {
+            return Err(ContractError::new(format!(
+                "{} artifact policy evidence mismatch",
+                module.package
+            )));
+        }
     }
     Ok(())
 }
@@ -3460,6 +3507,15 @@ mod tests {
         assert_eq!(plan.runtime_mode, RUNTIME_MODE_RESEARCH);
         assert_eq!(plan.modules[0].package, SUPERVISOR_WASM_MODULES[0].package);
         assert_eq!(
+            plan.modules[0].hash_status,
+            ARTIFACT_HASH_STATUS_MANIFEST_BOUND
+        );
+        assert_eq!(
+            plan.modules[0].signature_status,
+            ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED
+        );
+        assert!(!plan.modules[0].signature_verified);
+        assert_eq!(
             plan.modules[0].interfaces.semantic_contract_version,
             SEMANTIC_CONTRACT_SCHEMA_VERSION
         );
@@ -4653,7 +4709,7 @@ mod tests {
                 historical_edge_count: 9,
                 replayed_root_count: 9,
                 integrated_scenario_count: 9,
-                golden_trace_count: 9,
+                replay_fixture_count: 9,
                 contract_validation_ok: true,
                 replay_validation_ok: true,
                 graph_history_ok: true,

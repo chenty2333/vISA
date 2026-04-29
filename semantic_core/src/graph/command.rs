@@ -401,7 +401,7 @@ pub enum SemanticCommand {
         historical_edge_count: u32,
         replayed_root_count: u32,
         integrated_scenario_count: u32,
-        golden_trace_count: u32,
+        replay_fixture_count: u32,
         invariant_checks: u32,
         note: String,
     },
@@ -3289,7 +3289,7 @@ impl SemanticGraph {
                 historical_edge_count,
                 replayed_root_count,
                 integrated_scenario_count,
-                golden_trace_count,
+                replay_fixture_count,
                 invariant_checks,
                 ..
             } => self
@@ -3319,7 +3319,7 @@ impl SemanticGraph {
                     *historical_edge_count,
                     *replayed_root_count,
                     *integrated_scenario_count,
-                    *golden_trace_count,
+                    *replay_fixture_count,
                     *invariant_checks,
                 )
                 .map_err(CommandError::precondition),
@@ -6999,7 +6999,7 @@ impl SemanticGraph {
                 historical_edge_count,
                 replayed_root_count,
                 integrated_scenario_count,
-                golden_trace_count,
+                replay_fixture_count,
                 invariant_checks,
                 note,
             } => self.record_integrated_osctl_trace_replay_with_id(
@@ -7028,7 +7028,7 @@ impl SemanticGraph {
                 historical_edge_count,
                 replayed_root_count,
                 integrated_scenario_count,
-                golden_trace_count,
+                replay_fixture_count,
                 invariant_checks,
                 &note,
             ),

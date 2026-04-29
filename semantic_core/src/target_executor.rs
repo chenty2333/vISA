@@ -750,9 +750,14 @@ pub struct TargetArtifactImage {
     pub kind: TargetArtifactKind,
     pub target_profile: String,
     pub artifact_hash: String,
+    pub hash_status: String,
     pub abi_fingerprint: String,
     pub manifest_binding_hash: String,
     pub code_hash: String,
+    pub signature_scheme: String,
+    pub signature_status: String,
+    pub signature_verified: bool,
+    pub signer: String,
     pub imports: Vec<String>,
     pub exports: Vec<String>,
     pub memory_plan: TargetMemoryPlan,
@@ -769,9 +774,14 @@ pub struct ExpectedTargetArtifact {
     pub artifact_name: String,
     pub target_profile: String,
     pub artifact_hash: String,
+    pub hash_status: String,
     pub abi_fingerprint: String,
     pub manifest_binding_hash: String,
     pub code_hash: String,
+    pub signature_scheme: String,
+    pub signature_status: String,
+    pub signature_verified: bool,
+    pub signer: String,
 }
 
 impl ExpectedTargetArtifact {
@@ -789,10 +799,31 @@ impl ExpectedTargetArtifact {
             artifact_name: artifact_name.to_string(),
             target_profile: target_profile.to_string(),
             artifact_hash: artifact_hash.to_string(),
+            hash_status: "unknown".to_string(),
             abi_fingerprint: abi_fingerprint.to_string(),
             manifest_binding_hash: manifest_binding_hash.to_string(),
             code_hash: code_hash.to_string(),
+            signature_scheme: "unknown".to_string(),
+            signature_status: "unknown".to_string(),
+            signature_verified: false,
+            signer: "unknown".to_string(),
         }
+    }
+
+    pub fn with_policy_status(
+        mut self,
+        hash_status: &str,
+        signature_scheme: &str,
+        signature_status: &str,
+        signature_verified: bool,
+        signer: &str,
+    ) -> Self {
+        self.hash_status = hash_status.to_string();
+        self.signature_scheme = signature_scheme.to_string();
+        self.signature_status = signature_status.to_string();
+        self.signature_verified = signature_verified;
+        self.signer = signer.to_string();
+        self
     }
 }
 
@@ -818,9 +849,14 @@ impl TargetArtifactImage {
             kind: TargetArtifactKind::TargetArtifactImageV1,
             target_profile: target_profile.to_string(),
             artifact_hash: artifact_hash.to_string(),
+            hash_status: "unknown".to_string(),
             abi_fingerprint: abi_fingerprint.to_string(),
             manifest_binding_hash: manifest_binding_hash.to_string(),
             code_hash: code_hash.to_string(),
+            signature_scheme: "unknown".to_string(),
+            signature_status: "unknown".to_string(),
+            signature_verified: false,
+            signer: "unknown".to_string(),
             imports: Vec::new(),
             exports: Vec::new(),
             memory_plan,
@@ -834,16 +870,21 @@ impl TargetArtifactImage {
 
     pub fn summary(&self) -> String {
         format!(
-            "target-artifact id={} package={} artifact={} kind={} profile={} artifact_hash={} abi={} binding={} code_hash={} exports={} hostcalls={} caps={}",
+            "target-artifact id={} package={} artifact={} kind={} profile={} artifact_hash={} hash_status={} abi={} binding={} code_hash={} signature={} signature_status={} signature_verified={} signer={} exports={} hostcalls={} caps={}",
             self.id,
             self.package,
             self.artifact_name,
             self.kind.as_str(),
             self.target_profile,
             self.artifact_hash,
+            self.hash_status,
             self.abi_fingerprint,
             self.manifest_binding_hash,
             self.code_hash,
+            self.signature_scheme,
+            self.signature_status,
+            self.signature_verified,
+            self.signer,
             self.exports.len(),
             self.hostcalls.len(),
             self.capabilities.len()
@@ -859,9 +900,14 @@ pub struct VerifiedArtifact {
     pub role: String,
     pub target_profile: String,
     pub artifact_hash: String,
+    pub hash_status: String,
     pub abi_fingerprint: String,
     pub manifest_binding_hash: String,
     pub code_hash: String,
+    pub signature_scheme: String,
+    pub signature_status: String,
+    pub signature_verified: bool,
+    pub signer: String,
     pub memory_plan: TargetMemoryPlan,
     pub trap_metadata: Vec<TargetTrapMetadata>,
     pub address_map: Vec<TargetAddressMapEntry>,
@@ -874,14 +920,19 @@ pub struct VerifiedArtifact {
 impl VerifiedArtifact {
     pub fn summary(&self) -> String {
         format!(
-            "verified-artifact id={} package={} profile={} artifact_hash={} abi={} binding={} code_hash={} generation={}",
+            "verified-artifact id={} package={} profile={} artifact_hash={} hash_status={} abi={} binding={} code_hash={} signature={} signature_status={} signature_verified={} signer={} generation={}",
             self.artifact_id,
             self.package,
             self.target_profile,
             self.artifact_hash,
+            self.hash_status,
             self.abi_fingerprint,
             self.manifest_binding_hash,
             self.code_hash,
+            self.signature_scheme,
+            self.signature_status,
+            self.signature_verified,
+            self.signer,
             self.generation
         )
     }
@@ -902,6 +953,8 @@ pub enum ArtifactRegistryError {
     ManifestBindingMismatch,
     ArtifactHashMismatch,
     CodeHashMismatch,
+    HashStatusMismatch,
+    SignatureStatusMismatch,
 }
 
 impl ArtifactRegistryError {
@@ -924,6 +977,10 @@ impl ArtifactRegistryError {
             }
             Self::ArtifactHashMismatch => "artifact hash does not match expected policy",
             Self::CodeHashMismatch => "artifact code hash does not match expected policy",
+            Self::HashStatusMismatch => "artifact hash status does not match expected policy",
+            Self::SignatureStatusMismatch => {
+                "artifact signature status does not match expected policy"
+            }
         }
     }
 }
@@ -999,6 +1056,16 @@ impl ArtifactRegistry {
             if expected.code_hash != image.code_hash {
                 return Err(ArtifactRegistryError::CodeHashMismatch);
             }
+            if expected.hash_status != image.hash_status {
+                return Err(ArtifactRegistryError::HashStatusMismatch);
+            }
+            if expected.signature_scheme != image.signature_scheme
+                || expected.signature_status != image.signature_status
+                || expected.signature_verified != image.signature_verified
+                || expected.signer != image.signer
+            {
+                return Err(ArtifactRegistryError::SignatureStatusMismatch);
+            }
         }
         let verified = VerifiedArtifact {
             artifact_id: image.id,
@@ -1007,9 +1074,14 @@ impl ArtifactRegistry {
             role: image.role,
             target_profile: image.target_profile,
             artifact_hash: image.artifact_hash,
+            hash_status: image.hash_status,
             abi_fingerprint: image.abi_fingerprint,
             manifest_binding_hash: image.manifest_binding_hash,
             code_hash: image.code_hash,
+            signature_scheme: image.signature_scheme,
+            signature_status: image.signature_status,
+            signature_verified: image.signature_verified,
+            signer: image.signer,
             memory_plan: image.memory_plan,
             trap_metadata: image.trap_metadata,
             address_map: image.address_map,
@@ -2112,6 +2184,16 @@ fn trap_class_for_attribution(kind: TrapKindV1) -> TargetTrapClass {
     }
 }
 
+fn trap_attribution_status(attribution: Option<TrapAttributionV1>) -> &'static str {
+    match attribution.map(|attribution| attribution.trap_kind) {
+        None => "synthetic",
+        Some(TrapKindV1::UnknownCodeFault | TrapKindV1::SubstrateFault) => "trap-map-unknown-pc",
+        Some(TrapKindV1::UnknownCodeTrap) => "trap-map-missing-entry",
+        Some(TrapKindV1::StaleCodeExecutionFault) => "trap-map-stale-code",
+        Some(_) => "trap-map-attributed",
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TargetTrapRecord {
     pub id: TargetTrapId,
@@ -2132,6 +2214,7 @@ pub struct TargetTrapRecord {
     pub wasm_offset: Option<u64>,
     pub debug_symbol: Option<u32>,
     pub classification_status: Option<String>,
+    pub attribution_status: String,
     pub simd_attribution: Option<SimdTrapAttribution>,
     pub hostcall: Option<String>,
     pub fault_policy: String,
@@ -2179,7 +2262,7 @@ impl TargetTrapRecord {
             .unwrap_or_else(|| "none".to_string());
         let hostcall = self.hostcall.as_deref().unwrap_or("none");
         format!(
-            "trap id={} generation={} class={} store={} store_generation={} activation={} activation_generation={} code={} code_generation={} artifact={} artifact_generation={} offset={} hostcall={} policy={} effect={} detail={}",
+            "trap id={} generation={} class={} store={} store_generation={} activation={} activation_generation={} code={} code_generation={} artifact={} artifact_generation={} offset={} attribution={} hostcall={} policy={} effect={} detail={}",
             self.id,
             self.generation,
             self.class.as_str(),
@@ -2192,6 +2275,7 @@ impl TargetTrapRecord {
             artifact,
             artifact_generation,
             offset,
+            self.attribution_status,
             hostcall,
             self.fault_policy,
             self.effect.summary(),
@@ -2487,13 +2571,16 @@ pub struct HostcallTraceRecord {
     pub name: String,
     pub category: HostcallCategory,
     pub subject: String,
+    pub subject_source: String,
     pub object: String,
     pub operation: String,
     pub args: [u64; 6],
     pub cap_args: Vec<CapabilityHandleArg>,
     pub record_mode: RecordMode,
     pub allowed: bool,
+    pub gate_status: String,
     pub result: String,
+    pub denial_reason: Option<String>,
     pub ret_tag: HostcallReturnTag,
     pub ret0: u64,
     pub ret1: u64,
@@ -2504,9 +2591,27 @@ pub struct HostcallTraceRecord {
 }
 
 impl HostcallTraceRecord {
+    pub const SUBJECT_SOURCE_ACTIVE_STATE: &'static str = "active-store-activation-code-object";
+
+    pub fn gate_status_for(
+        allowed: bool,
+        ret_tag: HostcallReturnTag,
+        trap_out: Option<TargetTrapId>,
+    ) -> &'static str {
+        if allowed {
+            "exit"
+        } else if ret_tag == HostcallReturnTag::Trap {
+            "denied"
+        } else if trap_out.is_some() {
+            "trap"
+        } else {
+            "denied"
+        }
+    }
+
     pub fn summary(&self) -> String {
         format!(
-            "hostcall id={} generation={} abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} store_generation={} code={} code_generation={} artifact={} artifact_generation={} number={} name={} category={} subject={} object={} op={} allowed={} result={} ret={}",
+            "hostcall id={} generation={} abi={} frame_size={} seq={} caller_offset={} record_mode={} activation={} activation_generation={} store={} store_generation={} code={} code_generation={} artifact={} artifact_generation={} number={} name={} category={} subject={} source={} object={} op={} gate={} allowed={} result={} ret={}",
             self.id,
             self.generation,
             self.abi_version,
@@ -2526,8 +2631,10 @@ impl HostcallTraceRecord {
             self.name,
             self.category.as_str(),
             self.subject,
+            self.subject_source,
             self.object,
             self.operation,
+            self.gate_status,
             self.allowed,
             self.result,
             self.ret_tag.as_str()
@@ -2876,13 +2983,14 @@ pub struct FaultCleanupTransaction {
     pub revoked_capability_refs: Vec<ContractObjectRef>,
     pub dropped_resources: u32,
     pub unbound_code_object: bool,
+    pub state_digest: String,
     pub effect: FailureEffect,
 }
 
 impl FaultCleanupTransaction {
     pub fn summary(&self) -> String {
         format!(
-            "cleanup id={} target_store={}@{} result_store_generation={} activation={} code={} generation={} started={} finished={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} effect={} steps={} effects={}",
+            "cleanup id={} target_store={}@{} result_store_generation={} activation={} code={} generation={} started={} finished={} state={} reason={} released_dmw={} cancelled_waits={} revoked_caps={} dropped_resources={} unbound_code={} state_digest={} effect={} steps={} effects={}",
             self.id,
             self.store,
             self.store_generation,
@@ -2909,6 +3017,7 @@ impl FaultCleanupTransaction {
             self.revoked_capabilities.len(),
             self.dropped_resources,
             self.unbound_code_object,
+            self.state_digest,
             self.effect.summary(),
             self.steps
                 .iter()
@@ -3285,9 +3394,9 @@ impl TargetExecutor {
         else {
             let placeholder = HostcallSpec::new(
                 wire_frame.hostcall_number,
-                "hostcall.undeclared",
+                "hostcall.unsupported",
                 HostcallCategory::Service,
-                "hostcall.undeclared",
+                "hostcall.unsupported",
                 "decode",
                 false,
             );
@@ -3298,15 +3407,15 @@ impl TargetExecutor {
                 TargetTrapClass::HostcallTrap,
                 Some(code),
                 Some(format!("hostcall#{}", wire_frame.hostcall_number)),
-                "restart",
+                "unsupported-hostcall",
                 FailureEffect::CompleteWithErrno(38),
-                "hostcall not declared by artifact",
+                "hostcall unsupported by artifact import table",
             );
             self.record_trace(
                 &frame,
                 &placeholder,
                 false,
-                "undeclared",
+                "unsupported-call",
                 HostcallReturnTag::BadAbi,
                 Some(trap),
                 None,
@@ -3798,6 +3907,7 @@ impl TargetExecutor {
             wasm_offset: None,
             debug_symbol: None,
             classification_status: None,
+            attribution_status: "synthetic".to_string(),
             simd_attribution: None,
             hostcall: hostcall.map(|hostcall| hostcall.to_string()),
             fault_policy: "harness-classification".to_string(),
@@ -3896,6 +4006,7 @@ impl TargetExecutor {
             revoked_capability_refs: Vec::new(),
             dropped_resources: 0,
             unbound_code_object: false,
+            state_digest: String::new(),
             effect: FailureEffect::CompleteWithErrno(5),
         });
         self.event_log.push(format!(
@@ -3947,7 +4058,7 @@ impl TargetExecutor {
         &mut self,
         cleanup_id: CleanupTransactionId,
         store: &mut StoreRecord,
-        code: Option<&mut CodeObject>,
+        mut code: Option<&mut CodeObject>,
         capabilities: &mut CapabilityLedger,
     ) -> Result<CleanupTransactionId, TargetExecutorError> {
         let Some(cleanup_index) = self
@@ -3969,6 +4080,7 @@ impl TargetExecutor {
         let expected_store_generation = self.cleanup_transactions[cleanup_index].store_generation;
         if store.generation != expected_store_generation {
             let event = self.next_event("fault-cleanup-stale-generation");
+            let state_digest = self.cleanup_state_digest(store, code.as_deref(), capabilities);
             let target = ContractObjectRef::new(
                 ContractObjectKind::Store,
                 store.id,
@@ -3979,6 +4091,7 @@ impl TargetExecutor {
             cleanup.generation += 1;
             cleanup.result_store_generation = Some(store.generation);
             cleanup.finished_at = Some(event);
+            cleanup.state_digest = state_digest;
             cleanup.steps = Self::cleanup_step_order()
                 .iter()
                 .map(|step| {
@@ -4055,7 +4168,7 @@ impl TargetExecutor {
         let mut unbound = false;
         let mut code_generation = None;
         let mut code_ref = None;
-        if let Some(code) = code {
+        if let Some(code) = code.as_deref_mut() {
             if code.bound_store == Some(store.id)
                 && code.bound_store_generation == Some(expected_store_generation)
             {
@@ -4119,6 +4232,22 @@ impl TargetExecutor {
                 "fault-cleanup-code-retired",
             ));
         }
+        let state_digest = self.cleanup_state_digest(store, code.as_deref(), capabilities);
+        let revoked_count = revoked.len();
+        let effects = Self::cleanup_effects_for_completed_transaction(
+            store_ref,
+            activation
+                .zip(final_activation_generation)
+                .map(|(id, generation)| {
+                    ContractObjectRef::new(ContractObjectKind::Activation, id, generation)
+                }),
+            code_ref,
+            &revoked_refs,
+            released,
+            cancelled_waits,
+            1,
+            finished_at,
+        );
         let cleanup = self
             .cleanup_transactions
             .iter_mut()
@@ -4137,6 +4266,7 @@ impl TargetExecutor {
         cleanup.revoked_capability_refs = revoked_refs;
         cleanup.dropped_resources = 1;
         cleanup.unbound_code_object = unbound;
+        cleanup.state_digest = state_digest;
         cleanup.effect = FailureEffect::CompleteWithErrno(5);
         let mut steps = Vec::new();
         steps.push(
@@ -4221,25 +4351,12 @@ impl TargetExecutor {
                 .with_event_seq(finished_at),
         );
         cleanup.steps = steps;
-        cleanup.effects = Self::cleanup_effects_for_completed_transaction(
-            store_ref,
-            activation
-                .zip(final_activation_generation)
-                .map(|(id, generation)| {
-                    ContractObjectRef::new(ContractObjectKind::Activation, id, generation)
-                }),
-            code_ref,
-            &cleanup.revoked_capability_refs,
-            released,
-            cancelled_waits,
-            cleanup.dropped_resources,
-            finished_at,
-        );
+        cleanup.effects = effects;
         self.event_log.push(format!(
             "FaultCleanupCompleted cleanup={cleanup_id} store={} released_dmw={} revoked_caps={} unbound_code={}",
             store.id,
             released,
-            cleanup.revoked_capabilities.len(),
+            revoked_count,
             unbound
         ));
         Ok(cleanup_id)
@@ -4650,13 +4767,17 @@ impl TargetExecutor {
             name: spec.name.clone(),
             category: spec.category,
             subject: frame.subject.clone(),
+            subject_source: HostcallTraceRecord::SUBJECT_SOURCE_ACTIVE_STATE.to_string(),
             object: spec.object.clone(),
             operation: spec.operation.clone(),
             args: frame.args,
             cap_args: frame.cap_args.clone(),
             record_mode: frame.record_mode,
             allowed,
+            gate_status: HostcallTraceRecord::gate_status_for(allowed, ret_tag, trap_out)
+                .to_string(),
             result: result.to_string(),
+            denial_reason: (!allowed).then(|| result.to_string()),
             ret_tag,
             ret0: frame.ret0,
             ret1: frame.ret1,
@@ -4744,6 +4865,7 @@ impl TargetExecutor {
             debug_symbol: attribution.and_then(|attribution| attribution.debug_symbol),
             classification_status: attribution
                 .map(|attribution| attribution.trap_kind.as_str().to_string()),
+            attribution_status: trap_attribution_status(attribution).to_string(),
             simd_attribution: attribution.and_then(|attribution| {
                 SimdTrapAttribution::from_code(attribution.trap_kind, code)
             }),
@@ -5251,6 +5373,70 @@ mod tests {
     }
 
     #[test]
+    fn registry_policy_preserves_hash_and_signature_status() {
+        let expected = ExpectedTargetArtifact::new(
+            "driver_virtio_net",
+            "driver_virtio_net.tart",
+            "host-validation",
+            "artifact-hash-1",
+            "abi-1",
+            "binding-1",
+            "code-hash-1",
+        )
+        .with_policy_status(
+            "manifest-bound",
+            "prototype-self-signed-sha256",
+            "profile-bound-unverified",
+            false,
+            "vmos-aotc-dev",
+        );
+        let mut expected_list = Vec::new();
+        expected_list.push(expected);
+        let mut registry = ArtifactRegistry::with_expected(expected_list);
+        let mut good = image();
+        good.hash_status = "manifest-bound".to_string();
+        good.signature_scheme = "prototype-self-signed-sha256".to_string();
+        good.signature_status = "profile-bound-unverified".to_string();
+        good.signature_verified = false;
+        good.signer = "vmos-aotc-dev".to_string();
+
+        let verified = registry.verify(good).expect("policy status matches");
+        assert_eq!(verified.hash_status, "manifest-bound");
+        assert_eq!(verified.signature_status, "profile-bound-unverified");
+        assert!(!verified.signature_verified);
+        assert!(verified.summary().contains("signature_verified=false"));
+
+        let expected = ExpectedTargetArtifact::new(
+            "driver_virtio_net",
+            "driver_virtio_net.tart",
+            "host-validation",
+            "artifact-hash-1",
+            "abi-1",
+            "binding-1",
+            "code-hash-1",
+        )
+        .with_policy_status(
+            "manifest-bound",
+            "prototype-self-signed-sha256",
+            "profile-bound-unverified",
+            false,
+            "vmos-aotc-dev",
+        );
+        let mut expected_list = Vec::new();
+        expected_list.push(expected);
+        let mut registry = ArtifactRegistry::with_expected(expected_list);
+        let mut bad = image();
+        bad.hash_status = "hash-unchecked".to_string();
+        bad.signature_scheme = "prototype-self-signed-sha256".to_string();
+        bad.signature_status = "profile-bound-unverified".to_string();
+        bad.signer = "vmos-aotc-dev".to_string();
+        assert_eq!(
+            registry.verify(bad),
+            Err(ArtifactRegistryError::HashStatusMismatch)
+        );
+    }
+
+    #[test]
     fn hostcall_frame_v1_wire_abi_is_fixed_layout() {
         assert_eq!(
             ExecutorHostcallFrameV1::FRAME_SIZE as usize,
@@ -5645,6 +5831,172 @@ mod tests {
     }
 
     #[test]
+    fn hostcall_gate_closure_records_positive_and_negative_trace_reasons() {
+        let (_artifact, store, code, capabilities) = running_store_and_code();
+        let cap = capabilities
+            .check("driver_virtio_net", "mmio.virtio-net", "map")
+            .unwrap()
+            .clone();
+        let mut executor = TargetExecutor::new();
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("hostcall_gate_ok".to_string()),
+            )
+            .unwrap();
+        executor
+            .invoke_hostcall(
+                &code,
+                HostcallFrame::new_bound(
+                    activation,
+                    &store.store,
+                    &code,
+                    1,
+                    "mmio.virtio-net",
+                    "map",
+                    cap.generation,
+                )
+                .with_cap_args(Vec::from([CapabilityHandleArg::from_record(
+                    &cap,
+                    1,
+                    &["map"],
+                )]))
+                .to_wire_frame(),
+                &capabilities,
+            )
+            .unwrap();
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("hostcall_bad_frame".to_string()),
+            )
+            .unwrap();
+        let mut wire_frame = HostcallFrame::new_bound(
+            activation,
+            &store.store,
+            &code,
+            1,
+            "mmio.virtio-net",
+            "map",
+            cap.generation,
+        )
+        .to_wire_frame();
+        wire_frame.frame_size = HostcallFrame::FRAME_SIZE + 8;
+        assert_eq!(
+            executor.invoke_hostcall(&code, wire_frame, &capabilities),
+            Err(TargetExecutorError::HostcallAbiMismatch)
+        );
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("hostcall_bad_abi".to_string()),
+            )
+            .unwrap();
+        let mut wire_frame = HostcallFrame::new_bound(
+            activation,
+            &store.store,
+            &code,
+            1,
+            "mmio.virtio-net",
+            "map",
+            cap.generation,
+        )
+        .to_wire_frame();
+        wire_frame.abi_version = 0;
+        assert_eq!(
+            executor.invoke_hostcall(&code, wire_frame, &capabilities),
+            Err(TargetExecutorError::HostcallAbiMismatch)
+        );
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("hostcall_stale_cap".to_string()),
+            )
+            .unwrap();
+        let mut stale_arg = CapabilityHandleArg::from_record(&cap, 1, &["map"]);
+        stale_arg.handle_generation += 1;
+        assert_eq!(
+            executor.invoke_hostcall(
+                &code,
+                HostcallFrame::new_bound(
+                    activation,
+                    &store.store,
+                    &code,
+                    1,
+                    "mmio.virtio-net",
+                    "map",
+                    cap.generation,
+                )
+                .with_cap_args(Vec::from([stale_arg]))
+                .to_wire_frame(),
+                &capabilities,
+            ),
+            Err(TargetExecutorError::CapabilityDenied)
+        );
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("hostcall_unsupported".to_string()),
+            )
+            .unwrap();
+        assert_eq!(
+            executor.invoke_hostcall(
+                &code,
+                HostcallFrame::new_bound(
+                    activation,
+                    &store.store,
+                    &code,
+                    77,
+                    "hostcall.unsupported",
+                    "decode",
+                    1,
+                )
+                .to_wire_frame(),
+                &capabilities,
+            ),
+            Err(TargetExecutorError::HostcallNotDeclared)
+        );
+
+        let trace = |result: &str| {
+            executor
+                .hostcall_trace()
+                .iter()
+                .find(|trace| trace.result == result)
+                .unwrap_or_else(|| panic!("missing hostcall trace result={result}"))
+        };
+        assert_eq!(trace("complete").gate_status, "exit");
+        assert_eq!(trace("complete").denial_reason, None);
+        for result in [
+            "bad-frame-size",
+            "bad-hostcall-abi",
+            "cap-arg-generation",
+            "unsupported-call",
+        ] {
+            let trace = trace(result);
+            assert_eq!(
+                trace.subject_source,
+                HostcallTraceRecord::SUBJECT_SOURCE_ACTIVE_STATE
+            );
+            assert_eq!(trace.denial_reason.as_deref(), Some(result));
+            assert!(trace.trap_out.is_some());
+        }
+        assert_eq!(trace("cap-arg-generation").gate_status, "denied");
+        assert_eq!(trace("bad-frame-size").gate_status, "trap");
+        assert_eq!(trace("bad-hostcall-abi").gate_status, "trap");
+        assert_eq!(trace("unsupported-call").gate_status, "trap");
+    }
+
+    #[test]
     fn authority_matrix_covers_privileged_object_classes_and_fails_closed() {
         for (object, operation) in [
             ("mmio.regs", "read32"),
@@ -5723,6 +6075,7 @@ mod tests {
             wasm_offset: None,
             debug_symbol: None,
             classification_status: None,
+            attribution_status: "synthetic".to_string(),
             simd_attribution: None,
             hostcall: Some("hostcall.bad".to_string()),
             fault_policy: "debug".to_string(),
@@ -5884,6 +6237,7 @@ mod tests {
             },
             dropped_resources: 1,
             unbound_code_object: true,
+            state_digest: String::new(),
             effect: FailureEffect::CompleteWithErrno(5),
         };
         let snapshot = ContractGraphSnapshot {
@@ -6024,6 +6378,7 @@ mod tests {
             revoked_capability_refs: Vec::new(),
             dropped_resources: 0,
             unbound_code_object: false,
+            state_digest: String::new(),
             effect: FailureEffect::CompleteWithErrno(5),
         };
         let snapshot = ContractGraphSnapshot {
@@ -6097,6 +6452,7 @@ mod tests {
             revoked_capability_refs: Vec::new(),
             dropped_resources: 0,
             unbound_code_object: false,
+            state_digest: String::new(),
             effect: FailureEffect::CompleteWithErrno(5),
         };
         let snapshot = ContractGraphSnapshot {
@@ -6553,6 +6909,7 @@ mod tests {
             revoked_capability_refs: Vec::new(),
             dropped_resources: 0,
             unbound_code_object: false,
+            state_digest: String::new(),
             effect: FailureEffect::CompleteWithErrno(5),
         };
         let trap = TargetTrapRecord {
@@ -6574,6 +6931,7 @@ mod tests {
             wasm_offset: None,
             debug_symbol: None,
             classification_status: None,
+            attribution_status: "synthetic".to_string(),
             simd_attribution: None,
             hostcall: None,
             fault_policy: "history-only".to_string(),
@@ -6694,13 +7052,16 @@ mod tests {
                     name: "hostcall.history".to_string(),
                     category: HostcallCategory::Mmio,
                     subject: code.package.clone(),
+                    subject_source: HostcallTraceRecord::SUBJECT_SOURCE_ACTIVE_STATE.to_string(),
                     object: "mmio.virtio-net".to_string(),
                     operation: "map".to_string(),
                     args: [0; 6],
                     cap_args: Vec::new(),
                     record_mode: RecordMode::Deterministic,
                     allowed: true,
+                    gate_status: "exit".to_string(),
                     result: "ok".to_string(),
+                    denial_reason: None,
                     ret_tag: HostcallReturnTag::Ok,
                     ret0: 0,
                     ret1: 0,
@@ -6867,6 +7228,7 @@ mod tests {
         let digest_after_once = executor.cleanup_state_digest(&store, Some(&code), &capabilities);
         assert_eq!(executor.snapshot_barrier(), Ok(()));
         let completed_cleanup = &executor.cleanup_transactions()[0];
+        assert_eq!(completed_cleanup.state_digest, digest_after_once);
         assert_eq!(
             completed_cleanup.result_store_generation,
             Some(store.generation)
@@ -6890,6 +7252,10 @@ mod tests {
         assert_eq!(executor.cleanup_transactions().len(), 1);
         assert_eq!(
             executor.cleanup_state_digest(&store, Some(&code), &capabilities),
+            digest_after_once
+        );
+        assert_eq!(
+            executor.cleanup_transactions()[0].state_digest,
             digest_after_once
         );
         assert_eq!(
@@ -6982,6 +7348,7 @@ mod tests {
             cleanup.state,
             CleanupTransactionState::SkippedStaleGeneration
         );
+        assert_eq!(cleanup.state_digest, digest_before);
         assert!(cleanup.steps.iter().all(|step| step.state
             == CleanupStepState::SkippedStaleGeneration
             && step.observed_generation == Some(store.generation)));
@@ -7195,9 +7562,112 @@ mod tests {
         );
         assert_eq!(trap.offset, Some(offset));
         assert_eq!(trap.trap_kind.as_deref(), Some("wasm-unreachable"));
+        assert_eq!(trap.attribution_status, "trap-map-attributed");
         assert_eq!(
             trap.classification_status.as_deref(),
             Some("wasm-unreachable")
+        );
+    }
+
+    #[test]
+    fn trap_map_records_success_and_failure_attribution_statuses() {
+        let (_artifact, store, code, _capabilities) = running_store_and_code();
+        let mut executor = TargetExecutor::new();
+        let offset = target_abi::RV64_ENTRY_TRAP_EBREAK_OFFSET;
+        let trap_map = [TrapMapEntryV1::new(
+            ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, code.id, code.generation),
+            offset,
+            offset + 4,
+            TrapKindV1::WasmUnreachable,
+            1,
+            0x20,
+            7,
+        )];
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("trap_success".to_string()),
+            )
+            .unwrap();
+        let success = executor
+            .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
+            .unwrap();
+        assert_eq!(
+            executor
+                .traps()
+                .iter()
+                .find(|trap| trap.id == success)
+                .unwrap()
+                .attribution_status,
+            "trap-map-attributed"
+        );
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("trap_unknown_pc".to_string()),
+            )
+            .unwrap();
+        let unknown_pc = executor
+            .trap_exit_by_pc(activation, &code, code.text.end() + 0x1000, &trap_map)
+            .unwrap();
+        let trap = executor
+            .traps()
+            .iter()
+            .find(|trap| trap.id == unknown_pc)
+            .unwrap();
+        assert_eq!(trap.attribution_status, "trap-map-unknown-pc");
+        assert_eq!(trap.trap_kind.as_deref(), Some("unknown-code-fault"));
+        assert_eq!(trap.code_object, None);
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("trap_missing_entry".to_string()),
+            )
+            .unwrap();
+        let missing_entry = executor
+            .trap_exit_by_pc(activation, &code, code.text.start + offset, &[])
+            .unwrap();
+        let trap = executor
+            .traps()
+            .iter()
+            .find(|trap| trap.id == missing_entry)
+            .unwrap();
+        assert_eq!(trap.attribution_status, "trap-map-missing-entry");
+        assert_eq!(trap.trap_kind.as_deref(), Some("unknown-code-trap"));
+        assert_eq!(trap.code_object, Some(code.id));
+
+        let activation = executor
+            .start_activation(
+                &store.store,
+                &code,
+                ActivationEntry::Symbol("trap_stale_code".to_string()),
+            )
+            .unwrap();
+        let mut retired_code = code.clone();
+        retired_code.state = CodeObjectState::Retired;
+        let stale = executor
+            .trap_exit_by_pc(
+                activation,
+                &retired_code,
+                retired_code.text.start + offset,
+                &trap_map,
+            )
+            .unwrap();
+        let trap = executor
+            .traps()
+            .iter()
+            .find(|trap| trap.id == stale)
+            .unwrap();
+        assert_eq!(trap.attribution_status, "trap-map-stale-code");
+        assert_eq!(
+            trap.trap_kind.as_deref(),
+            Some("stale-code-execution-fault")
         );
     }
 

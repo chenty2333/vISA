@@ -374,8 +374,11 @@ fn artifact_verification_is_queryable_and_versioned() {
         "vfs",
         "binding-a",
         "cwasm-a",
+        "manifest-bound",
         "abi-a",
         "prototype-self-signed-sha256",
+        "profile-bound-unverified",
+        false,
         "target_executor",
         ArtifactVerificationState::ManifestVerified,
         Some("target-cwasm-loader-not-linked"),
@@ -385,8 +388,11 @@ fn artifact_verification_is_queryable_and_versioned() {
         "vfs",
         "binding-a",
         "cwasm-a",
+        "manifest-bound",
         "abi-a",
         "prototype-self-signed-sha256",
+        "profile-bound-unverified",
+        false,
         "target_executor",
         ArtifactVerificationState::HostValidated,
         Some("target-runtime-only-loader"),
@@ -397,7 +403,7 @@ fn artifact_verification_is_queryable_and_versioned() {
     assert_eq!(graph.artifact_verifications()[0].generation, 2);
     assert_eq!(
         graph.artifact_verifications()[0].summary(),
-        "artifact vfs_service name=vfs state=host-validated binding=binding-a artifact_hash=cwasm-a abi=abi-a signature=prototype-self-signed-sha256 signer=target_executor blocked=target-runtime-only-loader generation=2"
+        "artifact vfs_service name=vfs state=host-validated binding=binding-a artifact_hash=cwasm-a hash_status=manifest-bound abi=abi-a signature=prototype-self-signed-sha256 signature_status=profile-bound-unverified signature_verified=false signer=target_executor blocked=target-runtime-only-loader generation=2"
     );
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
@@ -601,6 +607,156 @@ fn wait_token_event_bridge_indexes_resolves_cancels_and_restarts() {
             expected: 1,
             actual: Some(2),
         })
+    );
+}
+
+#[test]
+fn linux_wait_service_convergence_records_epoll_and_futex_states() {
+    let mut graph = SemanticGraph::new();
+    let epoll_store = graph.register_store(
+        "epoll_service",
+        "epoll_service.cwasm",
+        "reference-service",
+        "restartable",
+    );
+    let futex_store = graph.register_store(
+        "futex_service",
+        "futex_service.cwasm",
+        "reference-service",
+        "restartable",
+    );
+    let epoll_cap = graph.grant_capability(
+        "epoll_service",
+        "epoll.instance",
+        &["create", "ctl", "wait"],
+        "store",
+    );
+    let futex_cap = graph.grant_capability("futex_service", "futex.waitset", &["wait"], "store");
+    let epoll_blocker = ContractObjectRef::new(ContractObjectKind::Capability, epoll_cap, 1);
+    let futex_blocker = ContractObjectRef::new(ContractObjectKind::Capability, futex_cap, 1);
+
+    graph.record_wait_created_with_details(
+        31,
+        None,
+        Some(epoll_store),
+        Some(1),
+        SemanticWaitKind::Epoll,
+        1,
+        {
+            let mut blockers = Vec::new();
+            blockers.push(epoll_blocker);
+            blockers
+        },
+        Some(250),
+        RestartPolicy::RestartWithAdjustedTimeout,
+        Some("linux-wait-service:epoll_wait:pending".to_string()),
+    );
+    graph.record_wait_created_with_details(
+        32,
+        None,
+        Some(epoll_store),
+        Some(1),
+        SemanticWaitKind::Epoll,
+        1,
+        {
+            let mut blockers = Vec::new();
+            blockers.push(epoll_blocker);
+            blockers
+        },
+        None,
+        RestartPolicy::RestartIfAllowed,
+        Some("linux-wait-service:epoll_wait:resume-ready".to_string()),
+    );
+    graph.record_wait_resolved(32, "epoll-ready");
+    graph.record_wait_consumed(32);
+    graph.record_wait_created_with_details(
+        33,
+        None,
+        Some(futex_store),
+        Some(1),
+        SemanticWaitKind::Futex,
+        1,
+        {
+            let mut blockers = Vec::new();
+            blockers.push(futex_blocker);
+            blockers
+        },
+        Some(500),
+        RestartPolicy::InternalOnly,
+        Some("linux-wait-service:futex_wait:timeout-cancel".to_string()),
+    );
+    graph.record_wait_cancelled_with_reason(33, 110, WaitCancelReason::Timeout);
+    graph.record_wait_created_with_details(
+        34,
+        None,
+        Some(epoll_store),
+        Some(1),
+        SemanticWaitKind::Epoll,
+        1,
+        {
+            let mut blockers = Vec::new();
+            blockers.push(epoll_blocker);
+            blockers
+        },
+        Some(750),
+        RestartPolicy::RestartIfAllowed,
+        Some("linux-wait-service:epoll_wait:restart-driver".to_string()),
+    );
+    graph.record_wait_restarted(34, "driver-restart");
+
+    let pending_epoll = graph
+        .wait_records()
+        .iter()
+        .find(|wait| wait.id == 31)
+        .expect("pending epoll wait");
+    assert_eq!(pending_epoll.kind, SemanticWaitKind::Epoll);
+    assert_eq!(pending_epoll.state, WaitState::Pending);
+    assert_eq!(pending_epoll.owner_store, Some(epoll_store));
+    assert_eq!(pending_epoll.blockers, {
+        let mut blockers = Vec::new();
+        blockers.push(epoll_blocker);
+        blockers
+    });
+    assert_eq!(
+        pending_epoll.saved_context.as_deref(),
+        Some("linux-wait-service:epoll_wait:pending")
+    );
+
+    let resumed_epoll = graph
+        .wait_records()
+        .iter()
+        .find(|wait| wait.id == 32)
+        .expect("resumed epoll wait");
+    assert_eq!(resumed_epoll.state, WaitState::Consumed);
+
+    let cancelled_futex = graph
+        .wait_records()
+        .iter()
+        .find(|wait| wait.id == 33)
+        .expect("cancelled futex wait");
+    assert_eq!(cancelled_futex.kind, SemanticWaitKind::Futex);
+    assert_eq!(cancelled_futex.state, WaitState::Cancelled);
+    assert_eq!(
+        cancelled_futex.cancel_reason,
+        Some(WaitCancelReason::Timeout)
+    );
+    assert_eq!(
+        cancelled_futex.saved_context.as_deref(),
+        Some("linux-wait-service:futex_wait:timeout-cancel")
+    );
+
+    let restarted_epoll = graph
+        .wait_records()
+        .iter()
+        .find(|wait| wait.id == 34)
+        .expect("restarted epoll wait");
+    assert_eq!(restarted_epoll.state, WaitState::Restarted);
+    assert_eq!(restarted_epoll.generation, 2);
+    assert!(
+        graph
+            .event_log_tail(8)
+            .iter()
+            .any(|event| event.kind.summary() == "WaitRestarted wait=34 class=driver-restart")
     );
 }
 
@@ -829,6 +985,302 @@ fn contract_graph_rejects_active_capability_and_wait_owned_by_old_store_generati
     }));
 }
 
+fn b3_store_record(id: StoreId, generation: Generation, state: StoreState) -> StoreRecord {
+    StoreRecord {
+        id,
+        package: "driver".to_string(),
+        artifact: "driver.cwasm".to_string(),
+        role: "driver".to_string(),
+        fault_policy: "restartable".to_string(),
+        fault_domain: 1,
+        resource: Some(id),
+        state,
+        generation,
+        restart_count: generation.saturating_sub(1),
+    }
+}
+
+fn b3_capability_record(
+    id: CapabilityId,
+    owner_store: StoreId,
+    owner_store_generation: Generation,
+    object: ContractObjectRef,
+    source: &str,
+    manifest_decl: bool,
+) -> CapabilityRecord {
+    let mut ledger = CapabilityLedger::new();
+    let capability = ledger
+        .grant_with_authority_ref(
+            "driver",
+            "packet-device.net0",
+            AuthorityObjectRef::internal(CapabilityClass::PacketDevice, object),
+            &["rx"],
+            "store",
+            Some(owner_store),
+            Some(owner_store_generation),
+            None,
+            source,
+            manifest_decl,
+        )
+        .expect("b3 capability grant");
+    let mut record = ledger
+        .records()
+        .iter()
+        .find(|record| record.id == capability)
+        .expect("b3 capability record")
+        .clone();
+    record.id = id;
+    record
+}
+
+fn assert_contract_violation(
+    violations: &[ContractViolation],
+    kind: ContractViolationKind,
+    edge: &str,
+) {
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.kind == kind && violation.edge == edge),
+        "missing violation kind={} edge={} in {:?}",
+        kind.as_str(),
+        edge,
+        violations
+            .iter()
+            .map(ContractViolation::summary)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn contract_graph_b3_accepts_valid_validator_boundary_snapshot() {
+    let store = b3_store_record(1, 1, StoreState::Running);
+    let authority_object = ContractObjectRef::new(ContractObjectKind::Resource, 77, 1);
+    let capability = b3_capability_record(
+        10,
+        store.id,
+        store.generation,
+        authority_object,
+        "manifest",
+        true,
+    );
+    let wait = WaitRecord {
+        id: 20,
+        owner_task: None,
+        owner_task_generation: None,
+        owner_store: Some(store.id),
+        owner_store_generation: Some(store.generation),
+        kind: SemanticWaitKind::DeviceIrq,
+        generation: 1,
+        state: WaitState::Pending,
+        blockers: vec![capability.object_ref()],
+        deadline: None,
+        cancel_reason: None,
+        restart_policy: RestartPolicy::RestartIfAllowed,
+        saved_context: None,
+    };
+    let snapshot = ContractGraphSnapshot {
+        stores: vec![store.clone()],
+        capabilities: vec![capability.clone()],
+        waits: vec![wait],
+        external_objects: vec![ExternalObjectDeclaration::new(
+            authority_object,
+            "manifest",
+            CapabilityClass::PacketDevice.as_str(),
+            "packet-device.net0",
+        )],
+        explicit_edges: vec![ContractEdgeRecord::new(
+            store.object_ref(),
+            capability.object_ref(),
+            ContractEdgeMode::Live,
+            "store->capability-live",
+            1,
+        )],
+        ..ContractGraphSnapshot::default()
+    };
+
+    assert_eq!(validate_contract_graph(&snapshot), Vec::new());
+}
+
+#[test]
+fn contract_graph_b3_reports_validator_completeness_matrix() {
+    let running_store = b3_store_record(1, 2, StoreState::Running);
+    let dead_store = b3_store_record(2, 1, StoreState::Dead);
+    let authority_object = ContractObjectRef::new(ContractObjectKind::Resource, 77, 1);
+    let external_object = ContractObjectRef::new(ContractObjectKind::ExternalObject, 900, 1);
+
+    let mut stale_handle_capability = b3_capability_record(
+        10,
+        running_store.id,
+        running_store.generation,
+        authority_object,
+        "manifest",
+        true,
+    );
+    stale_handle_capability.handle_generation = 0;
+
+    let overclaimed_provenance_capability = b3_capability_record(
+        11,
+        running_store.id,
+        running_store.generation,
+        authority_object,
+        "debug-label-only",
+        false,
+    );
+
+    let dead_owner_wait = WaitRecord {
+        id: 20,
+        owner_task: None,
+        owner_task_generation: None,
+        owner_store: Some(dead_store.id),
+        owner_store_generation: Some(dead_store.generation),
+        kind: SemanticWaitKind::DeviceIrq,
+        generation: 1,
+        state: WaitState::Pending,
+        blockers: vec![stale_handle_capability.object_ref()],
+        deadline: None,
+        cancel_reason: None,
+        restart_policy: RestartPolicy::RestartIfAllowed,
+        saved_context: None,
+    };
+
+    let active_lease_activation = ActivationRecord {
+        id: 30,
+        store: dead_store.id,
+        store_generation: dead_store.generation,
+        code_object: 40,
+        code_generation: 1,
+        artifact: 1,
+        entry: ActivationEntry::Symbol("_start".to_string()),
+        generation: 1,
+        state: ActivationState::Running,
+        start_event: 1,
+        exit_event: None,
+        active_dmw_leases: 1,
+        blocked_wait: None,
+        trap: None,
+        return_tag: None,
+    };
+
+    let cleanup_source = ContractObjectRef::new(ContractObjectKind::CleanupTransaction, 42, 1);
+    let snapshot = ContractGraphSnapshot {
+        stores: vec![running_store.clone(), dead_store],
+        activations: vec![active_lease_activation],
+        capabilities: vec![
+            stale_handle_capability.clone(),
+            overclaimed_provenance_capability,
+        ],
+        waits: vec![dead_owner_wait],
+        tombstones: vec![TombstoneRecord::new(
+            ContractObjectKind::Store,
+            running_store.id,
+            1,
+            1,
+            "old-generation",
+        )],
+        external_objects: vec![
+            ExternalObjectDeclaration::new(
+                authority_object,
+                "manifest",
+                CapabilityClass::PacketDevice.as_str(),
+                "packet-device.net0",
+            ),
+            ExternalObjectDeclaration::new(
+                external_object,
+                "real-provider",
+                CapabilityClass::PacketDevice.as_str(),
+                "external.packet-device",
+            ),
+        ],
+        explicit_edges: vec![
+            ContractEdgeRecord::new(
+                running_store.object_ref(),
+                ContractObjectRef::new(ContractObjectKind::Task, 999, 1),
+                ContractEdgeMode::Live,
+                "store->missing-task",
+                1,
+            ),
+            ContractEdgeRecord::new(
+                running_store.object_ref(),
+                ContractObjectRef::new(ContractObjectKind::Store, running_store.id, 3),
+                ContractEdgeMode::Live,
+                "store->future-generation",
+                1,
+            ),
+            ContractEdgeRecord::new(
+                running_store.object_ref(),
+                ContractObjectRef::new(ContractObjectKind::Store, running_store.id, 1),
+                ContractEdgeMode::Live,
+                "store->old-generation-live",
+                1,
+            ),
+            ContractEdgeRecord::new(
+                cleanup_source,
+                stale_handle_capability.object_ref(),
+                ContractEdgeMode::CleanupEffect,
+                "authorizes",
+                1,
+            ),
+            ContractEdgeRecord::new(
+                running_store.object_ref(),
+                external_object,
+                ContractEdgeMode::External,
+                "store->claimed-external",
+                1,
+            )
+            .with_external_metadata("wrong-provider", CapabilityClass::PacketDevice.as_str()),
+        ],
+        ..ContractGraphSnapshot::default()
+    };
+
+    let violations = validate_contract_graph(&snapshot);
+    assert_contract_violation(
+        &violations,
+        ContractViolationKind::DanglingEdge,
+        "store->missing-task",
+    );
+    assert_contract_violation(
+        &violations,
+        ContractViolationKind::GenerationMismatch,
+        "store->future-generation",
+    );
+    assert_contract_violation(
+        &violations,
+        ContractViolationKind::TombstoneReferencedByLiveEdge,
+        "store->old-generation-live",
+    );
+    assert_contract_violation(
+        &violations,
+        ContractViolationKind::CleanupEffectCreatesLiveOwnership,
+        "authorizes",
+    );
+    assert_contract_violation(
+        &violations,
+        ContractViolationKind::ExternalEdgeMetadataMismatch,
+        "store->claimed-external",
+    );
+    assert_contract_violation(
+        &violations,
+        ContractViolationKind::GenerationMismatch,
+        "capability->handle",
+    );
+    assert_contract_violation(
+        &violations,
+        ContractViolationKind::ExternalEdgeMetadataMismatch,
+        "capability->provenance",
+    );
+    assert_contract_violation(
+        &violations,
+        ContractViolationKind::LiveEdgeReferencesInactiveObject,
+        "wait->owner-store",
+    );
+    assert_contract_violation(
+        &violations,
+        ContractViolationKind::LiveObjectReferencesDeadObject,
+        "activation->dmw-lease",
+    );
+}
+
 #[test]
 fn command_surface_grants_capability_and_precondition_failures_are_atomic() {
     let mut graph = SemanticGraph::new();
@@ -985,6 +1437,39 @@ fn command_envelope_epoch_mismatch_is_atomic() {
     assert_eq!(graph.event_count(), before);
     assert_eq!(graph.command_results().len(), 1);
     assert_eq!(graph.command_results()[0], result);
+}
+
+#[test]
+fn command_surface_rejected_precondition_leaves_semantic_state_unchanged() {
+    let mut graph = SemanticGraph::new();
+    graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
+    assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
+    assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
+
+    let task_before = graph.tasks()[0].clone();
+    let activation_before = graph.runtime_activations()[0].clone();
+    let queue_before = graph.runnable_queues()[0].clone();
+    let event_count_before = graph.event_count();
+    let command_result_count_before = graph.command_results().len();
+
+    let result = graph.apply(SemanticCommand::EnqueueRunnable {
+        queue: 1,
+        activation: 11,
+        activation_generation: 99,
+    });
+
+    assert_eq!(
+        result,
+        Err(CommandError::PreconditionFailed(
+            "activation generation mismatch".to_string()
+        ))
+    );
+    assert_eq!(graph.tasks()[0], task_before);
+    assert_eq!(graph.runtime_activations()[0], activation_before);
+    assert_eq!(graph.runnable_queues()[0], queue_before);
+    assert_eq!(graph.event_count(), event_count_before);
+    assert_eq!(graph.command_results().len(), command_result_count_before);
+    assert_eq!(graph.check_invariants(), Ok(()));
 }
 
 #[test]
@@ -10088,6 +10573,321 @@ fn network_runtime_n20_invariants_reject_cleanup_generation_drift() {
 }
 
 #[test]
+fn network_convergence_d4_preserves_dma_generation_audit_and_wait_cleanup_evidence() {
+    let (mut graph, _, connected_endpoint) = setup_n14_socket_wait_graph();
+    let binding_record = graph
+        .driver_store_bindings()
+        .iter()
+        .find(|record| record.id == 1552)
+        .cloned()
+        .unwrap();
+    let tx_gate = graph
+        .network_tx_capability_gates()
+        .iter()
+        .find(|record| record.id == 1571)
+        .unwrap();
+    assert_eq!(tx_gate.tx_queue, 1545);
+    assert_eq!(tx_gate.device_capability, 1570);
+    assert_ne!(tx_gate.capability_generation, 0);
+    let tx_queue = graph
+        .packet_queue_objects()
+        .iter()
+        .find(|record| record.id == 1545)
+        .unwrap();
+    assert_eq!(tx_queue.role, PacketQueueRole::Tx);
+    assert_eq!(tx_queue.packet_device, 1541);
+
+    let rx_queue_ref = ContractObjectRef::new(ContractObjectKind::PacketQueueObject, 1544, 1);
+    for (command_id, command) in [
+        (
+            401,
+            SemanticCommand::RecordNetworkRxInterrupt {
+                rx_interrupt: 1620,
+                virtio_net_backend: 1553,
+                virtio_net_backend_generation: 1,
+                irq_event: 1555,
+                irq_event_generation: 1,
+                packet_device: 1541,
+                packet_device_generation: 1,
+                rx_queue: 1544,
+                rx_queue_generation: 1,
+                ready_descriptors: 1,
+                sequence: 4,
+                note: "d4 rx queue interrupt evidence".to_string(),
+            },
+        ),
+        (
+            402,
+            SemanticCommand::CreateWait {
+                wait: 1621,
+                owner_task: None,
+                owner_store: Some(binding_record.driver_store),
+                owner_store_generation: Some(binding_record.driver_store_generation),
+                kind: SemanticWaitKind::DeviceIrq,
+                generation: 1,
+                blockers: vec![rx_queue_ref],
+                deadline: None,
+                restart_policy: RestartPolicy::InternalOnly,
+                saved_context: Some("d4-driver-rx-queue-wait".to_string()),
+            },
+        ),
+        (
+            403,
+            SemanticCommand::RecordIoWait {
+                io_wait: 1622,
+                wait: 1621,
+                wait_generation: 1,
+                driver_store: binding_record.driver_store,
+                driver_store_generation: binding_record.driver_store_generation,
+                device: 1540,
+                device_generation: 1,
+                driver_binding: 1552,
+                driver_binding_generation: 1,
+                blocker: rx_queue_ref,
+                note: "d4 rx packet queue wait token evidence".to_string(),
+            },
+        ),
+        (
+            404,
+            SemanticCommand::ResolveNetworkRxWait {
+                resolution: 1623,
+                io_wait: 1622,
+                io_wait_generation: 1,
+                rx_interrupt: 1620,
+                rx_interrupt_generation: 1,
+                note: "d4 rx queue wait resolved by interrupt".to_string(),
+            },
+        ),
+    ] {
+        let result = graph.apply_envelope(CommandEnvelope::new(command_id, "d4-test", command));
+        assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    }
+    let rx_resolution = graph
+        .network_rx_wait_resolutions()
+        .iter()
+        .find(|record| record.id == 1623)
+        .unwrap();
+    assert_eq!(rx_resolution.rx_queue, 1544);
+    assert_eq!(rx_resolution.wait, 1621);
+
+    let (dma_ref, dma_capability_ref, dma_handle, driver_store, driver_store_generation) =
+        add_n17_dma_generation_fixture(&mut graph);
+    let stale_packet_buffer = graph.apply_envelope(CommandEnvelope::new(
+        405,
+        "d4-test",
+        SemanticCommand::RecordPacketDescriptorObject {
+            packet_descriptor: 1628,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            packet_buffer: 1543,
+            packet_buffer_generation: 2,
+            slot: 1,
+            length: 64,
+            note: "d4 stale packet buffer generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_packet_buffer.status, CommandStatus::Rejected);
+    let stale_packet_descriptor = graph.apply_envelope(CommandEnvelope::new(
+        406,
+        "d4-test",
+        SemanticCommand::RecordNetworkTxCapabilityGate {
+            tx_gate: 1629,
+            driver_store,
+            driver_store_generation,
+            packet_descriptor: 1547,
+            packet_descriptor_generation: 2,
+            device_capability: 1570,
+            device_capability_generation: 1,
+            handle: graph
+                .device_capabilities()
+                .iter()
+                .find(|record| record.id == 1570)
+                .and_then(|record| graph.capabilities().record(record.capability))
+                .and_then(|record| record.store_local_handle(vec!["tx".to_string()]))
+                .unwrap(),
+            note: "d4 stale packet descriptor generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_packet_descriptor.status, CommandStatus::Rejected);
+    let stale_dma_target = graph.apply_envelope(CommandEnvelope::new(
+        407,
+        "d4-test",
+        SemanticCommand::RecordDeviceCapability {
+            device_capability: 1630,
+            driver_store,
+            driver_store_generation,
+            target: ContractObjectRef::new(ContractObjectKind::DmaBufferObject, dma_ref.id, 2),
+            class: CapabilityClass::DmaBuffer,
+            operation: "sync-for-device".to_string(),
+            handle: dma_handle,
+            note: "d4 stale dma buffer generation".to_string(),
+        },
+    ));
+    assert_eq!(stale_dma_target.status, CommandStatus::Rejected);
+    let audit = graph.apply_envelope(CommandEnvelope::new(
+        408,
+        "d4-test",
+        SemanticCommand::RecordNetworkGenerationAudit {
+            audit: 1608,
+            adapter: 1575,
+            adapter_generation: 1,
+            packet_device: 1541,
+            packet_device_generation: 1,
+            packet_queue: 1545,
+            packet_queue_generation: 1,
+            packet_descriptor: 1547,
+            packet_descriptor_generation: 1,
+            packet_buffer: 1543,
+            packet_buffer_generation: 1,
+            dma_buffer: dma_ref,
+            device_capability: dma_capability_ref,
+            rejected_packet_generation_probes: 2,
+            rejected_dma_generation_probes: 1,
+            note: "d4 historical packet and dma generation audit".to_string(),
+        },
+    ));
+    assert_eq!(audit.status, CommandStatus::Applied, "{audit:?}");
+
+    let socket_blocker =
+        ContractObjectRef::new(ContractObjectKind::EndpointObject, connected_endpoint, 1);
+    let linux_socket_store = graph.store_id("linux_socket_service").unwrap();
+    let linux_socket_store_generation = graph
+        .store_handle(linux_socket_store)
+        .map(|handle| handle.generation)
+        .unwrap();
+    for (command_id, command) in [
+        (
+            409,
+            SemanticCommand::CreateWait {
+                wait: 1624,
+                owner_task: None,
+                owner_store: Some(linux_socket_store),
+                owner_store_generation: Some(linux_socket_store_generation),
+                kind: SemanticWaitKind::SocketReadable,
+                generation: 1,
+                blockers: vec![socket_blocker],
+                deadline: None,
+                restart_policy: RestartPolicy::RestartIfAllowed,
+                saved_context: Some("d4-pending-socket-wait-before-cleanup".to_string()),
+            },
+        ),
+        (
+            410,
+            SemanticCommand::RecordSocketWait {
+                socket_wait: 1625,
+                wait: 1624,
+                wait_generation: 1,
+                endpoint: connected_endpoint,
+                endpoint_generation: 1,
+                wait_kind: SemanticWaitKind::SocketReadable,
+                blocker: socket_blocker,
+                note: "d4 pending socket wait before cleanup".to_string(),
+            },
+        ),
+        (
+            411,
+            SemanticCommand::CleanupNetworkDriver {
+                cleanup: 1626,
+                io_cleanup: 1627,
+                adapter: 1575,
+                adapter_generation: 1,
+                packet_device: 1541,
+                packet_device_generation: 1,
+                backend: ContractObjectRef::new(
+                    ContractObjectKind::VirtioNetBackendObject,
+                    1553,
+                    1,
+                ),
+                reason: "device-fault".to_string(),
+                note: "d4 cleanup after network convergence evidence".to_string(),
+            },
+        ),
+    ] {
+        let result = graph.apply_envelope(CommandEnvelope::new(command_id, "d4-test", command));
+        assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    }
+
+    let cleanup = graph
+        .network_driver_cleanups()
+        .iter()
+        .find(|record| record.id == 1626)
+        .unwrap();
+    assert_eq!(cleanup.state, NetworkDriverCleanupState::Completed);
+    assert_eq!(
+        cleanup.cancelled_socket_waits,
+        vec![ContractObjectRef::new(
+            ContractObjectKind::SocketWait,
+            1625,
+            1
+        )]
+    );
+    assert_eq!(
+        cleanup.cancelled_wait_tokens,
+        vec![ContractObjectRef::new(
+            ContractObjectKind::WaitToken,
+            1624,
+            1
+        )]
+    );
+    assert_eq!(
+        cleanup.revoked_packet_capabilities,
+        vec![ContractObjectRef::new(
+            ContractObjectKind::DeviceCapability,
+            1570,
+            1
+        )]
+    );
+    let io_cleanup = graph
+        .io_cleanups()
+        .iter()
+        .find(|record| record.id == 1627)
+        .unwrap();
+    assert!(io_cleanup.released_dma_buffers.contains(&dma_ref));
+    assert!(
+        io_cleanup
+            .revoked_device_capabilities
+            .contains(&dma_capability_ref)
+    );
+    assert!(
+        io_cleanup
+            .revoked_device_capabilities
+            .contains(&ContractObjectRef::new(
+                ContractObjectKind::DeviceCapability,
+                1570,
+                1,
+            ))
+    );
+    let audit = graph
+        .network_generation_audits()
+        .iter()
+        .find(|record| record.id == 1608)
+        .unwrap();
+    assert_eq!(audit.dma_buffer, dma_ref);
+    assert_eq!(audit.device_capability, dma_capability_ref);
+    assert_eq!(audit.state, NetworkGenerationAuditState::Recorded);
+    let socket_wait = graph
+        .socket_waits()
+        .iter()
+        .find(|record| record.id == 1625)
+        .unwrap();
+    assert_eq!(socket_wait.state, SocketWaitState::Cancelled);
+    assert_eq!(
+        socket_wait.cancel_reason,
+        Some(WaitCancelReason::DeviceFault)
+    );
+    assert_eq!(
+        graph
+            .wait_records()
+            .iter()
+            .find(|record| record.id == 1624)
+            .unwrap()
+            .state,
+        WaitState::Cancelled
+    );
+    assert!(graph.check_invariants().is_ok());
+}
+
+#[test]
 fn block_runtime_b0_block_device_object_records_contract_identity() {
     let mut graph = SemanticGraph::new();
     let resource = graph.register_resource(ResourceKind::BlockDevice, None, "block-device:blk0");
@@ -16020,6 +16820,313 @@ fn block_runtime_b23_invariants_reject_cleanup_generation_leak() {
 }
 
 #[test]
+fn block_filesystem_convergence_d5_preserves_capability_wait_policy_and_cleanup_evidence() {
+    let mut fs_graph = setup_b18_fs_wait_graph();
+    let store = fs_graph.store_id("linux_syscall").unwrap();
+    {
+        let cache = fs_graph
+            .buffer_cache_objects()
+            .iter()
+            .find(|record| record.id == 1840)
+            .unwrap();
+        assert_eq!(cache.block_device, 1824);
+        assert_eq!(cache.block_range, 1825);
+        assert_eq!(cache.page, b11_page(1903));
+        assert_eq!(cache.cache_state, BufferCacheObjectState::Dirty);
+        let file = fs_graph
+            .file_objects()
+            .iter()
+            .find(|record| record.id == 1845)
+            .unwrap();
+        assert_eq!(file.buffer_cache_object, 1840);
+        assert_eq!(file.path, "/demo/file.txt");
+        assert_eq!(file.content_digest, 0xB13);
+        let directory = fs_graph
+            .directory_objects()
+            .iter()
+            .find(|record| record.id == 1850)
+            .unwrap();
+        assert_eq!(directory.file_object, 1845);
+        assert_eq!(directory.child_path, "/demo/file.txt");
+        let gate = fs_graph
+            .file_handle_capabilities()
+            .iter()
+            .find(|record| record.id == 1865)
+            .unwrap();
+        assert_eq!(gate.owner_store, store);
+        assert_eq!(gate.file_object, 1845);
+        assert_eq!(gate.directory_object, 1850);
+        assert_ne!(gate.capability_generation, 0);
+        assert_ne!(gate.handle_generation, 0);
+        assert_eq!(gate.operation, "read");
+        assert_eq!(gate.state, FileHandleCapabilityState::Allowed);
+        assert_ne!(gate.recorded_at_event, 0);
+        let cap_record = fs_graph.capabilities().record(gate.capability).unwrap();
+        assert_eq!(
+            cap_record.object_ref,
+            Some(AuthorityObjectRef::internal(
+                CapabilityClass::FileHandle,
+                ContractObjectRef::new(ContractObjectKind::FileObject, 1845, 1),
+            ))
+        );
+    }
+
+    let blocker = ContractObjectRef::new(ContractObjectKind::FileHandleCapability, 1865, 1);
+    for (command_id, command) in [
+        (
+            501,
+            SemanticCommand::CreateWait {
+                wait: 1910,
+                owner_task: None,
+                owner_store: Some(store),
+                owner_store_generation: Some(1),
+                kind: SemanticWaitKind::FdReadable,
+                generation: 1,
+                blockers: vec![blocker],
+                deadline: None,
+                restart_policy: RestartPolicy::RestartIfAllowed,
+                saved_context: Some("d5 cancellable filesystem wait".to_string()),
+            },
+        ),
+        (
+            502,
+            SemanticCommand::RecordFsWait {
+                fs_wait: 1911,
+                wait: 1910,
+                wait_generation: 1,
+                file_handle_capability: 1865,
+                file_handle_capability_generation: 1,
+                operation: "read".to_string(),
+                sequence: 3,
+                note: "d5 fs wait uses file handle capability blocker".to_string(),
+            },
+        ),
+        (
+            503,
+            SemanticCommand::CancelFsWait {
+                fs_wait: 1911,
+                fs_wait_generation: 1,
+                errno: 9,
+                reason: WaitCancelReason::CloseFd,
+                note: "d5 close fd cancels filesystem wait token".to_string(),
+            },
+        ),
+    ] {
+        let result = fs_graph.apply_envelope(CommandEnvelope::new(command_id, "d5-test", command));
+        assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+    }
+    let fs_wait = fs_graph
+        .fs_waits()
+        .iter()
+        .find(|record| record.id == 1911)
+        .unwrap();
+    assert_eq!(fs_wait.blocker, blocker);
+    assert_eq!(fs_wait.state, FsWaitState::Cancelled);
+    assert_eq!(fs_wait.cancel_reason, Some(WaitCancelReason::CloseFd));
+    assert!(fs_wait.completed_at_event.is_some());
+    assert_eq!(
+        fs_graph
+            .wait_records()
+            .iter()
+            .find(|record| record.id == 1910)
+            .unwrap()
+            .state,
+        WaitState::Cancelled
+    );
+    assert!(fs_graph.event_log_tail(8).iter().any(|event| {
+        event
+            .kind
+            .summary()
+            .contains("FsWaitCancelled fs_wait=1911")
+    }));
+    assert!(fs_graph.check_invariants().is_ok());
+
+    let mut policy_graph = setup_b20_pending_io_policy_graph();
+    let mut policy_result_events = Vec::new();
+    for command in [
+        CommandEnvelope::new(
+            504,
+            "d5-test",
+            SemanticCommand::ApplyBlockPendingIoPolicy {
+                policy: 1892,
+                block_wait: 1884,
+                block_wait_generation: 1,
+                action: BlockPendingIoAction::Retry,
+                retry_request: Some(1891),
+                retry_request_generation: Some(1),
+                errno: 11,
+                retry_attempt: 1,
+                max_retries: 2,
+                note: "d5 retry pending block io".to_string(),
+            },
+        ),
+        CommandEnvelope::new(
+            505,
+            "d5-test",
+            SemanticCommand::ApplyBlockPendingIoPolicy {
+                policy: 1899,
+                block_wait: 1895,
+                block_wait_generation: 1,
+                action: BlockPendingIoAction::Eio,
+                retry_request: None,
+                retry_request_generation: None,
+                errno: 5,
+                retry_attempt: 0,
+                max_retries: 0,
+                note: "d5 return eio for pending block io".to_string(),
+            },
+        ),
+        CommandEnvelope::new(
+            506,
+            "d5-test",
+            SemanticCommand::ApplyBlockPendingIoPolicy {
+                policy: 1900,
+                block_wait: 1898,
+                block_wait_generation: 1,
+                action: BlockPendingIoAction::Cancel,
+                retry_request: None,
+                retry_request_generation: None,
+                errno: 125,
+                retry_attempt: 0,
+                max_retries: 0,
+                note: "d5 cancel pending block io".to_string(),
+            },
+        ),
+    ] {
+        let result = policy_graph.apply_envelope(command);
+        assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
+        assert!(
+            !result.events.is_empty(),
+            "policy command must be event-visible"
+        );
+        policy_result_events.extend(result.events);
+    }
+    assert_eq!(policy_graph.block_pending_io_policy_count(), 3);
+    assert_eq!(policy_result_events.len(), 9);
+    let retry = policy_graph
+        .block_pending_io_policies()
+        .iter()
+        .find(|record| record.id == 1892)
+        .unwrap();
+    assert_eq!(retry.action, BlockPendingIoAction::Retry);
+    assert_eq!(retry.retry_request, Some(1891));
+    assert_eq!(retry.state, BlockPendingIoPolicyState::RetryScheduled);
+    assert_ne!(retry.recorded_at_event, 0);
+    let eio = policy_graph
+        .block_pending_io_policies()
+        .iter()
+        .find(|record| record.id == 1899)
+        .unwrap();
+    assert_eq!(eio.action, BlockPendingIoAction::Eio);
+    assert_eq!(eio.state, BlockPendingIoPolicyState::EioReturned);
+    assert_ne!(eio.recorded_at_event, 0);
+    let cancel = policy_graph
+        .block_pending_io_policies()
+        .iter()
+        .find(|record| record.id == 1900)
+        .unwrap();
+    assert_eq!(cancel.action, BlockPendingIoAction::Cancel);
+    assert_eq!(cancel.state, BlockPendingIoPolicyState::Cancelled);
+    assert_ne!(cancel.recorded_at_event, 0);
+    for (block_wait, reason) in [
+        (1884, WaitCancelReason::DeviceFault),
+        (1895, WaitCancelReason::DeviceFault),
+        (1898, WaitCancelReason::ResourceDropped),
+    ] {
+        let wait = policy_graph
+            .block_waits()
+            .iter()
+            .find(|record| record.id == block_wait)
+            .unwrap();
+        assert_eq!(wait.state, BlockWaitState::Cancelled);
+        assert_eq!(wait.cancel_reason, Some(reason));
+        let token = policy_graph
+            .wait_records()
+            .iter()
+            .find(|record| record.id == wait.wait)
+            .unwrap();
+        assert_eq!(token.state, WaitState::Cancelled);
+    }
+    let policy_event_summaries: Vec<_> = policy_graph
+        .event_log_tail(16)
+        .iter()
+        .map(|event| event.kind.summary())
+        .filter(|summary| summary.starts_with("BlockPendingIoPolicyApplied "))
+        .collect();
+    assert_eq!(policy_event_summaries.len(), 3);
+    assert!(
+        policy_event_summaries
+            .iter()
+            .any(|summary| summary.contains("action=retry"))
+    );
+    assert!(
+        policy_event_summaries
+            .iter()
+            .any(|summary| summary.contains("action=eio"))
+    );
+    assert!(
+        policy_event_summaries
+            .iter()
+            .any(|summary| summary.contains("action=cancel"))
+    );
+    assert!(policy_graph.check_invariants().is_ok());
+
+    let cleanup_graph = setup_b23_disk_recovery_benchmark_graph();
+    let cleanup = cleanup_graph
+        .block_driver_cleanups()
+        .iter()
+        .find(|record| record.id == 1888)
+        .unwrap();
+    assert_eq!(cleanup.state, BlockDriverCleanupState::Completed);
+    assert_eq!(cleanup.cancelled_block_waits.len(), 1);
+    assert_eq!(cleanup.cancelled_wait_tokens.len(), 1);
+    assert_eq!(cleanup.released_dma_buffers.len(), 1);
+    assert_eq!(cleanup.revoked_device_capabilities.len(), 1);
+    assert!(cleanup.completed_at_event.unwrap() > cleanup.started_at_event);
+    let io_cleanup = cleanup_graph
+        .io_cleanups()
+        .iter()
+        .find(|record| record.id == cleanup.io_cleanup)
+        .unwrap();
+    assert_eq!(
+        io_cleanup.released_dma_buffers,
+        cleanup.released_dma_buffers
+    );
+    assert_eq!(
+        io_cleanup.revoked_device_capabilities,
+        cleanup.revoked_device_capabilities
+    );
+    assert_eq!(
+        cleanup_graph
+            .block_waits()
+            .iter()
+            .find(|record| record.id == 1884)
+            .unwrap()
+            .state,
+        BlockWaitState::Cancelled
+    );
+    assert_eq!(
+        cleanup_graph
+            .wait_records()
+            .iter()
+            .find(|record| record.id == 1883)
+            .unwrap()
+            .state,
+        WaitState::Cancelled
+    );
+    assert_eq!(
+        cleanup_graph
+            .dma_buffer_objects()
+            .iter()
+            .find(|record| record.id == 1887)
+            .unwrap()
+            .state,
+        DmaBufferObjectState::Released
+    );
+    assert!(cleanup_graph.check_invariants().is_ok());
+}
+
+#[test]
 fn smp_runtime_s2_timer_interrupt_uses_exact_hart_ref_and_event_attribution() {
     let mut graph = SemanticGraph::new();
     let hart_generation = register_idle_test_hart(&mut graph);
@@ -18964,6 +20071,156 @@ fn preemptive_runtime_p9_invariants_reject_latency_delta_drift() {
         graph.check_invariants(),
         Err(SemanticInvariantError::PreemptionLatencyTimelineMismatch { sample: 18 })
     );
+}
+
+#[test]
+fn timer_wait_scheduler_convergence_keeps_generation_safe_cancel_chain() {
+    let mut graph = p7_resumed_activation();
+
+    let timer = graph
+        .timer_interrupts()
+        .iter()
+        .find(|record| record.id == 5)
+        .expect("timer interrupt");
+    assert_eq!(timer.target_activation, Some(11));
+    assert_eq!(timer.target_activation_generation, Some(3));
+
+    let decision = graph
+        .scheduler_decisions()
+        .iter()
+        .find(|record| record.id == 14)
+        .expect("scheduler decision");
+    assert_eq!(decision.selected_activation, 11);
+    assert_eq!(decision.selected_activation_generation, 4);
+    assert_eq!(decision.state, SchedulerDecisionState::Superseded);
+
+    let resume = graph
+        .activation_resumes()
+        .iter()
+        .find(|record| record.id == 15)
+        .expect("activation resume");
+    assert_eq!(resume.scheduler_decision, 14);
+    assert_eq!(resume.activation_generation_before, 4);
+    assert_eq!(resume.activation_generation_after, 5);
+
+    let timer_blocker = ContractObjectRef::new(ContractObjectKind::TimerInterrupt, 5, 1);
+    assert!(graph.block_activation_on_wait_with_id(
+        160,
+        11,
+        5,
+        170,
+        SemanticWaitKind::Timer,
+        vec![timer_blocker],
+        Some(400),
+        RestartPolicy::RestartIfAllowed,
+        "d2 timer wait convergence"
+    ));
+
+    let wait = graph
+        .wait_records()
+        .iter()
+        .find(|record| record.id == 170)
+        .expect("d2 wait");
+    assert_eq!(wait.kind, SemanticWaitKind::Timer);
+    assert_eq!(wait.state, WaitState::Pending);
+    assert_eq!(wait.owner_task, Some(7));
+    assert_eq!(wait.owner_task_generation, Some(2));
+    assert_eq!(wait.blockers, vec![timer_blocker]);
+    assert_eq!(wait.deadline, Some(400));
+
+    let activation_wait = graph
+        .activation_waits()
+        .iter()
+        .find(|record| record.id == 160)
+        .expect("d2 activation wait");
+    assert_eq!(activation_wait.activation_generation_before, 5);
+    assert_eq!(activation_wait.activation_generation_after_block, 6);
+    assert_eq!(activation_wait.owner_task_generation, 2);
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Pending
+    );
+    assert_eq!(graph.runtime_activations()[0].generation, 6);
+
+    let mut pending_graph = graph.clone();
+    assert!(pending_graph.record_timer_interrupt_with_id(
+        171,
+        2,
+        1,
+        2,
+        Some(11),
+        Some(6),
+        "pending tick"
+    ));
+    let rejected_preempt = pending_graph.apply_envelope(CommandEnvelope::new(
+        2,
+        "d2-test",
+        SemanticCommand::PreemptActivation {
+            preemption: 172,
+            activation: 11,
+            activation_generation: 6,
+            timer_interrupt: 171,
+            timer_interrupt_generation: 1,
+            queue: 1,
+            note: "pending activation is not running".to_string(),
+        },
+    ));
+    assert_eq!(rejected_preempt.status, CommandStatus::Rejected);
+    assert!(pending_graph.check_invariants().is_ok());
+
+    assert!(graph.cancel_activation_wait(
+        160,
+        1,
+        1,
+        110,
+        WaitCancelReason::Timeout,
+        "d2 timer wait timeout"
+    ));
+    let wait = graph
+        .wait_records()
+        .iter()
+        .find(|record| record.id == 170)
+        .expect("cancelled d2 wait");
+    assert_eq!(wait.state, WaitState::Cancelled);
+    assert_eq!(wait.cancel_reason, Some(WaitCancelReason::Timeout));
+
+    let activation_wait = graph
+        .activation_waits()
+        .iter()
+        .find(|record| record.id == 160)
+        .expect("cancelled d2 activation wait");
+    assert_eq!(activation_wait.state, ActivationWaitState::Cancelled);
+    assert_eq!(activation_wait.activation_generation_after_cancel, Some(7));
+    assert_eq!(
+        graph.runtime_activations()[0].state,
+        RuntimeActivationState::Blocked
+    );
+    assert_eq!(graph.runtime_activations()[0].generation, 7);
+    assert!(graph.runnable_queues()[0].entries.is_empty());
+    assert!(!graph.cancel_activation_wait(
+        160,
+        1,
+        1,
+        110,
+        WaitCancelReason::Timeout,
+        "repeat cancel must not apply"
+    ));
+    assert!(!graph.record_scheduler_decision_with_id(
+        173,
+        1,
+        1,
+        11,
+        7,
+        "blocked-activation",
+        "blocked activation is not schedulable"
+    ));
+    assert!(graph.check_invariants().is_ok());
+    assert!(graph.event_log_tail(4).iter().any(|record| {
+        record
+            .kind
+            .summary()
+            .contains("RuntimeActivationWaitCancelled activation_wait=160 activation=11@6->7")
+    }));
 }
 
 #[test]
@@ -27489,7 +28746,7 @@ fn integrated_runtime_x9_rejects_missing_or_incomplete_replay_evidence() {
             historical_edge_count: 9,
             replayed_root_count: 9,
             integrated_scenario_count: 9,
-            golden_trace_count: 9,
+            replay_fixture_count: 9,
             invariant_checks: 9,
             note: "missing integrated scenario evidence rejects".to_string(),
         },
@@ -27529,7 +28786,7 @@ fn integrated_runtime_x9_rejects_missing_or_incomplete_replay_evidence() {
             historical_edge_count: 9,
             replayed_root_count: 9,
             integrated_scenario_count: 9,
-            golden_trace_count: 9,
+            replay_fixture_count: 9,
             invariant_checks: 9,
             note: "incomplete stable view evidence rejects".to_string(),
         },
@@ -27570,7 +28827,7 @@ fn integrated_runtime_x9_contract_graph_rejects_dangling_integrated_history() {
             historical_edge_count: 9,
             replayed_root_count: 9,
             integrated_scenario_count: 9,
-            golden_trace_count: 9,
+            replay_fixture_count: 9,
             contract_validation_ok: true,
             replay_validation_ok: true,
             graph_history_ok: true,

@@ -3,11 +3,12 @@ use alloc::vec::Vec;
 use semantic_core::RuntimeMode;
 use service_core::net_contract::NETWORK_CONTRACT_VERSION;
 use supervisor_catalog::{
-    ARTIFACT_SIGNATURE_PROFILE, CapabilitySpec, DMW_LAYOUT, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
-    RUNTIME_ONLY_EXECUTOR_ABI, SUPERVISOR_ABI_VERSION, SUPERVISOR_ARTIFACT_FORMAT,
-    SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_CONTRACT_VERSION, SUPERVISOR_EXECUTION_MODE,
-    SUPERVISOR_WASM_MODULES, SUPERVISOR_WORLD, StoreBlueprint, WASM_FEATURE_PROFILE,
-    WasmModuleSpec, module_dependencies,
+    ARTIFACT_HASH_STATUS_MANIFEST_BOUND, ARTIFACT_SIGNATURE_PROFILE,
+    ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED, ARTIFACT_SIGNATURE_VERIFIED_DEFAULT,
+    CapabilitySpec, DMW_LAYOUT, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION, RUNTIME_ONLY_EXECUTOR_ABI,
+    SUPERVISOR_ABI_VERSION, SUPERVISOR_ARTIFACT_FORMAT, SUPERVISOR_COMPILER_ENGINE,
+    SUPERVISOR_CONTRACT_VERSION, SUPERVISOR_EXECUTION_MODE, SUPERVISOR_WASM_MODULES,
+    SUPERVISOR_WORLD, StoreBlueprint, WASM_FEATURE_PROFILE, WasmModuleSpec, module_dependencies,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -194,7 +195,10 @@ pub(crate) struct ArtifactManifestBinding {
     pub(crate) abi_fingerprint: &'static str,
     pub(crate) cwasm_sha256: &'static str,
     pub(crate) manifest_binding_hash: &'static str,
+    pub(crate) hash_status: &'static str,
     pub(crate) signature_profile: &'static str,
+    pub(crate) signature_status: &'static str,
+    pub(crate) signature_verified: bool,
     pub(crate) signer: &'static str,
     pub(crate) resource_limits: StoreResourceLimits,
 }
@@ -209,7 +213,10 @@ impl ArtifactManifestBinding {
             abi_fingerprint: "catalog-derived",
             cwasm_sha256: "target-cwasm-not-linked",
             manifest_binding_hash: "catalog-derived",
+            hash_status: ARTIFACT_HASH_STATUS_MANIFEST_BOUND,
             signature_profile: ARTIFACT_SIGNATURE_PROFILE,
+            signature_status: ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED,
+            signature_verified: ARTIFACT_SIGNATURE_VERIFIED_DEFAULT,
             signer: "supervisor_catalog",
             resource_limits: StoreResourceLimits::prototype_default(),
         }
@@ -223,7 +230,10 @@ impl ArtifactManifestBinding {
             abi_fingerprint: entry.abi_fingerprint,
             cwasm_sha256: entry.cwasm_sha256,
             manifest_binding_hash: entry.manifest_binding_hash,
+            hash_status: ARTIFACT_HASH_STATUS_MANIFEST_BOUND,
             signature_profile: entry.signature_profile,
+            signature_status: ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED,
+            signature_verified: ARTIFACT_SIGNATURE_VERIFIED_DEFAULT,
             signer: entry.signer,
             resource_limits: entry.resource_limits,
         }

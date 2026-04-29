@@ -72,8 +72,11 @@ impl SemanticGraph {
         artifact_name: &str,
         manifest_binding_hash: &str,
         artifact_hash: &str,
+        hash_status: &str,
         abi_fingerprint: &str,
         signature_profile: &str,
+        signature_status: &str,
+        signature_verified: bool,
         signer: &str,
         state: ArtifactVerificationState,
         blocked_by: Option<&str>,
@@ -87,8 +90,11 @@ impl SemanticGraph {
             self.artifact_verifications[index].manifest_binding_hash =
                 manifest_binding_hash.to_string();
             self.artifact_verifications[index].artifact_hash = artifact_hash.to_string();
+            self.artifact_verifications[index].hash_status = hash_status.to_string();
             self.artifact_verifications[index].abi_fingerprint = abi_fingerprint.to_string();
             self.artifact_verifications[index].signature_profile = signature_profile.to_string();
+            self.artifact_verifications[index].signature_status = signature_status.to_string();
+            self.artifact_verifications[index].signature_verified = signature_verified;
             self.artifact_verifications[index].signer = signer.to_string();
             self.artifact_verifications[index].state = state;
             self.artifact_verifications[index].blocked_by =
@@ -118,8 +124,11 @@ impl SemanticGraph {
             artifact_name: artifact_name.to_string(),
             manifest_binding_hash: manifest_binding_hash.to_string(),
             artifact_hash: artifact_hash.to_string(),
+            hash_status: hash_status.to_string(),
             abi_fingerprint: abi_fingerprint.to_string(),
             signature_profile: signature_profile.to_string(),
+            signature_status: signature_status.to_string(),
+            signature_verified,
             signer: signer.to_string(),
             state,
             blocked_by: blocked_by.map(|value| value.to_string()),

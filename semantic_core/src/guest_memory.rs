@@ -319,6 +319,7 @@ pub enum GuestMemoryError {
     PermissionDenied,
     BadCapability,
     SnapshotBarrierActive,
+    ActiveDmwLease,
     PendingCleanup,
     VmaUnmapped,
     PageDead,
@@ -334,6 +335,7 @@ impl GuestMemoryError {
             Self::PermissionDenied => "permission-denied",
             Self::BadCapability => "bad-capability",
             Self::SnapshotBarrierActive => "snapshot-barrier-active",
+            Self::ActiveDmwLease => "active-dmw-lease",
             Self::PendingCleanup => "pending-cleanup",
             Self::VmaUnmapped => "vma-unmapped",
             Self::PageDead => "page-dead",
@@ -544,6 +546,24 @@ impl GuestMemoryManager {
         )
     }
 
+    pub fn copyout(
+        &self,
+        fast_path: &UserBufferFastPath,
+        subject: &str,
+        authority: AuthorityObjectRef,
+        handle: &CapabilityHandle,
+        ledger: &CapabilityLedger,
+    ) -> Result<(), GuestMemoryError> {
+        self.validate_fast_path(
+            fast_path,
+            GuestPerms::WRITE,
+            subject,
+            authority,
+            handle,
+            ledger,
+        )
+    }
+
     pub fn unmap_region(&mut self, region: VmaRegionRef) -> Result<(), GuestMemoryError> {
         let index = self.region_index(region)?;
         let aspace = self.regions[index].aspace;
@@ -557,11 +577,22 @@ impl GuestMemoryManager {
     }
 
     pub fn cow_break(&mut self, page: PageObjectRef) -> Result<(), GuestMemoryError> {
-        let page = self.page_exact_mut(page)?;
-        page.cow = CowState::Broken;
-        page.dirty_generation += 1;
-        page.generation += 1;
-        page.page = PageObjectRef::new(page.page.id(), page.generation);
+        let new_page = {
+            let page = self.page_exact_mut(page)?;
+            page.cow = CowState::Broken;
+            page.dirty_generation += 1;
+            page.generation += 1;
+            page.page = PageObjectRef::new(page.page.id(), page.generation);
+            page.page
+        };
+        for region in &mut self.regions {
+            if region.backing == page {
+                region.backing = new_page;
+            }
+        }
+        for aspace in &mut self.aspaces {
+            aspace.page_map_generation += 1;
+        }
         Ok(())
     }
 
@@ -585,6 +616,12 @@ impl GuestMemoryManager {
         self.active_dmw_leases += 1;
     }
 
+    pub fn close_dmw_lease(&mut self) {
+        if self.active_dmw_leases != 0 {
+            self.active_dmw_leases -= 1;
+        }
+    }
+
     pub const fn active_dmw_leases(&self) -> u32 {
         self.active_dmw_leases
     }
@@ -599,9 +636,10 @@ impl GuestMemoryManager {
         }
     }
 
-    pub fn snapshot_barrier(&mut self) -> SnapshotBarrierReport {
-        let released = self.active_dmw_leases;
-        self.active_dmw_leases = 0;
+    pub fn snapshot_barrier(&mut self) -> Result<SnapshotBarrierReport, GuestMemoryError> {
+        if self.active_dmw_leases != 0 {
+            return Err(GuestMemoryError::ActiveDmwLease);
+        }
         self.snapshot_barrier_active = true;
         let mut frozen_pages = Vec::new();
         for page in &mut self.pages {
@@ -614,10 +652,10 @@ impl GuestMemoryManager {
         for aspace in &mut self.aspaces {
             aspace.state = AddressSpaceState::Frozen;
         }
-        SnapshotBarrierReport {
-            released_dmw_leases: released,
+        Ok(SnapshotBarrierReport {
+            released_dmw_leases: 0,
             frozen_pages,
-        }
+        })
     }
 
     pub fn rebuild_substrate_mappings(
@@ -946,23 +984,92 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_barrier_releases_active_dmw_leases() {
+    fn guest_memory_convergence_copyout_cow_and_lease_boundaries_are_generation_safe() {
+        let mut h = Harness::new();
+        let fast_path = h.fast_path();
+
+        assert_eq!(
+            h.memory
+                .copyout(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
+            Ok(())
+        );
+        h.memory.open_dmw_lease();
+        assert_eq!(
+            h.memory.snapshot_barrier(),
+            Err(GuestMemoryError::ActiveDmwLease)
+        );
+        assert_eq!(h.memory.active_dmw_leases(), 1);
+        h.memory.close_dmw_lease();
+        assert_eq!(h.memory.active_dmw_leases(), 0);
+
+        h.memory.cow_break(h.page).expect("cow break");
+        assert_eq!(
+            h.memory
+                .copyout(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
+            Err(GuestMemoryError::GenerationMismatch)
+        );
+        let mappings = h
+            .memory
+            .rebuild_substrate_mappings(h.aspace)
+            .expect("rebuild after cow");
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].page.id(), h.page.id());
+        assert_eq!(mappings[0].page.generation(), h.page.generation() + 1);
+
+        let fresh = h
+            .memory
+            .build_user_buffer_fast_path(h.aspace, h.region, 0x4000, 0x1000, h.cap_generation)
+            .expect("fresh fast path");
+        assert_eq!(fresh.pages[0], mappings[0].page);
+        assert_eq!(
+            h.memory
+                .copyout(&fresh, SUBJECT, h.authority, &h.handle, &h.ledger),
+            Ok(())
+        );
+
+        let report = h.memory.snapshot_barrier().expect("snapshot barrier");
+        assert_eq!(report.released_dmw_leases, 0);
+        assert_eq!(report.frozen_pages[0].page, mappings[0].page);
+        assert_eq!(
+            h.memory
+                .copyout(&fresh, SUBJECT, h.authority, &h.handle, &h.ledger),
+            Err(GuestMemoryError::SnapshotBarrierActive)
+        );
+    }
+
+    #[test]
+    fn copyout_requires_write_permission_in_cached_fast_path() {
+        let h = Harness::new();
+        let mut fast_path = h.fast_path();
+        fast_path.perms = GuestPerms::READ;
+
+        assert_eq!(
+            h.memory
+                .copyout(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
+            Err(GuestMemoryError::PermissionDenied)
+        );
+    }
+
+    #[test]
+    fn snapshot_barrier_rejects_active_dmw_leases() {
         let mut h = Harness::new();
         h.memory.open_dmw_lease();
         h.memory.open_dmw_lease();
 
-        let report = h.memory.snapshot_barrier();
-
-        assert_eq!(report.released_dmw_leases, 2);
-        assert_eq!(h.memory.active_dmw_leases(), 0);
+        assert_eq!(
+            h.memory.snapshot_barrier(),
+            Err(GuestMemoryError::ActiveDmwLease)
+        );
+        assert_eq!(h.memory.active_dmw_leases(), 2);
     }
 
     #[test]
     fn snapshot_barrier_freezes_page_object_generations() {
         let mut h = Harness::new();
-        let report = h.memory.snapshot_barrier();
+        let report = h.memory.snapshot_barrier().expect("snapshot barrier");
 
         assert_eq!(report.frozen_pages.len(), 1);
+        assert_eq!(report.released_dmw_leases, 0);
         assert_eq!(report.frozen_pages[0].page, h.page);
         assert_eq!(report.frozen_pages[0].dirty_generation, 1);
         assert_eq!(

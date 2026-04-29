@@ -48,7 +48,7 @@ impl SemanticGraph {
         historical_edge_count: u32,
         replayed_root_count: u32,
         integrated_scenario_count: u32,
-        golden_trace_count: u32,
+        replay_fixture_count: u32,
         invariant_checks: u32,
     ) -> Result<(), &'static str> {
         self.validate_integrated_osctl_trace_replay_candidate(
@@ -77,7 +77,7 @@ impl SemanticGraph {
             historical_edge_count,
             replayed_root_count,
             integrated_scenario_count,
-            golden_trace_count,
+            replay_fixture_count,
             invariant_checks,
             None,
         )
@@ -111,7 +111,7 @@ impl SemanticGraph {
         historical_edge_count: u32,
         replayed_root_count: u32,
         integrated_scenario_count: u32,
-        golden_trace_count: u32,
+        replay_fixture_count: u32,
         invariant_checks: u32,
         allow_existing_integrated: Option<IntegratedOsctlTraceReplayId>,
     ) -> Result<(), &'static str> {
@@ -132,7 +132,7 @@ impl SemanticGraph {
             || stable_view_count < X9_INTEGRATED_SCENARIO_COUNT
             || historical_edge_count < X9_INTEGRATED_SCENARIO_COUNT
             || replayed_root_count < X9_INTEGRATED_SCENARIO_COUNT
-            || golden_trace_count < X9_INTEGRATED_SCENARIO_COUNT
+            || replay_fixture_count < X9_INTEGRATED_SCENARIO_COUNT
         {
             return Err("integrated osctl trace replay requires complete stable evidence");
         }
@@ -229,7 +229,7 @@ impl SemanticGraph {
                 historical_edge_count,
                 replayed_root_count,
                 integrated_scenario_count,
-                golden_trace_count,
+                replay_fixture_count,
                 max_source_event,
             )
             .complete()
@@ -247,14 +247,14 @@ impl SemanticGraph {
         historical_edge_count: u32,
         replayed_root_count: u32,
         integrated_scenario_count: u32,
-        golden_trace_count: u32,
+        replay_fixture_count: u32,
         max_source_event: EventId,
     ) -> IntegratedOsctlTraceReplayDerivedEvidence {
         let roots_match_counts = integrated_scenario_count == X9_INTEGRATED_SCENARIO_COUNT
             && stable_view_count >= integrated_scenario_count
             && historical_edge_count >= integrated_scenario_count
             && replayed_root_count >= integrated_scenario_count
-            && golden_trace_count >= integrated_scenario_count;
+            && replay_fixture_count >= integrated_scenario_count;
         let graph_history_ok = historical_edge_count >= X9_INTEGRATED_SCENARIO_COUNT
             && replay_event_cursor >= max_source_event;
         let replay_validation_ok = replay_event_cursor >= max_source_event
@@ -296,7 +296,7 @@ impl SemanticGraph {
         historical_edge_count: u32,
         replayed_root_count: u32,
         integrated_scenario_count: u32,
-        golden_trace_count: u32,
+        replay_fixture_count: u32,
         invariant_checks: u32,
         note: &str,
     ) -> bool {
@@ -327,7 +327,7 @@ impl SemanticGraph {
                 historical_edge_count,
                 replayed_root_count,
                 integrated_scenario_count,
-                golden_trace_count,
+                replay_fixture_count,
                 invariant_checks,
             )
             .is_err()
@@ -409,7 +409,7 @@ impl SemanticGraph {
             historical_edge_count,
             replayed_root_count,
             integrated_scenario_count,
-            golden_trace_count,
+            replay_fixture_count,
             max_source_event,
         );
         let generation = 1;
@@ -426,7 +426,7 @@ impl SemanticGraph {
                 replayed_root_count,
                 stable_view_count,
                 historical_edge_count,
-                golden_trace_count,
+                replay_fixture_count,
                 contract_validation_ok: derived.contract_validation_ok,
                 replay_validation_ok: derived.replay_validation_ok,
                 graph_history_ok: derived.graph_history_ok,
@@ -462,7 +462,7 @@ impl SemanticGraph {
                 historical_edge_count,
                 replayed_root_count,
                 integrated_scenario_count,
-                golden_trace_count,
+                replay_fixture_count,
                 contract_validation_ok: derived.contract_validation_ok,
                 replay_validation_ok: derived.replay_validation_ok,
                 graph_history_ok: derived.graph_history_ok,
@@ -497,7 +497,7 @@ impl SemanticGraph {
                 || record.stable_view_count < X9_INTEGRATED_SCENARIO_COUNT
                 || record.historical_edge_count < X9_INTEGRATED_SCENARIO_COUNT
                 || record.replayed_root_count < X9_INTEGRATED_SCENARIO_COUNT
-                || record.golden_trace_count < X9_INTEGRATED_SCENARIO_COUNT
+                || record.replay_fixture_count < X9_INTEGRATED_SCENARIO_COUNT
                 || !record.contract_validation_ok
                 || !record.replay_validation_ok
                 || !record.graph_history_ok
@@ -536,7 +536,7 @@ impl SemanticGraph {
                     record.historical_edge_count,
                     record.replayed_root_count,
                     record.integrated_scenario_count,
-                    record.golden_trace_count,
+                    record.replay_fixture_count,
                     record.invariant_checks,
                     Some(record.id),
                 )
@@ -558,7 +558,7 @@ impl SemanticGraph {
                             replayed_root_count,
                             stable_view_count,
                             historical_edge_count,
-                            golden_trace_count,
+                            replay_fixture_count,
                             contract_validation_ok,
                             replay_validation_ok,
                             graph_history_ok,
@@ -572,7 +572,7 @@ impl SemanticGraph {
                             && *replayed_root_count == record.replayed_root_count
                             && *stable_view_count == record.stable_view_count
                             && *historical_edge_count == record.historical_edge_count
-                            && *golden_trace_count == record.golden_trace_count
+                            && *replay_fixture_count == record.replay_fixture_count
                             && *contract_validation_ok == record.contract_validation_ok
                             && *replay_validation_ok == record.replay_validation_ok
                             && *graph_history_ok == record.graph_history_ok

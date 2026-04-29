@@ -1988,7 +1988,7 @@ pub struct IntegratedOsctlTraceReplayManifest {
     pub historical_edge_count: u32,
     pub replayed_root_count: u32,
     pub integrated_scenario_count: u32,
-    pub golden_trace_count: u32,
+    pub replay_fixture_count: u32,
     pub contract_validation_ok: bool,
     pub replay_validation_ok: bool,
     pub graph_history_ok: bool,
@@ -3980,9 +3980,19 @@ pub struct TargetArtifactImageManifest {
     pub target_profile: String,
     #[serde(default)]
     pub artifact_hash: String,
+    #[serde(default)]
+    pub hash_status: String,
     pub abi_fingerprint: String,
     pub manifest_binding_hash: String,
     pub code_hash: String,
+    #[serde(default)]
+    pub signature_scheme: String,
+    #[serde(default)]
+    pub signature_status: String,
+    #[serde(default)]
+    pub signature_verified: bool,
+    #[serde(default)]
+    pub signer: String,
     pub exports: Vec<String>,
     pub imports: Vec<String>,
     pub hostcalls: Vec<HostcallSpecManifest>,
@@ -4200,6 +4210,8 @@ pub struct TrapRecordManifest {
     #[serde(default)]
     pub classification_status: Option<String>,
     #[serde(default)]
+    pub attribution_status: String,
+    #[serde(default)]
     pub simd_attribution: Option<SimdTrapAttributionManifest>,
     pub hostcall: Option<String>,
     pub fault_policy: String,
@@ -4243,6 +4255,8 @@ pub struct HostcallTraceManifest {
     pub category: String,
     #[serde(default)]
     pub subject: String,
+    #[serde(default)]
+    pub subject_source: String,
     pub object: String,
     pub operation: String,
     #[serde(default)]
@@ -4252,7 +4266,11 @@ pub struct HostcallTraceManifest {
     #[serde(default)]
     pub record_mode: String,
     pub allowed: bool,
+    #[serde(default)]
+    pub gate_status: String,
     pub result: String,
+    #[serde(default)]
+    pub denial_reason: Option<String>,
     #[serde(default)]
     pub ret_tag: String,
     #[serde(default)]
@@ -4376,6 +4394,8 @@ pub struct CleanupTransactionManifest {
     pub revoked_capability_refs: Vec<ContractObjectRefManifest>,
     pub dropped_resources: u32,
     pub unbound_code_object: bool,
+    #[serde(default)]
+    pub state_digest: String,
     pub effect: String,
     pub steps: Vec<CleanupStepManifest>,
     #[serde(default)]
