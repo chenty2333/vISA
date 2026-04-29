@@ -20,7 +20,7 @@ KNOWN_LARGE_FILES=(
     "crates/core/semantic_core/src/migration.rs"
     "crates/core/semantic_core/src/taxonomy.rs"
     "crates/core/semantic_core/src/graph/command.rs"
-    "crates/runtime/target_executor/src/main.rs"
+    "crates/runtime/target_executor/src/lib.rs"
     "crates/core/contract_core/src/lib.rs"
     "crates/core/artifact_manifest/src/lib.rs"
 )
